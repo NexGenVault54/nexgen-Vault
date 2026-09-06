@@ -221,14 +221,14 @@
                     <input type="email" id="auth-email" placeholder="name@example.com" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 mt-1">
                 </div>
                 <div>
-                    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Password</label>
+                    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Password (Min 6 chars)</label>
                     <input type="password" id="auth-password" placeholder="••••••••" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 mt-1">
                 </div>
                 <div class="pt-2 flex space-x-2">
-                    <button onclick="handleLogin()" class="w-1/2 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition border border-slate-700">
+                    <button type="button" onclick="handleLogin()" class="w-1/2 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition border border-slate-700 cursor-pointer">
                         Log In
                     </button>
-                    <button onclick="handleSignup()" class="w-1/2 bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2.5 rounded-xl text-xs transition">
+                    <button type="button" onclick="handleSignup()" class="w-1/2 bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2.5 rounded-xl text-xs transition cursor-pointer">
                         Sign Up
                     </button>
                 </div>
@@ -240,7 +240,7 @@
                     <div class="text-slate-400">Account: <span id="profile-email" class="text-emerald-400 font-bold">user@mail.com</span></div>
                     <div class="text-slate-400">Cloud Balance: <span id="profile-total" class="text-emerald-400 font-bold">$0.00</span></div>
                 </div>
-                <button onclick="handleLogout()" class="w-full bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold py-2 rounded-xl text-xs transition">
+                <button onclick="handleLogout()" class="w-full bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold py-2 rounded-xl text-xs transition cursor-pointer">
                     Log Out / Switch Account
                 </button>
             </div>
@@ -292,62 +292,112 @@
         let currentUser = null;
 
         window.addEventListener('DOMContentLoaded', async () => {
-            const { data: { session } } = await _supabase.auth.getSession();
-            if (session) {
-                currentUser = session.user;
-                updateUserSessionUI(currentUser.email);
-                await fetchUserProfile(currentUser.id);
+            try {
+                const { data: { session } } = await _supabase.auth.getSession();
+                if (session && session.user) {
+                    currentUser = session.user;
+                    updateUserSessionUI(currentUser.email);
+                    await fetchUserProfile(currentUser.id);
+                }
+            } catch (err) {
+                console.error("Session load error:", err);
             }
         });
 
         async function fetchUserProfile(userId) {
-            const { data, error } = await _supabase
-                .from('profiles')
-                .select('balance')
-                .eq('id', userId)
-                .single();
-            
-            if (data) {
-                walletBalance = parseFloat(data.balance || 0);
-                document.getElementById('wallet-balance').innerText = '$' + walletBalance.toFixed(2);
-                document.getElementById('profile-total').innerText = '$' + walletBalance.toFixed(2);
+            try {
+                const { data, error } = await _supabase
+                    .from('profiles')
+                    .select('balance')
+                    .eq('id', userId)
+                    .single();
+                
+                if (data) {
+                    walletBalance = parseFloat(data.balance || 0);
+                    document.getElementById('wallet-balance').innerText = '$' + walletBalance.toFixed(2);
+                    document.getElementById('profile-total').innerText = '$' + walletBalance.toFixed(2);
+                }
+            } catch (e) {
+                console.log("Profile fetch note:", e);
             }
         }
 
         async function handleSignup() {
-            const email = document.getElementById('auth-email').value;
-            const password = document.getElementById('auth-password').value;
+            const emailField = document.getElementById('auth-email');
+            const passField = document.getElementById('auth-password');
+            
+            if(!emailField || !passField) {
+                alert("Form fields missing!");
+                return;
+            }
+
+            const email = emailField.value.trim();
+            const password = passField.value.trim();
+
             if(!email || !password) {
                 showToast('Please enter email and password', '⚠️');
                 return;
             }
-            const { data, error } = await _supabase.auth.signUp({ email, password });
-            if (error) {
-                showToast(error.message, '❌');
-            } else {
-                showToast('Signup successful! Welcome 🎉', '✅');
-                currentUser = data.user;
-                updateUserSessionUI(email);
-                closeAuthModal();
+
+            if(password.length < 6) {
+                showToast('Password must be at least 6 characters', '⚠️');
+                return;
+            }
+
+            showToast('Processing signup...', '⏳');
+
+            try {
+                const { data, error } = await _supabase.auth.signUp({ email, password });
+                
+                if (error) {
+                    showToast(error.message, '❌');
+                } else {
+                    showToast('Signup successful! Welcome 🎉', '✅');
+                    if(data && data.user) {
+                        currentUser = data.user;
+                        updateUserSessionUI(email);
+                    }
+                    setTimeout(() => closeAuthModal(), 1500);
+                }
+            } catch (err) {
+                showToast('Network error during signup', '❌');
+                console.error(err);
             }
         }
 
         async function handleLogin() {
-            const email = document.getElementById('auth-email').value;
-            const password = document.getElementById('auth-password').value;
+            const emailField = document.getElementById('auth-email');
+            const passField = document.getElementById('auth-password');
+            
+            if(!emailField || !passField) return;
+
+            const email = emailField.value.trim();
+            const password = passField.value.trim();
+
             if(!email || !password) {
                 showToast('Please enter email and password', '⚠️');
                 return;
             }
-            const { data, error } = await _supabase.auth.signInWithPassword({ email, password });
-            if (error) {
-                showToast(error.message, '❌');
-            } else {
-                showToast('Logged in successfully! 🚀', '✅');
-                currentUser = data.user;
-                updateUserSessionUI(email);
-                await fetchUserProfile(currentUser.id);
-                closeAuthModal();
+
+            showToast('Logging in...', '⏳');
+
+            try {
+                const { data, error } = await _supabase.auth.signInWithPassword({ email, password });
+                
+                if (error) {
+                    showToast(error.message, '❌');
+                } else {
+                    showToast('Logged in successfully! 🚀', '✅');
+                    if(data && data.user) {
+                        currentUser = data.user;
+                        updateUserSessionUI(email);
+                        await fetchUserProfile(currentUser.id);
+                    }
+                    setTimeout(() => closeAuthModal(), 1500);
+                }
+            } catch (err) {
+                showToast('Network error during login', '❌');
+                console.error(err);
             }
         }
 
@@ -375,7 +425,7 @@
             setTimeout(() => {
                 toast.classList.remove('opacity-100', 'translate-y-0');
                 toast.classList.add('opacity-0', 'translate-y-10');
-            }, 3000);
+            }, 3500);
         }
 
         async function earnReward(amount, message) {
@@ -387,15 +437,12 @@
 
             walletBalance += amount;
             
-            const { error } = await _supabase
-                .from('profiles')
-                .update({ balance: walletBalance })
-                .eq('id', currentUser.id);
-
-            if (error) {
-                showToast('Error syncing with DB', '❌');
-                return;
-            }
+            try {
+                await _supabase
+                    .from('profiles')
+                    .update({ balance: walletBalance })
+                    .eq('id', currentUser.id);
+            } catch(e) { console.log(e); }
 
             const container = document.getElementById('wallet-container');
             const wave = document.createElement('div');
