@@ -106,9 +106,9 @@
         <button type="button" onclick="Z.openCreateSelectionModal()" class="flex items-center justify-center w-11 h-11 bg-gradient-to-tr from-emerald-500 to-blue-600 rounded-full text-black hover:scale-105 transition shadow-lg shadow-emerald-500/20 -mt-3" title="Create">
             <i class="fa-solid fa-plus text-base font-black"></i>
         </button>
-        <button type="button" onclick="Z.showView('people')" id="nav-btn-people" class="flex flex-col items-center justify-center text-slate-400 hover:text-emerald-400 transition w-1/5 py-1">
-            <i class="fa-solid fa-users text-lg"></i>
-            <span class="text-[10px] font-medium mt-0.5">People</span>
+        <button type="button" onclick="Z.showView('circles')" id="nav-btn-circles" class="flex flex-col items-center justify-center text-slate-400 hover:text-emerald-400 transition w-1/5 py-1">
+            <i class="fa-solid fa-circle-nodes text-lg"></i>
+            <span class="text-[10px] font-medium mt-0.5">Circles</span>
         </button>
         <button type="button" onclick="Z.showView('profile')" id="nav-btn-profile" class="flex flex-col items-center justify-center text-slate-400 hover:text-emerald-400 transition w-1/5 py-1">
             <i class="fa-solid fa-user text-lg"></i>
@@ -135,7 +135,9 @@
 
         Z.State = {
             currentUser: null,
-            currentView: 'home'
+            currentView: 'home',
+            circleSearchQuery: '',
+            joinedCircles: ['cir_1'] // Keeps track of recently visited/joined circles
         };
 
         // Central Reward & Bounty Engine Layer
@@ -254,7 +256,7 @@
             }, 3200);
         };
 
-        // Data Management Layer (Local Storage with Supabase-ready abstraction)
+        // Data Management Layer
         Z.DB = {
             getUsers: function() {
                 const data = localStorage.getItem('zynix_users');
@@ -382,16 +384,27 @@
                     name: 'ZYNIX Creator Circle',
                     description: 'Official community for top-tier creators and digital asset designers.',
                     membersCount: 340,
-                    creatorId: 'usr_1'
-                }
-            ],
-            adminPosts: [
+                    creatorId: 'usr_1',
+                    avatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80',
+                    category: 'Creator'
+                },
                 {
-                    id: 'adm_1',
-                    title: 'Welcome to ZYNIX Official Admin Wall',
-                    body: 'This is the secure administration timeline containing official announcements, platform updates, and verified news.',
-                    pinned: true,
-                    createdAt: '2026-09-07'
+                    id: 'cir_2',
+                    name: 'Forex Global Traders',
+                    description: 'Live market analysis, currency pairs, and intraday trading setups.',
+                    membersCount: 1250,
+                    creatorId: 'usr_1',
+                    avatar: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=150&q=80',
+                    category: 'Forex'
+                },
+                {
+                    id: 'cir_3',
+                    name: 'Crypto Alpha Signals',
+                    description: 'DeFi yield farming, altcoin gems, and decentralized ecosystems.',
+                    membersCount: 2100,
+                    creatorId: 'usr_1',
+                    avatar: 'https://images.unsplash.com/photo-1621416894569-0f39ed31d247?auto=format&fit=crop&w=150&q=80',
+                    category: 'Crypto'
                 }
             ]
         };
@@ -403,7 +416,6 @@
             if (!localStorage.getItem('zynix_statuses')) Z.DB.saveStatuses(Z.SeedData.statuses);
             if (!localStorage.getItem('zynix_circles')) Z.DB.saveCircles(Z.SeedData.circles);
 
-            // Session persistence check
             let current = Z.DB.getCurrentUser();
             Z.State.currentUser = current || null;
 
@@ -755,7 +767,7 @@
             Z.State.currentView = viewName;
             window.scrollTo({ top: 0, behavior: 'smooth' });
 
-            ['home', 'spark', 'people', 'profile'].forEach(v => {
+            ['home', 'spark', 'circles', 'profile'].forEach(v => {
                 const btn = document.getElementById(`nav-btn-${v}`);
                 if (btn) {
                     if (v === viewName) btn.classList.add('text-emerald-400');
@@ -776,7 +788,7 @@
             else if (viewName === 'referrals') container.innerHTML = Z.Views.renderReferrals();
             else if (viewName === 'analytics') container.innerHTML = Z.Views.renderAnalytics();
             else if (viewName === 'people') container.innerHTML = Z.Views.renderPeople();
-            else if (viewName === 'circles') container.innerHTML = Z.Views.renderCircles();
+            else if (viewName === 'circles') container.innerHTML = Z.Views.renderCirclesPage();
             else if (viewName === 'admin-wall') container.innerHTML = Z.Views.renderAdminWall();
             else container.innerHTML = Z.Views.renderHome();
         };
@@ -1116,7 +1128,7 @@
                             <button type="button" onclick="Z.showView('profile')" class="text-slate-400 hover:text-white"><i class="fa-solid fa-arrow-left"></i></button>
                             <h3 class="font-bold text-sm text-white">Reward & Earnings Calculator</h3>
                         </div>
-                        <p class="text-xs text-slate-400">Estimate estimated gross rewards based on package activity and engagement rules.</p>
+                        <p class="text-xs text-slate-400">Estimate gross rewards based on package activity and engagement rules.</p>
                         <div class="space-y-3">
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 mb-1">Estimated Daily Interactions</label>
@@ -1214,25 +1226,84 @@
                 `;
             },
 
-            renderCircles: function() {
+            // Manual Full Page Circles View with Search and Horizontal Scrollable Joined Circles
+            renderCirclesPage: function() {
                 const circles = Z.DB.getCircles();
-                let circHtml = '';
-                circles.forEach(c => {
-                    circHtml += `
-                        <div class="bg-[#111827] border border-slate-800 p-4 rounded-2xl space-y-2 shadow-xl">
-                            <h4 class="font-bold text-sm text-white">${c.name}</h4>
-                            <p class="text-xs text-slate-300">${c.description}</p>
-                            <div class="flex justify-between items-center pt-2 text-xs text-slate-400 border-t border-slate-800">
-                                <span>${c.membersCount} Members</span>
-                                <button type="button" onclick="Z.showToast('Joined circle successfully!')" class="bg-emerald-600 text-black font-bold px-3 py-1.5 rounded-xl">Join Circle</button>
+                const query = (Z.State.circleSearchQuery || '').toLowerCase();
+
+                // Horizontal scrollable joined/recent circles row
+                let joinedRowHtml = '';
+                Z.State.joinedCircles.forEach(cid => {
+                    const c = circles.find(item => item.id === cid);
+                    if (c) {
+                        joinedRowHtml += `
+                            <div class="flex flex-col items-center shrink-0 space-y-1 cursor-pointer group" onclick="Z.visitCircle('${c.id}')">
+                                <div class="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-emerald-400 to-indigo-500 group-hover:scale-105 transition">
+                                    <img src="${c.avatar}" class="w-full h-full rounded-full object-cover border-2 border-[#090d16]">
+                                </div>
+                                <span class="text-[10px] text-slate-300 font-medium truncate w-14 text-center">${c.name.split(' ')[0]}</span>
                             </div>
-                        </div>
-                    `;
+                        `;
+                    }
                 });
+
+                // Filtered circles list based on search query (e.g., "Forex", "Crypto")
+                let filteredCircles = circles.filter(c => 
+                    c.name.toLowerCase().includes(query) || 
+                    c.description.toLowerCase().includes(query) ||
+                    (c.category && c.category.toLowerCase().includes(query))
+                );
+
+                let listHtml = '';
+                if (filteredCircles.length > 0) {
+                    filteredCircles.forEach(c => {
+                        listHtml += `
+                            <div class="bg-[#111827] border border-slate-800 p-4 rounded-2xl space-y-2 shadow-xl">
+                                <div class="flex items-center space-x-3">
+                                    <img src="${c.avatar}" class="w-10 h-10 rounded-full object-cover border border-slate-700">
+                                    <div>
+                                        <h4 class="font-bold text-sm text-white">${c.name}</h4>
+                                        <p class="text-[10px] text-slate-400">${c.membersCount} Members • <span class="text-emerald-400">${c.category || 'Community'}</span></p>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-slate-300 leading-relaxed">${c.description}</p>
+                                <div class="flex justify-between items-center pt-2 border-t border-slate-800 text-xs">
+                                    <button type="button" onclick="Z.visitCircle('${c.id}')" class="text-indigo-400 font-bold hover:underline">View Discussions</button>
+                                    <button type="button" onclick="Z.joinCircle('${c.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold px-3 py-1.5 rounded-xl transition">Join Circle</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    listHtml = `<p class="text-xs text-slate-500 text-center py-8">No circles found matching "${Z.State.circleSearchQuery}". Try searching "Forex" or "Crypto".</p>`;
+                }
+
                 return `
                     <div class="space-y-4">
-                        <h2 class="font-black text-sm text-white px-1">Professional Circles</h2>
-                        <div class="space-y-3">${circHtml}</div>
+                        <div class="flex items-center justify-between px-1">
+                            <h2 class="font-black text-sm text-white flex items-center"><i class="fa-solid fa-circle-nodes text-emerald-400 mr-2"></i> Professional Circles</h2>
+                            <span class="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded font-bold">Full Page</span>
+                        </div>
+
+                        <!-- Search Bar for Circles -->
+                        <div class="relative">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-500 text-xs"></i>
+                            <input type="text" id="circle-search-input" value="${Z.State.circleSearchQuery || ''}" oninput="Z.handleCircleSearch(this.value)" placeholder="Search circles by name, keyword (e.g. Forex, Crypto)..." class="w-full bg-[#111827] border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 shadow-inner">
+                        </div>
+
+                        <!-- Horizontal Scrollable Row of Joined/Recent Circles -->
+                        <div class="space-y-1.5">
+                            <span class="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-1">Your Joined & Recent Circles</span>
+                            <div class="flex items-center space-x-3 overflow-x-auto pb-2 scrollbar-none bg-[#111827]/50 p-3 rounded-2xl border border-slate-800">
+                                ${joinedRowHtml}
+                            </div>
+                        </div>
+
+                        <!-- Circles List -->
+                        <div class="space-y-3">
+                            <span class="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-1">Discover All Circles</span>
+                            ${listHtml}
+                        </div>
                     </div>
                 `;
             },
@@ -1258,6 +1329,38 @@
                     </div>
                 `;
             }
+        };
+
+        // Circle Interactions & Search Handlers
+        Z.handleCircleSearch = function(val) {
+            Z.State.circleSearchQuery = val;
+            const container = document.getElementById('app-container');
+            if (container && Z.State.currentView === 'circles') {
+                container.innerHTML = Z.Views.renderCirclesPage();
+                // Maintain cursor position in search input
+                const input = document.getElementById('circle-search-input');
+                if (input) {
+                    input.focus();
+                    input.setSelectionRange(input.value.length, input.value.length);
+                }
+            }
+        };
+
+        Z.joinCircle = function(circleId) {
+            if (!Z.State.joinedCircles.includes(circleId)) {
+                Z.State.joinedCircles.unshift(circleId); // Most recently visited/joined first
+            }
+            Z.showToast('Successfully joined circle!');
+            Z.showView('circles');
+        };
+
+        Z.visitCircle = function(circleId) {
+            // Move to front of recent list
+            Z.State.joinedCircles = [circleId, ...Z.State.joinedCircles.filter(id => id !== circleId)];
+            const circles = Z.DB.getCircles();
+            const c = circles.find(item => item.id === circleId);
+            Z.showToast(`Opened circle: ${c ? c.name : 'Community'}`);
+            Z.showView('circles');
         };
     </script>
 </body>
