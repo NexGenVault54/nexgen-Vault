@@ -30,8 +30,6 @@
     </script>
     <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Supabase JS SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: #090d16; }
@@ -98,7 +96,7 @@
         <!-- Views will be injected dynamically here -->
     </main>
 
-    <!-- Fixed Bottom Navigation -->
+    <!-- Fixed Bottom Navigation (With Home, Spark, Plus, Circles, People, Profile) -->
     <nav class="fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-lg border-t border-slate-800 px-2 py-2 max-w-xl mx-auto flex items-center justify-between shadow-2xl">
         <button type="button" onclick="Z.showView('home')" id="nav-btn-home" class="flex flex-col items-center justify-center text-slate-400 hover:text-emerald-400 transition w-1/6 py-1">
             <i class="fa-solid fa-house text-base"></i>
@@ -142,11 +140,6 @@
     <script>
         window.Z = {};
 
-        // Initialize Supabase Client with your credentials
-        const SUPABASE_URL = 'https://ipypwqajsfxrdzlxfnlr.supabase.co/rest/v1/';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4';
-        const supabaseClient = supabase.createClient('https://ipypwqajsfxrdzlxfnlr.supabase.co', SUPABASE_ANON_KEY);
-
         Z.State = {
             currentUser: null,
             currentView: 'home',
@@ -154,58 +147,49 @@
             joinedCircles: ['cir_1']
         };
 
-        // Central Reward & Bounty Engine Layer
+        // Central Reward & Bounty Engine Layer (Range $0.00 to $0.05 max per bounty)
         Z.RewardEngine = {
             calculateSplit: function(grossAmount) {
                 const cash = Number((grossAmount * 0.60).toFixed(4));
                 const bounty = Number((grossAmount * 0.40).toFixed(4));
                 return { cash, bounty, gross: grossAmount };
             },
-            creditReward: async function(user, grossAmount, reason) {
+            creditReward: function(user, grossAmount, reason) {
                 if (!user) return false;
                 const split = this.calculateSplit(grossAmount);
                 
-                const newCash = (user.cash_balance ?? user.wallet?.cash ?? 0) + split.cash;
-                const newBounty = (user.bounty_balance ?? user.wallet?.bounty ?? 0) + split.bounty;
-                const newTotal = (user.total_earned ?? user.wallet?.totalEarned ?? 0) + grossAmount;
+                if (!user.wallet) {
+                    user.wallet = { cash: 0.00, bounty: 0.00, totalEarned: 0.00 };
+                }
+                if (!user.walletTransactions) user.walletTransactions = [];
 
-                // Update Profile Balances in Supabase
-                await supabaseClient.from('profiles').update({ 
-                    cash_balance: newCash, 
-                    bounty_balance: newBounty, 
-                    total_earned: newTotal 
-                }).eq('id', user.id);
+                user.wallet.cash += split.cash;
+                user.wallet.bounty += split.bounty;
+                user.wallet.totalEarned += grossAmount;
 
-                // Record Transaction in Supabase
-                await supabaseClient.from('wallet_transactions').insert({ 
-                    user_id: user.id, 
-                    type: reason, 
-                    amount: grossAmount, 
-                    cash_split: split.cash, 
-                    bounty_split: split.bounty 
+                user.walletTransactions.unshift({
+                    id: 'tx_' + Date.now(),
+                    date: new Date().toISOString(),
+                    type: reason,
+                    amount: grossAmount,
+                    cash: split.cash,
+                    bounty: split.bounty,
+                    status: 'Completed'
                 });
 
-                user.cash_balance = newCash;
-                user.bounty_balance = newBounty;
-                user.total_earned = newTotal;
-                if(user.wallet) {
-                    user.wallet.cash = newCash;
-                    user.wallet.bounty = newBounty;
-                    user.wallet.totalEarned = newTotal;
-                }
-
+                Z.DB.saveUsers();
                 Z.updateHeaderWallet();
                 Z.triggerRewardAnimation(grossAmount);
                 Z.showToast(`Reward received: +$${grossAmount.toFixed(2)} (+$${split.cash.toFixed(3)} Cash, +$${split.bounty.toFixed(3)} Bounty)`);
                 return true;
             },
-            processInteraction: async function(contentOwnerId, interactionType, post) {
+            processInteraction: function(contentOwnerId, interactionType, post) {
                 if (!Z.State.currentUser) {
                     Z.openAuthModal('login');
                     Z.showToast('Please log in or sign up to earn rewards.');
                     return false;
                 }
-                const users = await Z.DB.getUsers();
+                const users = Z.DB.getUsers();
                 const contentOwner = users.find(u => u.id === contentOwnerId);
                 if (!contentOwner) return false;
 
@@ -214,21 +198,29 @@
                     return false;
                 }
 
+                // Default bounds within $0.00 - $0.05
                 const bountySettings = contentOwner.bountySettings || { like: 0.01, share: 0.03, follow: 0.03, subscribe: 0.02, circleJoin: 0.03 };
                 let rewardAmount = bountySettings[interactionType] || 0.01;
-                if (rewardAmount > 0.05) rewardAmount = 0.05;
+                if (rewardAmount > 0.05) rewardAmount = 0.05; // Enforce max $0.05 limit
 
-                const ownerBounty = contentOwner.bounty_balance ?? contentOwner.wallet?.bounty ?? 5.00;
-                if (ownerBounty < rewardAmount) {
+                if (!contentOwner.wallet) contentOwner.wallet = { cash: 5.00, bounty: 5.00, totalEarned: 10.00 };
+                if (contentOwner.wallet.bounty < rewardAmount) {
                     Z.showToast('Creator bounty balance is insufficient for this reward.');
                     return false;
                 }
 
-                const updatedOwnerBounty = ownerBounty - rewardAmount;
-                await supabaseClient.from('profiles').update({ bounty_balance: updatedOwnerBounty }).eq('id', contentOwner.id);
-                contentOwner.bounty_balance = updatedOwnerBounty;
+                contentOwner.wallet.bounty -= rewardAmount;
+                if (!contentOwner.bountySpentHistory) contentOwner.bountySpentHistory = [];
+                contentOwner.bountySpentHistory.unshift({
+                    id: 'bspend_' + Date.now(),
+                    date: new Date().toISOString(),
+                    recipient: Z.State.currentUser.name,
+                    action: interactionType,
+                    amount: rewardAmount
+                });
 
                 this.creditReward(Z.State.currentUser, rewardAmount, `${interactionType.toUpperCase()} Reward`);
+                Z.DB.saveUsers();
                 return true;
             }
         };
@@ -239,6 +231,7 @@
                 walletEl.classList.add('wallet-pulse');
                 setTimeout(() => walletEl.classList.remove('wallet-pulse'), 500);
             }
+            // Pure flying banknote with no background box wrapper
             const floatingNote = document.createElement('div');
             floatingNote.className = 'fixed z-50 text-emerald-400 font-black text-2xl dollar-note-pure pointer-events-none flex items-center space-x-1';
             floatingNote.style.right = '50px';
@@ -262,70 +255,185 @@
             }, 3200);
         };
 
-        // Supabase-Powered Data Management Layer
+        // Data Management Layer
         Z.DB = {
-            getUsers: async function() {
-                const { data, error } = await supabaseClient.from('profiles').select('*');
-                if (error || !data || data.length === 0) return [];
-                return data;
+            getUsers: function() {
+                const data = localStorage.getItem('zynix_users');
+                if (!data) return Z.SeedData.users;
+                return JSON.parse(data);
             },
-            getCurrentUser: async function() {
-                const { data: { session } } = await supabaseClient.auth.getSession();
-                if (!session) return null;
-                const { data: profile } = await supabaseClient
-                    .from('profiles')
-                    .select('*')
-                    .eq('id', session.user.id)
-                    .single();
-                return profile || null;
+            saveUsers: function(users) {
+                if (users) localStorage.setItem('zynix_users', JSON.stringify(users));
+                else {
+                    const current = this.getUsers();
+                    localStorage.setItem('zynix_users', JSON.stringify(current));
+                }
             },
-            setCurrentUser: async function(user) {
+            getCurrentUser: function() {
+                const id = localStorage.getItem('zynix_current_user_id');
+                if (!id) return null;
+                const users = this.getUsers();
+                return users.find(u => u.id === id) || null;
+            },
+            setCurrentUser: function(user) {
+                if (user) {
+                    localStorage.setItem('zynix_current_user_id', user.id);
+                } else {
+                    localStorage.removeItem('zynix_current_user_id');
+                }
                 Z.State.currentUser = user;
                 Z.renderHeaderAuth();
                 Z.updateHeaderWallet();
             },
-            getPosts: async function() {
-                const { data, error } = await supabaseClient
-                    .from('posts')
-                    .select('*, profiles(name, username, avatar, role)')
-                    .order('created_at', { ascending: false });
-                return data || [];
+            getPosts: function() {
+                const data = localStorage.getItem('zynix_posts');
+                if (!data) return Z.SeedData.posts;
+                return JSON.parse(data);
             },
-            getSparks: async function() {
-                const { data, error } = await supabaseClient
-                    .from('sparks')
-                    .select('*, profiles(name, username, avatar)')
-                    .order('created_at', { ascending: false });
-                return data || [];
+            savePosts: function(posts) {
+                localStorage.setItem('zynix_posts', JSON.stringify(posts));
             },
-            getStatuses: async function() {
-                // Falls back or returns empty if status table isn't created, keeping app robust
-                return [
-                    {
-                        id: 'st_1',
-                        authorId: Z.State.currentUser?.id || 'usr_1',
-                        content: 'Building the future of independent creator rewards!',
-                        media: '',
-                        createdAt: '1 hour ago'
-                    }
-                ];
+            getSparks: function() {
+                const data = localStorage.getItem('zynix_sparks');
+                if (!data) return Z.SeedData.sparks;
+                return JSON.parse(data);
             },
-            getCircles: async function() {
-                const { data, error } = await supabaseClient
-                    .from('circles')
-                    .select('*')
-                    .order('members_count', { ascending: false });
-                return data || [];
+            saveSparks: function(sparks) {
+                localStorage.setItem('zynix_sparks', JSON.stringify(sparks));
+            },
+            getStatuses: function() {
+                const data = localStorage.getItem('zynix_statuses');
+                if (!data) return Z.SeedData.statuses;
+                return JSON.parse(data);
+            },
+            saveStatuses: function(statuses) {
+                localStorage.setItem('zynix_statuses', JSON.stringify(statuses));
+            },
+            getCircles: function() {
+                const data = localStorage.getItem('zynix_circles');
+                if (!data) return Z.SeedData.circles;
+                return JSON.parse(data);
+            },
+            saveCircles: function(circles) {
+                localStorage.setItem('zynix_circles', JSON.stringify(circles));
             }
         };
 
-        document.addEventListener('DOMContentLoaded', async function() {
-            let current = await Z.DB.getCurrentUser();
-            if (!current) {
-                const users = await Z.DB.getUsers();
-                current = users[0] || null;
-            }
-            Z.State.currentUser = current;
+        Z.SeedData = {
+            users: [
+                {
+                    id: 'usr_1',
+                    name: 'Abdullah Abbas',
+                    username: 'abdullah_abbas',
+                    profession: 'Creator & Medical Student',
+                    dob: '2006-05-12',
+                    bio: 'Building ZYNIX ecosystem, exploring organic chemistry, design assets, and digital growth.',
+                    role: 'Creator',
+                    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+                    cover: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
+                    followers: 1420,
+                    package: '$100',
+                    bountySettings: { like: 0.01, share: 0.03, follow: 0.03, subscribe: 0.02, circleJoin: 0.03 },
+                    monthlySubscription: true,
+                    wallet: { cash: 45.50, bounty: 28.20, totalEarned: 120.50 },
+                    walletTransactions: [],
+                    bountySpentHistory: [],
+                    referrals: { code: 'ZYNIX-ABD2026', earnings: 184.00 },
+                    email: 'abdullah@zynix.io',
+                    password: 'password123'
+                },
+                {
+                    id: 'usr_2',
+                    name: 'Sarah Khan',
+                    username: 'sarah_khan',
+                    profession: 'UI Designer',
+                    bio: 'Crafting minimalist UI interfaces and design systems.',
+                    role: 'Creator',
+                    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80',
+                    cover: 'https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&w=800&q=80',
+                    followers: 890,
+                    package: 'Starter $3',
+                    bountySettings: { like: 0.01, share: 0.02, follow: 0.03, circleJoin: 0.02 },
+                    wallet: { cash: 12.00, bounty: 15.00, totalEarned: 27.00 },
+                    referrals: { code: 'ZYNIX-SK88', earnings: 45.00 },
+                    email: 'sarah@zynix.io',
+                    password: 'password123'
+                }
+            ],
+            posts: [
+                {
+                    id: 'post_1',
+                    authorId: 'usr_1',
+                    content: 'Welcome to the upgraded ZYNIX ecosystem! Mobile-first architecture, sticky header, live bounty system, and instant spark streamer fully online. 🔥',
+                    media: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
+                    createdAt: '2 hours ago',
+                    reactions: { heart: 45 },
+                    comments: [
+                        { id: 'c_1', author: 'ZYNIX Official', text: 'Amazing platform progress!', time: '1 hour ago' }
+                    ],
+                    shares: 14
+                }
+            ],
+            sparks: [
+                {
+                    id: 'spark_1',
+                    authorId: 'usr_1',
+                    caption: 'Exploring modern UI motion dynamics and creator ecosystems. #technology #zynix #design',
+                    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-digital-animation-of-screens-and-code-31910-large.mp4',
+                    likes: 120,
+                    commentsCount: 12,
+                    shares: 5
+                }
+            ],
+            statuses: [
+                {
+                    id: 'st_1',
+                    authorId: 'usr_1',
+                    content: 'Building the future of independent creator rewards!',
+                    media: '',
+                    createdAt: '1 hour ago'
+                }
+            ],
+            circles: [
+                {
+                    id: 'cir_1',
+                    name: 'ZYNIX Creator Circle',
+                    description: 'Official community for top-tier creators and digital asset designers.',
+                    membersCount: 340,
+                    creatorId: 'usr_1',
+                    avatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80',
+                    category: 'Creator'
+                },
+                {
+                    id: 'cir_2',
+                    name: 'Forex Global Traders',
+                    description: 'Live market analysis, currency pairs, and intraday trading setups.',
+                    membersCount: 1250,
+                    creatorId: 'usr_1',
+                    avatar: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=150&q=80',
+                    category: 'Forex'
+                },
+                {
+                    id: 'cir_3',
+                    name: 'Crypto Alpha Signals',
+                    description: 'DeFi yield farming, altcoin gems, and decentralized ecosystems.',
+                    membersCount: 2100,
+                    creatorId: 'usr_2',
+                    avatar: 'https://images.unsplash.com/photo-1621416894569-0f39ed31d247?auto=format&fit=crop&w=150&q=80',
+                    category: 'Crypto'
+                }
+            ]
+        };
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!localStorage.getItem('zynix_users')) Z.DB.saveUsers(Z.SeedData.users);
+            if (!localStorage.getItem('zynix_posts')) Z.DB.savePosts(Z.SeedData.posts);
+            if (!localStorage.getItem('zynix_sparks')) Z.DB.saveSparks(Z.SeedData.sparks);
+            if (!localStorage.getItem('zynix_statuses')) Z.DB.saveStatuses(Z.SeedData.statuses);
+            if (!localStorage.getItem('zynix_circles')) Z.DB.saveCircles(Z.SeedData.circles);
+
+            let current = Z.DB.getCurrentUser();
+            Z.State.currentUser = current || Z.DB.getUsers()[0]; // Default user active for testing
 
             Z.renderHeaderAuth();
             Z.updateHeaderWallet();
@@ -340,7 +448,7 @@
                 container.innerHTML = `
                     <div class="flex items-center space-x-2">
                         <button type="button" onclick="Z.showView('profile')" class="flex items-center space-x-1.5 focus:outline-none">
-                            <img src="${user.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" alt="${user.name}" class="w-7 h-7 rounded-full object-cover border border-emerald-500/50">
+                            <img src="${user.avatar}" alt="${user.name}" class="w-7 h-7 rounded-full object-cover border border-emerald-500/50">
                         </button>
                         <button type="button" onclick="Z.logout()" class="w-7 h-7 rounded-full bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 flex items-center justify-center transition" aria-label="Logout" title="Logout">
                             <i class="fa-solid fa-power-off text-xs"></i>
@@ -357,13 +465,11 @@
         };
 
         Z.updateHeaderWallet = function() {
-            const user = Z.State.currentUser;
+            const user = Z.State.currentUser || Z.DB.getUsers()[0];
             const cashEl = document.getElementById('header-cash');
             const bountyEl = document.getElementById('header-bounty');
-            const cashVal = user ? (user.cash_balance ?? user.wallet?.cash ?? 0.00) : 0.00;
-            const bountyVal = user ? (user.bounty_balance ?? user.wallet?.bounty ?? 0.00) : 0.00;
-            if (cashEl) cashEl.innerText = '$' + cashVal.toFixed(2);
-            if (bountyEl) bountyEl.innerText = '$' + bountyVal.toFixed(2);
+            if (cashEl && user && user.wallet) cashEl.innerText = '$' + user.wallet.cash.toFixed(2);
+            if (bountyEl && user && user.wallet) bountyEl.innerText = '$' + user.wallet.bounty.toFixed(2);
         };
 
         // Authentication & Modals
@@ -384,14 +490,10 @@
                                     <label class="block text-xs font-medium text-slate-400 mb-1">Full Name</label>
                                     <input type="text" id="auth-name" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="Abdullah Abbas">
                                 </div>
-                                <div>
-                                    <label class="block text-xs font-medium text-slate-400 mb-1">Username</label>
-                                    <input type="text" id="auth-username" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="abdullah_abbas">
-                                </div>
                             ` : ''}
                             <div>
-                                <label class="block text-xs font-medium text-slate-400 mb-1">Email</label>
-                                <input type="email" id="auth-email" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="abdullah@zynix.io">
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Email / Username</label>
+                                <input type="text" id="auth-email" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="abdullah@zynix.io">
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 mb-1">Password</label>
@@ -416,7 +518,7 @@
             if (modalContainer) modalContainer.innerHTML = '';
         };
 
-        Z.handleAuthSubmit = async function(mode) {
+        Z.handleAuthSubmit = function(mode) {
             const emailInput = document.getElementById('auth-email').value.trim();
             const passInput = document.getElementById('auth-password').value.trim();
             if (!emailInput || !passInput) {
@@ -424,64 +526,50 @@
                 return;
             }
 
+            let users = Z.DB.getUsers();
             if (mode === 'login') {
-                const { data, error } = await supabaseClient.auth.signInWithPassword({
-                    email: emailInput,
-                    password: passInput
-                });
-                if (error) {
-                    Z.showToast('Login failed: ' + error.message);
-                    return;
+                const found = users.find(u => u.email === emailInput || u.username === emailInput);
+                if (found) {
+                    Z.DB.setCurrentUser(found);
+                    Z.closeModal();
+                    Z.showToast(`Welcome back, ${found.name}!`);
+                    Z.showView('profile');
+                } else {
+                    Z.showToast('User not found. Please check credentials or sign up.');
                 }
-                const profile = await Z.DB.getCurrentUser();
-                Z.DB.setCurrentUser(profile);
-                Z.closeModal();
-                Z.showToast(`Welcome back, ${profile?.name || 'Creator'}!`);
-                Z.showView('profile');
             } else {
                 const nameInput = document.getElementById('auth-name').value.trim() || 'New User';
-                const usernameInput = document.getElementById('auth-username').value.trim() || emailInput.split('@')[0];
                 const uniqueCode = 'ZYNIX-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-
-                const { data: authData, error: authError } = await supabaseClient.auth.signUp({
+                const newUser = {
+                    id: 'usr_' + Date.now(),
+                    name: nameInput,
+                    username: emailInput.split('@')[0],
+                    profession: 'Creator',
+                    bio: 'Joined ZYNIX ecosystem.',
+                    role: 'Viewer',
+                    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+                    cover: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
+                    followers: 1,
+                    package: 'Free',
+                    bountySettings: { like: 0.01, share: 0.03, follow: 0.03, subscribe: 0.02, circleJoin: 0.03 },
+                    monthlySubscription: true,
+                    wallet: { cash: 1.00, bounty: 1.00, totalEarned: 2.00 },
+                    walletTransactions: [],
+                    bountySpentHistory: [],
+                    referrals: { code: uniqueCode, earnings: 0.00 },
                     email: emailInput,
                     password: passInput
-                });
-                if (authError) {
-                    Z.showToast('Signup failed: ' + authError.message);
-                    return;
-                }
-
-                const userId = authData.user?.id;
-                if (userId) {
-                    await supabaseClient.from('profiles').insert({
-                        id: userId,
-                        name: nameInput,
-                        username: usernameInput,
-                        profession: 'Creator',
-                        bio: 'Joined ZYNIX ecosystem.',
-                        role: 'Creator',
-                        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
-                        cover: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
-                        followers: 1,
-                        package: 'Free',
-                        cash_balance: 1.0000,
-                        bounty_balance: 1.0000,
-                        total_earned: 2.0000,
-                        referral_code: uniqueCode
-                    });
-                }
-
-                const profile = await Z.DB.getCurrentUser();
-                Z.DB.setCurrentUser(profile);
+                };
+                users.push(newUser);
+                Z.DB.saveUsers(users);
+                Z.DB.setCurrentUser(newUser);
                 Z.closeModal();
-                Z.showToast('Account created successfully via Supabase!');
+                Z.showToast(`Account created successfully! Unique referral link generated.`);
                 Z.showView('profile');
             }
         };
 
-        Z.logout = async function() {
-            await supabaseClient.auth.signOut();
+        Z.logout = function() {
             Z.DB.setCurrentUser(null);
             Z.showToast('Logged out successfully.');
             Z.showView('home');
@@ -507,11 +595,15 @@
                         <div class="grid grid-cols-1 gap-2.5 pt-1">
                             <button type="button" onclick="Z.closeModal(); Z.openCreatePostModal();" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 p-3 rounded-xl flex items-center space-x-3 text-left transition">
                                 <div class="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center"><i class="fa-solid fa-pen-to-square"></i></div>
-                                <div><h4 class="font-bold text-xs text-white">Create Post</h4><p class="text-[10px] text-slate-400">Share updates to Supabase feed</p></div>
+                                <div><h4 class="font-bold text-xs text-white">Create Post</h4><p class="text-[10px] text-slate-400">Share updates to the public feed</p></div>
                             </button>
                             <button type="button" onclick="Z.closeModal(); Z.openCreateSparkModal();" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 p-3 rounded-xl flex items-center space-x-3 text-left transition">
                                 <div class="w-9 h-9 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center"><i class="fa-solid fa-bolt"></i></div>
                                 <div><h4 class="font-bold text-xs text-white">Create Spark</h4><p class="text-[10px] text-slate-400">Publish short-form video stream</p></div>
+                            </button>
+                            <button type="button" onclick="Z.closeModal(); Z.openCreateStatusModal();" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 p-3 rounded-xl flex items-center space-x-3 text-left transition">
+                                <div class="w-9 h-9 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center"><i class="fa-solid fa-circle-notch"></i></div>
+                                <div><h4 class="font-bold text-xs text-white">Create Status</h4><p class="text-[10px] text-slate-400">Temporary 24-hour status bubble</p></div>
                             </button>
                         </div>
                     </div>
@@ -539,7 +631,7 @@
                                 <input type="text" id="new-post-media" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="https://images.unsplash.com/...">
                             </div>
                             <button type="button" onclick="Z.submitNewPost()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2.5 rounded-xl text-xs transition shadow-lg shadow-emerald-600/20">
-                                Publish to Supabase
+                                Publish Post
                             </button>
                         </div>
                     </div>
@@ -547,26 +639,28 @@
             `;
         };
 
-        Z.submitNewPost = async function() {
+        Z.submitNewPost = function() {
             const content = document.getElementById('new-post-content').value.trim();
             const media = document.getElementById('new-post-media').value.trim();
             if (!content) {
                 Z.showToast('Please write something for your post.');
                 return;
             }
-            const { error } = await supabaseClient.from('posts').insert({
-                author_id: Z.State.currentUser.id,
+            const posts = Z.DB.getPosts();
+            const newPost = {
+                id: 'post_' + Date.now(),
+                authorId: Z.State.currentUser.id,
                 content: content,
-                media: media || null,
-                likes_count: 0,
-                shares_count: 0
-            });
-            if (error) {
-                Z.showToast('Error publishing post: ' + error.message);
-                return;
-            }
+                media: media || '',
+                createdAt: 'Just now',
+                reactions: { heart: 0 },
+                comments: [],
+                shares: 0
+            };
+            posts.unshift(newPost);
+            Z.DB.savePosts(posts);
             Z.closeModal();
-            Z.showToast('Post published to Supabase successfully!');
+            Z.showToast('Post published successfully!');
             Z.showView('home');
         };
 
@@ -583,7 +677,7 @@
                         <div class="space-y-3">
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 mb-1">Caption & Tags</label>
-                                <textarea id="spark-caption" rows="2" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="Describe your spark... #zynix"></textarea>
+                                <textarea id="spark-caption" rows="2" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="Describe your spark... #zynix #creator"></textarea>
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 mb-1">Video URL (MP4 / WebM)</label>
@@ -598,26 +692,71 @@
             `;
         };
 
-        Z.submitNewSpark = async function() {
+        Z.submitNewSpark = function() {
             const caption = document.getElementById('spark-caption').value.trim();
             const videoUrl = document.getElementById('spark-video').value.trim();
             if (!caption || !videoUrl) {
                 Z.showToast('Please provide both caption and video URL.');
                 return;
             }
-            const { error } = await supabaseClient.from('sparks').insert({
-                author_id: Z.State.currentUser.id,
+            const sparks = Z.DB.getSparks();
+            sparks.unshift({
+                id: 'spark_' + Date.now(),
+                authorId: Z.State.currentUser.id,
                 caption: caption,
-                video_url: videoUrl,
-                likes_count: 0
+                videoUrl: videoUrl,
+                likes: 0,
+                commentsCount: 0,
+                shares: 0
             });
-            if (error) {
-                Z.showToast('Error publishing spark: ' + error.message);
+            Z.DB.saveSparks(sparks);
+            Z.closeModal();
+            Z.showToast('Spark published successfully!');
+            Z.showView('spark');
+        };
+
+        Z.openCreateStatusModal = function() {
+            const modalContainer = document.getElementById('modal-container');
+            if (!modalContainer) return;
+            modalContainer.innerHTML = `
+                <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl relative">
+                        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                            <h3 class="font-bold text-base text-white">Create Status (24h)</h3>
+                            <button type="button" onclick="Z.closeModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+                        </div>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Status Content</label>
+                                <textarea id="status-content" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="What's happening right now?"></textarea>
+                            </div>
+                            <button type="button" onclick="Z.submitNewStatus()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2.5 rounded-xl text-xs transition shadow-lg shadow-emerald-600/20">
+                                Publish Status
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        Z.submitNewStatus = function() {
+            const content = document.getElementById('status-content').value.trim();
+            if (!content) {
+                Z.showToast('Please enter status text.');
                 return;
             }
+            const statuses = Z.DB.getStatuses();
+            statuses.unshift({
+                id: 'st_' + Date.now(),
+                authorId: Z.State.currentUser.id,
+                content: content,
+                media: '',
+                createdAt: 'Just now'
+            });
+            Z.DB.saveStatuses(statuses);
             Z.closeModal();
-            Z.showToast('Spark published to Supabase successfully!');
-            Z.showView('spark');
+            Z.showToast('Status published successfully!');
+            Z.showView('home');
         };
 
         Z.openAiModal = function() {
@@ -631,7 +770,7 @@
                             <button type="button" onclick="Z.closeModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
                         </div>
                         <p class="text-xs text-slate-300 leading-relaxed">
-                            Supabase backend is successfully connected! Your posts, sparks, circles, and wallet transactions are fully synchronized with real cloud database tables.
+                            Welcome to ZYNIX! You can explore the public social feed, share short Sparks videos, manage creator-funded bounties ($0.00 - $0.05 limits), upgrade packages, connect with creators in the People tab, and track earnings securely in your wallet with 60/40 Cash and Bounty splits.
                         </p>
                         <button type="button" onclick="Z.closeModal()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl text-xs transition">
                             Got it
@@ -642,7 +781,7 @@
         };
 
         // Navigation Controller
-        Z.showView = async function(viewName) {
+        Z.showView = function(viewName) {
             Z.State.currentView = viewName;
             window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -657,63 +796,63 @@
             const container = document.getElementById('app-container');
             if (!container) return;
 
-            if (viewName === 'home') container.innerHTML = await Z.Views.renderHome();
-            else if (viewName === 'spark') container.innerHTML = await Z.Views.renderSparkStream();
-            else if (viewName === 'profile') container.innerHTML = await Z.Views.renderProfileDashboard();
-            else if (viewName === 'wallet') container.innerHTML = await Z.Views.renderWallet();
-            else if (viewName === 'bounty-settings') container.innerHTML = await Z.Views.renderBountySettings();
+            if (viewName === 'home') container.innerHTML = Z.Views.renderHome();
+            else if (viewName === 'spark') container.innerHTML = Z.Views.renderSparkStream();
+            else if (viewName === 'profile') container.innerHTML = Z.Views.renderProfileDashboard();
+            else if (viewName === 'wallet') container.innerHTML = Z.Views.renderWallet();
+            else if (viewName === 'bounty-settings') container.innerHTML = Z.Views.renderBountySettings();
             else if (viewName === 'packages') container.innerHTML = Z.Views.renderPackages();
             else if (viewName === 'calculator') container.innerHTML = Z.Views.renderCalculator();
             else if (viewName === 'referrals') container.innerHTML = Z.Views.renderReferrals();
             else if (viewName === 'analytics') container.innerHTML = Z.Views.renderAnalytics();
-            else if (viewName === 'people') container.innerHTML = await Z.Views.renderPeople();
-            else if (viewName === 'circles') container.innerHTML = await Z.Views.renderCirclesPage();
+            else if (viewName === 'people') container.innerHTML = Z.Views.renderPeople();
+            else if (viewName === 'circles') container.innerHTML = Z.Views.renderCirclesPage();
             else if (viewName === 'admin-wall') container.innerHTML = Z.Views.renderAdminWall();
-            else container.innerHTML = await Z.Views.renderHome();
+            else container.innerHTML = Z.Views.renderHome();
         };
 
         // Views Implementation
         Z.Views = {
-            renderHome: async function() {
-                const posts = await Z.DB.getPosts();
-                const users = await Z.DB.getUsers();
-                const statuses = await Z.DB.getStatuses();
+            renderHome: function() {
+                const posts = Z.DB.getPosts();
+                const users = Z.DB.getUsers();
+                const statuses = Z.DB.getStatuses();
 
                 let statusHtml = '';
                 statuses.forEach(st => {
-                    const author = users.find(u => u.id === st.authorId) || users[0] || { name: 'User', avatar: '' };
+                    const author = users.find(u => u.id === st.authorId) || users[0];
                     statusHtml += `
-                        <div class="flex flex-col items-center shrink-0 space-y-1 cursor-pointer" onclick="Z.showToast('${author.name || 'User'}: ${st.content}')">
+                        <div class="flex flex-col items-center shrink-0 space-y-1 cursor-pointer" onclick="Z.showToast('${author.name}: ${st.content}')">
                             <div class="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-emerald-500 to-blue-500">
-                                <img src="${author.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-full h-full rounded-full object-cover border-2 border-[#090d16]">
+                                <img src="${author.avatar}" class="w-full h-full rounded-full object-cover border-2 border-[#090d16]">
                             </div>
-                            <span class="text-[10px] text-slate-300 font-medium truncate w-14 text-center">${(author.name || 'User').split(' ')[0]}</span>
+                            <span class="text-[10px] text-slate-300 font-medium truncate w-14 text-center">${author.name.split(' ')[0]}</span>
                         </div>
                     `;
                 });
 
                 let postsHtml = '';
                 posts.forEach(post => {
-                    const author = post.profiles || users.find(u => u.id === post.author_id) || { name: 'Creator', username: 'creator', avatar: '', role: 'Creator' };
+                    const author = users.find(u => u.id === post.authorId) || users[0];
                     postsHtml += `
                         <div class="bg-[#111827] border border-slate-800/80 rounded-2xl p-4 space-y-3 shadow-xl">
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center space-x-2.5">
-                                    <img src="${author.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-9 h-9 rounded-full object-cover border border-slate-700">
+                                    <img src="${author.avatar}" class="w-9 h-9 rounded-full object-cover border border-slate-700">
                                     <div>
-                                        <h4 class="font-bold text-xs text-white">${author.name || 'Creator'}</h4>
-                                        <p class="text-[10px] text-slate-400">${new Date(post.created_at).toLocaleTimeString()} • <span class="text-emerald-400">${author.role || 'Creator'}</span></p>
+                                        <h4 class="font-bold text-xs text-white">${author.name}</h4>
+                                        <p class="text-[10px] text-slate-400">${post.createdAt} • <span class="text-emerald-400">${author.role || 'Creator'}</span></p>
                                     </div>
                                 </div>
-                                <span class="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full font-semibold">Supabase</span>
+                                <span class="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full font-semibold">Feed</span>
                             </div>
                             <p class="text-xs text-slate-200 leading-relaxed">${post.content}</p>
                             ${post.media ? `<div class="rounded-xl overflow-hidden border border-slate-800 bg-slate-950 max-h-72"><img src="${post.media}" class="w-full h-full object-cover"></div>` : ''}
                             <div class="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-400">
-                                <button type="button" onclick="Z.RewardEngine.processInteraction('${post.author_id}', 'like')" class="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-500/20 transition flex items-center space-x-1">
+                                <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'like')" class="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-500/20 transition flex items-center space-x-1">
                                     <i class="fa-solid fa-heart mr-1"></i> <span>Like ($0.01)</span>
                                 </button>
-                                <button type="button" onclick="Z.RewardEngine.processInteraction('${post.author_id}', 'share')" class="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1.5 rounded-lg font-bold hover:bg-blue-500/20 transition flex items-center space-x-1">
+                                <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'share')" class="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1.5 rounded-lg font-bold hover:bg-blue-500/20 transition flex items-center space-x-1">
                                     <i class="fa-solid fa-share mr-1"></i> <span>Share ($0.03)</span>
                                 </button>
                                 <button type="button" onclick="Z.showView('circles')" class="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/30 px-3 py-1.5 rounded-lg font-bold hover:bg-purple-500/20 transition flex items-center space-x-1">
@@ -726,8 +865,9 @@
 
                 return `
                     <div class="space-y-4">
+                        <!-- Status Row with Plus Icon -->
                         <div class="flex items-center space-x-3 overflow-x-auto pb-2 scrollbar-none">
-                            <div class="flex flex-col items-center shrink-0 space-y-1 cursor-pointer" onclick="Z.openCreateSelectionModal()">
+                            <div class="flex flex-col items-center shrink-0 space-y-1 cursor-pointer" onclick="Z.openCreateStatusModal()">
                                 <div class="w-14 h-14 rounded-full bg-slate-800 border-2 border-dashed border-emerald-500 flex items-center justify-center text-emerald-400 hover:bg-slate-700 transition">
                                     <i class="fa-solid fa-plus text-base"></i>
                                 </div>
@@ -736,41 +876,43 @@
                             ${statusHtml}
                         </div>
 
+                        <!-- Inline Post Composer trigger -->
                         <div class="bg-[#111827] border border-slate-800 rounded-2xl p-3 flex items-center space-x-3 shadow-lg">
-                            <img src="${Z.State.currentUser?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-9 h-9 rounded-full object-cover">
+                            <img src="${Z.State.currentUser ? Z.State.currentUser.avatar : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-9 h-9 rounded-full object-cover">
                             <button type="button" onclick="Z.openCreatePostModal()" class="w-full bg-slate-950 border border-slate-800 text-slate-400 text-xs text-left px-3.5 py-2.5 rounded-xl hover:border-slate-700 transition">
                                 What’s on your mind?
                             </button>
                         </div>
 
-                        <div class="space-y-4">${postsHtml || '<p class="text-xs text-slate-500 text-center py-6">No posts found in Supabase.</p>'}</div>
+                        <!-- Public Feed -->
+                        <div class="space-y-4">${postsHtml}</div>
                     </div>
                 `;
             },
 
-            renderSparkStream: async function() {
-                const sparks = await Z.DB.getSparks();
-                const users = await Z.DB.getUsers();
+            renderSparkStream: function() {
+                const sparks = Z.DB.getSparks();
+                const users = Z.DB.getUsers();
                 let sparksHtml = '';
                 sparks.forEach(spark => {
-                    const author = spark.profiles || users.find(u => u.id === spark.author_id) || { name: 'Creator', username: 'creator', avatar: '' };
+                    const author = users.find(u => u.id === spark.authorId) || users[0];
                     sparksHtml += `
                         <div class="bg-[#111827] border border-slate-800 rounded-2xl overflow-hidden shadow-2xl relative">
                             <div class="relative bg-black h-96 flex items-center justify-center">
-                                <video src="${spark.video_url}" controls class="w-full h-full object-cover"></video>
+                                <video src="${spark.videoUrl}" controls class="w-full h-full object-cover"></video>
                             </div>
                             <div class="p-4 space-y-2">
                                 <div class="flex items-center space-x-2.5">
-                                    <img src="${author.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-8 h-8 rounded-full object-cover border">
+                                    <img src="${author.avatar}" class="w-8 h-8 rounded-full object-cover border">
                                     <div>
-                                        <h4 class="font-bold text-xs text-white">${author.name || 'Creator'}</h4>
-                                        <p class="text-[10px] text-slate-400">@${author.username || 'creator'}</p>
+                                        <h4 class="font-bold text-xs text-white">${author.name}</h4>
+                                        <p class="text-[10px] text-slate-400">@${author.username}</p>
                                     </div>
                                 </div>
                                 <p class="text-xs text-slate-200">${spark.caption}</p>
                                 <div class="flex items-center justify-between pt-2 text-xs text-slate-400 border-t border-slate-800">
-                                    <button type="button" onclick="Z.RewardEngine.processInteraction('${spark.author_id}', 'like')" class="flex items-center space-x-1 text-emerald-400 font-bold hover:underline">
-                                        <i class="fa-solid fa-heart"></i> <span>${spark.likes_count || 0} Likes</span>
+                                    <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'like')" class="flex items-center space-x-1 text-emerald-400 font-bold hover:underline">
+                                        <i class="fa-solid fa-heart"></i> <span>${spark.likes} Likes</span>
                                     </button>
                                     <button type="button" onclick="Z.showToast('Spark shared successfully!')" class="flex items-center space-x-1 text-blue-400 font-bold hover:underline">
                                         <i class="fa-solid fa-share"></i> <span>Share</span>
@@ -786,7 +928,7 @@
                             <h2 class="font-black text-sm text-white flex items-center"><i class="fa-solid fa-bolt text-emerald-400 mr-2"></i> ZYNIX Spark Stream</h2>
                             <button type="button" onclick="Z.openCreateSparkModal()" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-3 py-1.5 rounded-xl transition">Create Spark</button>
                         </div>
-                        <div class="space-y-4">${sparksHtml || '<p class="text-xs text-slate-500 text-center py-6">No sparks found.</p>'}</div>
+                        <div class="space-y-4">${sparksHtml}</div>
                     </div>
                 `;
             },
@@ -805,28 +947,29 @@
                     <div class="space-y-4">
                         <div class="bg-[#111827] border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
                             <div class="h-28 bg-slate-800 relative">
-                                <img src="${user.cover || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80'}" class="w-full h-full object-cover">
+                                <img src="${user.cover}" class="w-full h-full object-cover">
                             </div>
                             <div class="px-4 pb-4 relative pt-10">
-                                <img src="${user.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-20 h-20 rounded-full object-cover border-4 border-[#111827] absolute -top-10 left-4 shadow-lg">
+                                <img src="${user.avatar}" class="w-20 h-20 rounded-full object-cover border-4 border-[#111827] absolute -top-10 left-4 shadow-lg">
                                 <div class="flex justify-between items-start">
                                     <div>
                                         <h3 class="font-bold text-sm text-white flex items-center">${user.name} <i class="fa-solid fa-circle-check text-emerald-400 ml-1.5 text-xs"></i></h3>
-                                        <p class="text-xs text-slate-400">@${user.username} • ${user.profession || 'Creator'}</p>
+                                        <p class="text-xs text-slate-400">@${user.username} • ${user.profession}</p>
                                     </div>
                                     <button type="button" onclick="Z.showView('bounty-settings')" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-2 rounded-xl transition shadow-md flex items-center space-x-1.5">
                                         <i class="fa-solid fa-gear"></i><span>Bounty Settings</span>
                                     </button>
                                 </div>
-                                <p class="text-xs text-slate-300 mt-3 leading-relaxed">${user.bio || 'ZYNIX Creator'}</p>
+                                <p class="text-xs text-slate-300 mt-3 leading-relaxed">${user.bio}</p>
                                 <div class="flex items-center space-x-4 pt-3 text-xs text-slate-400 border-t border-slate-800 mt-3">
-                                    <span><strong class="text-white">${user.followers || 1}</strong> Followers</span>
+                                    <span><strong class="text-white">${user.followers}</strong> Followers</span>
                                     <span><strong class="text-white">Package:</strong> ${user.package || 'Free'}</span>
-                                    <span><strong class="text-white">Role:</strong> ${user.role || 'Creator'}</span>
+                                    <span><strong class="text-white">Role:</strong> ${user.role || 'Viewer'}</span>
                                 </div>
                             </div>
                         </div>
 
+                        <!-- Advanced Management Grid -->
                         <div class="grid grid-cols-2 gap-3">
                             <button type="button" onclick="Z.showView('wallet')" class="bg-[#111827] border border-slate-800 p-4 rounded-2xl text-left space-y-1 hover:border-emerald-500 transition shadow-lg">
                                 <i class="fa-solid fa-wallet text-emerald-400 text-base mb-1"></i>
@@ -851,7 +994,7 @@
                             <button type="button" onclick="Z.showView('analytics')" class="bg-[#111827] border border-slate-800 p-4 rounded-2xl text-left space-y-1 hover:border-emerald-500 transition shadow-lg">
                                 <i class="fa-solid fa-chart-line text-teal-400 text-base mb-1"></i>
                                 <h4 class="font-bold text-xs text-white">Analytics</h4>
-                                <p class="text-[10px] text-slate-400">Engagement metrics</p>
+                                <p class="text-[10px] text-slate-400">Engagement & views metrics</p>
                             </button>
                             <button type="button" onclick="Z.showView('people')" class="bg-[#111827] border border-slate-800 p-4 rounded-2xl text-left space-y-1 hover:border-emerald-500 transition shadow-lg">
                                 <i class="fa-solid fa-users text-indigo-400 text-base mb-1"></i>
@@ -863,38 +1006,27 @@
                 `;
             },
 
-            renderWallet: async function() {
-                const user = Z.State.currentUser;
+            renderWallet: function() {
+                const user = Z.State.currentUser || Z.DB.getUsers()[0];
                 let txHtml = '';
-                if (user) {
-                    const { data: txs } = await supabaseClient
-                        .from('wallet_transactions')
-                        .select('*')
-                        .eq('user_id', user.id)
-                        .order('created_at', { ascending: false });
-
-                    if (txs && txs.length > 0) {
-                        txs.forEach(tx => {
-                            txHtml += `
-                                <div class="flex items-center justify-between bg-slate-950/60 border border-slate-800 p-2.5 rounded-xl text-xs">
-                                    <div>
-                                        <span class="font-bold text-white block">${tx.type}</span>
-                                        <span class="text-[10px] text-slate-400">${new Date(tx.created_at).toLocaleTimeString()}</span>
-                                    </div>
-                                    <div class="text-right">
-                                        <span class="font-black text-emerald-400 block">+$${tx.amount.toFixed(2)}</span>
-                                        <span class="text-[9px] text-slate-500">Cash: +$${tx.cash_split.toFixed(3)} | Bounty: +$${tx.bounty_split.toFixed(3)}</span>
-                                    </div>
+                if (user && user.walletTransactions && user.walletTransactions.length > 0) {
+                    user.walletTransactions.forEach(tx => {
+                        txHtml += `
+                            <div class="flex items-center justify-between bg-slate-950/60 border border-slate-800 p-2.5 rounded-xl text-xs">
+                                <div>
+                                    <span class="font-bold text-white block">${tx.type}</span>
+                                    <span class="text-[10px] text-slate-400">${new Date(tx.date).toLocaleTimeString()}</span>
                                 </div>
-                            `;
-                        });
-                    } else {
-                        txHtml = `<p class="text-xs text-slate-500 text-center py-4">No recent Supabase transactions found.</p>`;
-                    }
+                                <div class="text-right">
+                                    <span class="font-black text-emerald-400 block">+$${tx.amount.toFixed(2)}</span>
+                                    <span class="text-[9px] text-slate-500">Cash: +$${tx.cash.toFixed(3)} | Bounty: +$${tx.bounty.toFixed(3)}</span>
+                                </div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    txHtml = `<p class="text-xs text-slate-500 text-center py-4">No recent wallet transactions found.</p>`;
                 }
-
-                const cashVal = user ? (user.cash_balance ?? 0.00) : 0.00;
-                const bountyVal = user ? (user.bounty_balance ?? 0.00) : 0.00;
 
                 return `
                     <div class="space-y-4">
@@ -902,21 +1034,21 @@
                             <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                                 <div class="flex items-center space-x-2">
                                     <button type="button" onclick="Z.showView('profile')" class="text-slate-400 hover:text-white mr-1"><i class="fa-solid fa-arrow-left"></i></button>
-                                    <h3 class="font-bold text-sm text-white">Wallet & Earnings (Supabase)</h3>
+                                    <h3 class="font-bold text-sm text-white">Wallet & Earnings</h3>
                                 </div>
-                                <button type="button" onclick="Z.RewardEngine.creditReward(Z.State.currentUser, 0.03, 'Test Cloud Reward')" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition">
-                                    <i class="fa-solid fa-plus mr-1"></i> Test Flying Note
+                                <button type="button" onclick="Z.RewardEngine.creditReward(Z.State.currentUser || Z.DB.getUsers()[0], 0.03, 'Test Demo Reward')" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition">
+                                    <i class="fa-solid fa-plus mr-1"></i> Test Pure Flying Note
                                 </button>
                             </div>
 
                             <div class="grid grid-cols-2 gap-3">
                                 <div class="bg-slate-950/80 border border-slate-800 p-3.5 rounded-xl">
                                     <span class="text-[10px] text-slate-400 uppercase font-semibold">Cash Balance</span>
-                                    <span class="text-xl font-black text-emerald-400 block mt-1">$${cashVal.toFixed(2)}</span>
+                                    <span class="text-xl font-black text-emerald-400 block mt-1">$${user ? user.wallet.cash.toFixed(2) : '0.00'}</span>
                                 </div>
                                 <div class="bg-slate-950/80 border border-slate-800 p-3.5 rounded-xl">
                                     <span class="text-[10px] text-slate-400 uppercase font-semibold">Bounty Balance</span>
-                                    <span class="text-xl font-black text-blue-400 block mt-1">$${bountyVal.toFixed(2)}</span>
+                                    <span class="text-xl font-black text-blue-400 block mt-1">$${user ? user.wallet.bounty.toFixed(2) : '0.00'}</span>
                                 </div>
                             </div>
 
@@ -934,8 +1066,8 @@
             },
 
             renderBountySettings: function() {
-                const user = Z.State.currentUser || {};
-                const bs = user.bountySettings || { like: 0.01, share: 0.03, follow: 0.03, circleJoin: 0.03 };
+                const user = Z.State.currentUser || Z.DB.getUsers()[0];
+                const bs = user.bountySettings || { like: 0.01, share: 0.03, follow: 0.03, subscribe: 0.02, circleJoin: 0.03 };
                 return `
                     <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-4 shadow-2xl">
                         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -945,6 +1077,9 @@
                             </div>
                             <span class="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-bold">Active</span>
                         </div>
+                        <p class="text-xs text-slate-400 leading-relaxed">
+                            Configure reward values for actions on your content. Limits are restricted between $0.00 and $0.05.
+                        </p>
                         <div class="space-y-3.5">
                             <div class="bg-slate-950/60 border border-slate-800/80 p-3 rounded-xl space-y-1">
                                 <label class="block text-xs font-bold text-slate-200">Like Reward ($)</label>
@@ -958,6 +1093,10 @@
                                 <label class="block text-xs font-bold text-slate-200">Follow Bounty ($)</label>
                                 <input type="number" step="0.01" min="0.00" max="0.05" id="bounty-follow" value="${bs.follow}" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono">
                             </div>
+                            <div class="bg-slate-950/60 border border-slate-800/80 p-3 rounded-xl space-y-1">
+                                <label class="block text-xs font-bold text-slate-200">Circle Join Bounty ($)</label>
+                                <input type="number" step="0.01" min="0.00" max="0.05" id="bounty-circle" value="${bs.circleJoin || 0.03}" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono">
+                            </div>
                             <button type="button" onclick="Z.Views.saveBountySettings()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-3 rounded-xl text-xs transition shadow-lg mt-2">
                                 Save Bounty Settings
                             </button>
@@ -965,16 +1104,15 @@
                     </div>
                 `;
             },
-            saveBountySettings: async function() {
-                const user = Z.State.currentUser;
-                if (!user) return;
-                user.bountySettings = {
-                    like: Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-like').value) || 0.01)),
-                    share: Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-share').value) || 0.03)),
-                    follow: Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-follow').value) || 0.03)),
-                    circleJoin: 0.03
-                };
-                Z.showToast('Bounty settings updated successfully!');
+            saveBountySettings: function() {
+                const user = Z.State.currentUser || Z.DB.getUsers()[0];
+                if (!user.bountySettings) user.bountySettings = {};
+                user.bountySettings.like = Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-like').value) || 0.01));
+                user.bountySettings.share = Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-share').value) || 0.03));
+                user.bountySettings.follow = Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-follow').value) || 0.03));
+                user.bountySettings.circleJoin = Math.min(0.05, Math.max(0, parseFloat(document.getElementById('bounty-circle').value) || 0.03));
+                Z.DB.saveUsers();
+                Z.showToast('Bounty settings updated successfully within $0.05 limits!');
                 Z.showView('profile');
             },
 
@@ -989,12 +1127,17 @@
                             <div class="bg-[#111827] border border-slate-800 p-4 rounded-2xl space-y-2">
                                 <div class="flex justify-between items-center"><h3 class="font-bold text-sm text-white">Free Package</h3><span class="text-xs text-slate-400">$0</span></div>
                                 <p class="text-xs text-slate-300">Browse, post, interact. No reward earning from likes.</p>
-                                <button type="button" onclick="Z.showToast('Current Plan')" class="w-full bg-slate-800 text-slate-300 font-bold py-2 rounded-xl text-xs">Current Plan</button>
+                                <button type="button" onclick="Z.showToast('Already on Free Package')" class="w-full bg-slate-800 text-slate-300 font-bold py-2 rounded-xl text-xs">Current Plan</button>
                             </div>
                             <div class="bg-[#111827] border border-emerald-500/50 p-4 rounded-2xl space-y-2 shadow-xl">
                                 <div class="flex justify-between items-center"><h3 class="font-bold text-sm text-emerald-400">Starter $3 Package</h3><span class="text-xs text-emerald-400 font-bold">$3</span></div>
-                                <p class="text-xs text-slate-300">$0.01 per eligible like, 3 daily limits.</p>
+                                <p class="text-xs text-slate-300">$0.01 per eligible like, 3 daily limits, 2 referral levels ($1 + $1 commission).</p>
                                 <button type="button" onclick="Z.showToast('Package upgraded successfully.')" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2 rounded-xl text-xs">Upgrade to $3</button>
+                            </div>
+                            <div class="bg-[#111827] border border-blue-500/50 p-4 rounded-2xl space-y-2 shadow-xl">
+                                <div class="flex justify-between items-center"><h3 class="font-bold text-sm text-blue-400">Pro $100 Package</h3><span class="text-xs text-blue-400 font-bold">$100</span></div>
+                                <p class="text-xs text-slate-300">$0.02 per like, high daily limits, boosted reach, 3 referral levels ($10, $8, $6 commissions).</p>
+                                <button type="button" onclick="Z.showToast('Package upgraded successfully.')" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-xl text-xs">Upgrade to $100</button>
                             </div>
                         </div>
                     </div>
@@ -1008,7 +1151,7 @@
                             <button type="button" onclick="Z.showView('profile')" class="text-slate-400 hover:text-white"><i class="fa-solid fa-arrow-left"></i></button>
                             <h3 class="font-bold text-sm text-white">Reward & Earnings Calculator</h3>
                         </div>
-                        <p class="text-xs text-slate-400">Estimate gross rewards based on activity.</p>
+                        <p class="text-xs text-slate-400">Estimate gross rewards based on package activity and engagement rules.</p>
                         <div class="space-y-3">
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 mb-1">Estimated Daily Interactions</label>
@@ -1024,20 +1167,28 @@
             },
 
             renderReferrals: function() {
-                const user = Z.State.currentUser || {};
-                const refCode = user.referral_code || 'ZYNIX-REF2026';
+                const user = Z.State.currentUser || Z.DB.getUsers()[0];
+                const refCode = user.referrals ? user.referrals.code : 'ZYNIX-REF2026';
                 const refLink = `${window.location.origin}${window.location.pathname}?ref=${refCode}`;
                 return `
                     <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-4 shadow-2xl">
                         <div class="flex items-center space-x-2 border-b border-slate-800 pb-3">
                             <button type="button" onclick="Z.showView('profile')" class="text-slate-400 hover:text-white"><i class="fa-solid fa-arrow-left"></i></button>
-                            <h3 class="font-bold text-sm text-white">Referral Network</h3>
+                            <h3 class="font-bold text-sm text-white">Referral Network & Unique Link</h3>
                         </div>
+                        <p class="text-xs text-slate-300">Share your unique referral link with friends to earn multi-level commissions when they join ZYNIX.</p>
                         <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
                             <span class="text-[10px] text-slate-400 block uppercase font-semibold">Your Unique Referral Link</span>
                             <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-lg">
                                 <span class="font-mono text-[11px] text-emerald-400 truncate mr-2">${refLink}</span>
-                                <button type="button" onclick="navigator.clipboard.writeText('${refLink}'); Z.showToast('Copied!')" class="text-xs bg-emerald-600 text-black px-3 py-1 rounded font-bold shrink-0">Copy</button>
+                                <button type="button" onclick="navigator.clipboard.writeText('${refLink}'); Z.showToast('Unique referral link copied to clipboard!')" class="text-xs bg-emerald-600 text-black px-3 py-1 rounded font-bold shrink-0">Copy</button>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            <h4 class="font-bold text-xs text-slate-300">Commission Earnings</h4>
+                            <div class="bg-slate-950/60 border border-slate-800 p-3 rounded-xl flex justify-between items-center text-xs">
+                                <span class="text-slate-300">Total Referral Revenue</span>
+                                <span class="font-black text-emerald-400">$${user.referrals ? user.referrals.earnings.toFixed(2) : '0.00'}</span>
                             </div>
                         </div>
                     </div>
@@ -1060,20 +1211,29 @@
                                 <span class="text-[10px] text-slate-400 block">Post Likes</span>
                                 <span class="text-base font-black text-emerald-400">345</span>
                             </div>
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 block">Spark Engagement</span>
+                                <span class="text-base font-black text-blue-400">890</span>
+                            </div>
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 block">Bounty Spent</span>
+                                <span class="text-base font-black text-purple-400">$12.50</span>
+                            </div>
                         </div>
                     </div>
                 `;
             },
 
-            renderPeople: async function() {
-                const users = await Z.DB.getUsers();
+            // People Directory View in Bottom Navigation
+            renderPeople: function() {
+                const users = Z.DB.getUsers();
                 let listHtml = '';
                 users.forEach(u => {
                     const isSelf = Z.State.currentUser && Z.State.currentUser.id === u.id;
                     listHtml += `
                         <div class="bg-[#111827] border border-slate-800 p-3.5 rounded-2xl flex items-center justify-between shadow-lg">
                             <div class="flex items-center space-x-3">
-                                <img src="${u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}" class="w-10 h-10 rounded-full object-cover border border-slate-700">
+                                <img src="${u.avatar}" class="w-10 h-10 rounded-full object-cover border border-slate-700">
                                 <div>
                                     <h4 class="font-bold text-xs text-white">${u.name}</h4>
                                     <p class="text-[10px] text-slate-400">@${u.username} • ${u.profession || 'Creator'}</p>
@@ -1090,18 +1250,20 @@
                 return `
                     <div class="space-y-3">
                         <div class="flex justify-between items-center px-1">
-                            <h3 class="font-black text-sm text-white flex items-center"><i class="fa-solid fa-users text-emerald-400 mr-2"></i> People Directory (Supabase)</h3>
+                            <h3 class="font-black text-sm text-white flex items-center"><i class="fa-solid fa-users text-emerald-400 mr-2"></i> People Directory & Creators</h3>
                             <span class="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded font-bold">Earn Bounties</span>
                         </div>
-                        <div class="space-y-3">${listHtml || '<p class="text-xs text-slate-500 text-center py-6">No users found.</p>'}</div>
+                        <div class="space-y-3">${listHtml}</div>
                     </div>
                 `;
             },
 
-            renderCirclesPage: async function() {
-                const circles = await Z.DB.getCircles();
+            // Manual Full Page Circles View with Search and Horizontal Scrollable Joined Circles
+            renderCirclesPage: function() {
+                const circles = Z.DB.getCircles();
                 const query = (Z.State.circleSearchQuery || '').toLowerCase();
 
+                // Horizontal scrollable joined/recent circles row
                 let joinedRowHtml = '';
                 Z.State.joinedCircles.forEach(cid => {
                     const c = circles.find(item => item.id === cid);
@@ -1109,7 +1271,7 @@
                         joinedRowHtml += `
                             <div class="flex flex-col items-center shrink-0 space-y-1 cursor-pointer group" onclick="Z.visitCircle('${c.id}')">
                                 <div class="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-emerald-400 to-indigo-500 group-hover:scale-105 transition">
-                                    <img src="${c.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80'}" class="w-full h-full rounded-full object-cover border-2 border-[#090d16]">
+                                    <img src="${c.avatar}" class="w-full h-full rounded-full object-cover border-2 border-[#090d16]">
                                 </div>
                                 <span class="text-[10px] text-slate-300 font-medium truncate w-14 text-center">${c.name.split(' ')[0]}</span>
                             </div>
@@ -1117,9 +1279,10 @@
                     }
                 });
 
+                // Filtered circles list based on search query (e.g., "Forex", "Crypto")
                 let filteredCircles = circles.filter(c => 
                     c.name.toLowerCase().includes(query) || 
-                    (c.description && c.description.toLowerCase().includes(query)) ||
+                    c.description.toLowerCase().includes(query) ||
                     (c.category && c.category.toLowerCase().includes(query))
                 );
 
@@ -1129,36 +1292,38 @@
                         listHtml += `
                             <div class="bg-[#111827] border border-slate-800 p-4 rounded-2xl space-y-2 shadow-xl">
                                 <div class="flex items-center space-x-3">
-                                    <img src="${c.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80'}" class="w-10 h-10 rounded-full object-cover border border-slate-700">
+                                    <img src="${c.avatar}" class="w-10 h-10 rounded-full object-cover border border-slate-700">
                                     <div>
                                         <h4 class="font-bold text-sm text-white">${c.name}</h4>
-                                        <p class="text-[10px] text-slate-400">${c.members_count || 1} Members • <span class="text-emerald-400">${c.category || 'Community'}</span></p>
+                                        <p class="text-[10px] text-slate-400">${c.membersCount} Members • <span class="text-emerald-400">${c.category || 'Community'}</span></p>
                                     </div>
                                 </div>
-                                <p class="text-xs text-slate-300 leading-relaxed">${c.description || ''}</p>
+                                <p class="text-xs text-slate-300 leading-relaxed">${c.description}</p>
                                 <div class="flex justify-between items-center pt-2 border-t border-slate-800 text-xs">
                                     <button type="button" onclick="Z.visitCircle('${c.id}')" class="text-indigo-400 font-bold hover:underline">View Discussions</button>
-                                    <button type="button" onclick="Z.joinCircle('${c.id}', '${c.creator_id}')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold px-3.5 py-1.5 rounded-xl transition">Join Circle ($0.03)</button>
+                                    <button type="button" onclick="Z.joinCircle('${c.id}', '${c.creatorId}')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold px-3.5 py-1.5 rounded-xl transition">Join Circle ($0.03)</button>
                                 </div>
                             </div>
                         `;
                     });
                 } else {
-                    listHtml = `<p class="text-xs text-slate-500 text-center py-8">No circles found matching "${Z.State.circleSearchQuery}".</p>`;
+                    listHtml = `<p class="text-xs text-slate-500 text-center py-8">No circles found matching "${Z.State.circleSearchQuery}". Try searching "Forex" or "Crypto".</p>`;
                 }
 
                 return `
                     <div class="space-y-4">
                         <div class="flex items-center justify-between px-1">
                             <h2 class="font-black text-sm text-white flex items-center"><i class="fa-solid fa-circle-nodes text-emerald-400 mr-2"></i> Professional Circles</h2>
-                            <span class="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded font-bold">Supabase</span>
+                            <span class="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded font-bold">Full Page</span>
                         </div>
 
+                        <!-- Search Bar for Circles -->
                         <div class="relative">
                             <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-500 text-xs"></i>
-                            <input type="text" id="circle-search-input" value="${Z.State.circleSearchQuery || ''}" oninput="Z.handleCircleSearch(this.value)" placeholder="Search circles..." class="w-full bg-[#111827] border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 shadow-inner">
+                            <input type="text" id="circle-search-input" value="${Z.State.circleSearchQuery || ''}" oninput="Z.handleCircleSearch(this.value)" placeholder="Search circles by name, keyword (e.g. Forex, Crypto)..." class="w-full bg-[#111827] border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 shadow-inner">
                         </div>
 
+                        <!-- Horizontal Scrollable Row of Joined/Recent Circles -->
                         <div class="space-y-1.5">
                             <span class="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-1">Your Joined & Recent Circles</span>
                             <div class="flex items-center space-x-3 overflow-x-auto pb-2 scrollbar-none bg-[#111827]/50 p-3 rounded-2xl border border-slate-800">
@@ -1166,6 +1331,7 @@
                             </div>
                         </div>
 
+                        <!-- Circles List -->
                         <div class="space-y-3">
                             <span class="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-1">Discover All Circles</span>
                             ${listHtml}
@@ -1181,8 +1347,13 @@
                             <span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded font-bold uppercase tracking-wider">Official ZYNIX Admin Wall</span>
                             <h2 class="font-black text-base text-white">Platform Announcements & Updates</h2>
                             <p class="text-xs text-slate-300 leading-relaxed">
-                                Welcome to the official ZYNIX administration feed powered by Supabase Cloud.
+                                Welcome to the official ZYNIX administration feed. Here you will find official announcements, pinned network updates, and platform notices.
                             </p>
+                        </div>
+                        <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-2">
+                            <h3 class="font-bold text-xs text-white">Pinned System Notice</h3>
+                            <p class="text-xs text-slate-300">ZYNIX Independent Creator Ecosystem is running stable with zero competitor dependencies.</p>
+                            <span class="text-[10px] text-slate-500 block">Published: September 2026</span>
                         </div>
                         <button type="button" onclick="Z.showView('home')" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition">
                             Return to Public Social Feed
@@ -1192,11 +1363,12 @@
             }
         };
 
-        Z.handleCircleSearch = async function(val) {
+        // Circle Interactions & Search Handlers
+        Z.handleCircleSearch = function(val) {
             Z.State.circleSearchQuery = val;
             const container = document.getElementById('app-container');
             if (container && Z.State.currentView === 'circles') {
-                container.innerHTML = await Z.Views.renderCirclesPage();
+                container.innerHTML = Z.Views.renderCirclesPage();
                 const input = document.getElementById('circle-search-input');
                 if (input) {
                     input.focus();
@@ -1217,9 +1389,9 @@
             Z.showView('circles');
         };
 
-        Z.visitCircle = async function(circleId) {
+        Z.visitCircle = function(circleId) {
             Z.State.joinedCircles = [circleId, ...Z.State.joinedCircles.filter(id => id !== circleId)];
-            const circles = await Z.DB.getCircles();
+            const circles = Z.DB.getCircles();
             const c = circles.find(item => item.id === circleId);
             Z.showToast(`Opened circle: ${c ? c.name : 'Community'}`);
             Z.showView('circles');
