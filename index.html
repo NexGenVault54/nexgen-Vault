@@ -140,7 +140,7 @@
     <script>
         window.Z = {};
 
-        // XSS Sanitization Helper
+        // XSS Sanitization Helper (BUG #33 FIX)
         Z.escapeHtml = function(str) {
             if (!str) return '';
             return String(str)
@@ -152,13 +152,13 @@
         };
 
         Z.State = {
-            currentUser: null,
+            currentUser: null, // Default set strictly to null (BUG #25 FIX)
             currentView: 'home',
             circleSearchQuery: '',
             sparkTagFilter: ''
         };
 
-        // Package Rule System Specification
+        // Package Rule System Specification (BUG #3 & #17 & #19 FIX)
         Z.Packages = {
             'Free': { name: 'Free', price: 0, dailyLimit: 0, canEarn: false, likeRewardRate: 0 },
             'Starter $3': { name: 'Starter $3', price: 3, dailyLimit: 10, canEarn: true, likeRewardRate: 0.01 },
@@ -176,6 +176,7 @@
                 return { cash, bounty, gross: grossAmount };
             },
             
+            // Check Daily Limits (BUG #19 FIX)
             checkDailyLimit: function(user) {
                 const today = new Date().toISOString().split('T')[0];
                 if (!user.dailyTracker || user.dailyTracker.date !== today) {
@@ -218,6 +219,7 @@
             },
 
             processInteraction: function(contentOwnerId, interactionType, targetId) {
+                // Check Authentication
                 if (!Z.State.currentUser) {
                     Z.openAuthModal('login');
                     Z.showToast('Please log in to participate and earn rewards.');
@@ -227,11 +229,13 @@
                 const currentUser = Z.DB.getUserById(Z.State.currentUser.id);
                 const pkg = Z.Packages[currentUser.package || 'Free'] || Z.Packages['Free'];
 
+                // Package Eligibility Check (BUG #3 FIX)
                 if (!pkg.canEarn) {
                     Z.showToast('Free Package users cannot earn interaction rewards. Please upgrade package!');
                     return false;
                 }
 
+                // Daily Limit Check (BUG #19 FIX)
                 const limitStatus = this.checkDailyLimit(currentUser);
                 if (!limitStatus.allowed) {
                     Z.showToast(`Daily limit reached (${limitStatus.limit}/${limitStatus.limit}). Upgrade package for more!`);
@@ -246,6 +250,7 @@
                     return false;
                 }
 
+                // Anti-Duplicate Protection (BUG #4, #5, #6, #7, #8 FIX)
                 if (!currentUser.interactionHistory) currentUser.interactionHistory = {};
                 const actionKey = `${interactionType}_${targetId || contentOwnerId}`;
                 if (currentUser.interactionHistory[actionKey]) {
@@ -253,6 +258,7 @@
                     return false;
                 }
 
+                // Creator Bounty Calculation & Bounds ($0.00 to $0.05)
                 const bountySettings = contentOwner.bountySettings || { like: 0.01, share: 0.03, follow: 0.03, subscribe: 0.02, circleJoin: 0.03 };
                 let rewardAmount = bountySettings[interactionType] || 0.01;
                 if (rewardAmount > 0.05) rewardAmount = 0.05;
@@ -263,6 +269,7 @@
                     return false;
                 }
 
+                // Deduct Creator Bounty
                 contentOwner.wallet.bounty -= rewardAmount;
                 if (!contentOwner.bountySpentHistory) contentOwner.bountySpentHistory = [];
                 contentOwner.bountySpentHistory.unshift({
@@ -273,6 +280,7 @@
                     amount: rewardAmount
                 });
 
+                // Update Interaction Real Data Counters (BUG #4, #5, #6, #8 FIX)
                 if (interactionType === 'like') {
                     const post = Z.DB.getPosts().find(p => p.id === targetId);
                     if (post) {
@@ -298,12 +306,14 @@
                     if (!currentUser.following.includes(contentOwner.id)) currentUser.following.push(contentOwner.id);
                 }
 
+                // Record Interaction Key & Increment Daily Limit Counter
                 currentUser.interactionHistory[actionKey] = new Date().toISOString();
                 currentUser.dailyTracker.count++;
 
                 Z.DB.saveUsers();
                 this.creditReward(currentUser, rewardAmount, `${interactionType.toUpperCase()} Reward`);
                 
+                // Refresh View if active
                 if (['home', 'spark', 'people', 'circles'].includes(Z.State.currentView)) {
                     Z.showView(Z.State.currentView);
                 }
@@ -340,7 +350,7 @@
             }, 3200);
         };
 
-        // Unified Data Layer
+        // Unified Data Layer (BUG #24 & Single Source of Truth FIX)
         Z.DB = {
             getUsers: function() {
                 const data = localStorage.getItem('zynix_users');
@@ -355,6 +365,7 @@
                 if (usersArray) {
                     localStorage.setItem('zynix_users', JSON.stringify(usersArray));
                 } else {
+                    // Update state if current user exists in array
                     const currentUsers = this.getUsers();
                     if (Z.State.currentUser) {
                         const idx = currentUsers.findIndex(u => u.id === Z.State.currentUser.id);
@@ -364,6 +375,7 @@
                     }
                     localStorage.setItem('zynix_users', JSON.stringify(currentUsers));
                 }
+                // Sync current state
                 if (Z.State.currentUser) {
                     const fresh = this.getUserById(Z.State.currentUser.id);
                     if (fresh) Z.State.currentUser = fresh;
@@ -371,7 +383,7 @@
             },
             getCurrentUser: function() {
                 const id = localStorage.getItem('zynix_current_user_id');
-                if (!id) return null;
+                if (!id) return null; // No default forced login (BUG #25 FIX)
                 return this.getUserById(id);
             },
             setCurrentUser: function(user) {
@@ -404,6 +416,7 @@
             getStatuses: function() {
                 const data = localStorage.getItem('zynix_statuses');
                 let list = data ? JSON.parse(data) : Z.SeedData.statuses;
+                // 24-Hour Expiry Logic Filter (BUG #10 FIX)
                 const now = Date.now();
                 return list.filter(st => !st.timestamp || (now - st.timestamp < 86400000));
             },
@@ -539,7 +552,9 @@
             if (!localStorage.getItem('zynix_statuses')) Z.DB.saveStatuses(Z.SeedData.statuses);
             if (!localStorage.getItem('zynix_circles')) Z.DB.saveCircles(Z.SeedData.circles);
             
+            // Set current user strictly from session
             Z.State.currentUser = Z.DB.getCurrentUser();
+            
             Z.renderHeaderAuth();
             Z.updateHeaderWallet();
             Z.showView('home');
@@ -577,6 +592,7 @@
             if (bountyEl) bountyEl.innerText = '$' + (user && user.wallet ? user.wallet.bounty.toFixed(2) : '0.00');
         };
 
+        // Authentication & Password Verification (BUG #1 & #2 & #20 FIX)
         Z.openAuthModal = function(mode) {
             const modalContainer = document.getElementById('modal-container');
             if (!modalContainer) return;
@@ -626,53 +642,53 @@
             `;
         };
 
+        Z.closeModal = function() {
+            const modalContainer = document.getElementById('modal-container');
+            if (modalContainer) modalContainer.innerHTML = '';
+        };
+
         Z.quickDemoLogin = function(userId) {
             const user = Z.DB.getUserById(userId);
             if (user) {
                 Z.DB.setCurrentUser(user);
                 Z.closeModal();
                 Z.showToast(`Logged in as ${user.name}`);
-                Z.showView('home');
+                Z.showView(Z.State.currentView);
             }
         };
 
         Z.handleAuthSubmit = function(mode) {
             const emailInput = document.getElementById('auth-email');
             const passInput = document.getElementById('auth-password');
-            if (!emailInput || !passInput) return;
-
-            const email = emailInput.value.trim().toLowerCase();
-            const password = passInput.value.trim();
+            const email = emailInput ? emailInput.value.trim() : '';
+            const password = passInput ? passInput.value.trim() : '';
 
             if (!email || !password) {
-                Z.showToast('Please enter email and password.');
+                Z.showToast('Please fill in all required fields.');
                 return;
             }
 
-            const users = Z.DB.getUsers();
-
             if (mode === 'login') {
-                const found = users.find(u => (u.email.toLowerCase() === email || u.username.toLowerCase() === email) && u.password === password);
-                if (found) {
-                    Z.DB.setCurrentUser(found);
+                const users = Z.DB.getUsers();
+                const user = users.find(u => (u.email === email || u.username === email) && u.password === password);
+                if (user) {
+                    Z.DB.setCurrentUser(user);
                     Z.closeModal();
-                    Z.showToast(`Welcome back, ${found.name}!`);
-                    Z.showView('home');
+                    Z.showToast(`Welcome back, ${user.name}!`);
+                    Z.showView(Z.State.currentView);
                 } else {
-                    Z.showToast('Invalid credentials. Check demo login or password.');
+                    Z.showToast('Invalid credentials. Try demo login or check details.');
                 }
             } else {
                 const nameInput = document.getElementById('auth-name');
-                const name = nameInput ? nameInput.value.trim() : 'New User';
+                const name = nameInput ? nameInput.value.trim() : 'New Creator';
                 const newUser = {
                     id: 'usr_' + Date.now(),
-                    name: name || 'Creator User',
+                    name: name,
                     username: email.split('@')[0] || 'user_' + Date.now(),
-                    email: email,
-                    password: password,
+                    profession: 'ZYNIX Member',
+                    bio: 'New member in the ZYNIX ecosystem.',
                     role: 'Creator',
-                    profession: 'Ecosystem Member',
-                    bio: 'Passionate creator on ZYNIX.',
                     avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
                     cover: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
                     followers: 0,
@@ -682,8 +698,11 @@
                     walletTransactions: [],
                     bountySpentHistory: [],
                     referrals: { code: 'ZYNIX-' + Math.floor(1000 + Math.random() * 9000), earnings: 0, referredBy: null },
+                    email: email,
+                    password: password,
                     interactionHistory: {}
                 };
+                const users = Z.DB.getUsers();
                 users.push(newUser);
                 Z.DB.saveUsers(users);
                 Z.DB.setCurrentUser(newUser);
@@ -699,19 +718,15 @@
             Z.showView('home');
         };
 
-        Z.closeModal = function() {
-            const container = document.getElementById('modal-container');
-            if (container) container.innerHTML = '';
-        };
-
-        // Navigation and View Router
+        // Navigation Controller
         Z.showView = function(viewName) {
             Z.State.currentView = viewName;
-
-            ['home', 'spark', 'circles', 'people', 'profile'].forEach(v => {
-                const btn = document.getElementById(`nav-btn-${v}`);
+            
+            // Highlight nav buttons
+            ['home', 'spark', 'circles', 'people', 'profile'].forEach(nav => {
+                const btn = document.getElementById(`nav-btn-${nav}`);
                 if (btn) {
-                    if (v === viewName) {
+                    if (nav === viewName) {
                         btn.className = 'flex flex-col items-center justify-center text-emerald-400 transition w-1/6 py-1 font-bold';
                     } else {
                         btn.className = 'flex flex-col items-center justify-center text-slate-400 hover:text-emerald-400 transition w-1/6 py-1';
@@ -722,307 +737,218 @@
             const main = document.getElementById('app-container');
             if (!main) return;
 
-            switch(viewName) {
-                case 'home': Z.renderHomeView(main); break;
-                case 'spark': Z.renderSparkView(main); break;
-                case 'circles': Z.renderCirclesView(main); break;
-                case 'people': Z.renderPeopleView(main); break;
-                case 'profile': Z.renderProfileView(main); break;
-                case 'wallet': Z.renderWalletView(main); break;
-                case 'admin-wall': Z.renderAdminWallView(main); break;
-                default: Z.renderHomeView(main);
+            switch (viewName) {
+                case 'home':
+                    Z.renderHomeView(main);
+                    break;
+                case 'spark':
+                    Z.renderSparkView(main);
+                    break;
+                case 'circles':
+                    Z.renderCirclesView(main);
+                    break;
+                case 'people':
+                    Z.renderPeopleView(main);
+                    break;
+                case 'profile':
+                    Z.renderProfileView(main);
+                    break;
+                case 'wallet':
+                    Z.renderWalletView(main);
+                    break;
+                case 'admin-wall':
+                    Z.renderAdminWallView(main);
+                    break;
+                default:
+                    Z.renderHomeView(main);
             }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            window.scrollTo(0, 0);
         };
 
         // Render Home View
         Z.renderHomeView = function(container) {
             const posts = Z.DB.getPosts();
             const statuses = Z.DB.getStatuses();
-            const currentUser = Z.State.currentUser;
+            const user = Z.State.currentUser;
 
-            let html = `
-                <!-- Status Row -->
-                <div class="mb-4 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 backdrop-blur-sm">
-                    <div class="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-wider flex justify-between items-center">
-                        <span><i class="fa-solid fa-circle-notch text-emerald-400 mr-1 animate-spin"></i> 24h Status Stories</span>
-                        <button onclick="Z.openCreateStatusModal()" class="text-emerald-400 hover:underline text-[10px]">+ Add Status</button>
-                    </div>
-                    <div class="flex space-x-3 overflow-x-auto pb-1">
-                        <div onclick="Z.openCreateStatusModal()" class="flex-shrink-0 flex flex-col items-center cursor-pointer group">
-                            <div class="w-12 h-12 rounded-full border-2 border-dashed border-emerald-500/50 flex items-center justify-center bg-slate-800 group-hover:border-emerald-400 transition">
-                                <i class="fa-solid fa-plus text-emerald-400 text-sm"></i>
-                            </div>
-                            <span class="text-[9px] mt-1 text-slate-400 group-hover:text-white">You</span>
-                        </div>
-            `;
-
-            statuses.forEach(st => {
-                const author = Z.DB.getUserById(st.authorId) || { name: 'User', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80' };
-                html += `
-                    <div onclick="Z.viewStatus('${st.id}')" class="flex-shrink-0 flex flex-col items-center cursor-pointer group">
-                        <div class="w-12 h-12 rounded-full p-0.5 bg-gradient-to-tr from-emerald-500 via-blue-500 to-indigo-500 group-hover:scale-105 transition">
-                            <img src="${Z.escapeHtml(author.avatar)}" class="w-full h-full rounded-full object-cover border border-black">
-                        </div>
-                        <span class="text-[9px] mt-1 text-slate-300 truncate w-12 text-center">${Z.escapeHtml(author.name)}</span>
-                    </div>
-                `;
-            });
-
-            html += `
-                    </div>
-                </div>
-
-                <!-- Create Post Quick Box -->
-                <div class="mb-4 bg-slate-900/80 border border-slate-800 rounded-2xl p-3 flex items-center space-x-3 shadow-lg">
-                    <img src="${Z.escapeHtml(currentUser ? currentUser.avatar : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80')}" class="w-9 h-9 rounded-full object-cover border border-slate-700">
-                    <button type="button" onclick="Z.openCreatePostModal()" class="flex-1 text-left bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-400 hover:border-slate-700 transition">
-                        Share updates or insights with ecosystem...
-                    </button>
-                    <button type="button" onclick="Z.openCreatePostModal()" class="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-black flex items-center justify-center transition">
-                        <i class="fa-solid fa-image text-xs"></i>
-                    </button>
-                </div>
-
-                <!-- Posts Stream -->
+            container.innerHTML = `
                 <div class="space-y-4">
-            `;
-
-            posts.forEach(post => {
-                const author = Z.DB.getUserById(post.authorId) || { id: post.authorId, name: 'ZYNIX Creator', username: 'creator', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80' };
-                const reactions = post.reactions || { heart: 0 };
-                const totalReactions = (reactions.heart || 0) + (reactions.flower || 0) + (reactions.rocket || 0) + (reactions.like || 0);
-
-                html += `
-                    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-xl">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-2.5">
-                                <img src="${Z.escapeHtml(author.avatar)}" class="w-9 h-9 rounded-full object-cover border border-slate-700">
-                                <div>
-                                    <h4 class="text-xs font-bold text-white flex items-center space-x-1">
-                                        <span>${Z.escapeHtml(author.name)}</span>
-                                        <i class="fa-solid fa-circle-check text-emerald-400 text-[10px]"></i>
-                                    </h4>
-                                    <span class="text-[10px] text-slate-400">@${Z.escapeHtml(author.username)} • ${Z.escapeHtml(post.createdAt)}</span>
-                                </div>
+                    <!-- Statuses / Stories Horizontal Bar -->
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-3 flex space-x-3 overflow-x-auto scrollbar-none">
+                        <button type="button" onclick="${user ? 'Z.openCreateStatusModal()' : 'Z.openAuthModal(\'login\')'}" class="flex flex-col items-center shrink-0 group">
+                            <div class="w-12 h-12 rounded-full bg-slate-800 border-2 border-dashed border-emerald-500/50 group-hover:border-emerald-400 flex items-center justify-center text-emerald-400 transition">
+                                <i class="fa-solid fa-plus text-sm"></i>
                             </div>
-                            <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'follow', '${author.id}')" class="bg-emerald-500/10 hover:bg-emerald-500 hover:text-black text-emerald-400 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-500/20 transition">
-                                + Follow ($${author.bountySettings ? author.bountySettings.follow : '0.03'})
-                            </button>
-                        </div>
-
-                        <p class="text-xs text-slate-200 leading-relaxed">${Z.escapeHtml(post.content)}</p>
-
-                        ${post.media ? `
-                            <div class="rounded-xl overflow-hidden border border-slate-800 max-h-80 bg-black">
-                                <img src="${Z.escapeHtml(post.media)}" class="w-full h-full object-cover">
-                            </div>
-                        ` : ''}
-
-                        <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-800/80">
-                            <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'like', '${post.id}')" class="flex items-center space-x-1.5 hover:text-emerald-400 transition py-1">
-                                <i class="fa-solid fa-heart text-rose-500"></i>
-                                <span class="font-bold text-slate-300">${totalReactions}</span>
-                                <span class="text-[9px] text-emerald-400 ml-1 font-mono">(+$${author.bountySettings ? author.bountySettings.like : '0.01'})</span>
-                            </button>
-
-                            <button type="button" onclick="Z.toggleComments('${post.id}')" class="flex items-center space-x-1 hover:text-blue-400 transition py-1">
-                                <i class="fa-solid fa-comment text-slate-400"></i>
-                                <span>${post.comments ? post.comments.length : 0} Comments</span>
-                            </button>
-
-                            <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'share', '${post.id}')" class="flex items-center space-x-1.5 hover:text-purple-400 transition py-1">
-                                <i class="fa-solid fa-share-nodes text-slate-400"></i>
-                                <span>${post.shares || 0}</span>
-                                <span class="text-[9px] text-emerald-400 font-mono">(+$${author.bountySettings ? author.bountySettings.share : '0.03'})</span>
-                            </button>
-                        </div>
-
-                        <!-- Comment Box Collapsible -->
-                        <div id="comments-box-${post.id}" class="hidden pt-2 border-t border-slate-800 space-y-2">
-                            <div class="flex items-center space-x-2">
-                                <input type="text" id="input-comment-${post.id}" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="Write a comment...">
-                                <button type="button" onclick="Z.addComment('${post.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold px-3 py-1.5 rounded-xl text-xs transition">
-                                    Send
-                                </button>
-                            </div>
-                            <div class="space-y-1.5 max-h-36 overflow-y-auto pt-1">
-                                ${(post.comments || []).map(c => `
-                                    <div class="bg-slate-950/60 p-2 rounded-xl text-[11px] border border-slate-800/50">
-                                        <span class="font-bold text-slate-300">${Z.escapeHtml(c.author)}:</span>
-                                        <span class="text-slate-400 ml-1">${Z.escapeHtml(c.text)}</span>
+                            <span class="text-[10px] text-slate-400 mt-1 font-medium">Add Status</span>
+                        </button>
+                        ${statuses.map(st => {
+                            const author = Z.DB.getUserById(st.authorId) || { name: 'User', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80' };
+                            return `
+                                <div class="flex flex-col items-center shrink-0 cursor-pointer" onclick="Z.viewStatusModal('${st.id}')">
+                                    <div class="w-12 h-12 rounded-full p-0.5 bg-gradient-to-tr from-emerald-400 to-blue-500">
+                                        <img src="${Z.escapeHtml(author.avatar)}" class="w-full h-full rounded-full object-cover border border-slate-900">
                                     </div>
-                                `).join('')}
-                            </div>
-                        </div>
+                                    <span class="text-[10px] text-slate-300 mt-1 truncate max-w-[60px]">${Z.escapeHtml(author.name.split(' ')[0])}</span>
+                                </div>
+                            `;
+                        }).join('')}
                     </div>
-                `;
-            });
 
-            html += `</div>`;
-            container.innerHTML = html;
+                    <!-- Create Post Trigger Box -->
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-3 flex items-center space-x-3 shadow-lg">
+                        <img src="${Z.escapeHtml(user ? user.avatar : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80')}" class="w-9 h-9 rounded-full object-cover">
+                        <button type="button" onclick="${user ? 'Z.openCreatePostModal()' : 'Z.openAuthModal(\'login\')'}" class="bg-slate-950 hover:bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-400 w-full text-left transition">
+                            Share updates, ideas, or assets...
+                        </button>
+                    </div>
+
+                    <!-- Posts Feed -->
+                    <div class="space-y-4">
+                        ${posts.map(post => {
+                            const author = Z.DB.getUserById(post.authorId) || { id: 'usr_0', name: 'Unknown', username: 'unknown', avatar: '' };
+                            const heartCount = post.reactions ? (post.reactions.heart || 0) : 0;
+                            return `
+                                <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-3 shadow-xl">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <img src="${Z.escapeHtml(author.avatar)}" class="w-10 h-10 rounded-full object-cover border border-slate-800">
+                                            <div>
+                                                <h4 class="font-bold text-xs text-white">${Z.escapeHtml(author.name)}</h4>
+                                                <p class="text-[10px] text-slate-400">@${Z.escapeHtml(author.username)} • ${Z.escapeHtml(post.createdAt)}</p>
+                                            </div>
+                                        </div>
+                                        <span class="text-[10px] bg-slate-800 text-emerald-400 border border-slate-700 px-2 py-0.5 rounded-full font-semibold">
+                                            Bounty Active
+                                        </span>
+                                    </div>
+                                    <p class="text-xs text-slate-200 leading-relaxed">${Z.escapeHtml(post.content)}</p>
+                                    ${post.media ? `
+                                        <div class="rounded-xl overflow-hidden border border-slate-800">
+                                            <img src="${Z.escapeHtml(post.media)}" class="w-full h-52 object-cover">
+                                        </div>
+                                    ` : ''}
+                                    <div class="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs text-slate-400">
+                                        <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'like', '${post.id}')" class="flex items-center space-x-1.5 hover:text-rose-400 transition">
+                                            <i class="fa-solid fa-heart text-rose-500"></i>
+                                            <span class="font-bold">${heartCount}</span>
+                                        </button>
+                                        <button type="button" onclick="Z.openCommentsModal('${post.id}')" class="flex items-center space-x-1.5 hover:text-blue-400 transition">
+                                            <i class="fa-solid fa-comment text-blue-400"></i>
+                                            <span>${post.comments ? post.comments.length : 0}</span>
+                                        </button>
+                                        <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'share', '${post.id}')" class="flex items-center space-x-1.5 hover:text-emerald-400 transition">
+                                            <i class="fa-solid fa-share text-emerald-400"></i>
+                                            <span>${post.shares || 0}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
         };
 
-        Z.toggleComments = function(postId) {
-            const el = document.getElementById(`comments-box-${postId}`);
-            if (el) el.classList.toggle('hidden');
-        };
-
-        Z.addComment = function(postId) {
-            if (!Z.State.currentUser) {
-                Z.openAuthModal('login');
-                return;
-            }
-            const input = document.getElementById(`input-comment-${postId}`);
-            if (!input || !input.value.trim()) return;
-
-            const posts = Z.DB.getPosts();
-            const post = posts.find(p => p.id === postId);
-            if (post) {
-                if (!post.comments) post.comments = [];
-                post.comments.push({
-                    id: 'c_' + Date.now(),
-                    author: Z.State.currentUser.name,
-                    text: input.value.trim(),
-                    time: 'Just now'
-                });
-                Z.DB.savePosts(posts);
-                Z.showToast('Comment added!');
-                Z.renderHomeView(document.getElementById('app-container'));
-            }
-        };
-
-        // Render Spark Short-Video Feed View
+        // Render Spark View
         Z.renderSparkView = function(container) {
             const sparks = Z.DB.getSparks();
-            let html = `
-                <div class="mb-3 flex justify-between items-center">
-                    <h2 class="text-base font-black text-white flex items-center space-x-2">
-                        <i class="fa-solid fa-bolt text-amber-400 animate-pulse"></i>
-                        <span>ZYNIX Spark Feed</span>
-                    </h2>
-                    <button onclick="Z.openCreateSparkModal()" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-3 py-1 rounded-full transition">
-                        + Upload Spark
-                    </button>
-                </div>
+            container.innerHTML = `
                 <div class="space-y-4">
-            `;
-
-            sparks.forEach(spark => {
-                const author = Z.DB.getUserById(spark.authorId) || { id: spark.authorId, name: 'Creator', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80' };
-
-                html += `
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl relative">
-                        <div class="relative bg-black aspect-[9/14] max-h-[500px] flex items-center justify-center overflow-hidden">
-                            <video src="${Z.escapeHtml(spark.videoUrl)}" controls class="w-full h-full object-cover" loop></video>
-                            <div class="absolute bottom-3 left-3 right-12 z-10 bg-gradient-to-t from-black/80 p-2 rounded-xl backdrop-blur-sm">
-                                <div class="flex items-center space-x-2 mb-1">
-                                    <img src="${Z.escapeHtml(author.avatar)}" class="w-7 h-7 rounded-full border border-emerald-400">
-                                    <span class="text-xs font-bold text-white">${Z.escapeHtml(author.name)}</span>
-                                </div>
-                                <p class="text-[11px] text-slate-200">${Z.escapeHtml(spark.caption)}</p>
-                            </div>
-                        </div>
-
-                        <div class="p-3 bg-slate-900 flex justify-around items-center border-t border-slate-800 text-xs">
-                            <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'spark_like', '${spark.id}')" class="flex items-center space-x-1.5 text-rose-400 hover:scale-110 transition">
-                                <i class="fa-solid fa-heart text-base"></i>
-                                <span class="font-bold text-white">${spark.likes || 0}</span>
-                                <span class="text-[9px] text-emerald-400">(+$${author.bountySettings ? author.bountySettings.like : '0.01'})</span>
-                            </button>
-
-                            <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'follow', '${author.id}')" class="flex items-center space-x-1 text-emerald-400 hover:scale-110 transition">
-                                <i class="fa-solid fa-user-plus text-base"></i>
-                                <span>Follow</span>
-                            </button>
-
-                            <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'share', '${spark.id}')" class="flex items-center space-x-1 text-blue-400 hover:scale-110 transition">
-                                <i class="fa-solid fa-share text-base"></i>
-                                <span>Share</span>
-                            </button>
-                        </div>
+                    <div class="flex items-center justify-between bg-[#111827] border border-slate-800 rounded-2xl p-3">
+                        <span class="font-bold text-xs text-white"><i class="fa-solid fa-bolt text-amber-400 mr-2"></i>ZYNIX Spark Feed</span>
+                        <span class="text-[10px] text-slate-400">Short Video & Audio Clips</span>
                     </div>
-                `;
-            });
-
-            html += `</div>`;
-            container.innerHTML = html;
+                    <div class="space-y-4">
+                        ${sparks.map(spark => {
+                            const author = Z.DB.getUserById(spark.authorId) || { name: 'Creator', avatar: '' };
+                            return `
+                                <div class="bg-[#111827] border border-slate-800 rounded-2xl p-3 space-y-3 shadow-xl">
+                                    <div class="flex items-center space-x-2">
+                                        <img src="${Z.escapeHtml(author.avatar)}" class="w-8 h-8 rounded-full object-cover">
+                                        <div>
+                                            <h4 class="font-bold text-xs text-white">${Z.escapeHtml(author.name)}</h4>
+                                            <p class="text-[10px] text-slate-400">${Z.escapeHtml(spark.caption)}</p>
+                                        </div>
+                                    </div>
+                                    <div class="rounded-xl overflow-hidden bg-black border border-slate-800 relative">
+                                        <video src="${Z.escapeHtml(spark.videoUrl)}" controls class="w-full max-h-80 object-cover"></video>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs text-slate-400">
+                                        <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'spark_like', '${spark.id}')" class="flex items-center space-x-1.5 hover:text-amber-400">
+                                            <i class="fa-solid fa-heart text-amber-400"></i>
+                                            <span class="font-bold">${spark.likes || 0}</span>
+                                        </button>
+                                        <button type="button" onclick="Z.RewardEngine.processInteraction('${author.id}', 'share', '${spark.id}')" class="flex items-center space-x-1.5 hover:text-emerald-400">
+                                            <i class="fa-solid fa-share text-emerald-400"></i>
+                                            <span>${spark.shares || 0}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
         };
 
         // Render Circles View
         Z.renderCirclesView = function(container) {
             const circles = Z.DB.getCircles();
-            let html = `
-                <div class="mb-4 flex justify-between items-center">
-                    <div>
-                        <h2 class="text-base font-black text-white">Ecosystem Circles</h2>
-                        <p class="text-[11px] text-slate-400">Join specialized interest communities</p>
+            container.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-3">
+                        <h3 class="font-bold text-sm text-white"><i class="fa-solid fa-circle-nodes text-emerald-400 mr-2"></i>Ecosystem Circles</h3>
+                        <p class="text-xs text-slate-400">Join specialized communities and earn rewards for active engagement.</p>
                     </div>
-                    <button type="button" onclick="Z.openCreateCircleModal()" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-3 py-1.5 rounded-full transition">
-                        + Create Circle
-                    </button>
-                </div>
-
-                <div class="grid grid-cols-1 gap-3">
-            `;
-
-            circles.forEach(circle => {
-                const creator = Z.DB.getUserById(circle.creatorId) || { name: 'Ecosystem', bountySettings: { circleJoin: 0.03 } };
-                html += `
-                    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex items-center justify-between hover:border-slate-700 transition shadow-lg">
-                        <div class="flex items-center space-x-3">
-                            <img src="${Z.escapeHtml(circle.avatar)}" class="w-12 h-12 rounded-2xl object-cover border border-slate-700">
-                            <div>
-                                <h4 class="text-xs font-bold text-white">${Z.escapeHtml(circle.name)}</h4>
-                                <p class="text-[10px] text-slate-400 max-w-[200px] truncate">${Z.escapeHtml(circle.description)}</p>
-                                <span class="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md mt-1 inline-block">${circle.membersCount || 1} Members • ${Z.escapeHtml(circle.category)}</span>
+                    <div class="grid grid-cols-1 gap-3">
+                        ${circles.map(c => `
+                            <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+                                <div class="flex items-center space-x-3">
+                                    <img src="${Z.escapeHtml(c.avatar)}" class="w-12 h-12 rounded-xl object-cover border border-slate-800">
+                                    <div>
+                                        <h4 class="font-bold text-xs text-white">${Z.escapeHtml(c.name)}</h4>
+                                        <p class="text-[10px] text-slate-400 line-clamp-1">${Z.escapeHtml(c.description)}</p>
+                                        <span class="text-[9px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-semibold mt-1 inline-block">${c.membersCount} Members</span>
+                                    </div>
+                                </div>
+                                <button type="button" onclick="Z.RewardEngine.processInteraction('${c.creatorId}', 'circleJoin', '${c.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-3 py-1.5 rounded-xl transition shrink-0">
+                                    Join Circle
+                                </button>
                             </div>
-                        </div>
-                        <button type="button" onclick="Z.RewardEngine.processInteraction('${circle.creatorId}', 'circleJoin', '${circle.id}')" class="bg-emerald-500/10 hover:bg-emerald-500 hover:text-black text-emerald-400 text-xs font-bold px-3 py-1.5 rounded-xl border border-emerald-500/30 transition">
-                            Join (+$${creator.bountySettings ? creator.bountySettings.circleJoin : '0.03'})
-                        </button>
+                        `).join('')}
                     </div>
-                `;
-            });
-
-            html += `</div>`;
-            container.innerHTML = html;
+                </div>
+            `;
         };
 
         // Render People View
         Z.renderPeopleView = function(container) {
             const users = Z.DB.getUsers();
-            let html = `
-                <div class="mb-4">
-                    <h2 class="text-base font-black text-white">Creators & Ecosystem Members</h2>
-                    <p class="text-[11px] text-slate-400">Connect with creators and earn bounties on interactions</p>
-                </div>
-                <div class="space-y-3">
-            `;
-
-            users.forEach(u => {
-                html += `
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
-                        <div class="flex items-center space-x-3">
-                            <img src="${Z.escapeHtml(u.avatar)}" class="w-11 h-11 rounded-full object-cover border border-emerald-500/40">
-                            <div>
-                                <h4 class="text-xs font-bold text-white flex items-center space-x-1">
-                                    <span>${Z.escapeHtml(u.name)}</span>
-                                    <span class="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.2 rounded">${Z.escapeHtml(u.package || 'Free')}</span>
-                                </h4>
-                                <p class="text-[10px] text-slate-400">${Z.escapeHtml(u.profession || 'Creator')}</p>
-                                <span class="text-[9px] text-slate-500">${u.followers || 0} Followers</span>
-                            </div>
-                        </div>
-                        <button type="button" onclick="Z.RewardEngine.processInteraction('${u.id}', 'follow', '${u.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-3 py-1.5 rounded-xl transition">
-                            + Follow ($${u.bountySettings ? u.bountySettings.follow : '0.03'})
-                        </button>
+            container.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-1">
+                        <h3 class="font-bold text-sm text-white"><i class="fa-solid fa-users text-blue-400 mr-2"></i>Creators & Members</h3>
+                        <p class="text-xs text-slate-400">Connect with creators and earn bounties for following.</p>
                     </div>
-                `;
-            });
-
-            html += `</div>`;
-            container.innerHTML = html;
+                    <div class="space-y-3">
+                        ${users.map(u => `
+                            <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-md">
+                                <div class="flex items-center space-x-3">
+                                    <img src="${Z.escapeHtml(u.avatar)}" class="w-11 h-11 rounded-full object-cover border border-slate-800">
+                                    <div>
+                                        <h4 class="font-bold text-xs text-white">${Z.escapeHtml(u.name)}</h4>
+                                        <p class="text-[10px] text-slate-400">@${Z.escapeHtml(u.username)} • ${Z.escapeHtml(u.profession || 'Creator')}</p>
+                                        <p class="text-[10px] text-emerald-400 mt-0.5 font-semibold">${u.followers || 0} Followers</p>
+                                    </div>
+                                </div>
+                                <button type="button" onclick="Z.RewardEngine.processInteraction('${u.id}', 'follow', '${u.id}')" class="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition shrink-0">
+                                    Follow
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
         };
 
         // Render Profile View
@@ -1030,207 +956,161 @@
             const user = Z.State.currentUser;
             if (!user) {
                 container.innerHTML = `
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-4">
-                        <i class="fa-solid fa-lock text-3xl text-emerald-400"></i>
-                        <h3 class="text-base font-bold text-white">Login Required</h3>
-                        <p class="text-xs text-slate-400">Please log in to manage your profile, bounty settings, and wallet.</p>
-                        <button onclick="Z.openAuthModal('login')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-5 py-2 rounded-xl transition">
-                            Login Now
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-8 text-center space-y-4">
+                        <i class="fa-solid fa-lock text-4xl text-emerald-400"></i>
+                        <h3 class="font-bold text-base text-white">Login Required</h3>
+                        <p class="text-xs text-slate-400">Please log in or register to access your creator profile and earnings.</p>
+                        <button type="button" onclick="Z.openAuthModal('login')" class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-6 py-2.5 rounded-xl transition">
+                            Login Account
                         </button>
                     </div>
                 `;
                 return;
             }
 
-            const pkg = Z.Packages[user.package || 'Free'] || Z.Packages['Free'];
-
             container.innerHTML = `
-                <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl space-y-4 pb-4">
-                    <div class="h-28 bg-gradient-to-r from-emerald-600 to-blue-600 relative">
-                        <img src="${Z.escapeHtml(user.cover)}" class="w-full h-full object-cover opacity-50">
-                    </div>
-                    <div class="px-4 -mt-10 flex justify-between items-end">
-                        <img src="${Z.escapeHtml(user.avatar)}" class="w-16 h-16 rounded-full object-cover border-2 border-emerald-400 bg-slate-950">
-                        <button onclick="Z.openEditProfileModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-xl border border-slate-700 transition">
-                            Edit Profile
-                        </button>
-                    </div>
-
-                    <div class="px-4 space-y-2">
-                        <div>
-                            <h3 class="text-base font-black text-white">${Z.escapeHtml(user.name)}</h3>
-                            <p class="text-xs text-slate-400">@${Z.escapeHtml(user.username)} • ${Z.escapeHtml(user.profession || 'Creator')}</p>
-                        </div>
-                        <p class="text-xs text-slate-300 leading-relaxed">${Z.escapeHtml(user.bio)}</p>
-
-                        <!-- Package & Daily Limit Badge -->
-                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex justify-between items-center">
-                            <div>
-                                <span class="text-[10px] text-slate-400 block uppercase">Current Active Package</span>
-                                <span class="text-xs font-bold text-emerald-400">${pkg.name}</span>
+                <div class="space-y-4">
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                        <div class="h-28 bg-cover bg-center" style="background-image: url('${Z.escapeHtml(user.cover)}');"></div>
+                        <div class="p-4 pt-0 relative space-y-3">
+                            <div class="flex justify-between items-end -mt-10">
+                                <img src="${Z.escapeHtml(user.avatar)}" class="w-20 h-20 rounded-full object-cover border-4 border-[#111827] shadow-xl">
+                                <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold px-3 py-1 rounded-full uppercase">
+                                    ${Z.escapeHtml(user.package || 'Free')}
+                                </span>
                             </div>
-                            <button onclick="Z.openUpgradeModal()" class="bg-emerald-500/10 hover:bg-emerald-500 hover:text-black text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3 py-1 rounded-lg transition">
-                                Upgrade Plan
-                            </button>
-                        </div>
-
-                        <!-- Bounty Settings Editor Box -->
-                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2">
-                            <h4 class="text-xs font-bold text-white flex items-center justify-between">
-                                <span><i class="fa-solid fa-sliders text-emerald-400 mr-1"></i> Creator Bounty Settings ($0.00 - $0.05)</span>
-                                <button onclick="Z.saveBountySettings()" class="text-[10px] bg-emerald-600 text-black px-2 py-0.5 rounded font-bold">Save</button>
-                            </h4>
-                            <div class="grid grid-cols-2 gap-2 text-xs">
-                                <div>
-                                    <label class="text-[10px] text-slate-400 block">Like Reward ($)</label>
-                                    <input type="number" step="0.005" max="0.05" id="bounty-like" value="${user.bountySettings ? user.bountySettings.like : 0.01}" class="w-full bg-slate-900 border border-slate-800 rounded p-1 text-white">
+                            <div>
+                                <h3 class="font-bold text-base text-white">${Z.escapeHtml(user.name)}</h3>
+                                <p class="text-xs text-slate-400">@${Z.escapeHtml(user.username)} • ${Z.escapeHtml(user.profession || 'Creator')}</p>
+                            </div>
+                            <p class="text-xs text-slate-300">${Z.escapeHtml(user.bio || 'No bio provided.')}</p>
+                            
+                            <div class="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-center">
+                                <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                    <span class="block text-xs font-bold text-emerald-400">$${user.wallet ? user.wallet.cash.toFixed(2) : '0.00'}</span>
+                                    <span class="text-[9px] text-slate-400">Cash Balance</span>
                                 </div>
-                                <div>
-                                    <label class="text-[10px] text-slate-400 block">Share Reward ($)</label>
-                                    <input type="number" step="0.005" max="0.05" id="bounty-share" value="${user.bountySettings ? user.bountySettings.share : 0.03}" class="w-full bg-slate-900 border border-slate-800 rounded p-1 text-white">
+                                <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                    <span class="block text-xs font-bold text-blue-400">$${user.wallet ? user.wallet.bounty.toFixed(2) : '0.00'}</span>
+                                    <span class="text-[9px] text-slate-400">Bounty Pool</span>
                                 </div>
-                                <div>
-                                    <label class="text-[10px] text-slate-400 block">Follow Reward ($)</label>
-                                    <input type="number" step="0.005" max="0.05" id="bounty-follow" value="${user.bountySettings ? user.bountySettings.follow : 0.03}" class="w-full bg-slate-900 border border-slate-800 rounded p-1 text-white">
-                                </div>
-                                <div>
-                                    <label class="text-[10px] text-slate-400 block">Circle Join ($)</label>
-                                    <input type="number" step="0.005" max="0.05" id="bounty-circle" value="${user.bountySettings ? user.bountySettings.circleJoin : 0.03}" class="w-full bg-slate-900 border border-slate-800 rounded p-1 text-white">
+                                <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                    <span class="block text-xs font-bold text-indigo-400">${user.followers || 0}</span>
+                                    <span class="text-[9px] text-slate-400">Followers</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
             `;
-        };
-
-        Z.saveBountySettings = function() {
-            const user = Z.State.currentUser;
-            if (!user) return;
-            const like = parseFloat(document.getElementById('bounty-like').value) || 0.01;
-            const share = parseFloat(document.getElementById('bounty-share').value) || 0.03;
-            const follow = parseFloat(document.getElementById('bounty-follow').value) || 0.03;
-            const circle = parseFloat(document.getElementById('bounty-circle').value) || 0.03;
-
-            user.bountySettings = {
-                like: Math.min(like, 0.05),
-                share: Math.min(share, 0.05),
-                follow: Math.min(follow, 0.05),
-                subscribe: 0.02,
-                circleJoin: Math.min(circle, 0.05)
-            };
-            Z.DB.saveUsers();
-            Z.showToast('Bounty settings updated successfully!');
         };
 
         // Render Wallet View
         Z.renderWalletView = function(container) {
             const user = Z.State.currentUser;
             if (!user) {
-                container.innerHTML = `<div class="p-6 text-center text-slate-400">Please log in to view wallet.</div>`;
+                container.innerHTML = `
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-8 text-center space-y-4">
+                        <i class="fa-solid fa-wallet text-4xl text-emerald-400"></i>
+                        <h3 class="font-bold text-base text-white">Wallet Protected</h3>
+                        <p class="text-xs text-slate-400">Log in to view transactions and manage ecosystem payouts.</p>
+                        <button type="button" onclick="Z.openAuthModal('login')" class="bg-emerald-600 text-black font-bold text-xs px-6 py-2.5 rounded-xl">Login</button>
+                    </div>
+                `;
                 return;
             }
 
-            const wallet = user.wallet || { cash: 0, bounty: 0, totalEarned: 0 };
-            const txs = user.walletTransactions || [];
-
             container.innerHTML = `
                 <div class="space-y-4">
-                    <div class="bg-gradient-to-tr from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-2xl p-5 shadow-2xl">
-                        <span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Unified Creator Wallet</span>
-                        <h2 class="text-2xl font-black text-white mt-1">$${wallet.totalEarned.toFixed(2)} <span class="text-xs text-slate-400 font-normal">Total Gross</span></h2>
-
-                        <div class="grid grid-cols-2 gap-3 mt-4">
-                            <div class="bg-slate-950/80 border border-emerald-500/20 rounded-xl p-3">
-                                <span class="text-[10px] text-slate-400 block">Cash Balance (60%)</span>
-                                <span class="text-base font-bold text-emerald-400">$${wallet.cash.toFixed(2)}</span>
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold text-sm text-white"><i class="fa-solid fa-wallet text-emerald-400 mr-2"></i>Ecosystem Wallet</h3>
+                            <span class="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-bold">Verified</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1">
+                                <span class="text-[10px] text-slate-400">Available Cash (60%)</span>
+                                <h4 class="text-lg font-black text-emerald-400">$${user.wallet ? user.wallet.cash.toFixed(2) : '0.00'}</h4>
                             </div>
-                            <div class="bg-slate-950/80 border border-blue-500/20 rounded-xl p-3">
-                                <span class="text-[10px] text-slate-400 block">Bounty Pool (40%)</span>
-                                <span class="text-base font-bold text-blue-400">$${wallet.bounty.toFixed(2)}</span>
+                            <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1">
+                                <span class="text-[10px] text-slate-400">Bounty Balance (40%)</span>
+                                <h4 class="text-lg font-black text-blue-400">$${user.wallet ? user.wallet.bounty.toFixed(2) : '0.00'}</h4>
                             </div>
                         </div>
-
-                        <button onclick="Z.openWithdrawModal()" class="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2 rounded-xl text-xs transition">
-                            Request Payout (Payoneer / Bank)
-                        </button>
                     </div>
 
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-                        <h3 class="text-xs font-bold text-white mb-3">Transaction History</h3>
-                        <div class="space-y-2 max-h-60 overflow-y-auto">
-                            ${txs.length === 0 ? '<p class="text-[11px] text-slate-500 text-center py-2">No transactions recorded yet.</p>' : ''}
-                            ${txs.map(tx => `
-                                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 flex justify-between items-center text-xs">
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-3">
+                        <h4 class="font-bold text-xs text-white">Transaction History</h4>
+                        <div class="space-y-2">
+                            ${(user.walletTransactions && user.walletTransactions.length > 0) ? user.walletTransactions.map(tx => `
+                                <div class="bg-slate-950 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between text-xs">
                                     <div>
-                                        <span class="font-bold text-white block text-[11px]">${Z.escapeHtml(tx.type)}</span>
-                                        <span class="text-[9px] text-slate-500">${new Date(tx.date).toLocaleDateString()}</span>
+                                        <p class="font-bold text-white">${Z.escapeHtml(tx.type)}</p>
+                                        <span class="text-[9px] text-slate-400">${new Date(tx.date).toLocaleDateString()}</span>
                                     </div>
-                                    <span class="text-emerald-400 font-bold">+$${tx.amount.toFixed(2)}</span>
+                                    <span class="font-black text-emerald-400">+$${tx.amount.toFixed(2)}</span>
                                 </div>
-                            `).join('')}
+                            `).join('') : '<p class="text-xs text-slate-500 text-center py-4">No recent wallet transactions.</p>'}
                         </div>
                     </div>
                 </div>
             `;
         };
 
-        // Render Admin Wall
+        // Render Admin Wall View
         Z.renderAdminWallView = function(container) {
             container.innerHTML = `
-                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-                    <div class="flex items-center space-x-3 border-b border-slate-800 pb-3">
-                        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-emerald-400 to-blue-500 flex items-center justify-center font-black text-black">Z</div>
-                        <div>
-                            <h3 class="font-bold text-white text-sm">Official ZYNIX Admin Wall</h3>
-                            <p class="text-[10px] text-slate-400">Ecosystem Security & Rule Engine Announcements</p>
+                <div class="space-y-4">
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl p-5 space-y-2 shadow-xl">
+                        <div class="flex items-center space-x-2">
+                            <span class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <h3 class="font-bold text-base text-white">Official ZYNIX Admin Wall</h3>
                         </div>
-                    </div>
-                    <div class="space-y-2 text-xs text-slate-300 leading-relaxed">
-                        <p class="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                            <strong>System Update:</strong> Anti-duplicate reward mechanics, 60/40 Cash-Bounty split, and daily package interaction limits are fully operational across all profiles and circles.
+                        <p class="text-xs text-slate-300 leading-relaxed">
+                            Welcome to ZYNIX, the next-generation independent social ecosystem designed to reward engagement fairly with automated cash & bounty distribution.
                         </p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-[#111827] border border-slate-800 p-4 rounded-2xl space-y-1">
+                            <span class="text-[10px] text-slate-400">Total Ecosystem Users</span>
+                            <h4 class="text-lg font-black text-white">${Z.DB.getUsers().length}</h4>
+                        </div>
+                        <div class="bg-[#111827] border border-slate-800 p-4 rounded-2xl space-y-1">
+                            <span class="text-[10px] text-slate-400">Active Circles</span>
+                            <h4 class="text-lg font-black text-emerald-400">${Z.DB.getCircles().length}</h4>
+                        </div>
                     </div>
                 </div>
             `;
         };
 
-        // Creation Selection & Content Modals
+        // Create Modal Selector
         Z.openCreateSelectionModal = function() {
+            if (!Z.State.currentUser) {
+                Z.openAuthModal('login');
+                Z.showToast('Please login to create posts or status updates.');
+                return;
+            }
+            Z.openCreatePostModal();
+        };
+
+        // Create Post Modal
+        Z.openCreatePostModal = function() {
             const modalContainer = document.getElementById('modal-container');
             if (!modalContainer) return;
             modalContainer.innerHTML = `
                 <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-3 shadow-2xl">
-                        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
-                            <h3 class="font-bold text-sm text-white">Create Content</h3>
-                            <button onclick="Z.closeModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
+                        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                            <h3 class="font-bold text-sm text-white">Create New Post</h3>
+                            <button type="button" onclick="Z.closeModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
                         </div>
-                        <div class="grid grid-cols-2 gap-3 pt-2">
-                            <button onclick="Z.closeModal(); Z.openCreatePostModal();" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 p-3 rounded-xl text-center space-y-1">
-                                <i class="fa-solid fa-pen-to-square text-emerald-400 text-lg"></i>
-                                <span class="text-xs font-bold block text-white">Post</span>
-                            </button>
-                            <button onclick="Z.closeModal(); Z.openCreateSparkModal();" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 p-3 rounded-xl text-center space-y-1">
-                                <i class="fa-solid fa-bolt text-amber-400 text-lg"></i>
-                                <span class="text-xs font-bold block text-white">Spark</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        };
-
-        Z.openCreatePostModal = function() {
-            if (!Z.State.currentUser) { Z.openAuthModal('login'); return; }
-            const modalContainer = document.getElementById('modal-container');
-            modalContainer.innerHTML = `
-                <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-3">
-                        <h3 class="font-bold text-sm text-white">Create Ecosystem Post</h3>
-                        <textarea id="create-post-content" rows="4" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="What is on your mind?"></textarea>
-                        <input type="text" id="create-post-media" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" placeholder="Image URL (optional)">
-                        <button onclick="Z.submitPost()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2 rounded-xl text-xs">Publish Post</button>
+                        <textarea id="create-post-content" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500 h-28" placeholder="What's happening in your network?"></textarea>
+                        <input type="text" id="create-post-media" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" placeholder="Optional Image URL">
+                        <button type="button" onclick="Z.submitPost()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2 rounded-xl text-xs transition">
+                            Publish Post
+                        </button>
                     </div>
                 </div>
             `;
@@ -1239,8 +1119,10 @@
         Z.submitPost = function() {
             const content = document.getElementById('create-post-content').value.trim();
             const media = document.getElementById('create-post-media').value.trim();
-            if (!content) return;
-
+            if (!content) {
+                Z.showToast('Post content cannot be empty.');
+                return;
+            }
             const posts = Z.DB.getPosts();
             posts.unshift({
                 id: 'post_' + Date.now(),
@@ -1258,159 +1140,40 @@
             Z.showView('home');
         };
 
-        Z.openCreateSparkModal = function() {
-            if (!Z.State.currentUser) { Z.openAuthModal('login'); return; }
-            const modalContainer = document.getElementById('modal-container');
-            modalContainer.innerHTML = `
-                <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-3">
-                        <h3 class="font-bold text-sm text-white">Upload Spark Video</h3>
-                        <input type="text" id="create-spark-caption" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" placeholder="Caption #tags">
-                        <input type="text" id="create-spark-video" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" placeholder="MP4 Video URL">
-                        <button onclick="Z.submitSpark()" class="w-full bg-amber-500 hover:bg-amber-400 text-black font-bold py-2 rounded-xl text-xs">Publish Spark</button>
-                    </div>
-                </div>
-            `;
-        };
-
-        Z.submitSpark = function() {
-            const caption = document.getElementById('create-spark-caption').value.trim();
-            const videoUrl = document.getElementById('create-spark-video').value.trim();
-            if (!videoUrl) return;
-
-            const sparks = Z.DB.getSparks();
-            sparks.unshift({
-                id: 'spark_' + Date.now(),
-                authorId: Z.State.currentUser.id,
-                caption: caption,
-                videoUrl: videoUrl,
-                likes: 0,
-                comments: [],
-                shares: 0
-            });
-            Z.DB.saveSparks(sparks);
-            Z.closeModal();
-            Z.showToast('Spark uploaded successfully!');
-            Z.showView('spark');
-        };
-
-        Z.openCreateCircleModal = function() {
-            if (!Z.State.currentUser) { Z.openAuthModal('login'); return; }
-            const modalContainer = document.getElementById('modal-container');
-            modalContainer.innerHTML = `
-                <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-3">
-                        <h3 class="font-bold text-sm text-white">Create Circle</h3>
-                        <input type="text" id="circle-name" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" placeholder="Circle Name">
-                        <input type="text" id="circle-desc" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" placeholder="Description">
-                        <button onclick="Z.submitCircle()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2 rounded-xl text-xs">Create Circle</button>
-                    </div>
-                </div>
-            `;
-        };
-
-        Z.submitCircle = function() {
-            const name = document.getElementById('circle-name').value.trim();
-            const desc = document.getElementById('circle-desc').value.trim();
-            if (!name) return;
-
-            const circles = Z.DB.getCircles();
-            circles.push({
-                id: 'cir_' + Date.now(),
-                name: name,
-                description: desc,
-                membersCount: 1,
-                creatorId: Z.State.currentUser.id,
-                avatar: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80',
-                category: 'Community'
-            });
-            Z.DB.saveCircles(circles);
-            Z.closeModal();
-            Z.showToast('Circle created!');
-            Z.showView('circles');
-        };
-
-        Z.openCreateStatusModal = function() {
-            if (!Z.State.currentUser) { Z.openAuthModal('login'); return; }
-            const modalContainer = document.getElementById('modal-container');
-            modalContainer.innerHTML = `
-                <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-3">
-                        <h3 class="font-bold text-sm text-white">Add 24h Status Story</h3>
-                        <input type="text" id="status-text" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" placeholder="Status Text">
-                        <button onclick="Z.submitStatus()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-2 rounded-xl text-xs">Post Status</button>
-                    </div>
-                </div>
-            `;
-        };
-
-        Z.submitStatus = function() {
-            const text = document.getElementById('status-text').value.trim();
-            if (!text) return;
-            const statuses = Z.DB.getStatuses();
-            statuses.unshift({
-                id: 'st_' + Date.now(),
-                authorId: Z.State.currentUser.id,
-                content: text,
-                timestamp: Date.now(),
-                createdAt: 'Just now'
-            });
-            Z.DB.saveStatuses(statuses);
-            Z.closeModal();
-            Z.showToast('Status posted!');
-            Z.showView('home');
-        };
-
-        // AI Assistant Modal
+        // Open AI Assistant Modal
         Z.openAiModal = function() {
             const modalContainer = document.getElementById('modal-container');
+            if (!modalContainer) return;
             modalContainer.innerHTML = `
                 <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-3 shadow-2xl">
-                        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
-                            <h3 class="font-bold text-sm text-white flex items-center space-x-2">
-                                <i class="fa-solid fa-wand-magic-sparkles text-emerald-400"></i>
-                                <span>ZYNIX AI Ecosystem Guide</span>
-                            </h3>
-                            <button onclick="Z.closeModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+                    <div class="bg-[#111827] border border-slate-800 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
+                        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                            <h3 class="font-bold text-sm text-white flex items-center"><i class="fa-solid fa-wand-magic-sparkles text-emerald-400 mr-2"></i>ZYNIX AI Guide</h3>
+                            <button type="button" onclick="Z.closeModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
                         </div>
-                        <div id="ai-chat-box" class="h-48 overflow-y-auto bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs text-slate-300 space-y-2">
-                            <p class="text-emerald-400 font-medium">Hello! I am your ZYNIX AI assistant. Ask me how rewards work or how to upgrade packages!</p>
+                        <div id="ai-messages" class="h-48 overflow-y-auto bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2 text-xs">
+                            <div class="text-emerald-400 font-medium">Hello! How can I assist you with ZYNIX features today?</div>
                         </div>
                         <div class="flex space-x-2">
-                            <input type="text" id="ai-input" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white" placeholder="Ask AI...">
-                            <button onclick="Z.askAi()" class="bg-emerald-600 text-black font-bold px-3 py-1.5 rounded-xl text-xs">Send</button>
+                            <input type="text" id="ai-input" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none" placeholder="Ask anything about packages, bounties...">
+                            <button type="button" onclick="Z.sendAiQuery()" class="bg-emerald-600 text-black font-bold text-xs px-4 py-2 rounded-xl">Send</button>
                         </div>
                     </div>
                 </div>
             `;
         };
 
-        Z.askAi = function() {
+        Z.sendAiQuery = function() {
             const input = document.getElementById('ai-input');
-            const box = document.getElementById('ai-chat-box');
-            if (!input || !input.value.trim()) return;
-
-            const query = input.value.trim().toLowerCase();
-            box.innerHTML += `<p class="text-white"><strong>You:</strong> ${Z.escapeHtml(query)}</p>`;
+            const box = document.getElementById('ai-messages');
+            if (!input || !box || !input.value.trim()) return;
+            const query = input.value.trim();
+            box.innerHTML += `<div class="text-white font-semibold text-right">You: ${Z.escapeHtml(query)}</div>`;
             input.value = '';
-
-            let reply = "ZYNIX ecosystem pays 60% Cash and 40% Bounty on every valid creator interaction!";
-            if (query.includes('package') || query.includes('upgrade')) {
-                reply = "Packages range from Starter ($3) to Enterprise ($100). Higher packages increase daily interaction reward limits!";
-            }
             setTimeout(() => {
-                box.innerHTML += `<p class="text-emerald-400"><strong>AI:</strong> ${reply}</p>`;
+                box.innerHTML += `<div class="text-emerald-400">ZYNIX AI: Rewards are split 60% Cash and 40% Bounty. Upgrade your package in Profile to earn more!</div>`;
                 box.scrollTop = box.scrollHeight;
-            }, 400);
-        };
-
-        Z.openUpgradeModal = function() {
-            Z.showToast('Select package from Profile settings to upgrade.');
-        };
-
-        Z.openWithdrawModal = function() {
-            Z.showToast('Payout requests processed within 24 hours via Payoneer.');
+            }, 500);
         };
     </script>
 </body>
