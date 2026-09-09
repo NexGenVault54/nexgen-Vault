@@ -2864,981 +2864,2755 @@
 
 })();
 </script>
-    <!-- =========================================================
- ZYNIX HOME CONTROLLED UPDATE
- HOME STATUS SYSTEM + REMOVE "WELCOME TO ZYNIX"
- IMPORTANT:
- - Add this segment immediately before </body>
- - Do NOT delete existing ZYNIX code
- - This segment is only for the current Home correction
+<!-- =========================================================
+ ZYNIX HOME STATUS — FINAL CONTROLLED CORRECTION
+ ---------------------------------------------------------
+ PURPOSE:
+ 1. Remove Home "Welcome to ZYNIX" block completely
+ 2. Keep ZYNIX Wall untouched
+ 3. Create one clean horizontal Home status row
+ 4. Text / Photo / Video / Text+Media publishing
+ 5. Media removal button
+ 6. Store media in IndexedDB instead of localStorage
+ 7. Full-page status viewer
+ 8. Multiple statuses per person
+ 9. Newest status first
+10. 5-column status contact grid
+11. Progressive/infinite status loading
+12. Back-to-top arrow
+13. Statuses NEVER become normal posts
+ ---------------------------------------------------------
+ ADD THIS ONCE, IMMEDIATELY BEFORE </body>
  ========================================================= -->
 
 <script>
 (function () {
   'use strict';
 
-  window.Z = window.Z || {};
+  const Z = window.Z;
+  if (!Z || !Z.DB) return;
 
   /* =========================================================
-     1. REMOVE "WELCOME TO ZYNIX" FROM HOME ONLY
-     ========================================================= */
-  Z.removeHomeWelcome = function () {
-    try {
-      const all = document.querySelectorAll('h1,h2,h3,h4,div,p,section');
-      all.forEach(function (el) {
-        const text = (el.textContent || '').trim();
-
-        if (
-          text === 'Welcome to ZYNIX' ||
-          text === 'Welcome to Zynix' ||
-          text === 'WELCOME TO ZYNIX'
-        ) {
-          /*
-           * Only remove the containing visual block if it is clearly
-           * a Home welcome block. The ZYNIX Wall remains untouched.
-           */
-          const block =
-            el.closest('[data-home-welcome]') ||
-            el.closest('.card') ||
-            el.closest('.panel') ||
-            el.closest('section');
-
-          if (block && block !== document.body) {
-            block.remove();
-          } else {
-            el.remove();
-          }
-        }
-      });
-    } catch (e) {
-      console.warn('ZYNIX: Home welcome cleanup skipped', e);
-    }
-  };
-
-
-  /* =========================================================
-     2. STATUS DATA HELPERS
+     BASIC HELPERS
      ========================================================= */
 
-  Z.getHomeContactStatuses = function () {
-    try {
-      const users =
-        Z.DB && typeof Z.DB.getUsers === 'function'
-          ? Z.DB.getUsers()
-          : [];
-
-      const statuses =
-        Z.DB && typeof Z.DB.getStatuses === 'function'
-          ? Z.DB.getStatuses()
-          : [];
-
-      const now = Date.now();
-
-      const currentUser =
-        Z.currentUser ||
-        Z.user ||
-        (typeof Z.getCurrentUser === 'function'
-          ? Z.getCurrentUser()
-          : null);
-
-      const currentUserId =
-        currentUser &&
-        (currentUser.id || currentUser.userId || currentUser.uid);
-
-      /*
-       * Remove expired statuses.
-       */
-      const activeStatuses = statuses.filter(function (s) {
-        if (!s) return false;
-
-        if (s.expiresAt && Number(s.expiresAt) <= now) {
-          return false;
-        }
-
-        return true;
-      });
-
-      /*
-       * Only ZYNIX users belonging to the user's contact/friend
-       * relationship are eligible here.
-       *
-       * During frontend/demo stage we use the available contact
-       * relationship fields if present. Backend will later enforce
-       * real phone-contact matching.
-       */
-      const contactIds = new Set();
-
-      if (currentUser) {
-        const possibleContacts =
-          currentUser.contacts ||
-          currentUser.contactIds ||
-          currentUser.friends ||
-          currentUser.following ||
-          [];
-
-        if (Array.isArray(possibleContacts)) {
-          possibleContacts.forEach(function (c) {
-            if (typeof c === 'string') {
-              contactIds.add(c);
-            } else if (c && typeof c === 'object') {
-              const id = c.id || c.userId || c.uid;
-              if (id) contactIds.add(id);
-            }
-          });
-        }
-      }
-
-      /*
-       * If the current frontend does not yet contain contact IDs,
-       * do not invent a permanent backend relationship.
-       * We use users marked as contacts only.
-       */
-      const contactUsers = users.filter(function (u) {
-        if (!u) return false;
-
-        const uid = u.id || u.userId || u.uid;
-
-        if (!uid || uid === currentUserId) return false;
-
-        return (
-          u.isContact === true ||
-          u.contact === true ||
-          u.inContacts === true ||
-          contactIds.has(uid)
-        );
-      });
-
-      const contactUserIds = new Set(
-        contactUsers.map(function (u) {
-          return u.id || u.userId || u.uid;
-        })
-      );
-
-      /*
-       * Keep only statuses belonging to eligible contacts.
-       */
-      const result = activeStatuses.filter(function (s) {
-        const sid =
-          s.userId ||
-          s.authorId ||
-          s.ownerId ||
-          s.uid;
-
-        return sid && contactUserIds.has(sid);
-      });
-
-      /*
-       * NEWEST STATUS FIRST
-       */
-      result.sort(function (a, b) {
-        const aTime =
-          Number(a.createdAt || a.updatedAt || a.timestamp || 0);
-
-        const bTime =
-          Number(b.createdAt || b.updatedAt || b.timestamp || 0);
-
-        return bTime - aTime;
-      });
-
-      return result;
-
-    } catch (e) {
-      console.warn('ZYNIX: status retrieval failed', e);
-      return [];
-    }
-  };
-
-
-  /* =========================================================
-     3. FIND USER FOR STATUS
-     ========================================================= */
-
-  Z.getStatusUser = function (status) {
-    try {
-      const users =
-        Z.DB && typeof Z.DB.getUsers === 'function'
-          ? Z.DB.getUsers()
-          : [];
-
-      const uid =
-        status &&
-        (
-          status.userId ||
-          status.authorId ||
-          status.ownerId ||
-          status.uid
-        );
-
-      return users.find(function (u) {
-        return (
-          u &&
-          (
-            u.id === uid ||
-            u.userId === uid ||
-            u.uid === uid
-          )
-        );
-      }) || null;
-
-    } catch (e) {
-      return null;
-    }
-  };
-
-
-  /* =========================================================
-     4. STATUS AVATAR / NAME
-     ========================================================= */
-
-  Z.statusUserName = function (status) {
-    const user = Z.getStatusUser(status);
-
-    return (
-      (user && (user.name || user.fullName || user.username)) ||
-      status.userName ||
-      'ZYNIX User'
-    );
-  };
-
-
-  Z.statusUserAvatar = function (status) {
-    const user = Z.getStatusUser(status);
-
-    return (
-      (user && (user.avatar || user.photo || user.profileImage)) ||
-      status.avatar ||
-      ''
-    );
-  };
-
-
-  /* =========================================================
-     5. FULL-PAGE STATUS VIEWER
-     ========================================================= */
-
-  Z.openStatusViewer = function (statusId) {
-    try {
-      const statuses = Z.getHomeContactStatuses();
-
-      const index = statuses.findIndex(function (s) {
-        return String(
-          s.id ||
-          s.statusId ||
-          s._id
-        ) === String(statusId);
-      });
-
-      if (index < 0) return;
-
-      const selected = statuses[index];
-
-      let old = document.getElementById('zynix-status-viewer');
-
-      if (old) old.remove();
-
-      const viewer = document.createElement('div');
-
-      viewer.id = 'zynix-status-viewer';
-
-      viewer.innerHTML = `
-        <div class="zynix-status-viewer-inner">
-
-          <button
-            type="button"
-            class="zynix-status-close"
-            onclick="Z.closeStatusViewer()"
-            aria-label="Close"
-          >×</button>
-
-          <div class="zynix-status-main">
-
-            <div class="zynix-status-person">
-
-              <div class="zynix-status-avatar">
-                ${
-                  Z.statusUserAvatar(selected)
-                    ? `<img src="${Z.statusUserAvatar(selected)}" alt="">`
-                    : `<span>${Z.statusUserName(selected).charAt(0).toUpperCase()}</span>`
-                }
-              </div>
-
-              <div>
-                <div class="zynix-status-name">
-                  ${Z.statusUserName(selected)}
-                </div>
-
-                <div class="zynix-status-time">
-                  ${Z.formatStatusTime
-                    ? Z.formatStatusTime(selected)
-                    : 'Status'}
-                </div>
-              </div>
-
-            </div>
-
-            <div class="zynix-status-content">
-
-              ${
-                selected.media
-                  ? (
-                      String(selected.media).match(/\.(mp4|webm|ogg)(\?.*)?$/i)
-                        ? `<video
-                             src="${selected.media}"
-                             controls
-                             autoplay
-                             playsinline
-                             class="zynix-status-media"
-                           ></video>`
-                        : `<img
-                             src="${selected.media}"
-                             alt="Status"
-                             class="zynix-status-media"
-                           >`
-                    )
-                  : ''
-              }
-
-              ${
-                selected.content
-                  ? `<div class="zynix-status-text">
-                       ${Z.escapeStatusText
-                         ? Z.escapeStatusText(selected.content)
-                         : selected.content}
-                     </div>`
-                  : ''
-              }
-
-            </div>
-
-            <div class="zynix-status-navigation">
-
-              <button
-                type="button"
-                onclick="Z.previousStatus('${statusId}')"
-              >‹</button>
-
-              <button
-                type="button"
-                onclick="Z.nextStatus('${statusId}')"
-              >›</button>
-
-            </div>
-
-          </div>
-
-          <div class="zynix-status-contacts">
-
-            <div class="zynix-status-contacts-title">
-              Other Contacts
-            </div>
-
-            <div class="zynix-status-contact-grid">
-              ${statuses.map(function (s) {
-
-                const sid =
-                  s.id ||
-                  s.statusId ||
-                  s._id;
-
-                const avatar = Z.statusUserAvatar(s);
-
-                return `
-                  <button
-                    type="button"
-                    class="zynix-status-contact"
-                    onclick="Z.openStatusViewer('${String(sid).replace(/'/g, "\\'")}')"
-                  >
-                    <div class="zynix-status-contact-avatar">
-                      ${
-                        avatar
-                          ? `<img src="${avatar}" alt="">`
-                          : `<span>${Z.statusUserName(s).charAt(0).toUpperCase()}</span>`
-                      }
-                    </div>
-
-                    <span>
-                      ${Z.statusUserName(s)}
-                    </span>
-                  </button>
-                `;
-
-              }).join('')}
-            </div>
-
-          </div>
-
-        </div>
-      `;
-
-      document.body.appendChild(viewer);
-
-      document.body.style.overflow = 'hidden';
-
-    } catch (e) {
-      console.warn('ZYNIX: status viewer error', e);
-    }
-  };
-
-
-  /* =========================================================
-     6. CLOSE VIEWER
-     ========================================================= */
-
-  Z.closeStatusViewer = function () {
-    const viewer =
-      document.getElementById('zynix-status-viewer');
-
-    if (viewer) viewer.remove();
-
-    document.body.style.overflow = '';
-  };
-
-
-  /* =========================================================
-     7. NEXT STATUS
-     ========================================================= */
-
-  Z.nextStatus = function (currentId) {
-    const statuses = Z.getHomeContactStatuses();
-
-    const index = statuses.findIndex(function (s) {
-      return String(
-        s.id ||
-        s.statusId ||
-        s._id
-      ) === String(currentId);
-    });
-
-    if (index < 0 || index >= statuses.length - 1) return;
-
-    const next = statuses[index + 1];
-
-    Z.openStatusViewer(
-      next.id ||
-      next.statusId ||
-      next._id
-    );
-  };
-
-
-  /* =========================================================
-     8. PREVIOUS STATUS
-     ========================================================= */
-
-  Z.previousStatus = function (currentId) {
-    const statuses = Z.getHomeContactStatuses();
-
-    const index = statuses.findIndex(function (s) {
-      return String(
-        s.id ||
-        s.statusId ||
-        s._id
-      ) === String(currentId);
-    });
-
-    if (index <= 0) return;
-
-    const previous = statuses[index - 1];
-
-    Z.openStatusViewer(
-      previous.id ||
-      previous.statusId ||
-      previous._id
-    );
-  };
-
-
-  /* =========================================================
-     9. STATUS TIME
-     ========================================================= */
-
-  Z.formatStatusTime = function (status) {
-    const time = Number(
-      status.createdAt ||
-      status.updatedAt ||
-      status.timestamp ||
-      Date.now()
-    );
-
-    const diff = Math.max(0, Date.now() - time);
-
-    const minutes = Math.floor(diff / 60000);
-
-    if (minutes < 1) return 'Just now';
-
-    if (minutes < 60) {
-      return minutes + 'm ago';
+  const esc = function (value) {
+    if (typeof Z.safe === 'function') {
+      return Z.safe(value == null ? '' : String(value));
     }
 
-    const hours = Math.floor(minutes / 60);
-
-    if (hours < 24) {
-      return hours + 'h ago';
-    }
-
-    return 'Today';
-  };
-
-
-  /* =========================================================
-     10. SAFE TEXT
-     ========================================================= */
-
-  Z.escapeStatusText = function (text) {
-    return String(text || '')
+    return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;')
-      .replace(/\n/g, '<br>');
+      .replace(/'/g, '&#39;');
+  };
+
+  const arr = function (value) {
+    return Array.isArray(value) ? value : [];
+  };
+
+  const users = function () {
+    try {
+      return arr(Z.DB.getUsers());
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const currentUser = function () {
+    return (
+      Z.State.currentUser ||
+      (typeof Z.DB.getCurrentUser === 'function'
+        ? Z.DB.getCurrentUser()
+        : null) ||
+      users()[0] ||
+      null
+    );
+  };
+
+  const getStatuses = function () {
+    try {
+      return arr(Z.DB.getStatuses());
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveStatuses = function (statuses) {
+    try {
+      Z.DB.saveStatuses(statuses);
+      return true;
+    } catch (e) {
+      console.error('ZYNIX status save failed:', e);
+      return false;
+    }
+  };
+
+  const getUserById = function (id) {
+    return users().find(function (u) {
+      return u && String(u.id) === String(id);
+    }) || null;
   };
 
 
   /* =========================================================
-     11. HOME STATUS ROW
+     STATUS CONTACT LOGIC
+     ---------------------------------------------------------
+     Backend will later replace this with real phone-contact
+     matching through Supabase.
+
+     For current frontend/demo:
+     - use explicit contact fields if they exist
+     - otherwise use available ZYNIX users as demo contacts
+       so the status system can actually be tested now
      ========================================================= */
 
-  Z.renderHomeStatusRow = function () {
+  Z.getZynixStatusContacts = function () {
 
-    const statuses = Z.getHomeContactStatuses();
+    const us = users();
+    const me = currentUser();
 
-    return `
-      <div class="zynix-home-status-section">
+    if (!me) return [];
 
-        <div class="zynix-home-status-row">
+    const myId = me.id;
 
-          <!-- ADD STATUS -->
-          <button
-            type="button"
-            class="zynix-home-status-item zynix-add-status"
-            onclick="Z.openCreateStatusModal()"
+    const ids = new Set();
+
+    const possibleLists = [
+      me.contacts,
+      me.contactIds,
+      me.friends,
+      me.following
+    ];
+
+    possibleLists.forEach(function (list) {
+
+      if (!Array.isArray(list)) return;
+
+      list.forEach(function (item) {
+
+        if (typeof item === 'string') {
+          ids.add(item);
+          return;
+        }
+
+        if (item && typeof item === 'object') {
+          const id =
+            item.id ||
+            item.userId ||
+            item.uid;
+
+          if (id) ids.add(id);
+        }
+
+      });
+
+    });
+
+    const explicitContacts = us.filter(function (u) {
+
+      if (!u || String(u.id) === String(myId)) {
+        return false;
+      }
+
+      return (
+        u.isContact === true ||
+        u.contact === true ||
+        u.inContacts === true ||
+        ids.has(u.id)
+      );
+
+    });
+
+    if (explicitContacts.length) {
+      return explicitContacts;
+    }
+
+    /*
+     * Current frontend has no real phone-contact database yet.
+     * Therefore the demo falls back to available ZYNIX users.
+     * Backend stage will replace this with actual contact matching.
+     */
+    return us.filter(function (u) {
+      return u && String(u.id) !== String(myId);
+    });
+  };
+
+
+  /* =========================================================
+     ACTIVE STATUSES
+     ========================================================= */
+
+  Z.getActiveZynixStatuses = function () {
+
+    const now = Date.now();
+
+    const all = getStatuses();
+
+    const active = all.filter(function (status) {
+
+      if (!status) return false;
+
+      if (
+        status.expiresAt &&
+        Number(status.expiresAt) <= now
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    /*
+     * Save only active statuses.
+     */
+    if (active.length !== all.length) {
+      saveStatuses(active);
+    }
+
+    /*
+     * Only contact statuses.
+     */
+    const contactIds = new Set(
+      Z.getZynixStatusContacts().map(function (u) {
+        return u.id;
+      })
+    );
+
+    const filtered = active.filter(function (status) {
+
+      const ownerId =
+        status.authorId ||
+        status.userId ||
+        status.ownerId;
+
+      return ownerId && contactIds.has(ownerId);
+    });
+
+    /*
+     * NEWEST FIRST
+     */
+    filtered.sort(function (a, b) {
+
+      const at =
+        Number(a.createdAtMs) ||
+        Date.parse(a.createdAt || '') ||
+        Number(a.timestamp) ||
+        0;
+
+      const bt =
+        Number(b.createdAtMs) ||
+        Date.parse(b.createdAt || '') ||
+        Number(b.timestamp) ||
+        0;
+
+      return bt - at;
+    });
+
+    return filtered;
+  };
+
+
+  /* =========================================================
+     INDEXEDDB MEDIA STORAGE
+     ---------------------------------------------------------
+     Large photo/video files are NOT stored in localStorage.
+     ========================================================= */
+
+  const IDB_NAME = 'ZYNIX_STATUS_MEDIA_DB';
+  const IDB_VERSION = 1;
+  const IDB_STORE = 'media';
+
+  let idbPromise = null;
+
+  function openMediaDB() {
+
+    if (idbPromise) {
+      return idbPromise;
+    }
+
+    idbPromise = new Promise(function (resolve, reject) {
+
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB is not available'));
+        return;
+      }
+
+      const request =
+        indexedDB.open(IDB_NAME, IDB_VERSION);
+
+      request.onupgradeneeded = function (event) {
+
+        const db = event.target.result;
+
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+
+          db.createObjectStore(
+            IDB_STORE,
+            { keyPath: 'id' }
+          );
+
+        }
+
+      };
+
+      request.onsuccess = function () {
+        resolve(request.result);
+      };
+
+      request.onerror = function () {
+        reject(
+          request.error ||
+          new Error('IndexedDB open failed')
+        );
+      };
+
+    });
+
+    return idbPromise;
+  }
+
+
+  Z.saveStatusMedia = function (file) {
+
+    return openMediaDB().then(function (db) {
+
+      return new Promise(function (resolve, reject) {
+
+        const id =
+          'status_media_' +
+          Date.now() +
+          '_' +
+          Math.random()
+            .toString(36)
+            .slice(2, 10);
+
+        const tx =
+          db.transaction(
+            IDB_STORE,
+            'readwrite'
+          );
+
+        const store =
+          tx.objectStore(IDB_STORE);
+
+        const request =
+          store.put({
+            id: id,
+            blob: file,
+            type: file.type || '',
+            name: file.name || '',
+            size: file.size || 0,
+            createdAt: Date.now()
+          });
+
+        request.onsuccess = function () {
+          resolve({
+            id: id,
+            type: file.type || '',
+            name: file.name || '',
+            size: file.size || 0
+          });
+        };
+
+        request.onerror = function () {
+          reject(
+            request.error ||
+            new Error('Media save failed')
+          );
+        };
+
+      });
+
+    });
+
+  };
+
+
+  Z.getStatusMedia = function (mediaId) {
+
+    return openMediaDB().then(function (db) {
+
+      return new Promise(function (resolve, reject) {
+
+        const tx =
+          db.transaction(
+            IDB_STORE,
+            'readonly'
+          );
+
+        const store =
+          tx.objectStore(IDB_STORE);
+
+        const request =
+          store.get(mediaId);
+
+        request.onsuccess = function () {
+
+          if (!request.result) {
+            resolve(null);
+            return;
+          }
+
+          resolve(request.result);
+
+        };
+
+        request.onerror = function () {
+
+          reject(
+            request.error ||
+            new Error('Media read failed')
+          );
+
+        };
+
+      });
+
+    });
+
+  };
+
+
+  Z.deleteStatusMedia = function (mediaId) {
+
+    if (!mediaId) {
+      return Promise.resolve();
+    }
+
+    return openMediaDB().then(function (db) {
+
+      return new Promise(function (resolve, reject) {
+
+        const tx =
+          db.transaction(
+            IDB_STORE,
+            'readwrite'
+          );
+
+        const store =
+          tx.objectStore(IDB_STORE);
+
+        const request =
+          store.delete(mediaId);
+
+        request.onsuccess = function () {
+          resolve();
+        };
+
+        request.onerror = function () {
+          reject(request.error);
+        };
+
+      });
+
+    });
+
+  };
+
+
+  /* =========================================================
+     MEDIA PREVIEW
+     ========================================================= */
+
+  let statusPreviewObjectURL = null;
+
+  function clearStatusPreviewURL() {
+
+    if (
+      statusPreviewObjectURL &&
+      typeof URL !== 'undefined' &&
+      URL.revokeObjectURL
+    ) {
+
+      try {
+        URL.revokeObjectURL(
+          statusPreviewObjectURL
+        );
+      } catch (e) {}
+
+    }
+
+    statusPreviewObjectURL = null;
+  }
+
+
+  Z.removeStatusSelectedMedia = function () {
+
+    const input =
+      document.getElementById(
+        'zynix-status-media-input'
+      );
+
+    if (input) {
+      input.value = '';
+    }
+
+    clearStatusPreviewURL();
+
+    const preview =
+      document.getElementById(
+        'zynix-status-media-preview'
+      );
+
+    if (preview) {
+      preview.innerHTML = '';
+      preview.classList.add('hidden');
+    }
+
+    const fileName =
+      document.getElementById(
+        'zynix-status-media-name'
+      );
+
+    if (fileName) {
+      fileName.textContent =
+        'No media selected';
+    }
+
+    const removeBtn =
+      document.getElementById(
+        'zynix-status-media-remove'
+      );
+
+    if (removeBtn) {
+      removeBtn.classList.add('hidden');
+    }
+
+  };
+
+
+  Z.previewZynixStatusMedia = function (input) {
+
+    const file =
+      input &&
+      input.files &&
+      input.files[0];
+
+    if (!file) {
+      Z.removeStatusSelectedMedia();
+      return;
+    }
+
+    /*
+     * Frontend safety limit.
+     * Backend/Supabase Storage will later handle production uploads.
+     */
+    if (
+      file.size >
+      50 * 1024 * 1024
+    ) {
+
+      Z.showToast(
+        'For this frontend test, keep media under 50 MB.'
+      );
+
+      input.value = '';
+
+      Z.removeStatusSelectedMedia();
+
+      return;
+    }
+
+    clearStatusPreviewURL();
+
+    statusPreviewObjectURL =
+      URL.createObjectURL(file);
+
+    const preview =
+      document.getElementById(
+        'zynix-status-media-preview'
+      );
+
+    const fileName =
+      document.getElementById(
+        'zynix-status-media-name'
+      );
+
+    const removeBtn =
+      document.getElementById(
+        'zynix-status-media-remove'
+      );
+
+    if (fileName) {
+
+      fileName.textContent =
+        file.name;
+
+    }
+
+    if (removeBtn) {
+      removeBtn.classList.remove('hidden');
+    }
+
+    if (!preview) return;
+
+    preview.classList.remove('hidden');
+
+    if (
+      file.type &&
+      file.type.indexOf('video/') === 0
+    ) {
+
+      preview.innerHTML =
+        '<video src="' +
+        esc(statusPreviewObjectURL) +
+        '" controls playsinline ' +
+        'class="w-full max-h-64 rounded-xl object-contain bg-black"></video>';
+
+    } else {
+
+      preview.innerHTML =
+        '<img src="' +
+        esc(statusPreviewObjectURL) +
+        '" alt="Selected media" ' +
+        'class="w-full max-h-64 rounded-xl object-contain bg-black">';
+
+    }
+
+  };
+
+
+  /* =========================================================
+     CREATE STATUS POPUP
+     ========================================================= */
+
+  Z.openCreateStatusModal = function () {
+
+    const me = currentUser();
+
+    if (!me) {
+
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
+      }
+
+      return;
+    }
+
+    const modal =
+      document.getElementById(
+        'modal-container'
+      );
+
+    if (!modal) return;
+
+    modal.innerHTML = `
+      <div
+        class="fixed inset-0 z-[99999] bg-black/80
+               backdrop-blur-sm flex items-center
+               justify-center p-4"
+      >
+
+        <div
+          class="bg-[#111827] border border-slate-800
+                 rounded-2xl w-full max-w-md
+                 p-5 space-y-4 shadow-2xl
+                 max-h-[92vh] overflow-y-auto"
+        >
+
+          <div
+            class="flex justify-between items-center
+                   border-b border-slate-800 pb-3"
           >
 
-            <div class="zynix-status-circle add">
-              +
+            <div>
+
+              <h3
+                class="font-bold text-base text-white"
+              >
+                Create Status
+              </h3>
+
+              <p
+                class="text-[10px] text-slate-500 mt-1"
+              >
+                Available for 24 hours
+              </p>
+
             </div>
 
-            <span>Add Status</span>
+            <button
+              type="button"
+              onclick="Z.closeModal()"
+              class="w-9 h-9 rounded-full
+                     bg-slate-900 text-slate-300
+                     hover:text-white"
+            >
+              ×
+            </button>
 
-          </button>
+          </div>
 
-          ${
-            statuses.map(function (status) {
 
-              const sid =
-                status.id ||
-                status.statusId ||
-                status._id;
+          <textarea
+            id="zynix-status-content"
+            rows="7"
+            class="w-full min-h-[150px]
+                   resize-y bg-slate-950
+                   border border-slate-800
+                   rounded-xl px-3 py-3
+                   text-xs text-white
+                   focus:outline-none
+                   focus:border-emerald-500"
+            placeholder="What's on your mind?"
+          ></textarea>
 
-              const avatar =
-                Z.statusUserAvatar(status);
 
-              return `
-                <button
-                  type="button"
-                  class="zynix-home-status-item"
-                  onclick="Z.openStatusViewer('${String(sid).replace(/'/g, "\\'")}')"
-                >
+          <div class="space-y-2">
 
-                  <div class="zynix-status-circle">
+            <button
+              type="button"
+              onclick="document.getElementById('zynix-status-media-input').click()"
+              class="w-full bg-slate-900
+                     border border-slate-800
+                     text-slate-300 font-bold
+                     py-2.5 rounded-xl text-xs"
+            >
+              <i class="fa-solid fa-photo-film mr-1"></i>
+              Add Photo / Video
+            </button>
 
-                    ${
-                      avatar
-                        ? `<img src="${avatar}" alt="">`
-                        : `<span>${Z.statusUserName(status).charAt(0).toUpperCase()}</span>`
-                    }
+            <input
+              id="zynix-status-media-input"
+              type="file"
+              accept="image/*,video/*"
+              class="hidden"
+              onchange="Z.previewZynixStatusMedia(this)"
+            >
 
-                  </div>
 
-                  <span>
-                    ${Z.statusUserName(status)}
-                  </span>
+            <div
+              class="flex items-center justify-between
+                     gap-2"
+            >
 
-                </button>
-              `;
+              <span
+                id="zynix-status-media-name"
+                class="text-[10px] text-slate-500
+                       truncate"
+              >
+                No media selected
+              </span>
 
-            }).join('')
-          }
+              <button
+                id="zynix-status-media-remove"
+                type="button"
+                onclick="Z.removeStatusSelectedMedia()"
+                class="hidden shrink-0
+                       w-7 h-7 rounded-full
+                       bg-rose-500/15
+                       border border-rose-500/30
+                       text-rose-300"
+                aria-label="Remove media"
+              >
+                ×
+              </button>
+
+            </div>
+
+
+            <div
+              id="zynix-status-media-preview"
+              class="hidden"
+            ></div>
+
+          </div>
+
+
+          <div
+            class="flex items-center
+                   justify-end gap-2"
+          >
+
+            <button
+              type="button"
+              onclick="Z.closeModal()"
+              class="bg-slate-900
+                     border border-slate-800
+                     text-slate-400
+                     font-bold px-4 py-2.5
+                     rounded-xl text-xs"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="button"
+              onclick="Z.publishZynixStatus()"
+              class="bg-emerald-600
+                     hover:bg-emerald-500
+                     text-black font-black
+                     px-5 py-2.5
+                     rounded-xl text-xs"
+            >
+              Publish Status
+            </button>
+
+          </div>
 
         </div>
 
       </div>
     `;
+
+    setTimeout(function () {
+
+      document
+        .getElementById(
+          'zynix-status-content'
+        )
+        ?.focus();
+
+    }, 50);
+
   };
 
 
   /* =========================================================
-     12. STATUS VIEWER CSS
+     ADD STATUS BUTTON
+     ---------------------------------------------------------
+     Existing Home code may call either function.
+     Both now use the same popup.
      ========================================================= */
 
-  const style = document.createElement('style');
-
-  style.id = 'zynix-home-status-controlled-style';
-
-  style.textContent = `
-
-    .zynix-home-status-section {
-      width: 100%;
-      margin: 10px 0 18px;
-    }
-
-    .zynix-home-status-row {
-      display: flex;
-      gap: 14px;
-      overflow-x: auto;
-      padding: 8px 4px 12px;
-      scrollbar-width: none;
-    }
-
-    .zynix-home-status-row::-webkit-scrollbar {
-      display: none;
-    }
-
-    .zynix-home-status-item {
-      flex: 0 0 auto;
-      width: 72px;
-      background: transparent;
-      border: 0;
-      color: inherit;
-      padding: 0;
-      cursor: pointer;
-      text-align: center;
-    }
-
-    .zynix-status-circle {
-      width: 58px;
-      height: 58px;
-      border-radius: 50%;
-      margin: 0 auto 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      border: 2px solid #ffffff;
-      background: #202020;
-      font-weight: 700;
-      font-size: 20px;
-    }
-
-    .zynix-status-circle.add {
-      font-size: 30px;
-      border-style: dashed;
-    }
-
-    .zynix-status-circle img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .zynix-home-status-item span {
-      display: block;
-      font-size: 11px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    /* FULL PAGE STATUS VIEWER */
-
-    #zynix-status-viewer {
-      position: fixed;
-      inset: 0;
-      z-index: 999999;
-      background: #050505;
-      color: #fff;
-      overflow-y: auto;
-    }
-
-    .zynix-status-viewer-inner {
-      min-height: 100vh;
-      padding: 18px;
-      box-sizing: border-box;
-    }
-
-    .zynix-status-close {
-      position: fixed;
-      top: 14px;
-      right: 14px;
-      z-index: 10;
-      width: 42px;
-      height: 42px;
-      border-radius: 50%;
-      border: 0;
-      background: rgba(255,255,255,.12);
-      color: #fff;
-      font-size: 28px;
-      cursor: pointer;
-    }
-
-    .zynix-status-main {
-      min-height: 65vh;
-      max-width: 760px;
-      margin: 0 auto;
-      padding-top: 18px;
-    }
-
-    .zynix-status-person {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-
-    .zynix-status-avatar,
-    .zynix-status-contact-avatar {
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      overflow: hidden;
-      background: #202020;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-    }
-
-    .zynix-status-avatar img,
-    .zynix-status-contact-avatar img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .zynix-status-name {
-      font-weight: 700;
-      font-size: 16px;
-    }
-
-    .zynix-status-time {
-      opacity: .65;
-      font-size: 12px;
-      margin-top: 3px;
-    }
-
-    .zynix-status-content {
-      min-height: 45vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 18px;
-      text-align: center;
-    }
-
-    .zynix-status-media {
-      max-width: 100%;
-      max-height: 55vh;
-      object-fit: contain;
-      border-radius: 14px;
-    }
-
-    .zynix-status-text {
-      max-width: 700px;
-      font-size: 22px;
-      line-height: 1.5;
-      word-break: break-word;
-    }
-
-    .zynix-status-navigation {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 10px;
-    }
-
-    .zynix-status-navigation button {
-      width: 46px;
-      height: 46px;
-      border-radius: 50%;
-      border: 0;
-      background: rgba(255,255,255,.10);
-      color: #fff;
-      font-size: 30px;
-      cursor: pointer;
-    }
-
-    .zynix-status-contacts {
-      max-width: 760px;
-      margin: 25px auto 0;
-      padding-bottom: 30px;
-    }
-
-    .zynix-status-contacts-title {
-      font-weight: 700;
-      margin-bottom: 14px;
-      opacity: .8;
-    }
-
-    .zynix-status-contact-grid {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 16px 10px;
-    }
-
-    .zynix-status-contact {
-      border: 0;
-      background: transparent;
-      color: inherit;
-      cursor: pointer;
-      text-align: center;
-    }
-
-    .zynix-status-contact-avatar {
-      margin: 0 auto 6px;
-    }
-
-    .zynix-status-contact span {
-      display: block;
-      font-size: 11px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-
-    @media (max-width: 600px) {
-
-      .zynix-status-main {
-        min-height: 60vh;
-      }
-
-      .zynix-status-text {
-        font-size: 18px;
-      }
-
-      .zynix-status-contact-grid {
-        grid-template-columns: repeat(5, 1fr);
-        gap: 14px 6px;
-      }
-
-      .zynix-status-contact-avatar {
-        width: 44px;
-        height: 44px;
-      }
-
-    }
-
-  `;
-
-  document.head.appendChild(style);
+  Z.openInlineStatusEditor = function () {
+    Z.openCreateStatusModal();
+  };
 
 
   /* =========================================================
-     13. HOME RENDER HOOK
+     PUBLISH STATUS
      ========================================================= */
 
-  Z.applyHomeStatusUpdate = function () {
-    try {
+  Z.publishZynixStatus = async function () {
 
-      Z.removeHomeWelcome();
+    const me = currentUser();
 
-      /*
-       * Locate the Home status area.
-       * We deliberately do not replace the complete Home page.
-       */
+    if (!me) {
 
-      const home =
-        document.querySelector('#home') ||
-        document.querySelector('[data-page="home"]') ||
-        document.querySelector('.home-page');
-
-      if (!home) return;
-
-      /*
-       * Existing controlled status area, if any.
-       */
-      const existing =
-        home.querySelector('.zynix-home-status-section');
-
-      if (existing) {
-        existing.outerHTML = Z.renderHomeStatusRow();
-        return;
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
       }
 
+      return;
+    }
+
+    const contentEl =
+      document.getElementById(
+        'zynix-status-content'
+      );
+
+    const mediaInput =
+      document.getElementById(
+        'zynix-status-media-input'
+      );
+
+    const text =
+      contentEl
+        ? contentEl.value.trim()
+        : '';
+
+    const file =
+      mediaInput &&
+      mediaInput.files &&
+      mediaInput.files[0]
+        ? mediaInput.files[0]
+        : null;
+
+
+    /*
+     * Neither text nor media = invalid.
+     */
+    if (!text && !file) {
+
+      Z.showToast(
+        'Add text or photo/video first.'
+      );
+
+      return;
+    }
+
+
+    const publishButton =
+      document.querySelector(
+        '[onclick="Z.publishZynixStatus()"]'
+      );
+
+    if (publishButton) {
+      publishButton.disabled = true;
+      publishButton.textContent =
+        'Publishing…';
+    }
+
+
+    try {
+
+      let mediaId = '';
+      let mediaType = '';
+      let mediaName = '';
+
       /*
-       * Insert only before the existing Home feed/composer.
+       * Save actual media in IndexedDB.
+       * Do NOT place large Base64 video into localStorage.
        */
-      const firstContent =
-        home.querySelector('.composer') ||
-        home.querySelector('.post-composer') ||
-        home.querySelector('[class*="composer"]') ||
-        home.firstElementChild;
+      if (file) {
 
-      const wrapper =
-        document.createElement('div');
+        const stored =
+          await Z.saveStatusMedia(file);
 
-      wrapper.innerHTML =
-        Z.renderHomeStatusRow();
+        mediaId = stored.id;
+        mediaType = stored.type;
+        mediaName = stored.name;
 
-      if (firstContent) {
-        home.insertBefore(
-          wrapper.firstElementChild,
-          firstContent
+      }
+
+
+      const now = Date.now();
+
+      const existing =
+        getStatuses().filter(function (s) {
+
+          return (
+            !s ||
+            !s.expiresAt ||
+            Number(s.expiresAt) > now
+          );
+
+        });
+
+
+      /*
+       * IMPORTANT:
+       * type = status
+       *
+       * This keeps status data separate from normal posts.
+       */
+      const newStatus = {
+
+        id:
+          'st_' +
+          now +
+          '_' +
+          Math.random()
+            .toString(36)
+            .slice(2, 7),
+
+        type: 'status',
+
+        authorId:
+          me.id,
+
+        content:
+          text,
+
+        mediaId:
+          mediaId,
+
+        mediaType:
+          mediaType,
+
+        mediaName:
+          mediaName,
+
+        /*
+         * Legacy compatibility:
+         * keep empty media field.
+         */
+        media:
+          '',
+
+        createdAt:
+          new Date(now).toISOString(),
+
+        createdAtMs:
+          now,
+
+        expiresAt:
+          now + (24 * 60 * 60 * 1000)
+
+      };
+
+
+      existing.unshift(
+        newStatus
+      );
+
+
+      if (!saveStatuses(existing)) {
+
+        if (mediaId) {
+          await Z.deleteStatusMedia(
+            mediaId
+          );
+        }
+
+        throw new Error(
+          'Status database save failed'
+        );
+
+      }
+
+
+      /*
+       * Close the popup.
+       */
+      if (
+        typeof Z.closeModal === 'function'
+      ) {
+        Z.closeModal();
+      }
+
+
+      clearStatusPreviewURL();
+
+
+      Z.showToast(
+        'Status published for 24 hours.'
+      );
+
+
+      /*
+       * Return to Home.
+       */
+      if (
+        typeof Z.showView === 'function'
+      ) {
+
+        Z.showView('home');
+
+      }
+
+
+    } catch (error) {
+
+      console.error(
+        'ZYNIX status publish error:',
+        error
+      );
+
+      Z.showToast(
+        'Status could not be published. Please try again.'
+      );
+
+    } finally {
+
+      if (publishButton) {
+        publishButton.disabled = false;
+        publishButton.textContent =
+          'Publish Status';
+      }
+
+    }
+
+  };
+
+
+  /* =========================================================
+     LEGACY FUNCTION COMPATIBILITY
+     ========================================================= */
+
+  Z.submitNewStatus = function () {
+    return Z.publishZynixStatus();
+  };
+
+  Z.submitInlineStatus = function () {
+    return Z.publishZynixStatus();
+  };
+
+
+  /* =========================================================
+     STATUS MEDIA RESOLVER
+     ========================================================= */
+
+  Z.resolveStatusMedia = async function (status) {
+
+    if (!status) return null;
+
+
+    /*
+     * New IndexedDB media
+     */
+    if (status.mediaId) {
+
+      try {
+
+        const stored =
+          await Z.getStatusMedia(
+            status.mediaId
+          );
+
+        if (stored && stored.blob) {
+
+          const url =
+            URL.createObjectURL(
+              stored.blob
+            );
+
+          return {
+
+            url: url,
+
+            type:
+              stored.type ||
+              status.mediaType ||
+              stored.blob.type ||
+              '',
+
+            revoke:
+              true
+
+          };
+
+        }
+
+      } catch (e) {
+
+        console.warn(
+          'ZYNIX: could not load status media',
+          e
+        );
+
+      }
+
+    }
+
+
+    /*
+     * Legacy statuses may still contain
+     * a data URL.
+     */
+    if (status.media) {
+
+      const m =
+        String(status.media);
+
+      let type =
+        status.mediaType || '';
+
+      if (!type && m.indexOf('data:') === 0) {
+
+        const match =
+          m.match(
+            /^data:([^;,]+)/i
+          );
+
+        if (match) {
+          type = match[1];
+        }
+
+      }
+
+      return {
+
+        url: m,
+
+        type: type,
+
+        revoke: false
+
+      };
+
+    }
+
+
+    return null;
+
+  };
+
+
+  /* =========================================================
+     STATUS OWNER
+     ========================================================= */
+
+  Z.getStatusOwner = function (status) {
+
+    if (!status) return null;
+
+    return getUserById(
+      status.authorId ||
+      status.userId ||
+      status.ownerId
+    );
+
+  };
+
+
+  /* =========================================================
+     STATUS TIME
+     ========================================================= */
+
+  Z.statusTimeLabel = function (status) {
+
+    const t =
+      Number(status.createdAtMs) ||
+      Date.parse(status.createdAt || '') ||
+      Date.now();
+
+    const diff =
+      Math.max(
+        0,
+        Date.now() - t
+      );
+
+    const mins =
+      Math.floor(
+        diff / 60000
+      );
+
+    if (mins < 1) {
+      return 'Just now';
+    }
+
+    if (mins < 60) {
+      return mins + 'm ago';
+    }
+
+    const hrs =
+      Math.floor(
+        mins / 60
+      );
+
+    if (hrs < 24) {
+      return hrs + 'h ago';
+    }
+
+    return 'Today';
+
+  };
+
+
+  /* =========================================================
+     FULL-PAGE STATUS VIEWER STATE
+     ========================================================= */
+
+  Z._statusViewer = {
+    statuses: [],
+    selectedId: null,
+    loadedCount: 0,
+    pageSize: 50
+  };
+
+
+  /* =========================================================
+     STATUS VIEWER PAGE
+     ========================================================= */
+
+  Z.openStatusViewer = function (statusId) {
+
+    const statuses =
+      Z.getActiveZynixStatuses();
+
+    if (!statuses.length) {
+
+      Z.showToast(
+        'No active contact statuses.'
+      );
+
+      return;
+    }
+
+
+    const found =
+      statuses.find(function (s) {
+
+        return String(s.id) ===
+          String(statusId);
+
+      });
+
+
+    if (!found) {
+
+      Z.showToast(
+        'This status is no longer available.'
+      );
+
+      return;
+    }
+
+
+    Z._statusViewer.statuses =
+      statuses;
+
+    Z._statusViewer.selectedId =
+      found.id;
+
+    Z._statusViewer.loadedCount =
+      Math.min(
+        Z._statusViewer.pageSize,
+        statuses.length
+      );
+
+
+    Z.renderStatusViewerPage();
+
+  };
+
+
+  /* =========================================================
+     VIEWER RENDER
+     ========================================================= */
+
+  Z.renderStatusViewerPage = function () {
+
+    const host =
+      document.getElementById(
+        'app-container'
+      );
+
+    if (!host) return;
+
+
+    const state =
+      Z._statusViewer;
+
+    const statuses =
+      state.statuses;
+
+    const selected =
+      statuses.find(function (s) {
+
+        return String(s.id) ===
+          String(state.selectedId);
+
+      }) || statuses[0];
+
+
+    if (!selected) return;
+
+
+    const owner =
+      Z.getStatusOwner(selected) ||
+      {
+        name: 'ZYNIX User',
+        username: '',
+        avatar: ''
+      };
+
+
+    const visible =
+      statuses.slice(
+        0,
+        state.loadedCount
+      );
+
+
+    host.innerHTML = `
+
+      <div
+        id="zynix-status-page"
+        class="fixed inset-0 z-[99998]
+               bg-[#05070b] text-white
+               overflow-y-auto"
+      >
+
+        <div
+          class="min-h-full px-3 sm:px-5
+                 py-4 pb-20"
+        >
+
+          <!-- TOP BAR -->
+
+          <div
+            class="sticky top-0 z-20
+                   flex items-center
+                   justify-between
+                   gap-3
+                   bg-[#05070b]/95
+                   backdrop-blur-md
+                   border-b border-slate-800
+                   py-3 mb-4"
+          >
+
+            <button
+              type="button"
+              onclick="Z.closeStatusViewerPage()"
+              class="w-10 h-10 rounded-full
+                     bg-slate-900
+                     border border-slate-800
+                     text-slate-200"
+            >
+              <i class="fa-solid fa-arrow-left"></i>
+            </button>
+
+
+            <div
+              class="font-black text-sm"
+            >
+              ZYNIX Status
+            </div>
+
+
+            <div class="w-10"></div>
+
+          </div>
+
+
+          <!-- SELECTED STATUS -->
+
+          <section
+            id="zynix-selected-status"
+            class="max-w-3xl mx-auto"
+          >
+
+            <div
+              class="flex items-center
+                     gap-3 mb-4"
+            >
+
+              <div
+                class="w-11 h-11
+                       rounded-full
+                       overflow-hidden
+                       bg-slate-800
+                       border border-slate-700
+                       flex items-center
+                       justify-center"
+              >
+
+                ${
+                  owner.avatar
+                    ? `
+                      <img
+                        src="${esc(owner.avatar)}"
+                        class="w-full h-full
+                               object-cover"
+                        alt=""
+                      >
+                    `
+                    : `
+                      <span
+                        class="font-black"
+                      >
+                        ${esc(
+                          String(
+                            owner.name || 'Z'
+                          ).charAt(0)
+                        )}
+                      </span>
+                    `
+                }
+
+              </div>
+
+
+              <div>
+
+                <div
+                  class="font-bold text-sm"
+                >
+                  ${esc(
+                    owner.name ||
+                    'ZYNIX User'
+                  )}
+                </div>
+
+                <div
+                  class="text-[10px]
+                         text-slate-500"
+                >
+                  ${esc(
+                    Z.statusTimeLabel(
+                      selected
+                    )
+                  )}
+                </div>
+
+              </div>
+
+            </div>
+
+
+            <div
+              id="zynix-selected-status-media"
+              class="min-h-[360px]
+                     rounded-2xl
+                     border border-slate-800
+                     bg-[#0b0f16]
+                     flex items-center
+                     justify-center
+                     overflow-hidden"
+            >
+
+              <div
+                class="text-xs
+                       text-slate-500"
+              >
+                Loading status…
+              </div>
+
+            </div>
+
+
+            ${
+              selected.content
+                ? `
+                  <div
+                    class="mt-4
+                           bg-[#111827]
+                           border border-slate-800
+                           rounded-2xl
+                           p-4
+                           text-sm
+                           leading-relaxed
+                           whitespace-pre-wrap
+                           break-words"
+                  >
+                    ${esc(selected.content)}
+                  </div>
+                `
+                : ''
+            }
+
+
+            <!-- PREVIOUS / NEXT -->
+
+            <div
+              class="flex
+                     items-center
+                     justify-between
+                     mt-4"
+            >
+
+              <button
+                type="button"
+                onclick="Z.openPreviousStatus()"
+                class="w-11 h-11
+                       rounded-full
+                       bg-slate-900
+                       border border-slate-800
+                       text-xl"
+              >
+                ‹
+              </button>
+
+
+              <div
+                class="text-[10px]
+                       text-slate-500"
+              >
+                ${
+                  statuses.findIndex(
+                    s =>
+                      String(s.id) ===
+                      String(selected.id)
+                  ) + 1
+                }
+                /
+                ${statuses.length}
+              </div>
+
+
+              <button
+                type="button"
+                onclick="Z.openNextStatus()"
+                class="w-11 h-11
+                       rounded-full
+                       bg-slate-900
+                       border border-slate-800
+                       text-xl"
+              >
+                ›
+              </button>
+
+            </div>
+
+          </section>
+
+
+          <!-- CONTACT STATUS GRID -->
+
+          <section
+            class="max-w-3xl mx-auto mt-8"
+          >
+
+            <div
+              class="flex items-center
+                     justify-between mb-3"
+            >
+
+              <h3
+                class="font-black text-sm"
+              >
+                Other Contact Statuses
+              </h3>
+
+              <span
+                class="text-[10px]
+                       text-slate-500"
+              >
+                ${statuses.length} active
+              </span>
+
+            </div>
+
+
+            <div
+              id="zynix-status-grid"
+              class="grid
+                     grid-cols-5
+                     gap-x-2
+                     gap-y-5"
+            >
+
+              ${visible.map(
+                Z.statusGridCard
+              ).join('')}
+
+            </div>
+
+
+            ${
+              state.loadedCount <
+              statuses.length
+                ? `
+                  <div
+                    id="zynix-status-load-more"
+                    class="py-8 text-center
+                           text-[10px]
+                           text-slate-500"
+                  >
+                    Scroll down for more statuses…
+                  </div>
+                `
+                : ''
+            }
+
+          </section>
+
+
+        </div>
+
+
+        <!-- BACK TO TOP -->
+
+        <button
+          id="zynix-status-top-button"
+          type="button"
+          onclick="Z.statusViewerTop()"
+          class="hidden fixed
+                 right-4 bottom-5
+                 z-40
+                 w-11 h-11
+                 rounded-full
+                 bg-emerald-600
+                 text-black
+                 font-black
+                 shadow-2xl"
+          aria-label="Back to top"
+        >
+          ↑
+        </button>
+
+      </div>
+    `;
+
+
+    /*
+     * Load actual selected media asynchronously.
+     */
+    Z.loadSelectedStatusMedia(
+      selected
+    );
+
+
+    /*
+     * Viewer scroll handling.
+     */
+    const page =
+      document.getElementById(
+        'zynix-status-page'
+      );
+
+    if (page) {
+
+      page.addEventListener(
+        'scroll',
+        Z.handleStatusViewerScroll,
+        {
+          passive: true
+        }
+      );
+
+    }
+
+
+    /*
+     * Start at top.
+     */
+    if (page) {
+      page.scrollTop = 0;
+    }
+
+  };
+
+
+  /* =========================================================
+     STATUS GRID CARD
+     ========================================================= */
+
+  Z.statusGridCard = function (status) {
+
+    const owner =
+      Z.getStatusOwner(status) ||
+      {
+        name: 'ZYNIX User',
+        avatar: ''
+      };
+
+
+    const sid =
+      esc(status.id);
+
+
+    return `
+
+      <button
+        type="button"
+        onclick="Z.selectStatusFromGrid('${sid}')"
+        class="text-center
+               min-w-0"
+      >
+
+        <div
+          class="mx-auto
+                 w-14 h-14
+                 sm:w-16 sm:h-16
+                 rounded-full
+                 p-[2px]
+                 bg-gradient-to-tr
+                 from-emerald-500
+                 to-blue-500"
+        >
+
+          <div
+            class="w-full h-full
+                   rounded-full
+                   overflow-hidden
+                   bg-slate-900
+                   border-2
+                   border-[#05070b]
+                   flex items-center
+                   justify-center"
+          >
+
+            ${
+              owner.avatar
+                ? `
+                  <img
+                    src="${esc(owner.avatar)}"
+                    class="w-full h-full
+                           object-cover"
+                    alt=""
+                  >
+                `
+                : `
+                  <span
+                    class="font-black"
+                  >
+                    ${esc(
+                      String(
+                        owner.name ||
+                        'Z'
+                      ).charAt(0)
+                    )}
+                  </span>
+                `
+            }
+
+          </div>
+
+        </div>
+
+
+        <span
+          class="block mt-1
+                 text-[9px]
+                 text-slate-300
+                 truncate"
+        >
+          ${esc(
+            String(
+              owner.name ||
+              'ZYNIX'
+            ).split(' ')[0]
+          )}
+        </span>
+
+      </button>
+
+    `;
+
+  };
+
+
+  /* =========================================================
+     SELECT FROM GRID
+     ========================================================= */
+
+  Z.selectStatusFromGrid = function (statusId) {
+
+    const statuses =
+      Z._statusViewer.statuses;
+
+    const selected =
+      statuses.find(function (s) {
+
+        return String(s.id) ===
+          String(statusId);
+
+      });
+
+    if (!selected) return;
+
+    Z._statusViewer.selectedId =
+      selected.id;
+
+    Z.renderStatusViewerPage();
+
+  };
+
+
+  /* =========================================================
+     LOAD SELECTED MEDIA
+     ========================================================= */
+
+  Z.loadSelectedStatusMedia = async function (
+    status
+  ) {
+
+    const target =
+      document.getElementById(
+        'zynix-selected-status-media'
+      );
+
+    if (!target) return;
+
+
+    const media =
+      await Z.resolveStatusMedia(
+        status
+      );
+
+
+    if (!media) {
+
+      target.innerHTML = `
+
+        <div
+          class="px-6 py-16
+                 text-center"
+        >
+
+          <div
+            class="text-4xl mb-4"
+          >
+            Aa
+          </div>
+
+          <div
+            class="text-xs
+                   text-slate-500"
+          >
+            Text status
+          </div>
+
+        </div>
+
+      `;
+
+      return;
+
+    }
+
+
+    const type =
+      String(
+        media.type || ''
+      ).toLowerCase();
+
+
+    if (
+      type.indexOf('video/') === 0 ||
+      type === 'video/mp4' ||
+      type === 'video/webm'
+    ) {
+
+      target.innerHTML = `
+
+        <video
+          src="${esc(media.url)}"
+          controls
+          autoplay
+          playsinline
+          class="w-full
+                 max-h-[70vh]
+                 object-contain
+                 bg-black"
+        ></video>
+
+      `;
+
+    } else {
+
+      target.innerHTML = `
+
+        <img
+          src="${esc(media.url)}"
+          alt="Status"
+          class="w-full
+                 max-h-[70vh]
+                 object-contain
+                 bg-black"
+        >
+
+      `;
+
+    }
+
+  };
+
+
+  /* =========================================================
+     NEXT STATUS
+     ========================================================= */
+
+  Z.openNextStatus = function () {
+
+    const statuses =
+      Z._statusViewer.statuses;
+
+    if (!statuses.length) return;
+
+    const index =
+      statuses.findIndex(function (s) {
+
+        return String(s.id) ===
+          String(
+            Z._statusViewer.selectedId
+          );
+
+      });
+
+    if (
+      index < 0 ||
+      index >= statuses.length - 1
+    ) {
+
+      return;
+
+    }
+
+    Z._statusViewer.selectedId =
+      statuses[index + 1].id;
+
+    Z.renderStatusViewerPage();
+
+  };
+
+
+  /* =========================================================
+     PREVIOUS STATUS
+     ========================================================= */
+
+  Z.openPreviousStatus = function () {
+
+    const statuses =
+      Z._statusViewer.statuses;
+
+    if (!statuses.length) return;
+
+    const index =
+      statuses.findIndex(function (s) {
+
+        return String(s.id) ===
+          String(
+            Z._statusViewer.selectedId
+          );
+
+      });
+
+    if (index <= 0) {
+      return;
+    }
+
+    Z._statusViewer.selectedId =
+      statuses[index - 1].id;
+
+    Z.renderStatusViewerPage();
+
+  };
+
+
+  /* =========================================================
+     INFINITE / PROGRESSIVE STATUS LOADING
+     ========================================================= */
+
+  Z.handleStatusViewerScroll = function () {
+
+    const page =
+      document.getElementById(
+        'zynix-status-page'
+      );
+
+    if (!page) return;
+
+
+    /*
+     * Back-to-top arrow
+     */
+    const topButton =
+      document.getElementById(
+        'zynix-status-top-button'
+      );
+
+    if (topButton) {
+
+      if (page.scrollTop > 350) {
+        topButton.classList.remove(
+          'hidden'
         );
       } else {
-        home.appendChild(
-          wrapper.firstElementChild
+        topButton.classList.add(
+          'hidden'
         );
+      }
+
+    }
+
+
+    /*
+     * Progressive loading
+     */
+    const state =
+      Z._statusViewer;
+
+    if (
+      state.loadedCount >=
+      state.statuses.length
+    ) {
+
+      return;
+
+    }
+
+
+    if (
+      page.scrollTop +
+      page.clientHeight >=
+      page.scrollHeight - 500
+    ) {
+
+      state.loadedCount =
+        Math.min(
+          state.loadedCount +
+          state.pageSize,
+          state.statuses.length
+        );
+
+
+      const grid =
+        document.getElementById(
+          'zynix-status-grid'
+        );
+
+      if (grid) {
+
+        const visible =
+          state.statuses.slice(
+            0,
+            state.loadedCount
+          );
+
+        grid.innerHTML =
+          visible.map(
+            Z.statusGridCard
+          ).join('');
+
+      }
+
+
+      if (
+        state.loadedCount >=
+        state.statuses.length
+      ) {
+
+        document
+          .getElementById(
+            'zynix-status-load-more'
+          )
+          ?.remove();
+
+      }
+
+    }
+
+  };
+
+
+  /* =========================================================
+     BACK TO TOP
+     ========================================================= */
+
+  Z.statusViewerTop = function () {
+
+    const page =
+      document.getElementById(
+        'zynix-status-page'
+      );
+
+    if (!page) return;
+
+    page.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+
+  };
+
+
+  /* =========================================================
+     CLOSE STATUS PAGE
+     ========================================================= */
+
+  Z.closeStatusViewerPage = function () {
+
+    const page =
+      document.getElementById(
+        'zynix-status-page'
+      );
+
+    if (page) {
+
+      page.remove();
+
+    }
+
+    if (
+      typeof Z.showView === 'function'
+    ) {
+
+      Z.showView('home');
+
+    }
+
+  };
+
+
+  /*
+   * Compatibility name.
+   */
+  Z.closeStatusViewer =
+    Z.closeStatusViewerPage;
+
+
+  /* =========================================================
+     CLEAN OLD HOME WELCOME + STATUS ROW
+     ========================================================= */
+
+  Z.cleanHomeStatusMarkup = function (html) {
+
+    if (!html) return html;
+
+    const wrapper =
+      document.createElement('div');
+
+    wrapper.innerHTML =
+      String(html);
+
+
+    /*
+     * Remove any Home block whose heading is
+     * exactly "Welcome to ZYNIX".
+     */
+    Array.from(
+      wrapper.querySelectorAll('h1,h2,h3,h4')
+    ).forEach(function (heading) {
+
+      const text =
+        (heading.textContent || '')
+          .trim()
+          .replace(/\s+/g, ' ');
+
+      if (
+        text === 'Welcome to ZYNIX'
+      ) {
+
+        let node =
+          heading;
+
+        /*
+         * Find the nearest obvious card.
+         */
+        for (
+          let i = 0;
+          i < 6 && node.parentElement;
+          i++
+        ) {
+
+          const parent =
+            node.parentElement;
+
+          const cls =
+            String(
+              parent.className || ''
+            );
+
+          if (
+            cls.indexOf('bg-[#111827]') >= 0 &&
+            cls.indexOf('rounded-2xl') >= 0
+          ) {
+
+            node =
+              parent;
+
+            break;
+
+          }
+
+          node =
+            parent;
+
+        }
+
+
+        if (
+          node &&
+          node !== wrapper
+        ) {
+
+          node.remove();
+
+        }
+
+      }
+
+    });
+
+
+    /*
+     * Remove the old status row.
+     */
+    Array.from(
+      wrapper.querySelectorAll(
+        'div.flex.items-center.gap-3.overflow-x-auto'
+      )
+    ).forEach(function (row) {
+
+      const hasAddStatus =
+        (row.textContent || '')
+          .toLowerCase()
+          .indexOf('status') >= 0;
+
+      if (hasAddStatus) {
+        row.remove();
+      }
+
+    });
+
+
+    return wrapper.innerHTML;
+
+  };
+
+
+  /* =========================================================
+     BUILD NEW HOME STATUS ROW
+     ========================================================= */
+
+  Z.buildHomeStatusRow = function () {
+
+    const statuses =
+      Z.getActiveZynixStatuses();
+
+
+    const circles =
+      statuses.map(function (status) {
+
+        const owner =
+          Z.getStatusOwner(status) ||
+          {
+            name: 'ZYNIX User',
+            avatar: ''
+          };
+
+
+        return `
+
+          <button
+            type="button"
+            onclick="Z.openStatusViewer('${esc(status.id)}')"
+            class="shrink-0
+                   w-[72px]
+                   text-center"
+          >
+
+            <div
+              class="mx-auto
+                     w-14 h-14
+                     rounded-full
+                     p-[2px]
+                     bg-gradient-to-tr
+                     from-emerald-500
+                     to-blue-500"
+            >
+
+              <div
+                class="w-full h-full
+                       rounded-full
+                       overflow-hidden
+                       bg-slate-900
+                       border-2
+                       border-[#090d16]
+                       flex items-center
+                       justify-center"
+              >
+
+                ${
+                  owner.avatar
+                    ? `
+                      <img
+                        src="${esc(owner.avatar)}"
+                        class="w-full h-full
+                               object-cover"
+                        alt=""
+                      >
+                    `
+                    : `
+                      <span
+                        class="font-black
+                               text-white"
+                      >
+                        ${esc(
+                          String(
+                            owner.name ||
+                            'Z'
+                          ).charAt(0)
+                        )}
+                      </span>
+                    `
+                }
+
+              </div>
+
+            </div>
+
+
+            <span
+              class="block mt-1
+                     text-[10px]
+                     text-slate-300
+                     truncate"
+            >
+              ${esc(
+                String(
+                  owner.name ||
+                  'ZYNIX'
+                ).split(' ')[0]
+              )}
+            </span>
+
+          </button>
+
+        `;
+
+      }).join('');
+
+
+    return `
+
+      <section
+        class="w-full
+               border-b
+               border-slate-800/70
+               pb-3 mb-2"
+      >
+
+        <div
+          class="flex
+                 items-center
+                 gap-3
+                 overflow-x-auto
+                 scrollbar-none
+                 pb-1"
+        >
+
+          <!-- ADD STATUS -->
+
+          <button
+            type="button"
+            onclick="Z.openCreateStatusModal()"
+            class="shrink-0
+                   w-[72px]
+                   text-center"
+          >
+
+            <div
+              class="mx-auto
+                     w-14 h-14
+                     rounded-full
+                     bg-slate-800
+                     border-2
+                     border-dashed
+                     border-emerald-500
+                     flex items-center
+                     justify-center
+                     text-emerald-400"
+            >
+
+              <i
+                class="fa-solid fa-plus
+                       text-base"
+              ></i>
+
+            </div>
+
+
+            <span
+              class="block mt-1
+                     text-[10px]
+                     text-slate-300"
+            >
+              Add Status
+            </span>
+
+          </button>
+
+
+          ${circles}
+
+        </div>
+
+      </section>
+
+    `;
+
+  };
+
+
+  /* =========================================================
+     FINAL HOME RENDER OVERRIDE
+     ---------------------------------------------------------
+     We preserve the existing Home content and only:
+     - remove Welcome block
+     - remove old status row
+     - insert the new status row
+     - filter status-type records from normal feed
+     ========================================================= */
+
+  const previousHomeRenderer =
+    Z.renderHomePatched;
+
+
+  Z.renderHomePatched = function () {
+
+    let html = '';
+
+    try {
+
+      if (
+        typeof previousHomeRenderer ===
+        'function'
+      ) {
+
+        html =
+          previousHomeRenderer.call(
+            Z
+          );
+
+      }
+
+    } catch (error) {
+
+      console.error(
+        'ZYNIX previous Home renderer error:',
+        error
+      );
+
+      html = '';
+
+    }
+
+
+    /*
+     * If old renderer failed,
+     * don't destroy Home.
+     */
+    if (!html) {
+
+      return `
+        <div
+          class="bg-[#111827]
+                 border border-slate-800
+                 rounded-2xl p-4"
+        >
+          <p
+            class="text-xs text-slate-400"
+          >
+            ZYNIX Home is temporarily unavailable.
+          </p>
+        </div>
+      `;
+
+    }
+
+
+    html =
+      Z.cleanHomeStatusMarkup(
+        html
+      );
+
+
+    /*
+     * Remove any accidentally created status
+     * cards from the normal Home post feed.
+     */
+    const wrap =
+      document.createElement('div');
+
+    wrap.innerHTML =
+      html;
+
+
+    wrap
+      .querySelectorAll(
+        '[data-status-post="true"]'
+      )
+      .forEach(function (el) {
+        el.remove();
+      });
+
+
+    /*
+     * Insert the new status row
+     * before the first Home composer/feed block.
+     */
+    const statusRow =
+      document.createElement('div');
+
+    statusRow.innerHTML =
+      Z.buildHomeStatusRow();
+
+
+    const firstCard =
+      wrap.firstElementChild;
+
+    if (firstCard) {
+
+      wrap.insertBefore(
+        statusRow.firstElementChild,
+        firstCard
+      );
+
+    } else {
+
+      wrap.appendChild(
+        statusRow.firstElementChild
+      );
+
+    }
+
+
+    return wrap.innerHTML;
+
+  };
+
+
+  /* =========================================================
+     MAKE ALL STATUS CLICKS USE THE NEW VIEWER
+     ========================================================= */
+
+  /*
+   * Existing old renderer may still have
+   * showToast status click strings.
+   *
+   * The final Home renderer above removes the old row,
+   * so no old status click remains in Home.
+   */
+
+
+  /* =========================================================
+     DO NOT ALLOW STATUS OBJECTS INTO POSTS
+     ========================================================= */
+
+  const originalSavePosts =
+    Z.DB.savePosts;
+
+
+  if (
+    typeof originalSavePosts ===
+    'function' &&
+    !Z.DB.__zynixStatusGuard
+  ) {
+
+    Z.DB.savePosts =
+      function (posts) {
+
+        const clean =
+          arr(posts).filter(function (post) {
+
+            /*
+             * Never save objects explicitly marked
+             * as statuses into normal posts.
+             */
+            if (
+              post &&
+              (
+                post.type === 'status' ||
+                post.isStatus === true ||
+                post.statusType === 'status'
+              )
+            ) {
+
+              return false;
+
+            }
+
+            return true;
+
+          });
+
+
+        return originalSavePosts.call(
+          Z.DB,
+          clean
+        );
+
+      };
+
+
+    Z.DB.__zynixStatusGuard =
+      true;
+
+  }
+
+
+  /* =========================================================
+     STATUS CSS
+     ========================================================= */
+
+  if (
+    !document.getElementById(
+      'zynix-final-status-style'
+    )
+  ) {
+
+    const style =
+      document.createElement('style');
+
+    style.id =
+      'zynix-final-status-style';
+
+    style.textContent = `
+
+      .scrollbar-none {
+        scrollbar-width: none;
+      }
+
+      .scrollbar-none::-webkit-scrollbar {
+        display: none;
+      }
+
+      #zynix-status-page button {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      #zynix-status-page img,
+      #zynix-status-page video {
+        user-select: none;
+      }
+
+      @media (max-width: 520px) {
+
+        #zynix-status-page
+        #zynix-selected-status-media {
+          min-height: 320px;
+        }
+
+      }
+
+    `;
+
+    document.head.appendChild(
+      style
+    );
+
+  }
+
+
+  /* =========================================================
+     CLEANUP OLD STATUS OBJECT URL
+     ========================================================= */
+
+  window.addEventListener(
+    'beforeunload',
+    function () {
+      clearStatusPreviewURL();
+    }
+  );
+
+
+  /* =========================================================
+     RE-RENDER HOME WHEN PAGE LOADS
+     ========================================================= */
+
+  function refreshHomeIfNeeded() {
+
+    try {
+
+      if (
+        Z.State &&
+        Z.State.currentView === 'home'
+      ) {
+
+        if (
+          typeof Z.showView ===
+          'function'
+        ) {
+
+          Z.showView('home');
+
+        }
+
       }
 
     } catch (e) {
+
       console.warn(
-        'ZYNIX: Home status update skipped',
+        'ZYNIX Home status refresh skipped',
         e
       );
+
     }
-  };
-
-
-  /* =========================================================
-     14. RUN AFTER DOM / PAGE LOAD
-     ========================================================= */
-
-  function runHomeUpdate() {
-
-    setTimeout(function () {
-      Z.applyHomeStatusUpdate();
-    }, 100);
 
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener(
-      'DOMContentLoaded',
-      runHomeUpdate
-    );
-  } else {
-    runHomeUpdate();
-  }
-
-
-  /* =========================================================
-     15. RE-APPLY WHEN HOME OPENS
-     ========================================================= */
-
-  const oldRenderHome =
-    Z.renderHome;
 
   if (
-    typeof oldRenderHome === 'function' &&
-    !oldRenderHome.__zynixStatusWrapped
+    document.readyState ===
+    'loading'
   ) {
 
-    const wrappedHome = function () {
+    document.addEventListener(
+      'DOMContentLoaded',
+      function () {
+        setTimeout(
+          refreshHomeIfNeeded,
+          80
+        );
+      }
+    );
 
-      const result =
-        oldRenderHome.apply(this, arguments);
+  } else {
 
-      setTimeout(function () {
-        Z.applyHomeStatusUpdate();
-      }, 50);
+    setTimeout(
+      refreshHomeIfNeeded,
+      80
+    );
 
-      return result;
-    };
-
-    wrappedHome.__zynixStatusWrapped = true;
-
-    Z.renderHome = wrappedHome;
   }
 
 
@@ -3846,8 +5620,7 @@
 </script>
 
 <!-- =========================================================
- END: ZYNIX HOME CONTROLLED UPDATE
- ========================================================= -->
-</body>
-</html>
-
+ END: ZYNIX HOME STATUS FINAL CONTROLLED CORRECTION
+ ========================================================= -->  
+   </body>
+</html>   
