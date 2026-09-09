@@ -2257,6 +2257,613 @@
  Z.renderPackagesPatched=function(){return Z._renderSafe('packages',function(){const u=user();const active=typeof Z.packageKey==='function'?Z.packageKey(u?.package):'0';const card=(key,name,price,desc,cls)=>'<div class="bg-[#111827] border '+cls+' rounded-2xl p-4 space-y-2 shadow-xl"><div class="flex justify-between items-center"><h3 class="font-bold text-sm text-white">'+name+'</h3><span class="text-xs font-black text-emerald-400">$'+price+'</span></div><p class="text-[10px] text-slate-300">'+desc+'</p><button type="button" onclick="Z.showToast(\''+(active===key?'Current plan':'Payment/backend activation will be connected in the next backend stage.')+'\')" class="w-full bg-slate-900 border border-slate-800 text-slate-200 font-bold py-2 rounded-xl text-xs">'+(active===key?'Current Plan':'Select')+'</button></div>';return '<div class="space-y-4"><div class="flex items-center gap-2"><button type="button" onclick="Z.showView(\'profile\')" class="bg-slate-900 border border-slate-800 text-slate-300 px-3 py-2 rounded-xl text-xs"><i class="fa-solid fa-arrow-left"></i></button><h2 class="font-black text-sm text-white">ZYNIX Packages</h2></div>'+card('0','Free','0','Browse and create. Share, follow and circle-join rewards remain available; likes do not earn bounty on Free.','border-slate-800')+card('1','ZYNIX $1 Monthly','1','Active monthly plan: like earning enabled. Level 1 gets $0.25 and Level 2 gets $0.25 recurring commission; company share $0.50.','border-emerald-500/50')+card('10','Creator $10','10','Paid creator tier with enhanced reward limits.','border-blue-500/30')+card('20','Creator $20','20','Paid creator tier with enhanced reward limits.','border-blue-500/30')+card('40','Creator $40','40','Paid creator tier with enhanced reward limits.','border-blue-500/30')+card('100','Pro $100','100','Highest existing tier in the current frontend model.','border-purple-500/30')+'</div>';});};
 })();
 </script>
+    <!-- =========================================================
+     ZYNIX MOBILE STABILITY FIX
+     Add AFTER the latest Segment 1 + Segment 2
+     Place immediately before </body>
+     ========================================================= -->
+<script>
+(function () {
+  'use strict';
+
+  window.Z = window.Z || {};
+
+  /* ---------------------------------------------------------
+     1. SAFE DATA NORMALIZATION
+     Prevent old/corrupted mobile localStorage from breaking
+     Home, Spark, People, Circles and other sections.
+     --------------------------------------------------------- */
+
+  function safeArray(value, fallback) {
+    return Array.isArray(value) ? value : (fallback || []);
+  }
+
+  function safeObject(value, fallback) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value
+      : (fallback || {});
+  }
+
+  function readArray(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return safeArray(fallback, []);
+      const parsed = JSON.parse(raw);
+      return safeArray(parsed, fallback);
+    } catch (e) {
+      console.warn('[ZYNIX] Recovered invalid local data:', key, e);
+      return safeArray(fallback, []);
+    }
+  }
+
+  /* Preserve original DB behavior but make reads mobile-safe. */
+  if (Z.DB) {
+
+    const originalGetUsers = Z.DB.getUsers;
+    const originalGetPosts = Z.DB.getPosts;
+    const originalGetSparks = Z.DB.getSparks;
+    const originalGetStatuses = Z.DB.getStatuses;
+    const originalGetCircles = Z.DB.getCircles;
+
+    Z.DB.getUsers = function () {
+      try {
+        const result = originalGetUsers.call(this);
+        return Array.isArray(result) ? result : safeArray(Z.SeedData?.users, []);
+      } catch (e) {
+        console.warn('[ZYNIX] Users recovered:', e);
+        return safeArray(Z.SeedData?.users, []);
+      }
+    };
+
+    Z.DB.getPosts = function () {
+      try {
+        const result = originalGetPosts.call(this);
+        return Array.isArray(result) ? result : safeArray(Z.SeedData?.posts, []);
+      } catch (e) {
+        console.warn('[ZYNIX] Posts recovered:', e);
+        return safeArray(Z.SeedData?.posts, []);
+      }
+    };
+
+    Z.DB.getSparks = function () {
+      try {
+        const result = originalGetSparks.call(this);
+        return Array.isArray(result) ? result : safeArray(Z.SeedData?.sparks, []);
+      } catch (e) {
+        console.warn('[ZYNIX] Sparks recovered:', e);
+        return safeArray(Z.SeedData?.sparks, []);
+      }
+    };
+
+    Z.DB.getStatuses = function () {
+      try {
+        const result = originalGetStatuses.call(this);
+        return Array.isArray(result) ? result : safeArray(Z.SeedData?.statuses, []);
+      } catch (e) {
+        console.warn('[ZYNIX] Statuses recovered:', e);
+        return safeArray(Z.SeedData?.statuses, []);
+      }
+    };
+
+    Z.DB.getCircles = function () {
+      try {
+        const result = originalGetCircles.call(this);
+        return Array.isArray(result) ? result : safeArray(Z.SeedData?.circles, []);
+      } catch (e) {
+        console.warn('[ZYNIX] Circles recovered:', e);
+        return safeArray(Z.SeedData?.circles, []);
+      }
+    };
+  }
+
+  /* ---------------------------------------------------------
+     2. SAFE USER SESSION
+     --------------------------------------------------------- */
+
+  try {
+    if (Z.DB && typeof Z.DB.getCurrentUser === 'function') {
+      const current = Z.DB.getCurrentUser();
+      Z.State = Z.State || {};
+      Z.State.currentUser = current || null;
+    }
+  } catch (e) {
+    console.warn('[ZYNIX] Session recovery:', e);
+    Z.State = Z.State || {};
+    Z.State.currentUser = null;
+  }
+
+  /* ---------------------------------------------------------
+     3. SAFE ARRAY CLEANING
+     Invalid individual records should not kill the entire
+     Home/Spark renderer.
+     --------------------------------------------------------- */
+
+  function cleanUsers() {
+    return safeArray(Z.DB?.getUsers?.(), []).filter(function (u) {
+      return u && typeof u === 'object';
+    });
+  }
+
+  function cleanPosts() {
+    return safeArray(Z.DB?.getPosts?.(), []).filter(function (p) {
+      return p && typeof p === 'object';
+    });
+  }
+
+  function cleanSparks() {
+    return safeArray(Z.DB?.getSparks?.(), []).filter(function (s) {
+      return s && typeof s === 'object';
+    });
+  }
+
+  /* ---------------------------------------------------------
+     4. MOBILE-SAFE HOME
+     Keep the existing Home renderer/content.
+     Only protect it from runtime exceptions.
+     --------------------------------------------------------- */
+
+  const originalStableHome =
+    typeof Z.renderHomePatched === 'function'
+      ? Z.renderHomePatched
+      : null;
+
+  if (originalStableHome) {
+    Z.renderHomePatched = function () {
+      try {
+        cleanUsers();
+        cleanPosts();
+
+        const html = originalStableHome.call(Z);
+
+        if (typeof html === 'string' && html.trim()) {
+          return html;
+        }
+
+        throw new Error('Home renderer returned empty content');
+      } catch (error) {
+        console.warn('[ZYNIX] Home renderer recovered:', error);
+
+        const users = cleanUsers();
+        const posts = cleanPosts();
+        const user = Z.State?.currentUser || users[0] || {};
+
+        let postHtml = '';
+
+        posts.forEach(function (p) {
+          try {
+            const author =
+              users.find(function (u) {
+                return u.id === p.authorId;
+              }) || user || {};
+
+            postHtml += `
+              <article class="bg-[#111827] border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+                <div class="flex items-center gap-3">
+                  <img
+                    src="${Z.safe ? Z.safe(author.avatar || '') : (author.avatar || '')}"
+                    class="w-10 h-10 rounded-full object-cover border border-slate-700"
+                    onerror="this.style.display='none'"
+                  >
+                  <div class="min-w-0">
+                    <h3 class="font-bold text-xs text-white truncate">
+                      ${Z.safe ? Z.safe(author.name || 'ZYNIX User') : (author.name || 'ZYNIX User')}
+                    </h3>
+                    <p class="text-[10px] text-slate-500">
+                      @${Z.safe ? Z.safe(author.username || 'user') : (author.username || 'user')}
+                    </p>
+                  </div>
+                </div>
+
+                <p class="text-sm text-slate-200 leading-relaxed">
+                  ${Z.safe ? Z.safe(p.content || '') : (p.content || '')}
+                </p>
+
+                ${
+                  p.media
+                    ? `<img
+                         src="${Z.safe ? Z.safe(p.media) : p.media}"
+                         class="w-full rounded-xl max-h-[420px] object-cover"
+                         loading="lazy"
+                         onerror="this.style.display='none'"
+                       >`
+                    : ''
+                }
+
+                <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                  <span class="text-[10px] text-slate-500">
+                    ${Number(p.shares || 0)} Shares
+                  </span>
+                  <button
+                    type="button"
+                    onclick="Z.showToast && Z.showToast('Post loaded successfully.')"
+                    class="text-xs text-emerald-400 font-bold"
+                  >
+                    View
+                  </button>
+                </div>
+              </article>
+            `;
+          } catch (itemError) {
+            console.warn('[ZYNIX] Skipped invalid post:', itemError);
+          }
+        });
+
+        return `
+          <div class="space-y-4">
+
+            <div class="bg-[#111827] border border-slate-800 rounded-2xl p-4">
+              <div class="flex items-center gap-3">
+                <img
+                  src="${Z.safe ? Z.safe(user.avatar || '') : (user.avatar || '')}"
+                  class="w-11 h-11 rounded-full object-cover border border-slate-700"
+                  onerror="this.style.display='none'"
+                >
+                <div>
+                  <h2 class="font-black text-base text-white">
+                    Welcome to ZYNIX
+                  </h2>
+                  <p class="text-[10px] text-slate-400">
+                    Independent social & creator ecosystem
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-[#111827] border border-slate-800 rounded-2xl p-3">
+              <button
+                type="button"
+                onclick="Z.expandInlineComposer ? Z.expandInlineComposer(this) : Z.openCreatePostModal && Z.openCreatePostModal()"
+                class="w-full bg-slate-950 border border-slate-800 text-slate-400 text-xs text-left px-3.5 py-3 rounded-xl"
+              >
+                What's on your mind?
+              </button>
+            </div>
+
+            <div class="space-y-4">
+              ${
+                postHtml ||
+                '<p class="text-center text-xs text-slate-500 py-10">No posts yet.</p>'
+              }
+            </div>
+
+          </div>
+        `;
+      }
+    };
+  }
+
+  /* ---------------------------------------------------------
+     5. MOBILE-SAFE SPARK
+     --------------------------------------------------------- */
+
+  const originalStableSpark =
+    typeof Z.renderSparkStreamPatched === 'function'
+      ? Z.renderSparkStreamPatched
+      : null;
+
+  if (originalStableSpark) {
+    Z.renderSparkStreamPatched = function () {
+      try {
+        cleanUsers();
+        cleanSparks();
+
+        const html = originalStableSpark.call(Z);
+
+        if (typeof html === 'string' && html.trim()) {
+          return html;
+        }
+
+        throw new Error('Spark renderer returned empty content');
+      } catch (error) {
+        console.warn('[ZYNIX] Spark renderer recovered:', error);
+
+        const users = cleanUsers();
+        const sparks = cleanSparks();
+
+        let html = '';
+
+        sparks.forEach(function (s) {
+          try {
+            const author =
+              users.find(function (u) {
+                return u.id === s.authorId;
+              }) || users[0] || {};
+
+            const video = s.videoUrl || s.video || '';
+
+            html += `
+              <article class="bg-[#111827] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+
+                <div class="relative bg-black w-full aspect-[9/16] max-h-[620px]">
+                  ${
+                    video
+                      ? `<video
+                           src="${Z.safe ? Z.safe(video) : video}"
+                           controls
+                           playsinline
+                           preload="metadata"
+                           class="w-full h-full object-contain bg-black"
+                         ></video>`
+                      : `
+                        <div class="w-full h-full flex items-center justify-center text-slate-500 text-xs">
+                          Spark video unavailable
+                        </div>
+                      `
+                  }
+                </div>
+
+                <div class="p-4 space-y-3">
+
+                  <div class="flex items-center gap-3">
+                    <img
+                      src="${Z.safe ? Z.safe(author.avatar || '') : (author.avatar || '')}"
+                      class="w-9 h-9 rounded-full object-cover border border-slate-700"
+                      onerror="this.style.display='none'"
+                    >
+                    <div>
+                      <h3 class="font-bold text-xs text-white">
+                        ${Z.safe ? Z.safe(author.name || 'ZYNIX Creator') : (author.name || 'ZYNIX Creator')}
+                      </h3>
+                      <p class="text-[10px] text-slate-500">
+                        @${Z.safe ? Z.safe(author.username || 'creator') : (author.username || 'creator')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p class="text-sm text-slate-200">
+                    ${Z.safe ? Z.safe(s.caption || '') : (s.caption || '')}
+                  </p>
+
+                  <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+                    <span class="text-[10px] text-slate-500">
+                      ${Number(s.likes || 0)} Likes
+                    </span>
+                    <span class="text-[10px] text-slate-500">
+                      ${Number(s.shares || 0)} Shares
+                    </span>
+                  </div>
+
+                </div>
+              </article>
+            `;
+          } catch (itemError) {
+            console.warn('[ZYNIX] Skipped invalid Spark:', itemError);
+          }
+        });
+
+        return `
+          <div class="space-y-4">
+
+            <div class="flex items-center justify-between px-1">
+              <h2 class="font-black text-sm text-white flex items-center">
+                <i class="fa-solid fa-bolt text-emerald-400 mr-2"></i>
+                ZYNIX Spark
+              </h2>
+
+              <button
+                type="button"
+                onclick="Z.openCreateSparkModal && Z.openCreateSparkModal()"
+                class="bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs px-3 py-2 rounded-xl"
+              >
+                Create Spark
+              </button>
+            </div>
+
+            ${
+              html ||
+              '<p class="text-center text-xs text-slate-500 py-10">No Sparks yet.</p>'
+            }
+
+          </div>
+        `;
+      }
+    };
+  }
+
+  /* ---------------------------------------------------------
+     6. UNIVERSAL SAFE VIEW SWITCHER
+     This is the main mobile navigation protection.
+     --------------------------------------------------------- */
+
+  const previousShowView = Z.showView;
+
+  Z.showView = function (viewName) {
+
+    const container = document.getElementById('app-container');
+
+    if (!container) {
+      console.warn('[ZYNIX] app-container not found.');
+      return;
+    }
+
+    Z.State = Z.State || {};
+    Z.State.currentView = viewName;
+
+    try {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    } catch (e) {
+      window.scrollTo(0, 0);
+    }
+
+    /* Active bottom navigation */
+    try {
+      document
+        .querySelectorAll('[id^="nav-btn-"]')
+        .forEach(function (button) {
+          button.classList.remove('text-emerald-400');
+        });
+
+      const activeButton =
+        document.getElementById('nav-btn-' + viewName);
+
+      if (activeButton) {
+        activeButton.classList.add('text-emerald-400');
+      }
+    } catch (e) {}
+
+    try {
+
+      if (viewName === 'home' && typeof Z.renderHomePatched === 'function') {
+        container.innerHTML = Z.renderHomePatched();
+        return;
+      }
+
+      if (viewName === 'spark' && typeof Z.renderSparkStreamPatched === 'function') {
+        container.innerHTML = Z.renderSparkStreamPatched();
+        return;
+      }
+
+      if (viewName === 'people' && typeof Z.renderPeoplePatched === 'function') {
+        container.innerHTML = Z.renderPeoplePatched();
+        return;
+      }
+
+      if (viewName === 'packages' && typeof Z.renderPackagesPatched === 'function') {
+        container.innerHTML = Z.renderPackagesPatched();
+        return;
+      }
+
+      if (viewName === 'calculator' && typeof Z.renderCalculatorPatched === 'function') {
+        container.innerHTML = Z.renderCalculatorPatched();
+        if (typeof Z.calculateEstimate === 'function') {
+          try { Z.calculateEstimate(); } catch (e) {}
+        }
+        return;
+      }
+
+      if (viewName === 'analytics' && typeof Z.renderAnalyticsPatched === 'function') {
+        container.innerHTML = Z.renderAnalyticsPatched();
+        return;
+      }
+
+      /* Fall back to the original ZYNIX routing for all other
+         existing sections. */
+      if (typeof previousShowView === 'function') {
+        previousShowView.call(Z, viewName);
+        return;
+      }
+
+    } catch (error) {
+
+      console.error('[ZYNIX] View recovery:', viewName, error);
+
+      /* Last-resort recovery: never leave mobile on a broken
+         blank section. Automatically return to Home. */
+
+      if (viewName !== 'home') {
+        try {
+          Z.State.currentView = 'home';
+
+          if (typeof Z.renderHomePatched === 'function') {
+            container.innerHTML = Z.renderHomePatched();
+            return;
+          }
+        } catch (homeError) {
+          console.error('[ZYNIX] Home recovery failed:', homeError);
+        }
+      }
+
+      container.innerHTML = `
+        <div class="bg-[#111827] border border-slate-800 rounded-2xl p-5 text-center space-y-3">
+          <div class="text-emerald-400 text-2xl">✓</div>
+          <h3 class="font-black text-white text-sm">
+            ZYNIX is ready
+          </h3>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            The section is being refreshed safely.
+          </p>
+          <button
+            type="button"
+            onclick="Z.showView('home')"
+            class="bg-emerald-600 text-black font-bold text-xs px-4 py-2.5 rounded-xl"
+          >
+            Back to Home
+          </button>
+        </div>
+      `;
+    }
+  };
+
+  /* ---------------------------------------------------------
+     7. MOBILE RESIZE / VISIBILITY RECOVERY
+     Some mobile browsers restore the page from cache after
+     navigation. Re-render only the currently active view.
+     --------------------------------------------------------- */
+
+  let resizeTimer = null;
+
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+
+    resizeTimer = setTimeout(function () {
+      try {
+        const view = Z.State?.currentView;
+
+        if (!view) return;
+
+        const container = document.getElementById('app-container');
+
+        if (!container) return;
+
+        if (!container.innerHTML.trim()) {
+          Z.showView(view);
+        }
+      } catch (e) {}
+    }, 180);
+  });
+
+  window.addEventListener('pageshow', function () {
+    setTimeout(function () {
+      try {
+        const view = Z.State?.currentView || 'home';
+        const container = document.getElementById('app-container');
+
+        if (container && !container.innerHTML.trim()) {
+          Z.showView(view);
+        }
+      } catch (e) {}
+    }, 80);
+  });
+
+  /* ---------------------------------------------------------
+     8. FINAL BOOT SAFETY
+     --------------------------------------------------------- */
+
+  function zynixMobileBoot() {
+    try {
+      Z.State = Z.State || {};
+
+      if (!Z.State.currentView) {
+        Z.State.currentView = 'home';
+      }
+
+      const container = document.getElementById('app-container');
+
+      if (
+        container &&
+        (!container.innerHTML || !container.innerHTML.trim())
+      ) {
+        Z.showView(Z.State.currentView || 'home');
+      }
+
+    } catch (error) {
+      console.warn('[ZYNIX] Mobile boot recovery:', error);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () {
+      setTimeout(zynixMobileBoot, 120);
+    });
+  } else {
+    setTimeout(zynixMobileBoot, 120);
+  }
+
+})();
+</script>
 </body>
 </html>
 
