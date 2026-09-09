@@ -5569,5 +5569,414 @@
 
 })();
 </script>
+    <!-- =========================================================
+ ZYNIX STATUS — TARGETED FINAL CORRECTION
+ 1. REMOVE ONLY OLD DUPLICATE STATUS ROW
+ 2. KEEP NEW FIRST STATUS ROW + HORIZONTAL SCROLL
+ 3. FIX VIDEO VIEWER PREVIOUS/NEXT LAYER
+ 4. KEEP STATUS VIEWER PAGE
+ ========================================================= -->
+<script>
+(function () {
+  'use strict';
+
+  const Z = window.Z;
+  if (!Z) return;
+
+  /* =========================================================
+     1. REMOVE ONLY THE OLD STATUS ROW
+     ========================================================= */
+
+  Z.removeDuplicateOldStatusRow = function () {
+
+    const newRow =
+      document.getElementById('zynix-home-status-row');
+
+    /*
+      Find old status rows by their old behaviour:
+      old row used showToast() when a status was clicked.
+      The NEW row has its own ID and is never removed.
+    */
+    document.querySelectorAll(
+      '#app-container .overflow-x-auto'
+    ).forEach(function (row) {
+
+      if (newRow && row === newRow) return;
+
+      const clickable =
+        row.querySelector('[onclick]');
+
+      if (!clickable) return;
+
+      const code =
+        clickable.getAttribute('onclick') || '';
+
+      /*
+        Old status row:
+        onclick="Z.showToast(...)"
+      */
+      if (
+        code.indexOf('Z.showToast') !== -1 &&
+        (
+          code.indexOf('status') !== -1 ||
+          code.indexOf('Status') !== -1
+        )
+      ) {
+        row.remove();
+      }
+    });
+
+    /*
+      Extra protection:
+      old row normally contains "Status" and the old
+      openCreateStatusModal button.
+    */
+    document.querySelectorAll(
+      '#app-container .flex.items-center'
+    ).forEach(function (row) {
+
+      if (
+        newRow &&
+        (
+          row === newRow ||
+          row.closest('#zynix-home-status-row')
+        )
+      ) return;
+
+      const code =
+        row.querySelector('[onclick]')
+          ?.getAttribute('onclick') || '';
+
+      if (
+        code.indexOf('Z.showToast') !== -1 &&
+        code.indexOf('status') !== -1
+      ) {
+        const horizontal =
+          row.closest('.overflow-x-auto');
+
+        if (horizontal) {
+          horizontal.remove();
+        }
+      }
+    });
+  };
+
+
+  /* =========================================================
+     2. PRESERVE NEW FIRST STATUS ROW
+     ========================================================= */
+
+  Z.ensureOnlyNewStatusRow = function () {
+
+    const row =
+      document.getElementById('zynix-home-status-row');
+
+    if (!row) return;
+
+    /*
+      Force horizontal scrolling only on the NEW row.
+      This does not create a second row.
+    */
+    const scroller =
+      row.querySelector('.overflow-x-auto');
+
+    if (scroller) {
+
+      scroller.style.display = 'flex';
+      scroller.style.flexWrap = 'nowrap';
+      scroller.style.overflowX = 'auto';
+      scroller.style.overflowY = 'hidden';
+      scroller.style.webkitOverflowScrolling = 'touch';
+      scroller.style.scrollbarWidth = 'none';
+      scroller.style.touchAction = 'pan-x';
+      scroller.style.overscrollBehaviorX = 'contain';
+    }
+  };
+
+
+  /* =========================================================
+     3. VIDEO VIEWER FIX
+     ========================================================= */
+
+  Z.fixStatusViewerVideoControls = function () {
+
+    const viewer =
+      document.getElementById(
+        'zynix-status-viewer-page'
+      );
+
+    if (!viewer) return;
+
+    /*
+      The status card becomes a controlled vertical layout.
+    */
+    const card =
+      viewer.querySelector(
+        '.max-w-5xl.mx-auto > div'
+      );
+
+    if (card) {
+
+      card.style.position = 'relative';
+      card.style.overflow = 'hidden';
+    }
+
+    /*
+      Video/media area must never cover the navigation buttons.
+    */
+    viewer.querySelectorAll('video').forEach(function (video) {
+
+      video.style.position = 'relative';
+      video.style.zIndex = '1';
+
+      video.style.display = 'block';
+      video.style.width = '100%';
+
+      /*
+        Leave guaranteed room for Previous / Next.
+      */
+      video.style.maxHeight =
+        'calc(70vh - 90px)';
+
+      video.style.height = 'auto';
+
+      video.style.objectFit = 'contain';
+
+      video.style.backgroundColor =
+        '#000';
+    });
+
+    /*
+      Navigation button bar.
+    */
+    viewer.querySelectorAll(
+      'button[onclick*="statusViewerPrevious"],' +
+      'button[onclick*="statusViewerNext"]'
+    ).forEach(function (button) {
+
+      button.style.position = 'relative';
+      button.style.zIndex = '50';
+    });
+
+    /*
+      Find the complete Previous/Next bar.
+    */
+    viewer.querySelectorAll(
+      '.border-t.border-slate-800'
+    ).forEach(function (bar) {
+
+      const hasPrevious =
+        bar.querySelector(
+          '[onclick*="statusViewerPrevious"]'
+        );
+
+      const hasNext =
+        bar.querySelector(
+          '[onclick*="statusViewerNext"]'
+        );
+
+      if (!hasPrevious && !hasNext) return;
+
+      bar.style.position = 'relative';
+      bar.style.zIndex = '60';
+
+      bar.style.background =
+        '#111827';
+
+      bar.style.minHeight =
+        '64px';
+
+      bar.style.display =
+        'flex';
+
+      bar.style.alignItems =
+        'center';
+
+      bar.style.flexShrink =
+        '0';
+    });
+  };
+
+
+  /* =========================================================
+     4. KEEP VIEWER + APPLY FIX AFTER IT RENDERS
+     ========================================================= */
+
+  const oldShowStatusViewer =
+    Z.showStatusViewerPage;
+
+  if (
+    typeof oldShowStatusViewer === 'function' &&
+    !Z.__statusViewerCorrectionInstalled
+  ) {
+
+    Z.__statusViewerCorrectionInstalled = true;
+
+    Z.showStatusViewerPage =
+      async function () {
+
+        const result =
+          await oldShowStatusViewer.apply(
+            Z,
+            arguments
+          );
+
+        setTimeout(function () {
+          Z.fixStatusViewerVideoControls();
+        }, 50);
+
+        setTimeout(function () {
+          Z.fixStatusViewerVideoControls();
+        }, 250);
+
+        return result;
+      };
+  }
+
+
+  /* =========================================================
+     5. HOME VIEW CLEANUP
+     ========================================================= */
+
+  const oldShowViewForStatus =
+    Z.showView;
+
+  if (
+    typeof oldShowViewForStatus === 'function' &&
+    !Z.__statusHomeCorrectionInstalled
+  ) {
+
+    Z.__statusHomeCorrectionInstalled = true;
+
+    Z.showView = function () {
+
+      const view =
+        arguments[0];
+
+      const result =
+        oldShowViewForStatus.apply(
+          Z,
+          arguments
+        );
+
+      if (view === 'home') {
+
+        /*
+          Wait until Home has rendered.
+        */
+        setTimeout(function () {
+
+          Z.removeDuplicateOldStatusRow();
+          Z.ensureOnlyNewStatusRow();
+
+        }, 30);
+
+        setTimeout(function () {
+
+          Z.removeDuplicateOldStatusRow();
+          Z.ensureOnlyNewStatusRow();
+
+        }, 180);
+
+      }
+
+      return result;
+    };
+  }
+
+
+  /* =========================================================
+     6. MOBILE + DESKTOP SAFETY CSS
+     ========================================================= */
+
+  if (!document.getElementById(
+    'zynix-status-final-correction-css'
+  )) {
+
+    const style =
+      document.createElement('style');
+
+    style.id =
+      'zynix-status-final-correction-css';
+
+    style.textContent = `
+
+      /* NEW status row only */
+      #zynix-home-status-row {
+        width: 100%;
+        overflow: visible !important;
+      }
+
+      #zynix-home-status-row
+      .overflow-x-auto {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        scrollbar-width: none !important;
+        -webkit-overflow-scrolling: touch !important;
+      }
+
+      #zynix-home-status-row
+      .overflow-x-auto::-webkit-scrollbar {
+        display: none !important;
+      }
+
+      /* Status viewer video */
+      #zynix-status-viewer-page video {
+        position: relative !important;
+        z-index: 1 !important;
+        max-height: calc(70vh - 90px) !important;
+        height: auto !important;
+      }
+
+      /* Previous / Next controls */
+      #zynix-status-viewer-page
+      button[onclick*="statusViewerPrevious"],
+      #zynix-status-viewer-page
+      button[onclick*="statusViewerNext"] {
+        position: relative !important;
+        z-index: 100 !important;
+      }
+
+      @media (max-width: 640px) {
+
+        #zynix-status-viewer-page video {
+          max-height: calc(62vh - 70px) !important;
+        }
+
+        #zynix-status-viewer-page
+        button[onclick*="statusViewerPrevious"],
+        #zynix-status-viewer-page
+        button[onclick*="statusViewerNext"] {
+          z-index: 100 !important;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+
+  /* =========================================================
+     7. RUN CLEANUP NOW
+     ========================================================= */
+
+  setTimeout(function () {
+
+    if (
+      Z.State &&
+      Z.State.currentView === 'home'
+    ) {
+
+      Z.removeDuplicateOldStatusRow();
+      Z.ensureOnlyNewStatusRow();
+
+    }
+
+  }, 100);
+
+})();
+</script>
    </body>
 </html>   
