@@ -1951,5 +1951,2643 @@
             Z.showView('circles');
         };
     </script>
+    <script>
+/* ============================================================
+   ZYNIX CONTROLLED SEGMENT 01
+   Scope:
+   - Navigation stability
+   - Home rendering safety
+   - Inline post composer
+   - Separate Status button/editor
+   - People search
+   IMPORTANT:
+   Do not remove or rewrite existing ZYNIX features.
+   ============================================================ */
+(function () {
+  'use strict';
+
+  const Z = window.Z;
+  if (!Z) return;
+
+  /* ---------- Safe HTML helper ---------- */
+  Z.safe = Z.safe || function (value) {
+    return String(value == null ? '' : value).replace(/[&<>'"]/g, function (c) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[c];
+    });
+  };
+
+  /* ---------- Current view refresh ---------- */
+  Z.refreshCurrentView = function () {
+    const current = Z.State.currentView || 'home';
+
+    try {
+      Z.showView(current);
+    } catch (error) {
+      console.error('ZYNIX refresh error:', error);
+    }
+
+    if (typeof Z.updateHeaderWallet === 'function') {
+      Z.updateHeaderWallet();
+    }
+  };
+
+  /* ---------- Stable navigation map ---------- */
+  Z._controlledRenderers = {
+    home: function () {
+      return typeof Z.renderHomeControlled === 'function'
+        ? Z.renderHomeControlled()
+        : (Z.Views && Z.Views.renderHome ? Z.Views.renderHome() : '');
+    },
+
+    spark: function () {
+      return typeof Z.renderSparkStreamControlled === 'function'
+        ? Z.renderSparkStreamControlled()
+        : (Z.Views && Z.Views.renderSparkStream ? Z.Views.renderSparkStream() : '');
+    },
+
+    people: function () {
+      return typeof Z.renderPeopleControlled === 'function'
+        ? Z.renderPeopleControlled()
+        : (Z.Views && Z.Views.renderPeople ? Z.Views.renderPeople() : '');
+    },
+
+    circles: function () {
+      return Z.Views && Z.Views.renderCirclesPage
+        ? Z.Views.renderCirclesPage()
+        : '';
+    },
+
+    profile: function () {
+      return Z.Views && Z.Views.renderProfileDashboard
+        ? Z.Views.renderProfileDashboard()
+        : '';
+    },
+
+    wallet: function () {
+      return Z.Views && Z.Views.renderWallet
+        ? Z.Views.renderWallet()
+        : '';
+    },
+
+    'bounty-settings': function () {
+      return Z.Views && Z.Views.renderBountySettings
+        ? Z.Views.renderBountySettings()
+        : '';
+    },
+
+    packages: function () {
+      return typeof Z.renderPackagesControlled === 'function'
+        ? Z.renderPackagesControlled()
+        : (Z.Views && Z.Views.renderPackages ? Z.Views.renderPackages() : '');
+    },
+
+    calculator: function () {
+      return typeof Z.renderCalculatorControlled === 'function'
+        ? Z.renderCalculatorControlled()
+        : (Z.Views && Z.Views.renderCalculator ? Z.Views.renderCalculator() : '');
+    },
+
+    referrals: function () {
+      return Z.Views && Z.Views.renderReferrals
+        ? Z.Views.renderReferrals()
+        : '';
+    },
+
+    analytics: function () {
+      return typeof Z.renderAnalyticsControlled === 'function'
+        ? Z.renderAnalyticsControlled()
+        : (Z.Views && Z.Views.renderAnalytics ? Z.Views.renderAnalytics() : '');
+    },
+
+    'admin-wall': function () {
+      return Z.Views && Z.Views.renderAdminWall
+        ? Z.Views.renderAdminWall()
+        : '';
+    }
+  };
+
+  /* ---------- Stable showView ---------- */
+  Z.showView = function (viewName) {
+
+    const container = document.getElementById('app-container');
+
+    if (!container) {
+      console.error('ZYNIX app-container not found.');
+      return;
+    }
+
+    const renderer =
+      Z._controlledRenderers[viewName] ||
+      Z._controlledRenderers.home;
+
+    try {
+
+      const html = renderer();
+
+      container.innerHTML =
+        html == null ? '' : String(html);
+
+      Z.State.currentView =
+        Z._controlledRenderers[viewName]
+          ? viewName
+          : 'home';
+
+      document
+        .querySelectorAll('[id^="nav-btn-"]')
+        .forEach(function (button) {
+          button.classList.remove('text-emerald-400');
+        });
+
+      const activeButton =
+        document.getElementById(
+          'nav-btn-' + Z.State.currentView
+        );
+
+      if (activeButton) {
+        activeButton.classList.add('text-emerald-400');
+      }
+
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+
+      if (
+        Z.State.currentView === 'calculator' &&
+        typeof Z.calculateEstimate === 'function'
+      ) {
+        setTimeout(function () {
+          Z.calculateEstimate();
+        }, 0);
+      }
+
+      if (typeof Z.updateHeaderWallet === 'function') {
+        Z.updateHeaderWallet();
+      }
+
+    } catch (error) {
+
+      console.error(
+        'ZYNIX controlled navigation error:',
+        viewName,
+        error
+      );
+
+      container.innerHTML = `
+        <div class="bg-[#111827]
+                    border border-rose-500/30
+                    rounded-2xl
+                    p-5
+                    text-xs
+                    text-rose-300
+                    space-y-2">
+
+          <strong class="block text-sm text-rose-400">
+            This section could not be displayed.
+          </strong>
+
+          <span class="block text-slate-400">
+            Your existing ZYNIX data and other sections were not changed.
+          </span>
+
+        </div>
+      `;
+    }
+  };
+
+  /* ---------- File reader for frontend demo ---------- */
+  Z.readLocalMedia = function (file, callback) {
+
+    if (!file) {
+      callback('');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = function () {
+      callback(String(reader.result || ''));
+    };
+
+    reader.onerror = function () {
+      if (typeof Z.showToast === 'function') {
+        Z.showToast('Could not read the selected file.');
+      }
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  /* ============================================================
+     INLINE POST COMPOSER
+     ============================================================ */
+
+  Z.expandInlineComposer = function () {
+
+    if (!Z.State.currentUser) {
+
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
+      }
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast('Please log in to create a post.');
+      }
+
+      return;
+    }
+
+    const host =
+      document.getElementById('zynix-inline-composer');
+
+    if (!host) return;
+
+    const avatar =
+      Z.safe(
+        Z.State.currentUser.avatar ||
+        ''
+      );
+
+    host.innerHTML = `
+      <div class="flex items-start gap-3">
+
+        <img
+          src="${avatar}"
+          class="w-9 h-9 rounded-full object-cover shrink-0"
+          alt="Your profile"
+        >
+
+        <div class="flex-1 space-y-2">
+
+          <textarea
+            id="inline-post-content"
+            rows="6"
+            autofocus
+            class="w-full
+                   min-h-[150px]
+                   max-h-60
+                   overflow-y-auto
+                   resize-none
+                   bg-slate-950
+                   border border-slate-800
+                   text-white
+                   text-xs
+                   rounded-xl
+                   px-3
+                   py-3
+                   focus:outline-none
+                   focus:border-emerald-500"
+            placeholder="Share a thought…"
+          ></textarea>
+
+          <div class="flex flex-wrap items-center gap-2">
+
+            <button
+              type="button"
+              onclick="document.getElementById('inline-post-file').click()"
+              class="bg-slate-900
+                     border border-slate-800
+                     text-slate-300
+                     text-[10px]
+                     font-bold
+                     px-3
+                     py-2
+                     rounded-lg"
+            >
+              <i class="fa-solid fa-paperclip mr-1"></i>
+              Browse Photo/Video
+            </button>
+
+            <button
+              type="button"
+              onclick="document.getElementById('inline-post-link').classList.toggle('hidden')"
+              class="bg-slate-900
+                     border border-slate-800
+                     text-slate-400
+                     text-[10px]
+                     font-bold
+                     px-3
+                     py-2
+                     rounded-lg"
+            >
+              <i class="fa-solid fa-link mr-1"></i>
+              Add Link
+            </button>
+
+            <input
+              id="inline-post-file"
+              type="file"
+              accept="image/*,video/*"
+              class="hidden"
+              onchange="Z.previewInlinePostFile(this)"
+            >
+
+            <span
+              id="inline-post-file-name"
+              class="text-[10px]
+                     text-slate-500
+                     truncate
+                     max-w-[150px]"
+            ></span>
+
+          </div>
+
+          <input
+            id="inline-post-link"
+            type="url"
+            class="hidden
+                   w-full
+                   bg-slate-950
+                   border border-slate-800
+                   text-white
+                   text-[10px]
+                   rounded-lg
+                   px-2
+                   py-2"
+            placeholder="https://…"
+          >
+
+          <div class="flex justify-end gap-2">
+
+            <button
+              type="button"
+              onclick="Z.showView('home')"
+              class="bg-slate-900
+                     border border-slate-800
+                     text-slate-400
+                     font-bold
+                     text-[10px]
+                     px-3
+                     py-2
+                     rounded-lg"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="button"
+              onclick="Z.submitInlinePost()"
+              class="bg-emerald-600
+                     hover:bg-emerald-500
+                     text-black
+                     font-bold
+                     text-[10px]
+                     px-4
+                     py-2
+                     rounded-lg"
+            >
+              Publish Post
+            </button>
+
+          </div>
+
+        </div>
+
+      </div>
+    `;
+  };
+
+  Z.previewInlinePostFile = function (input) {
+
+    const file =
+      input &&
+      input.files &&
+      input.files[0];
+
+    if (!file) return;
+
+    if (file.size > 15 * 1024 * 1024) {
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'For this frontend demo, keep media under 15 MB.'
+        );
+      }
+
+      input.value = '';
+      return;
+    }
+
+    const name =
+      document.getElementById(
+        'inline-post-file-name'
+      );
+
+    if (name) {
+      name.textContent = file.name;
+    }
+  };
+
+  Z.submitInlinePost = function () {
+
+    const user =
+      Z.State.currentUser;
+
+    if (!user) {
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
+      }
+      return;
+    }
+
+    const content =
+      document.getElementById(
+        'inline-post-content'
+      )?.value.trim() || '';
+
+    const file =
+      document.getElementById(
+        'inline-post-file'
+      )?.files?.[0];
+
+    const link =
+      document.getElementById(
+        'inline-post-link'
+      )?.value.trim() || '';
+
+    if (!content && !file && !link) {
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Write something or attach media first.'
+        );
+      }
+
+      return;
+    }
+
+    const savePost = function (media) {
+
+      const posts =
+        Z.DB.getPosts();
+
+      posts.unshift({
+        id: 'post_' + Date.now(),
+        authorId: user.id,
+        content: content,
+        media: media || '',
+        createdAt: new Date().toISOString(),
+        reactions: {
+          heart: 0
+        },
+        comments: [],
+        shares: 0
+      });
+
+      Z.DB.savePosts(posts);
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Post published successfully!'
+        );
+      }
+
+      Z.showView('home');
+    };
+
+    if (file) {
+      Z.readLocalMedia(file, savePost);
+    } else {
+      savePost(link);
+    }
+  };
+
+  /* ============================================================
+     INLINE STATUS EDITOR
+     ============================================================ */
+
+  Z.openInlineStatusEditor = function () {
+
+    if (!Z.State.currentUser) {
+
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
+      }
+
+      return;
+    }
+
+    const host =
+      document.getElementById(
+        'zynix-status-editor'
+      );
+
+    if (!host) return;
+
+    host.innerHTML = `
+      <div class="bg-[#111827]
+                  border border-emerald-500/30
+                  rounded-2xl
+                  p-3
+                  space-y-2">
+
+        <textarea
+          id="inline-status-content"
+          rows="4"
+          class="w-full
+                 min-h-[105px]
+                 resize-none
+                 bg-slate-950
+                 border border-slate-800
+                 rounded-xl
+                 px-3
+                 py-2
+                 text-xs
+                 text-white
+                 focus:outline-none
+                 focus:border-emerald-500"
+          placeholder="Share a temporary status…"
+        ></textarea>
+
+        <div class="flex flex-wrap items-center gap-2">
+
+          <button
+            type="button"
+            onclick="document.getElementById('inline-status-file').click()"
+            class="bg-slate-900
+                   border border-slate-800
+                   text-slate-300
+                   text-[10px]
+                   font-bold
+                   px-3
+                   py-2
+                   rounded-lg"
+          >
+            <i class="fa-solid fa-image mr-1"></i>
+            Browse Photo/Video
+          </button>
+
+          <input
+            id="inline-status-file"
+            type="file"
+            accept="image/*,video/*"
+            class="hidden"
+            onchange="Z.previewInlineStatusFile(this)"
+          >
+
+          <span
+            id="inline-status-file-name"
+            class="text-[10px] text-slate-500 truncate max-w-[150px]"
+          ></span>
+
+        </div>
+
+        <div class="flex justify-end gap-2">
+
+          <button
+            type="button"
+            onclick="Z.closeInlineStatusEditor()"
+            class="bg-slate-900
+                   border border-slate-800
+                   text-slate-400
+                   text-[10px]
+                   font-bold
+                   px-3
+                   py-2
+                   rounded-lg"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onclick="Z.submitInlineStatus()"
+            class="bg-emerald-600
+                   hover:bg-emerald-500
+                   text-black
+                   text-[10px]
+                   font-bold
+                   px-3
+                   py-2
+                   rounded-lg"
+          >
+            Publish 24h Status
+          </button>
+
+        </div>
+
+      </div>
+    `;
+  };
+
+  Z.closeInlineStatusEditor = function () {
+
+    const host =
+      document.getElementById(
+        'zynix-status-editor'
+      );
+
+    if (host) {
+      host.innerHTML = '';
+    }
+  };
+
+  Z.previewInlineStatusFile = function (input) {
+
+    const file =
+      input &&
+      input.files &&
+      input.files[0];
+
+    if (!file) return;
+
+    if (file.size > 15 * 1024 * 1024) {
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'For this frontend demo, keep media under 15 MB.'
+        );
+      }
+
+      input.value = '';
+      return;
+    }
+
+    const name =
+      document.getElementById(
+        'inline-status-file-name'
+      );
+
+    if (name) {
+      name.textContent = file.name;
+    }
+  };
+
+  Z.submitInlineStatus = function () {
+
+    const user =
+      Z.State.currentUser;
+
+    if (!user) return;
+
+    const content =
+      document.getElementById(
+        'inline-status-content'
+      )?.value.trim() || '';
+
+    const file =
+      document.getElementById(
+        'inline-status-file'
+      )?.files?.[0];
+
+    if (!content && !file) {
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Add text or media to your status.'
+        );
+      }
+
+      return;
+    }
+
+    const saveStatus = function (media) {
+
+      const statuses =
+        Z.DB.getStatuses()
+          .filter(function (status) {
+            return !status.expiresAt ||
+                   status.expiresAt > Date.now();
+          });
+
+      statuses.unshift({
+        id: 'st_' + Date.now(),
+        authorId: user.id,
+        content: content,
+        media: media || '',
+        createdAt: new Date().toISOString(),
+        expiresAt: Date.now() +
+          24 * 60 * 60 * 1000
+      });
+
+      Z.DB.saveStatuses(statuses);
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Status published for 24 hours.'
+        );
+      }
+
+      Z.closeInlineStatusEditor();
+      Z.showView('home');
+    };
+
+    if (file) {
+      Z.readLocalMedia(file, saveStatus);
+    } else {
+      saveStatus('');
+    }
+  };
+
+  /* ============================================================
+     PEOPLE SEARCH
+     ============================================================ */
+
+  Z.State.peopleSearchQuery =
+    Z.State.peopleSearchQuery || '';
+
+  Z.handlePeopleSearch = function (value) {
+
+    Z.State.peopleSearchQuery =
+      value || '';
+
+    Z.showView('people');
+
+    setTimeout(function () {
+
+      const input =
+        document.getElementById(
+          'people-search'
+        );
+
+      if (input) {
+
+        input.focus();
+
+        input.setSelectionRange(
+          input.value.length,
+          input.value.length
+        );
+      }
+
+    }, 0);
+  };
+
+  Z.renderPeopleControlled = function () {
+
+    const users =
+      Z.DB.getUsers();
+
+    const query =
+      String(
+        Z.State.peopleSearchQuery || ''
+      )
+      .trim()
+      .toLowerCase();
+
+    const filtered =
+      users.filter(function (user) {
+
+        return !query ||
+          String(user.name || '')
+            .toLowerCase()
+            .includes(query) ||
+          String(user.username || '')
+            .toLowerCase()
+            .includes(query) ||
+          String(user.id || '')
+            .toLowerCase()
+            .includes(query);
+      });
+
+    const cards =
+      filtered.map(function (user) {
+
+        const self =
+          Z.State.currentUser &&
+          Z.State.currentUser.id === user.id;
+
+        const following =
+          Z.State.currentUser &&
+          Array.isArray(
+            Z.State.currentUser.following
+          ) &&
+          Z.State.currentUser.following
+            .includes(user.id);
+
+        return `
+          <div class="bg-[#111827]
+                      border border-slate-800
+                      p-3.5
+                      rounded-2xl
+                      flex items-center
+                      justify-between
+                      shadow-lg">
+
+            <button
+              type="button"
+              onclick="Z.openPublicProfile('${Z.safe(user.id)}')"
+              class="flex items-center
+                     space-x-3
+                     text-left
+                     min-w-0"
+            >
+
+              <img
+                src="${Z.safe(user.avatar || '')}"
+                class="w-10 h-10 rounded-full object-cover border border-slate-700"
+                alt=""
+              >
+
+              <div class="min-w-0">
+
+                <h4 class="font-bold text-xs text-white truncate">
+                  ${Z.safe(user.name || 'User')}
+                </h4>
+
+                <p class="text-[10px] text-slate-400 truncate">
+                  @${Z.safe(user.username || '')}
+                  • ID: ${Z.safe(user.id || '')}
+                  • ${Number(user.followers || 0)} followers
+                </p>
+
+              </div>
+
+            </button>
+
+            ${
+              !self
+                ? `
+                  <button
+                    type="button"
+                    ${following ? 'disabled' : ''}
+                    onclick="Z.RewardEngine.processInteraction('${Z.safe(user.id)}','follow','${Z.safe(user.id)}')"
+                    class="bg-emerald-600/20
+                           border border-emerald-500/40
+                           text-emerald-400
+                           font-bold
+                           text-xs
+                           px-3
+                           py-1.5
+                           rounded-xl"
+                  >
+                    ${following ? 'Following' : 'Follow'}
+                  </button>
+                `
+                : `
+                  <span
+                    class="text-[10px]
+                           text-slate-500
+                           font-bold
+                           px-2
+                           py-1
+                           bg-slate-900
+                           rounded-lg"
+                  >
+                    You
+                  </span>
+                `
+            }
+
+          </div>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="space-y-3">
+
+        <div class="flex justify-between items-center px-1">
+
+          <h3 class="font-black text-sm text-white flex items-center">
+            <i class="fa-solid fa-users text-emerald-400 mr-2"></i>
+            People Directory & Creators
+          </h3>
+
+          <span
+            class="text-[10px]
+                   bg-emerald-500/10
+                   text-emerald-400
+                   px-2
+                   py-0.5
+                   rounded
+                   font-bold"
+          >
+            Earn Bounties
+          </span>
+
+        </div>
+
+        <div class="relative">
+
+          <i
+            class="fa-solid
+                   fa-magnifying-glass
+                   absolute
+                   left-3
+                   top-3
+                   text-slate-500
+                   text-xs"
+          ></i>
+
+          <input
+            id="people-search"
+            value="${Z.safe(Z.State.peopleSearchQuery || '')}"
+            oninput="Z.handlePeopleSearch(this.value)"
+            class="w-full
+                   bg-[#111827]
+                   border border-slate-800
+                   rounded-xl
+                   pl-9
+                   pr-3
+                   py-2.5
+                   text-xs
+                   text-white
+                   focus:outline-none
+                   focus:border-emerald-500"
+            placeholder="Search people, username or ID…"
+          >
+
+        </div>
+
+        <div class="space-y-3">
+
+          ${
+            cards ||
+            `
+              <p class="text-center
+                        text-xs
+                        text-slate-500
+                        py-8">
+                No people found.
+              </p>
+            `
+          }
+
+        </div>
+
+      </div>
+    `;
+  };
+
+  /* ---------- Controlled Home renderer ---------- */
+
+  Z.renderHomeControlled = function () {
+
+    const users =
+      Z.DB.getUsers();
+
+    const posts =
+      Z.DB.getPosts();
+
+    let statuses =
+      Z.DB.getStatuses();
+
+    const now =
+      Date.now();
+
+    const liveStatuses =
+      statuses.filter(function (status) {
+        return !status.expiresAt ||
+               status.expiresAt > now;
+      });
+
+    if (
+      liveStatuses.length !== statuses.length
+    ) {
+      Z.DB.saveStatuses(liveStatuses);
+    }
+
+    statuses =
+      liveStatuses;
+
+    const current =
+      Z.State.currentUser ||
+      users[0];
+
+    const statusHTML =
+      statuses.map(function (status) {
+
+        const author =
+          users.find(
+            function (user) {
+              return user.id === status.authorId;
+            }
+          ) || users[0];
+
+        return `
+          <div
+            class="flex flex-col
+                   items-center
+                   shrink-0
+                   space-y-1
+                   cursor-pointer"
+          >
+
+            <div
+              class="w-14 h-14
+                     rounded-full
+                     p-0.5
+                     bg-gradient-to-tr
+                     from-emerald-500
+                     to-blue-500"
+            >
+
+              <img
+                src="${Z.safe(author?.avatar || '')}"
+                class="w-full h-full
+                       rounded-full
+                       object-cover
+                       border-2
+                       border-[#090d16]"
+                alt=""
+              >
+
+            </div>
+
+            <span
+              class="text-[10px]
+                     text-slate-300
+                     font-medium
+                     truncate
+                     w-14
+                     text-center"
+            >
+              ${Z.safe(
+                (author?.name || 'User')
+                  .split(' ')[0]
+              )}
+            </span>
+
+          </div>
+        `;
+      })
+      .join('');
+
+    const postsHTML =
+      posts.map(function (post) {
+
+        const author =
+          users.find(
+            function (user) {
+              return user.id === post.authorId;
+            }
+          ) || users[0];
+
+        const bounty =
+          author?.bountySettings || {};
+
+        return `
+          <article
+            class="bg-[#111827]
+                   border border-slate-800/80
+                   rounded-2xl
+                   p-4
+                   space-y-3
+                   shadow-xl"
+          >
+
+            <div class="flex items-center justify-between">
+
+              <div class="flex items-center space-x-2.5">
+
+                <button
+                  type="button"
+                  onclick="Z.openPublicProfile('${Z.safe(author?.id || '')}')"
+                >
+
+                  <img
+                    src="${Z.safe(author?.avatar || '')}"
+                    class="w-9 h-9
+                           rounded-full
+                           object-cover
+                           border border-slate-700"
+                    alt=""
+                  >
+
+                </button>
+
+                <div>
+
+                  <button
+                    type="button"
+                    onclick="Z.openPublicProfile('${Z.safe(author?.id || '')}')"
+                    class="font-bold text-xs text-white"
+                  >
+                    ${Z.safe(author?.name || 'User')}
+                  </button>
+
+                  <p class="text-[10px] text-slate-400">
+                    ${Z.safe(post.createdAt || '')}
+                    •
+                    <span class="text-emerald-400">
+                      ${Z.safe(author?.role || 'Creator')}
+                    </span>
+                  </p>
+
+                </div>
+
+              </div>
+
+              <span
+                class="text-[10px]
+                       bg-indigo-500/10
+                       text-indigo-400
+                       border border-indigo-500/20
+                       px-2
+                       py-0.5
+                       rounded-full
+                       font-semibold"
+              >
+                Feed
+              </span>
+
+            </div>
+
+            <p
+              class="text-xs
+                     text-slate-200
+                     leading-relaxed
+                     whitespace-pre-wrap"
+            >
+              ${Z.safe(post.content || '')}
+            </p>
+
+            ${
+              post.media
+                ? `
+                  <div
+                    class="rounded-xl
+                           overflow-hidden
+                           border border-slate-800
+                           bg-slate-950
+                           max-h-72"
+                  >
+                    <img
+                      src="${Z.safe(post.media)}"
+                      class="w-full h-full object-cover"
+                      alt="Post media"
+                    >
+                  </div>
+                `
+                : ''
+            }
+
+            <div
+              class="text-[9px]
+                     text-slate-500"
+            >
+              Bounty:
+              Like $${Number(bounty.like || 0).toFixed(2)}
+              •
+              Share $${Number(bounty.share || 0).toFixed(2)}
+              •
+              Follow $${Number(bounty.follow || 0).toFixed(2)}
+            </div>
+
+            <div
+              class="flex
+                     items-center
+                     justify-between
+                     pt-2
+                     border-t
+                     border-slate-800/60"
+            >
+
+              <div class="flex items-center gap-2">
+
+                <button
+                  type="button"
+                  onclick="Z.togglePrimaryReaction('${Z.safe(post.id)}')"
+                  class="text-[10px]
+                         bg-slate-900
+                         border border-slate-800
+                         text-slate-200
+                         px-3
+                         py-1.5
+                         rounded-lg
+                         font-bold
+                         hover:border-emerald-500
+                         transition"
+                >
+                  <span class="text-base align-middle">
+                    ◇
+                  </span>
+
+                  <span>
+                    ${Number(
+                      post.reactions?.heart || 0
+                    )}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onclick="Z.toggleReactionBar('${Z.safe(post.id)}')"
+                  class="text-[10px]
+                         bg-slate-900
+                         border border-slate-800
+                         px-3
+                         py-1.5
+                         rounded-lg
+                         font-bold"
+                >
+                  React
+                </button>
+
+                <button
+                  type="button"
+                  onclick="Z.RewardEngine.processInteraction('${Z.safe(author?.id || '')}','share','${Z.safe(post.id)}')"
+                  class="text-[10px]
+                         bg-blue-500/10
+                         text-blue-400
+                         border border-blue-500/30
+                         px-3
+                         py-1.5
+                         rounded-lg
+                         font-bold"
+                >
+                  Share
+                  <span>
+                    ${Number(post.shares || 0)}
+                  </span>
+                </button>
+
+              </div>
+
+              <button
+                type="button"
+                onclick="Z.toggleComments('${Z.safe(post.id)}')"
+                class="text-[10px]
+                       bg-slate-900
+                       border border-slate-800
+                       px-3
+                       py-1.5
+                       rounded-lg
+                       font-bold"
+              >
+                <i class="fa-solid fa-comment mr-1"></i>
+                Comments
+                ${post.comments?.length || 0}
+              </button>
+
+            </div>
+
+            <div
+              id="reaction-bar-${Z.safe(post.id)}"
+              class="hidden
+                     flex flex-wrap
+                     gap-2
+                     bg-slate-950/80
+                     border border-slate-800
+                     rounded-xl
+                     p-2"
+            >
+
+              <button
+                type="button"
+                onclick="Z.reactToPost('${Z.safe(post.id)}','heart')"
+                class="px-2 py-1 rounded-lg hover:bg-slate-800"
+              >
+                ◇
+              </button>
+
+              <button
+                type="button"
+                onclick="Z.reactToPost('${Z.safe(post.id)}','flower')"
+                class="px-2 py-1 rounded-lg hover:bg-slate-800"
+              >
+                🌹
+              </button>
+
+              <button
+                type="button"
+                onclick="Z.reactToPost('${Z.safe(post.id)}','fire')"
+                class="px-2 py-1 rounded-lg hover:bg-slate-800"
+              >
+                🔥
+              </button>
+
+              <button
+                type="button"
+                onclick="Z.reactToPost('${Z.safe(post.id)}','star')"
+                class="px-2 py-1 rounded-lg hover:bg-slate-800"
+              >
+                ⭐
+              </button>
+
+              <button
+                type="button"
+                onclick="Z.reactToPost('${Z.safe(post.id)}','clap')"
+                class="px-2 py-1 rounded-lg hover:bg-slate-800"
+              >
+                👏
+              </button>
+
+              <button
+                type="button"
+                onclick="Z.reactToPost('${Z.safe(post.id)}','spark')"
+                class="px-2 py-1 rounded-lg hover:bg-slate-800"
+              >
+                ✨
+              </button>
+
+            </div>
+
+            <div
+              id="comments-${Z.safe(post.id)}"
+              class="hidden space-y-2"
+            >
+
+              ${
+                (post.comments || [])
+                  .map(function (comment) {
+                    return `
+                      <div
+                        class="bg-slate-950
+                               rounded-lg
+                               p-2
+                               text-[10px]"
+                      >
+                        <b>
+                          ${Z.safe(
+                            comment.author ||
+                            'User'
+                          )}
+                        </b>
+
+                        ${Z.safe(
+                          comment.text || ''
+                        )}
+                      </div>
+                    `;
+                  })
+                  .join('')
+              }
+
+              <div class="flex gap-2">
+
+                <input
+                  id="comment-input-${Z.safe(post.id)}"
+                  type="text"
+                  class="flex-1
+                         bg-slate-950
+                         border border-slate-800
+                         rounded-lg
+                         px-2
+                         py-2
+                         text-[10px]
+                         text-white"
+                  placeholder="Write a comment…"
+                >
+
+                <button
+                  type="button"
+                  onclick="Z.addComment('${Z.safe(post.id)}')"
+                  class="bg-emerald-600
+                         text-black
+                         font-bold
+                         px-3
+                         rounded-lg
+                         text-[10px]"
+                >
+                  Send
+                </button>
+
+              </div>
+
+            </div>
+
+          </article>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="space-y-4">
+
+        <div
+          class="bg-[#111827]
+                 border border-slate-800
+                 rounded-2xl
+                 p-4"
+        >
+
+          <div class="flex items-center gap-3">
+
+            <img
+              src="${Z.safe(current?.avatar || '')}"
+              class="w-11 h-11 rounded-full object-cover"
+              alt=""
+            >
+
+            <div>
+
+              <h2 class="font-black text-base text-white">
+                Welcome to ZYNIX
+              </h2>
+
+              <p class="text-[10px] text-slate-400">
+                Independent social & creator ecosystem
+              </p>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        <div
+          class="flex
+                 items-center
+                 space-x-3
+                 overflow-x-auto
+                 pb-2
+                 scrollbar-none"
+        >
+
+          <div
+            class="flex
+                   flex-col
+                   items-center
+                   shrink-0
+                   space-y-1
+                   cursor-pointer"
+            onclick="Z.openInlineStatusEditor()"
+          >
+
+            <div
+              class="w-14 h-14
+                     rounded-full
+                     bg-slate-800
+                     border-2
+                     border-dashed
+                     border-emerald-500
+                     flex items-center
+                     justify-center
+                     text-emerald-400"
+            >
+              <i class="fa-solid fa-plus text-base"></i>
+            </div>
+
+            <span
+              class="text-[10px]
+                     text-slate-300
+                     font-medium"
+            >
+              Status
+            </span>
+
+          </div>
+
+          ${statusHTML}
+
+        </div>
+
+        <div id="zynix-status-editor"></div>
+
+        <div
+          id="zynix-inline-composer"
+          class="bg-[#111827]
+                 border border-slate-800
+                 rounded-2xl
+                 p-3
+                 shadow-lg"
+        >
+
+          <div class="flex items-center space-x-3">
+
+            <img
+              src="${Z.safe(current?.avatar || '')}"
+              class="w-9 h-9 rounded-full object-cover"
+              alt=""
+            >
+
+            <button
+              id="zynix-inline-composer-trigger"
+              type="button"
+              onclick="Z.expandInlineComposer()"
+              class="w-full
+                     bg-slate-950
+                     border border-slate-800
+                     text-slate-400
+                     text-xs
+                     text-left
+                     px-3.5
+                     py-2.5
+                     rounded-xl"
+            >
+              What do you think?
+            </button>
+
+          </div>
+
+        </div>
+
+        <div class="space-y-4">
+
+          ${
+            postsHTML ||
+            `
+              <p
+                class="text-center
+                       text-xs
+                       text-slate-500
+                       py-8"
+              >
+                No posts yet.
+              </p>
+            `
+          }
+
+        </div>
+
+      </div>
+    `;
+  };
+
+})();
+</script>
+    <script>
+/* ============================================================
+   ZYNIX CONTROLLED SEGMENT 02
+   Scope:
+   - Diamond primary reaction
+   - Unlike state
+   - Inline reaction bar
+   - Red flower
+   - Free reward eligibility
+   - $1 monthly package
+   - Referral commission structure
+   - Navigation bootstrap safety
+
+   IMPORTANT:
+   This segment does NOT delete existing ZYNIX content.
+   Backend/payment enforcement is intentionally NOT included.
+   ============================================================ */
+(function () {
+  'use strict';
+
+  const Z = window.Z;
+  if (!Z) return;
+
+  /* ---------- Package model ---------- */
+
+  Z.packageRules = {
+
+    '0': {
+      name: 'Free',
+      price: 0,
+      likeReward: 0,
+      daily: 0,
+      levels: 0,
+      shareReward: true,
+      followReward: true,
+      circleJoinReward: true
+    },
+
+    '1': {
+      name: 'ZYNIX $1 Monthly',
+      price: 1,
+      likeReward: 0.01,
+      daily: 3,
+      levels: 2,
+      referralLevel1: 0.25,
+      referralLevel2: 0.25
+    },
+
+    '10': {
+      name: 'Creator $10',
+      price: 10,
+      likeReward: 0.01,
+      daily: 5,
+      levels: 2
+    },
+
+    '20': {
+      name: 'Creator $20',
+      price: 20,
+      likeReward: 0.015,
+      daily: 10,
+      levels: 2
+    },
+
+    '40': {
+      name: 'Creator $40',
+      price: 40,
+      likeReward: 0.015,
+      daily: 20,
+      levels: 2
+    },
+
+    '100': {
+      name: 'Pro $100',
+      price: 100,
+      likeReward: 0.02,
+      daily: 999999,
+      levels: 3
+    }
+
+  };
+
+  Z.packageKey = function (packageName) {
+
+    const value =
+      String(
+        packageName || 'Free'
+      ).toLowerCase();
+
+    if (value.includes('100')) return '100';
+    if (value.includes('40')) return '40';
+    if (value.includes('20')) return '20';
+    if (value.includes('10')) return '10';
+    if (
+      value.includes('$1') ||
+      value.includes('1 monthly') ||
+      value === '1'
+    ) {
+      return '1';
+    }
+
+    return '0';
+  };
+
+  /* ============================================================
+     REACTION STATE
+     ============================================================ */
+
+  Z.toggleReactionBar = function (postId) {
+
+    const bar =
+      document.getElementById(
+        'reaction-bar-' + postId
+      );
+
+    if (!bar) return;
+
+    bar.classList.toggle('hidden');
+  };
+
+  Z.reactToPost = function (
+    postId,
+    reaction
+  ) {
+
+    const user =
+      Z.State.currentUser;
+
+    if (!user) {
+
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
+      }
+
+      return;
+    }
+
+    const posts =
+      Z.DB.getPosts();
+
+    const post =
+      posts.find(function (item) {
+        return item.id === postId;
+      });
+
+    if (!post) return;
+
+    post.reactions =
+      post.reactions || {};
+
+    post._reactionUsers =
+      post._reactionUsers || {};
+
+    const oldReaction =
+      post._reactionUsers[user.id];
+
+    /* Same reaction = unlike/remove */
+    if (oldReaction === reaction) {
+
+      post.reactions[reaction] =
+        Math.max(
+          0,
+          Number(
+            post.reactions[reaction] || 0
+          ) - 1
+        );
+
+      delete post._reactionUsers[user.id];
+
+      Z.DB.savePosts(posts);
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Reaction removed.'
+        );
+      }
+
+      Z.showView('home');
+
+      return;
+    }
+
+    /* Change previous reaction */
+    if (oldReaction) {
+
+      post.reactions[oldReaction] =
+        Math.max(
+          0,
+          Number(
+            post.reactions[oldReaction] || 0
+          ) - 1
+        );
+    }
+
+    post.reactions[reaction] =
+      Number(
+        post.reactions[reaction] || 0
+      ) + 1;
+
+    post._reactionUsers[user.id] =
+      reaction;
+
+    Z.DB.savePosts(posts);
+
+    if (typeof Z.showToast === 'function') {
+      Z.showToast(
+        'Reaction added.'
+      );
+    }
+
+    Z.showView('home');
+  };
+
+  /* ---------- Main diamond reaction ---------- */
+
+  Z.togglePrimaryReaction = function (
+    postId
+  ) {
+
+    const user =
+      Z.State.currentUser;
+
+    if (!user) {
+
+      if (typeof Z.openAuthModal === 'function') {
+        Z.openAuthModal('login');
+      }
+
+      return;
+    }
+
+    const posts =
+      Z.DB.getPosts();
+
+    const post =
+      posts.find(function (item) {
+        return item.id === postId;
+      });
+
+    if (!post) return;
+
+    post.reactions =
+      post.reactions || {};
+
+    post._reactionUsers =
+      post._reactionUsers || {};
+
+    const oldReaction =
+      post._reactionUsers[user.id];
+
+    /* ---------- UNLIKE ---------- */
+
+    if (oldReaction === 'heart') {
+
+      post.reactions.heart =
+        Math.max(
+          0,
+          Number(
+            post.reactions.heart || 0
+          ) - 1
+        );
+
+      delete post._reactionUsers[user.id];
+
+      Z.DB.savePosts(posts);
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Unlike applied.'
+        );
+      }
+
+      Z.showView('home');
+
+      return;
+    }
+
+    /* Remove another selected reaction */
+    if (oldReaction) {
+
+      post.reactions[oldReaction] =
+        Math.max(
+          0,
+          Number(
+            post.reactions[oldReaction] || 0
+          ) - 1
+        );
+    }
+
+    /* ---------- DIAMOND ---------- */
+
+    post.reactions.heart =
+      Number(
+        post.reactions.heart || 0
+      ) + 1;
+
+    post._reactionUsers[user.id] =
+      'heart';
+
+    Z.DB.savePosts(posts);
+
+    if (typeof Z.showToast === 'function') {
+      Z.showToast(
+        'Diamond reaction added.'
+      );
+    }
+
+    Z.showView('home');
+  };
+
+  /* Keep old popup calls harmless */
+  Z.openReactionPicker = function (
+    postId
+  ) {
+    Z.toggleReactionBar(postId);
+  };
+
+  /* ============================================================
+     FREE / PAID REWARD ELIGIBILITY
+     ============================================================ */
+
+  Z.isRewardEligible = function (
+    user,
+    actionType
+  ) {
+
+    if (!user) return false;
+
+    const packageId =
+      Z.packageKey(
+        user.package
+      );
+
+    /* Free users:
+       share + follow + circle join
+       can earn bounty.
+       Likes require paid package.
+    */
+
+    if (packageId === '0') {
+
+      return (
+        actionType === 'share' ||
+        actionType === 'follow' ||
+        actionType === 'circleJoin'
+      );
+    }
+
+    /* Paid package */
+    return true;
+  };
+
+  /* ============================================================
+     SAFE INTERACTION PROCESSOR
+     ============================================================ */
+
+  const previousInteraction =
+    Z.RewardEngine &&
+    Z.RewardEngine.processInteraction;
+
+  Z.RewardEngine.processInteraction =
+    function (
+      ownerId,
+      type,
+      contentId
+    ) {
+
+      const actor =
+        Z.State.currentUser;
+
+      if (!actor) {
+
+        if (typeof Z.openAuthModal === 'function') {
+          Z.openAuthModal('login');
+        }
+
+        if (typeof Z.showToast === 'function') {
+          Z.showToast(
+            'Please log in to interact.'
+          );
+        }
+
+        return false;
+      }
+
+      const users =
+        Z.DB.getUsers();
+
+      const owner =
+        users.find(function (user) {
+          return user.id === ownerId;
+        });
+
+      if (!owner) {
+
+        if (typeof Z.showToast === 'function') {
+          Z.showToast(
+            'Creator not found.'
+          );
+        }
+
+        return false;
+      }
+
+      if (owner.id === actor.id) {
+
+        if (typeof Z.showToast === 'function') {
+          Z.showToast(
+            'You cannot earn rewards from your own content.'
+          );
+        }
+
+        return false;
+      }
+
+      /* ---------- LIKE ---------- */
+
+      if (type === 'like') {
+
+        const posts =
+          Z.DB.getPosts();
+
+        const post =
+          posts.find(function (item) {
+            return item.id === contentId;
+          });
+
+        if (post) {
+
+          post.reactions =
+            post.reactions || {};
+
+          post._reactionUsers =
+            post._reactionUsers || {};
+
+          if (
+            post._reactionUsers[actor.id] ===
+            'heart'
+          ) {
+
+            post.reactions.heart =
+              Math.max(
+                0,
+                Number(
+                  post.reactions.heart || 0
+                ) - 1
+              );
+
+            delete post._reactionUsers[
+              actor.id
+            ];
+
+            Z.DB.savePosts(posts);
+
+            if (typeof Z.showToast === 'function') {
+              Z.showToast(
+                'Unlike applied.'
+              );
+            }
+
+            Z.showView('home');
+
+            return true;
+          }
+
+          post.reactions.heart =
+            Number(
+              post.reactions.heart || 0
+            ) + 1;
+
+          post._reactionUsers[
+            actor.id
+          ] = 'heart';
+
+          Z.DB.savePosts(posts);
+
+        } else {
+
+          const sparks =
+            Z.DB.getSparks();
+
+          const spark =
+            sparks.find(function (item) {
+              return item.id === contentId;
+            });
+
+          if (spark) {
+
+            spark.likes =
+              Number(
+                spark.likes || 0
+              ) + 1;
+
+            Z.DB.saveSparks(
+              sparks
+            );
+          }
+        }
+
+        /* Free user gets interaction,
+           but no like bounty. */
+
+        if (
+          !Z.isRewardEligible(
+            actor,
+            'like'
+          )
+        ) {
+
+          if (typeof Z.showToast === 'function') {
+            Z.showToast(
+              'Like added. Paid package is required to earn like rewards.'
+            );
+          }
+
+          Z.showView('home');
+
+          return true;
+        }
+      }
+
+      /* ---------- SHARE ---------- */
+
+      if (type === 'share') {
+
+        const posts =
+          Z.DB.getPosts();
+
+        const post =
+          posts.find(function (item) {
+            return item.id === contentId;
+          });
+
+        if (post) {
+
+          post.shares =
+            Number(
+              post.shares || 0
+            ) + 1;
+
+          Z.DB.savePosts(
+            posts
+          );
+
+        } else {
+
+          const sparks =
+            Z.DB.getSparks();
+
+          const spark =
+            sparks.find(function (item) {
+              return item.id === contentId;
+            });
+
+          if (spark) {
+
+            spark.shares =
+              Number(
+                spark.shares || 0
+              ) + 1;
+
+            Z.DB.saveSparks(
+              sparks
+            );
+          }
+        }
+      }
+
+      /* ---------- FOLLOW ---------- */
+
+      if (type === 'follow') {
+
+        actor.following =
+          Array.isArray(
+            actor.following
+          )
+            ? actor.following
+            : [];
+
+        if (
+          actor.following.includes(
+            owner.id
+          )
+        ) {
+
+          if (typeof Z.showToast === 'function') {
+            Z.showToast(
+              'You are already following this creator.'
+            );
+          }
+
+          return false;
+        }
+
+        actor.following.push(
+          owner.id
+        );
+
+        owner.followers =
+          Number(
+            owner.followers || 0
+          ) + 1;
+
+        Z.DB.saveUsers(
+          users
+        );
+      }
+
+      /* ---------- CIRCLE JOIN ---------- */
+
+      if (type === 'circleJoin') {
+
+        const circles =
+          Z.DB.getCircles();
+
+        const circle =
+          circles.find(function (item) {
+            return item.id === contentId;
+          });
+
+        if (circle) {
+
+          actor.joinedCircles =
+            Array.isArray(
+              actor.joinedCircles
+            )
+              ? actor.joinedCircles
+              : [];
+
+          if (
+            actor.joinedCircles.includes(
+              circle.id
+            )
+          ) {
+
+            if (typeof Z.showToast === 'function') {
+              Z.showToast(
+                'You already joined this circle.'
+              );
+            }
+
+            return false;
+          }
+
+          actor.joinedCircles.push(
+            circle.id
+          );
+
+          circle.membersCount =
+            Number(
+              circle.membersCount || 0
+            ) + 1;
+
+          Z.DB.saveCircles(
+            circles
+          );
+
+          Z.DB.saveUsers(
+            users
+          );
+        }
+      }
+
+      /* ---------- Reward eligibility ---------- */
+
+      if (
+        !Z.isRewardEligible(
+          actor,
+          type
+        )
+      ) {
+
+        if (typeof Z.showToast === 'function') {
+          Z.showToast(
+            'Action completed. Upgrade to the $1 monthly package to earn like rewards.'
+          );
+        }
+
+        Z.refreshCurrentView();
+
+        return true;
+      }
+
+      /* ---------- Creator bounty ---------- */
+
+      const bounty =
+        owner.bountySettings ||
+        {};
+
+      let amount =
+        Number(
+          bounty[type] || 0
+        );
+
+      amount =
+        Math.max(
+          0,
+          Math.min(
+            0.05,
+            amount
+          )
+        );
+
+      if (amount <= 0) {
+
+        if (typeof Z.showToast === 'function') {
+          Z.showToast(
+            'Action completed.'
+          );
+        }
+
+        Z.refreshCurrentView();
+
+        return true;
+      }
+
+      owner.wallet =
+        owner.wallet || {
+          cash: 0,
+          bounty: 0,
+          totalEarned: 0
+        };
+
+      const creatorBounty =
+        Number(
+          owner.wallet.bounty || 0
+        );
+
+      if (
+        creatorBounty <
+        amount
+      ) {
+
+        if (typeof Z.showToast === 'function') {
+          Z.showToast(
+            'Action completed, but creator bounty balance is insufficient.'
+          );
+        }
+
+        Z.refreshCurrentView();
+
+        return true;
+      }
+
+      owner.wallet.bounty =
+        creatorBounty -
+        amount;
+
+      owner.bountySpentHistory =
+        owner.bountySpentHistory ||
+        [];
+
+      owner.bountySpentHistory.unshift({
+        id:
+          'bspend_' +
+          Date.now(),
+
+        date:
+          new Date().toISOString(),
+
+        recipient:
+          actor.name,
+
+        action:
+          type,
+
+        amount:
+          amount
+      });
+
+      Z.DB.saveUsers(
+        users
+      );
+
+      /* Existing reward engine
+         remains responsible for
+         the 60/40 wallet split
+         and animation. */
+
+      if (
+        typeof Z.RewardEngine.creditReward ===
+        'function'
+      ) {
+
+        Z.RewardEngine.creditReward(
+          actor,
+          amount,
+          type.toUpperCase() +
+          ' Reward'
+        );
+      }
+
+      if (typeof Z.showToast === 'function') {
+        Z.showToast(
+          'Reward processed successfully.'
+        );
+      }
+
+      Z.refreshCurrentView();
+
+      return true;
+    };
+
+  /* ============================================================
+     $1 MONTHLY PACKAGE UI
+     ============================================================ */
+
+  Z.renderPackagesControlled =
+    function () {
+
+      const user =
+        Z.State.currentUser;
+
+      const currentKey =
+        Z.packageKey(
+          user?.package
+        );
+
+      const packages = [
+        {
+          key: '0',
+          name: 'Free',
+          price: '$0',
+          description:
+            'Browse, post and interact. Earn bounty on eligible shares, follows and circle joins. Likes do not earn bounty.'
+        },
+        {
+          key: '1',
+          name: 'ZYNIX $1 Monthly',
+          price: '$1/month',
+          description:
+            'Unlock like rewards. Referral commission: $0.25 Level 1 + $0.25 Level 2 every month while the referred subscription remains active.'
+        },
+        {
+          key: '10',
+          name: 'Creator $10',
+          price: '$10',
+          description:
+            'Expanded creator earning limits and higher activity capacity.'
+        },
+        {
+          key: '20',
+          name: 'Creator $20',
+          price: '$20',
+          description:
+            'Higher earning limits for active creators.'
+        },
+        {
+          key: '40',
+          name: 'Creator $40',
+          price: '$40',
+          description:
+            'Higher creator activity capacity.'
+        },
+        {
+          key: '100',
+          name: 'Pro $100',
+          price: '$100',
+          description:
+            'Highest frontend demo tier with extended activity capacity.'
+        }
+      ];
+
+      return `
+        <div class="space-y-4">
+
+          <div
+            class="flex
+                   items-center
+                   space-x-2
+                   px-1"
+          >
+
+            <button
+              type="button"
+              onclick="Z.showView('profile')"
+              class="text-slate-400
+                     hover:text-white"
+            >
+              <i class="fa-solid fa-arrow-left"></i>
+            </button>
+
+            <h2
+              class="font-black
+                     text-sm
+                     text-white"
+            >
+              ZYNIX Membership Packages
+            </h2>
+
+          </div>
+
+          <div class="space-y-3">
+
+            ${packages.map(function (item) {
+
+              const active =
+                item.key ===
+                currentKey;
+
+              return `
+                <div
+                  class="bg-[#111827]
+                         border
+                         ${
+                           item.key === '1'
+                             ? 'border-emerald-500/60'
+                             : 'border-slate-800'
+                         }
+                         p-4
+                         rounded-2xl
+                         space-y-2
+                         shadow-xl"
+                >
+
+                  <div
+                    class="flex
+                           justify-between
+                           items-center"
+                  >
+
+                    <h3
+                      class="font-bold
+                             text-sm
+                             ${
+                               item.key === '1'
+                                 ? 'text-emerald-400'
+                                 : 'text-white'
+                             }"
+                    >
+                      ${item.name}
+                    </h3>
+
+                    <span
+                      class="text-xs
+                             font-bold
+                             ${
+                               item.key === '1'
+                                 ? 'text-emerald-400'
+                                 : 'text-slate-400'
+                             }"
+                    >
+                      ${item.price}
+                    </span>
+
+                  </div>
+
+                  <p
+                    class="text-xs
+                           text-slate-300
+                           leading-relaxed"
+                  >
+                    ${item.description}
+                  </p>
+
+                  ${
+                    item.key === '1'
+                      ? `
+                        <div
+                          class="bg-emerald-500/5
+                                 border border-emerald-500/20
+                                 rounded-xl
+                                 p-3
+                                 space-y-1"
+                        >
+
+                          <p
+                            class="text-[10px]
+                                   text-emerald-300
+                                   font-bold"
+                          >
+                            Monthly recurring referral model
+                          </p>
+
+                          <p
+                            class="text-[10px]
+                                   text-slate-400"
+                          >
+                            Level 1: $0.25/month
+                            •
+                            Level 2: $0.25/month
+                            •
+                            Company: $0.50/month
+                          </p>
+
+                        </div>
+                      `
+                      : ''
+                  }
+
+                  <button
+                    type="button"
+                    ${
+                      active
+                        ? 'disabled'
+                        : ''
+                    }
+                    onclick="${
+                      item.key === '1'
+                        ? "Z.showToast('The $1 monthly package is ready for backend subscription integration.')"
+                        : "Z.showToast('This package remains available in the frontend demo.')"
+                    }"
+                    class="w-full
+                           ${
+                             active
+                               ? 'bg-slate-800 text-slate-400'
+                               : 'bg-emerald-600 hover:bg-emerald-500 text-black'
+                           }
+                           font-bold
+                           py-2
+                           rounded-xl
+                           text-xs"
+                  >
+                    ${
+                      active
+                        ? 'Current Plan'
+                        : 'View Package'
+                    }
+                  </button>
+
+                </div>
+              `;
+
+            }).join('')}
+
+          </div>
+
+        </div>
+      `;
+    };
+
+  /* ============================================================
+     BOOTSTRAP SAFETY
+     ============================================================ */
+
+  document.addEventListener(
+    'DOMContentLoaded',
+    function () {
+
+      setTimeout(
+        function () {
+
+          try {
+
+            const current =
+              Z.DB &&
+              typeof Z.DB.getCurrentUser ===
+              'function'
+                ? Z.DB.getCurrentUser()
+                : null;
+
+            Z.State.currentUser =
+              current || null;
+
+            if (
+              typeof Z.renderHeaderAuth ===
+              'function'
+            ) {
+              Z.renderHeaderAuth();
+            }
+
+            if (
+              typeof Z.updateHeaderWallet ===
+              'function'
+            ) {
+              Z.updateHeaderWallet();
+            }
+
+            if (
+              typeof Z.showView ===
+              'function'
+            ) {
+              Z.showView(
+                Z.State.currentView ||
+                'home'
+              );
+            }
+
+          } catch (error) {
+
+            console.error(
+              'ZYNIX bootstrap error:',
+              error
+            );
+
+          }
+
+        },
+        0
+      );
+    }
+  );
+
+})();
+</script>
 </body>
 </html>
