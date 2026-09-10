@@ -450,6 +450,9 @@ Z.loadMedia = async function(ref){
   } catch(e){ return ''; }
 };
 
+// ============================================================
+// DATABASE
+// ============================================================
 Z.DB = {
   async loadAllProfiles(){
     var c = sb(); if(!c) return [];
@@ -873,6 +876,39 @@ function _timeAgo(ts){
   return Math.floor(h/24)+'d ago';
 }
 
+// ============================================================
+// SOFT REFRESH — re-render without any scroll jump
+// ============================================================
+Z.softRefresh = function(){
+  var container = document.getElementById('app-container');
+  if(!container) return;
+  var savedY = window.scrollY;
+  var view = Z.State.currentView;
+  try { container.innerHTML = Z.renderView(view); } catch(e){ console.error('softRefresh', e); }
+  if(view === 'home'){
+    Z.renderStatusRow();
+    setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 80);
+  }
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      window.scrollTo(0, savedY);
+    });
+  });
+  Z.updateHeader();
+};
+
+// ============================================================
+// PAUSE BACKGROUND VIDEOS
+// ============================================================
+Z.pauseAllBackgroundVideos = function(){
+  document.querySelectorAll('video').forEach(function(v){
+    try { v.pause(); } catch(e){}
+  });
+};
+
+// ============================================================
+// STATUS DATA HELPERS
+// ============================================================
 function _liveStatuses(){
   var now = Date.now();
   return (Z.State.allStatuses||[]).filter(function(s){
@@ -919,6 +955,9 @@ Z.getStatusContactList = function(){
 
 Z.STATUS_BGS = ['status-bg-deep-blue','status-bg-navy','status-bg-purple','status-bg-teal','status-bg-green','status-bg-burgundy','status-bg-rose','status-bg-plum','status-bg-slate'];
 
+// ============================================================
+// CREATE STATUS
+// ============================================================
 Z.openCreateStatusModal = function(){
   if(!_cu()){ Z.openAuthModal('login'); return; }
   var sw = Z.STATUS_BGS.map(function(bg, i){
@@ -989,6 +1028,9 @@ Z.submitStatus = async function(){
   Z.showView('home');
 };
 
+// ============================================================
+// STATUS ROW (Home) — with View All chip at end
+// ============================================================
 Z.renderStatusRow = function(){
   var existing = document.getElementById('status-row');
   if(existing) existing.remove();
@@ -1000,6 +1042,8 @@ Z.renderStatusRow = function(){
   var myCount = myEntry ? myEntry.statuses.length : 0;
 
   var html = '<div id="status-row" class="status-row-wrap"><div class="status-scroll">';
+
+  // My Status
   html += '<button onclick="' + (myCount>0?'Z.openStatusViewer(\'' + Z.escape(me.id) + '\',0)':'Z.openCreateStatusModal()') + '" class="status-item">' +
     '<div style="position:relative;">' +
     '<div class="' + (myCount>0?'status-ring-unseen':'') + '" style="' + (myCount>0?'':'width:58px;height:58px;border-radius:50%;background:#0f172a;border:2px dashed #10b981;display:flex;align-items:center;justify-content:center;margin:0 auto;') + '">' +
@@ -1008,18 +1052,29 @@ Z.renderStatusRow = function(){
     (myCount>0?'<div onclick="event.stopPropagation();Z.openCreateStatusModal()" style="position:absolute;bottom:0;right:-2px;width:22px;height:22px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;border:2px solid #090d16;cursor:pointer;"><i class="fa-solid fa-plus" style="color:#000;font-size:10px;"></i></div>':'') +
     '</div><span class="status-label" style="font-weight:700;color:#cbd5e1;">My Status</span></button>';
 
-  entries.forEach(function(entry){
-    if(entry.isSelf) return;
+  // Other users' statuses
+  var others = entries.filter(function(e){ return !e.isSelf; });
+  others.forEach(function(entry){
     var u = entry.user;
     var seen = entry.statuses.every(function(s){ return s._viewedByMe; });
     html += '<button onclick="Z.openStatusViewer(\'' + Z.escape(u.id) + '\',0)" class="status-item">' +
       '<div class="' + (seen?'status-ring-seen':'status-ring-unseen') + '"><div class="status-ring-inner"><img src="' + Z.escape(Z.displayAvatar(u)) + '"></div></div>' +
       '<span class="status-label">' + Z.escape(Z.displayName(u)) + '</span></button>';
   });
+
+  // View All chip at the END
+  html += '<button onclick="Z.showView(\'status-home\')" class="status-item" aria-label="View All Statuses">' +
+    '<div style="width:58px;height:58px;border-radius:50%;background:rgba(16,185,129,.12);border:2px solid #10b981;display:flex;align-items:center;justify-content:center;margin:0 auto;">' +
+    '<i class="fa-solid fa-arrow-right-long" style="color:#10b981;font-size:20px;"></i>' +
+    '</div><span class="status-label" style="font-weight:700;color:#10b981;">View All</span></button>';
+
   html += '</div></div>';
   host.innerHTML = html;
 };
 
+// ============================================================
+// STATUS HOME — 3 big circles per row
+// ============================================================
 Z.renderStatusHome = function(){
   var me = _cu();
   var entries = Z.getStatusContactList();
@@ -1062,8 +1117,13 @@ Z.renderStatusHome = function(){
   return html;
 };
 
+// ============================================================
+// OPEN STATUS VIEWER
+// ============================================================
 Z.openStatusViewer = async function(authorId, index){
   var ex = document.getElementById('status-viewer'); if(ex) ex.remove();
+  Z.pauseAllBackgroundVideos();
+
   var all = Z.getActiveStatuses();
   Z.State.viewerStatuses = all.filter(function(s){ return s.author_id === authorId; });
   Z.State.viewerStatuses.sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); });
@@ -1103,7 +1163,7 @@ Z.showStatusViewer = function(){
     '<div class="status-viewer-overlay" id="status-viewer">' +
     '<div class="status-progress-track"><div class="status-progress-bar" id="status-progress" style="width:0%;"></div></div>' +
     '<div class="status-viewer-header">' +
-    '<button class="circle-x-btn" onclick="Z.closeStatusViewer()"><i class="fa-solid fa-xmark"></i></button>' +
+    '<button class="circle-x-btn" onclick="event.stopPropagation();Z.closeStatusViewer();return false;"><i class="fa-solid fa-xmark"></i></button>' +
     '<div style="display:flex;align-items:center;gap:8px;">' +
     '<img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;">' +
     '<div><div style="font-weight:700;font-size:13px;">' + Z.escape(Z.displayName(author)) + '</div>' +
@@ -1111,11 +1171,12 @@ Z.showStatusViewer = function(){
     '<div style="width:38px;"></div></div>' +
     '<div class="status-viewer-body" id="status-viewer-body">' +
     '<div class="status-stage" id="status-stage">' + stage + '</div>' +
-    '<button onclick="Z.statusPrev()" class="status-nav-btn left"><i class="fa-solid fa-chevron-left"></i></button>' +
-    '<button onclick="Z.statusNext()" class="status-nav-btn right"><i class="fa-solid fa-chevron-right"></i></button></div>' +
-    '<div class="status-viewer-footer"><button onclick="Z.statusPrev()">‹ Prev</button>' +
+    '<button onclick="event.stopPropagation();Z.statusPrev();return false;" class="status-nav-btn left" data-nav="prev"><i class="fa-solid fa-chevron-left"></i></button>' +
+    '<button onclick="event.stopPropagation();Z.statusNext();return false;" class="status-nav-btn right" data-nav="next"><i class="fa-solid fa-chevron-right"></i></button></div>' +
+    '<div class="status-viewer-footer">' +
+    '<button onclick="event.stopPropagation();Z.statusPrev();return false;" data-nav="prev">‹ Prev</button>' +
     '<span style="font-size:10px;color:#64748b;">24h Status</span>' +
-    '<button onclick="Z.statusNext()">Next ›</button></div></div>'
+    '<button onclick="event.stopPropagation();Z.statusNext();return false;" data-nav="next">Next ›</button></div></div>'
   );
 
   if(status.media_url){
@@ -1141,6 +1202,9 @@ Z.showStatusViewer = function(){
   Z.setupViewerGesture();
 };
 
+// ============================================================
+// STATUS TIMER
+// ============================================================
 Z.startStatusTimer = function(){
   Z.clearStatusTimer();
   Z.State.viewerPaused = false;
@@ -1184,27 +1248,91 @@ Z.clearStatusTimer = function(){
   if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; }
 };
 
+// ============================================================
+// STATUS GESTURE — clean, no double-fire, hold-to-pause
+// ============================================================
 Z.setupViewerGesture = function(){
   var body = document.getElementById('status-viewer-body'); if(!body) return;
-  var sx=0, sy=0, st=0, moved=false;
-  var SW=50, TAP=12, TAPT=400;
-  function s(x,y){ sx=x; sy=y; st=Date.now(); moved=false; Z.pauseStatusTimer(); }
-  function m(x,y){ if(Math.abs(x-sx)>TAP || Math.abs(y-sy)>TAP) moved=true; }
-  function e(x,y){
+
+  var sx=0, sy=0, st=0, moved=false, holding=false, holdTimer=null;
+  var SWIPE=55, TAP=14, TAPTIME=350, HOLDMS=250;
+
+  function _start(x,y){
+    sx=x; sy=y; st=Date.now(); moved=false; holding=false;
+    if(holdTimer){ clearTimeout(holdTimer); holdTimer=null; }
+    holdTimer = setTimeout(function(){
+      holding = true;
+      Z.pauseStatusTimer();
+    }, HOLDMS);
+  }
+
+  function _move(x,y){
+    if(Math.abs(x-sx)>TAP || Math.abs(y-sy)>TAP){
+      moved = true;
+      if(holdTimer){ clearTimeout(holdTimer); holdTimer=null; }
+    }
+  }
+
+  function _end(x,y){
+    if(holdTimer){ clearTimeout(holdTimer); holdTimer=null; }
     var dx=x-sx, dy=y-sy, el=Date.now()-st;
     var ax=Math.abs(dx), ay=Math.abs(dy);
-    if(ax>SW && ax>ay*1.2){ if(dx<0) Z.advanceToNextContact(); else Z.advanceToPrevContact(); return; }
-    if(ay>SW && ay>ax*1.2){ if(dy<0) Z.statusNext(); else Z.statusPrev(); return; }
-    if(!moved && el<TAPT){ Z.statusNext(); return; }
+
+    if(holding){ holding=false; Z.resumeStatusTimer(); return; }
+
+    // horizontal swipe → next/prev status (auto-advance to next contact at end)
+    if(ax>SWIPE && ax>ay*1.15){
+      if(dx<0) Z.statusNext();
+      else Z.statusPrev();
+      return;
+    }
+
+    // vertical swipe → next/prev contact
+    if(ay>SWIPE && ay>ax*1.15){
+      if(dy<0) Z.advanceToNextContact();
+      else Z.advanceToPrevContact();
+      return;
+    }
+
+    // tap → next status
+    if(!moved && el<TAPTIME){
+      Z.statusNext();
+      return;
+    }
+
     Z.resumeStatusTimer();
   }
-  body.addEventListener('touchstart', function(ev){ if(ev.touches.length!==1) return; s(ev.touches[0].clientX, ev.touches[0].clientY); }, {passive:true});
-  body.addEventListener('touchmove', function(ev){ if(ev.touches.length!==1) return; m(ev.touches[0].clientX, ev.touches[0].clientY); }, {passive:true});
-  body.addEventListener('touchend', function(ev){ if(!ev.changedTouches.length) return; e(ev.changedTouches[0].clientX, ev.changedTouches[0].clientY); }, {passive:true});
+
+  body.addEventListener('touchstart', function(ev){
+    if(ev.touches.length!==1) return;
+    if(ev.target.closest('button')) return;
+    if(ev.target.closest('video')) return;
+    _start(ev.touches[0].clientX, ev.touches[0].clientY);
+  }, {passive:true});
+
+  body.addEventListener('touchmove', function(ev){
+    if(ev.touches.length!==1) return;
+    _move(ev.touches[0].clientX, ev.touches[0].clientY);
+  }, {passive:true});
+
+  body.addEventListener('touchend', function(ev){
+    if(!ev.changedTouches.length) return;
+    if(ev.target.closest('button')) return;
+    if(ev.target.closest('video')) return;
+    _end(ev.changedTouches[0].clientX, ev.changedTouches[0].clientY);
+  }, {passive:true});
+
   var dn=false;
-  body.addEventListener('mousedown', function(ev){ if(ev.target.closest('button')||ev.target.closest('video')) return; dn=true; s(ev.clientX, ev.clientY); });
-  body.addEventListener('mousemove', function(ev){ if(!dn) return; m(ev.clientX, ev.clientY); });
-  body.addEventListener('mouseup', function(ev){ if(!dn) return; dn=false; e(ev.clientX, ev.clientY); });
+  body.addEventListener('mousedown', function(ev){
+    if(ev.target.closest('button') || ev.target.closest('video')) return;
+    dn=true; _start(ev.clientX, ev.clientY);
+  });
+  body.addEventListener('mousemove', function(ev){ if(!dn) return; _move(ev.clientX, ev.clientY); });
+  body.addEventListener('mouseup', function(ev){
+    if(!dn) return; dn=false;
+    if(ev.target.closest('button') || ev.target.closest('video')) return;
+    _end(ev.clientX, ev.clientY);
+  });
   body.addEventListener('mouseleave', function(){ if(dn){ dn=false; Z.resumeStatusTimer(); } });
 };
 
@@ -1246,6 +1374,7 @@ Z.closeStatusViewer = function(){
   var v = document.getElementById('status-viewer');
   if(v){ v.querySelectorAll('video').forEach(function(vv){ try{vv.pause(); vv.src='';}catch(e){} }); v.remove(); }
   Z.showView('status-home');
+  setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 250);
 };
 
 // ============================================================
@@ -1307,60 +1436,76 @@ Z.renderSparkSlide = function(spark, index){
     '</div>' + stack + '</div>';
 };
 
+// ============================================================
+// SPARK FEED — one video only + audio unlock persistence
+// ============================================================
+Z._sparkAudioUnlocked = false;
+
 Z.setupSparkFeed = function(sparks){
   var feed = document.getElementById('spark-feed'); if(!feed) return;
-  var videos = feed.querySelectorAll('video'); if(!videos.length) return;
+  var slides = feed.querySelectorAll('.spark-slide'); if(!slides.length) return;
 
-  // try with sound first, fallback to muted if browser blocks autoplay
-  videos.forEach(function(v){
-    v.muted = false;
-    v.volume = 1;
-    var pr = v.play();
-    if(pr && pr.catch){ pr.catch(function(){ v.muted = true; v.play().catch(function(){}); }); }
-  });
-
-  // unmute all spark videos on first user gesture (browser autoplay policy)
   if(!Z._sparkUnmuteHooked){
     Z._sparkUnmuteHooked = true;
-    var unmuteAll = function(){
-      document.querySelectorAll('video[data-spark-id]').forEach(function(v){
-        try { v.muted = false; v.volume = 1; } catch(e){}
+    var unlockAudio = function(){
+      Z._sparkAudioUnlocked = true;
+      var feedEl = document.getElementById('spark-feed');
+      if(!feedEl) return;
+      var vids = feedEl.querySelectorAll('video');
+      vids.forEach(function(v){
+        if(!v.paused){
+          try { v.muted = false; v.volume = 1; } catch(e){}
+        }
       });
     };
-    document.addEventListener('touchstart', unmuteAll, {passive:true});
-    document.addEventListener('click', unmuteAll, true);
-    document.addEventListener('keydown', unmuteAll, true);
+    document.addEventListener('touchstart', unlockAudio, {passive:true});
+    document.addEventListener('click', unlockAudio, true);
+    document.addEventListener('keydown', unlockAudio, true);
   }
 
   if(Z.State.sparkObserver) Z.State.sparkObserver.disconnect();
-  Z.State.sparkObserver = new IntersectionObserver(function(entries){
-    entries.forEach(function(entry){
-      var v = entry.target.querySelector('video'); if(!v) return;
-      if(entry.isIntersecting && entry.intersectionRatio > 0.6){
-        var pr2 = v.play();
-        if(pr2 && pr2.catch) pr2.catch(function(){ v.muted = true; v.play().catch(function(){}); });
+  Z.State.sparkObserver = new IntersectionObserver(function(){
+    var vids = feed.querySelectorAll('video');
+    var vh = window.innerHeight;
+    var best = null, bestRatio = 0;
+    vids.forEach(function(v){
+      var r = v.getBoundingClientRect();
+      var top = Math.max(0, r.top);
+      var bot = Math.min(vh, r.bottom);
+      var visible = Math.max(0, bot - top);
+      var ratio = r.height > 0 ? visible / r.height : 0;
+      if(ratio > bestRatio){ bestRatio = ratio; best = v; }
+    });
+    vids.forEach(function(v){
+      if(v === best && bestRatio >= 0.75){
+        if(Z._sparkAudioUnlocked){ v.muted = false; v.volume = 1; }
+        var pr = v.play();
+        if(pr && pr.catch) pr.catch(function(){ v.muted = true; v.play().catch(function(){}); });
         var sid = v.getAttribute('data-spark-id');
         if(sid) Z.recordSparkView(sid);
-      } else { v.pause(); }
+      } else {
+        if(!v.paused){ try { v.pause(); } catch(e){} }
+      }
     });
-  }, {threshold:[0, 0.6, 1.0]});
-  feed.querySelectorAll('.spark-slide').forEach(function(sl){ Z.State.sparkObserver.observe(sl); });
+  }, {threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0]});
+
+  slides.forEach(function(sl){ Z.State.sparkObserver.observe(sl); });
 
   var sY = 0;
   feed.addEventListener('touchstart', function(e){ sY = e.touches[0].clientY; }, {passive:true});
   feed.addEventListener('touchend', function(e){
     var dy = sY - e.changedTouches[0].clientY;
     if(Math.abs(dy) > 80){
-      var slides = feed.querySelectorAll('.spark-slide');
+      var allSlides = feed.querySelectorAll('.spark-slide');
       var idx = 0, mx = 0, h = feed.clientHeight;
-      slides.forEach(function(s, i){
+      allSlides.forEach(function(s, i){
         var r = s.getBoundingClientRect();
         var vis = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 56));
         var ratio = vis / h;
         if(ratio > mx){ mx = ratio; idx = i; }
       });
-      if(dy > 0 && idx < slides.length-1) slides[idx+1].scrollIntoView({behavior:'smooth', block:'start'});
-      else if(dy < 0 && idx > 0) slides[idx-1].scrollIntoView({behavior:'smooth', block:'start'});
+      if(dy > 0 && idx < allSlides.length-1) allSlides[idx+1].scrollIntoView({behavior:'smooth', block:'start'});
+      else if(dy < 0 && idx > 0) allSlides[idx-1].scrollIntoView({behavior:'smooth', block:'start'});
     }
   }, {passive:true});
 };
@@ -1418,6 +1563,7 @@ Z.deleteSpark = async function(sparkId){
 Z.openSparkComments = async function(sparkId){
   var c = Z.sb(); if(!c) return;
   var me = _cu();
+  Z.pauseAllBackgroundVideos();
   var rr = await c.from('comments').select('*').eq('spark_id', sparkId).order('created_at', {ascending:true});
   var cmts = rr.data || [];
   var list = cmts.length ? cmts.map(function(cm){
@@ -1430,8 +1576,8 @@ Z.openSparkComments = async function(sparkId){
     : '<button onclick="Z.closeSheet();Z.openAuthModal(\'login\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:10px;font-size:13px;cursor:pointer;">Login to comment</button>';
 
   Z.openSheet(
-    '<div class="modal-overlay" style="background:transparent;align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()"><div class="bottom-sheet">' +
-    '<div class="sheet-handle"></div><div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Comments (' + cmts.length + ')</h3><button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>' +
+    '<div class="modal-overlay" style="background:transparent;align-items:flex-end;padding:0;" onclick="if(event.target===this){Z.closeSheet();Z.setupSparkFeed(Z.State.allSparks);}"><div class="bottom-sheet">' +
+    '<div class="sheet-handle"></div><div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Comments (' + cmts.length + ')</h3><button onclick="Z.closeSheet();Z.setupSparkFeed(Z.State.allSparks);" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>' +
     '<div class="sheet-body">' + list + '</div><div class="sheet-footer">' + input + '</div></div></div>'
   );
   if(me) setTimeout(function(){ var i = document.getElementById('spark-comment-input'); if(i) i.focus(); }, 200);
@@ -1447,8 +1593,10 @@ Z.addSparkComment = async function(sparkId){
   if(r.error){ Z.toast('Failed.'); return; }
   Z.closeSheet();
   Z.toast('Comment added!');
-  await Z.reloadData();
-  Z.showView('spark');
+  var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
+  if(sp){ sp._commentsCount = (sp._commentsCount||0)+1; }
+  Z.softRefresh();
+  setTimeout(function(){ Z.setupSparkFeed(Z.State.allSparks); }, 50);
 };
 
 Z.autoGrow = function(el){
@@ -1622,31 +1770,48 @@ Z.cancelComposer = function(){
   var i = document.getElementById('composer-input'); if(i) i.value='';
 };
 
+// ============================================================
+// REACT TO POST — optimistic + softRefresh (no jump)
+// ============================================================
 Z.reactToPost = async function(postId, reactionType){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var c = Z.sb(); if(!c) return;
   var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; }); if(!post) return;
   if(post.author_id === me.id){ Z.toast('Cannot react to your own post.'); return; }
-  var ex = await c.from('post_reactions').select('*').eq('post_id', postId).eq('user_id', me.id).maybeSingle();
-  if(ex.data && ex.data.reaction === reactionType){
-    await c.from('post_reactions').delete().eq('id', ex.data.id);
-    await Z.reloadData(); Z.showView('home'); return;
+
+  if(!post.reactions) post.reactions = {};
+  var prevMy = post._myReaction;
+  if(prevMy === reactionType){
+    post.reactions[reactionType] = Math.max(0, (post.reactions[reactionType]||0) - 1);
+    post._myReaction = null;
+  } else {
+    if(prevMy) post.reactions[prevMy] = Math.max(0, (post.reactions[prevMy]||0) - 1);
+    post.reactions[reactionType] = (post.reactions[reactionType]||0) + 1;
+    post._myReaction = reactionType;
   }
-  if(ex.data) await c.from('post_reactions').update({reaction: reactionType}).eq('id', ex.data.id);
-  else {
-    await c.from('post_reactions').insert({post_id: postId, user_id: me.id, reaction: reactionType});
-    var r = Z.Reactions[reactionType];
-    if(r && r.reward > 0){
-      await Z.RewardEngine.awardReaction(me.id, post.author_id, postId, reactionType);
-      Z.animateDollar(r.reward);
-      await Z.refreshSession();
+  Z.softRefresh();
+
+  try {
+    var ex = await c.from('post_reactions').select('*').eq('post_id', postId).eq('user_id', me.id).maybeSingle();
+    if(ex.data && ex.data.reaction === reactionType){
+      await c.from('post_reactions').delete().eq('id', ex.data.id);
+    } else if(ex.data){
+      await c.from('post_reactions').update({reaction: reactionType}).eq('id', ex.data.id);
+    } else {
+      await c.from('post_reactions').insert({post_id: postId, user_id: me.id, reaction: reactionType});
+      var r = Z.Reactions[reactionType];
+      if(r && r.reward > 0){
+        await Z.RewardEngine.awardReaction(me.id, post.author_id, postId, reactionType);
+        Z.animateDollar(r.reward);
+        await Z.refreshSession();
+      }
     }
-  }
-  await Z.reloadData(); Z.showView('home');
+  } catch(e){ console.warn('reactToPost sync', e); }
 };
 
 Z.toggleComments = function(postId){
-  var el = document.getElementById('comments-' + postId); if(el) el.classList.toggle('open');
+  var el = document.getElementById('comments-' + postId);
+  if(el) el.classList.toggle('open');
 };
 
 Z.setCommentColor = function(color){
@@ -1656,28 +1821,45 @@ Z.setCommentColor = function(color){
   });
 };
 
+// ============================================================
+// ADD COMMENT — soft update, no jump
+// ============================================================
 Z.addComment = async function(postId){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var el = document.getElementById('comment-input-' + postId);
   var t = el ? el.value.trim() : ''; if(!t) return;
+  if(el) el.value = '';
   var c = Z.sb(); if(!c) return;
-  var r = await c.from('comments').insert({post_id: postId, author_id: me.id, text: t, color: Z.State.commentColor||'light-green'});
-  if(r.error){ Z.toast('Failed.'); return; }
-  await Z.reloadData();
-  Z.showView('home');
+
+  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+  var tempId = 'temp_' + Date.now();
+  if(post){
+    if(!post._comments) post._comments = [];
+    post._comments.push({id: tempId, post_id: postId, author_id: me.id, text: t, color: Z.State.commentColor||'light-green'});
+  }
+  Z.softRefresh();
+  setTimeout(function(){ var ce = document.getElementById('comments-' + postId); if(ce) ce.classList.add('open'); }, 50);
+
+  try {
+    var r = await c.from('comments').insert({post_id: postId, author_id: me.id, text: t, color: Z.State.commentColor||'light-green'}).select().maybeSingle();
+    if(r.data && post){
+      var idx = post._comments.findIndex(function(x){ return x.id === tempId; });
+      if(idx > -1) post._comments[idx] = r.data;
+    }
+  } catch(e){ console.warn('addComment', e); }
 };
 
 Z.deletePost = async function(postId){
   if(!confirm('Delete this post?')) return;
   var ok = await Z.DB.deletePost(postId);
-  if(ok){ Z.toast('Deleted.'); Z.showView('home'); }
+  if(ok){ Z.toast('Deleted.'); Z.softRefresh(); }
 };
 
 Z.toggleSavePost = function(postId){
   var i = Z.State.savedPosts.indexOf(postId);
   if(i === -1){ Z.State.savedPosts.push(postId); Z.toast('Saved.'); }
   else { Z.State.savedPosts.splice(i,1); Z.toast('Unsaved.'); }
-  Z.showView('home');
+  Z.softRefresh();
 };
 
 Z.sharePost = function(postId){
@@ -1691,6 +1873,61 @@ Z.sharePost = function(postId){
     '<div class="share-item cp" onclick="Z.shareExternal(\'copy\',\'' + Z.escape(url) + '\')"><i class="fa-solid fa-copy"></i>Copy</div>' +
     '</div></div></div></div>'
   );
+};
+
+// ============================================================
+// FEED VIDEO AUTOPLAY — only ONE video plays, 75% visibility
+// ============================================================
+Z._feedVideoObserver = null;
+
+Z.recomputeFeedVideoPlayback = function(){
+  var vids = document.querySelectorAll('#app-container video:not([data-spark-id])');
+  if(!vids.length) return;
+  var vh = window.innerHeight;
+  var best = null, bestRatio = 0;
+  vids.forEach(function(v){
+    var r = v.getBoundingClientRect();
+    var top = Math.max(0, r.top);
+    var bot = Math.min(vh, r.bottom);
+    var visible = Math.max(0, bot - top);
+    var ratio = r.height > 0 ? visible / r.height : 0;
+    if(ratio > bestRatio){ bestRatio = ratio; best = v; }
+  });
+  vids.forEach(function(v){
+    if(v === best && bestRatio >= 0.75){
+      v.muted = false;
+      v.volume = 1;
+      var pr = v.play();
+      if(pr && pr.catch) pr.catch(function(){ v.muted = true; v.play().catch(function(){}); });
+    } else {
+      if(!v.paused){ try { v.pause(); } catch(e){} }
+    }
+  });
+};
+
+Z.setupFeedVideoAutoplay = function(){
+  if(Z._feedVideoObserver) Z._feedVideoObserver.disconnect();
+  var vids = document.querySelectorAll('#app-container video:not([data-spark-id])');
+  if(!vids.length) return;
+  Z._feedVideoObserver = new IntersectionObserver(function(){
+    Z.recomputeFeedVideoPlayback();
+  }, {threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0]});
+  vids.forEach(function(v){
+    v.setAttribute('playsinline','');
+    v.setAttribute('loop','');
+    Z._feedVideoObserver.observe(v);
+  });
+  if(!Z._feedScrollHooked){
+    Z._feedScrollHooked = true;
+    var t = null;
+    window.addEventListener('scroll', function(){
+      if(t) return;
+      t = setTimeout(function(){
+        t = null;
+        if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback();
+      }, 150);
+    }, {passive:true});
+  }
 };
 
 // ============================================================
@@ -1844,7 +2081,7 @@ Z.renderPublicProfile = function(userId){
 };
 
 // ============================================================
-// WALLET, BOUNTY, PACKAGES, REFERRALS
+// WALLET
 // ============================================================
 Z.renderWallet = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
@@ -1861,6 +2098,9 @@ Z.renderWallet = function(){
     '<div style="margin-top:16px;padding-top:14px;border-top:1px solid #1e293b;"><div class="section-title">Transactions</div>' + txHtml + '</div></div></div>';
 };
 
+// ============================================================
+// BOUNTY
+// ============================================================
 Z.renderBounty = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   var bs = u.bounty_settings || {connect:0.03, subscribe:0.05, comment:0.03, share:0.04, circleJoin:0.02};
@@ -1892,6 +2132,9 @@ Z.saveBounty = async function(){
   Z.showView('profile');
 };
 
+// ============================================================
+// PACKAGES
+// ============================================================
 Z.renderPackages = function(){
   var u = _cu();
   var cur = u ? u.package : 'Free';
@@ -1921,6 +2164,9 @@ Z.activatePackage = async function(name){
   Z.showView('profile');
 };
 
+// ============================================================
+// REFERRALS
+// ============================================================
 Z.renderReferrals = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   var code = u.referral_code || '—';
@@ -2031,34 +2277,6 @@ Z.reloadData = async function(){
 };
 
 // ============================================================
-// FEED VIDEO AUTOPLAY (center-of-viewport)
-// ============================================================
-Z._feedVideoObserver = null;
-Z.setupFeedVideoAutoplay = function(){
-  if(Z._feedVideoObserver) Z._feedVideoObserver.disconnect();
-  var vids = document.querySelectorAll('#app-container video:not([data-spark-id])');
-  if(!vids.length) return;
-  Z._feedVideoObserver = new IntersectionObserver(function(entries){
-    entries.forEach(function(en){
-      var v = en.target;
-      if(en.isIntersecting && en.intersectionRatio > 0.5){
-        v.muted = false;
-        v.volume = 1;
-        var pr = v.play();
-        if(pr && pr.catch) pr.catch(function(){ v.muted = true; v.play().catch(function(){}); });
-      } else {
-        try { v.pause(); } catch(e){}
-      }
-    });
-  }, {threshold:[0, 0.5, 0.75]});
-  vids.forEach(function(v){
-    v.setAttribute('playsinline','');
-    v.setAttribute('loop','');
-    Z._feedVideoObserver.observe(v);
-  });
-};
-
-// ============================================================
 // ROUTER
 // ============================================================
 Z.renderView = function(view, param){
@@ -2095,6 +2313,9 @@ Z.showView = async function(view, param){
   if(view === 'home'){
     setTimeout(function(){ Z.renderStatusRow(); }, 80);
     setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 150);
+  }
+  if(view === 'spark'){
+    setTimeout(function(){ Z.setupSparkFeed(Z.State.allSparks); }, 150);
   }
   Z.updateHeader();
 };
