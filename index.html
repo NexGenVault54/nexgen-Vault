@@ -84,7 +84,8 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .post-author .phandle{font-size:10px;color:#64748b}
 .post-content{font-size:13px;color:#e2e8f0;line-height:1.6;margin-bottom:10px;white-space:pre-wrap;word-break:break-word}
 .post-media{border-radius:12px;overflow:hidden;margin-bottom:10px;background:#000}
-.post-media img,.post-media video{width:100%;max-height:400px;object-fit:cover;display:block}
+.post-media img{width:100%;max-height:400px;object-fit:cover;display:block}
+.post-media video{width:100%;max-height:400px;object-fit:contain;display:block;background:#000}
 .post-reactions{display:flex;flex-wrap:wrap;gap:4px;padding:8px 0;border-top:1px solid #1e293b}
 .react-btn{padding:5px 10px;border-radius:20px;font-size:15px;background:transparent;border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:3px;color:#fff;transition:all .15s}
 .react-btn:hover{background:#1e293b}
@@ -357,6 +358,9 @@ Z.openModal = function(html){ var c=document.getElementById('modal-container'); 
 Z.closeSheet = function(){ var c=document.getElementById('sheet-container'); if(c) c.innerHTML=''; };
 Z.openSheet = function(html){ var c=document.getElementById('sheet-container'); if(c) c.innerHTML=html; };
 
+// ============================================================
+// MEDIA — Upload to Supabase Storage (persistent across devices)
+// ============================================================
 var MEDIA_DB = 'zynix_media_v1';
 var MEDIA_STORE = 'media';
 var _dbPromise = null;
@@ -378,6 +382,35 @@ function openMediaDB(){
 }
 
 Z.storeMedia = async function(file){
+  // 1) Try Supabase Storage first
+  try {
+    var c = sb();
+    var me = Z.State.currentUser;
+    if(c && me && file){
+      var ext = 'bin';
+      if(file.name && file.name.indexOf('.') > -1) ext = file.name.split('.').pop().toLowerCase();
+      else if(file.type){
+        var mm = { 'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif',
+                   'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','video/3gpp':'3gp' };
+        ext = mm[file.type] || 'bin';
+      }
+      var path = me.id + '/upload/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
+      var up = await c.storage.from('media').upload(path, file, {
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: file.type || 'application/octet-stream'
+      });
+      if(!up.error){
+        var pub = c.storage.from('media').getPublicUrl(path);
+        var url = (pub && pub.data && pub.data.publicUrl) || null;
+        if(url) return url;
+      } else {
+        console.warn('storage upload failed, falling back to IDB', up.error);
+      }
+    }
+  } catch(e){ console.warn('storeMedia storage error', e); }
+
+  // 2) Fallback: IndexedDB
   try {
     var db = await openMediaDB();
     var id = 'm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
@@ -1240,7 +1273,6 @@ Z.renderSparkSlide = function(spark, index){
   var isFull = spark.type === 'long_video';
   var me = _cu();
   var uR = spark._myReaction;
-  var isLiked = spark._likedByMe;
 
   var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
 
@@ -1279,6 +1311,7 @@ Z.setupSparkFeed = function(sparks){
   var feed = document.getElementById('spark-feed'); if(!feed) return;
   var videos = feed.querySelectorAll('video'); if(!videos.length) return;
 
+  // try with sound first, fallback to muted if browser blocks autoplay
   videos.forEach(function(v){
     v.muted = false;
     v.volume = 1;
@@ -1286,12 +1319,26 @@ Z.setupSparkFeed = function(sparks){
     if(pr && pr.catch){ pr.catch(function(){ v.muted = true; v.play().catch(function(){}); }); }
   });
 
+  // unmute all spark videos on first user gesture (browser autoplay policy)
+  if(!Z._sparkUnmuteHooked){
+    Z._sparkUnmuteHooked = true;
+    var unmuteAll = function(){
+      document.querySelectorAll('video[data-spark-id]').forEach(function(v){
+        try { v.muted = false; v.volume = 1; } catch(e){}
+      });
+    };
+    document.addEventListener('touchstart', unmuteAll, {passive:true});
+    document.addEventListener('click', unmuteAll, true);
+    document.addEventListener('keydown', unmuteAll, true);
+  }
+
   if(Z.State.sparkObserver) Z.State.sparkObserver.disconnect();
   Z.State.sparkObserver = new IntersectionObserver(function(entries){
     entries.forEach(function(entry){
       var v = entry.target.querySelector('video'); if(!v) return;
       if(entry.isIntersecting && entry.intersectionRatio > 0.6){
-        v.play().catch(function(){});
+        var pr2 = v.play();
+        if(pr2 && pr2.catch) pr2.catch(function(){ v.muted = true; v.play().catch(function(){}); });
         var sid = v.getAttribute('data-spark-id');
         if(sid) Z.recordSparkView(sid);
       } else { v.pause(); }
@@ -1496,8 +1543,8 @@ Z.renderHome = function(){
 
       var mHtml = '';
       if(p.media_url){
-        if(p.media_type === 'video') mHtml = '<div class="post-media"><video src="' + Z.escape(p.media_url) + '" controls playsinline></video></div>';
-        else mHtml = '<div class="post-media"><img src="' + Z.escape(p.media_url) + '" alt="Post"></div>';
+        if(p.media_type === 'video') mHtml = '<div class="post-media"><video src="' + Z.escape(p.media_url) + '" controls playsinline preload="metadata" loop></video></div>';
+        else mHtml = '<div class="post-media"><img src="' + Z.escape(p.media_url) + '" alt="Post" loading="lazy"></div>';
       }
 
       var cp = '<div class="comment-color-picker">' +
@@ -1537,10 +1584,10 @@ Z.expandComposer = function(){
 
 Z.previewComposerFile = function(input){
   var f = input && input.files && input.files[0]; if(!f) return;
-  if(f.size > 20*1024*1024){ Z.toast('Media under 20 MB.'); input.value=''; return; }
+  if(f.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); input.value=''; return; }
   var box = document.getElementById('composer-preview'); if(!box) return;
   var url = URL.createObjectURL(f);
-  box.innerHTML = (f.type.indexOf('video/')===0?'<video src="' + url + '" controls muted style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>':'<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') + '<button class="media-preview-remove" onclick="Z.removeComposerFile()"><i class="fa-solid fa-xmark"></i></button>';
+  box.innerHTML = (f.type.indexOf('video/')===0?'<video src="' + url + '" controls muted playsinline style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>':'<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') + '<button class="media-preview-remove" onclick="Z.removeComposerFile()"><i class="fa-solid fa-xmark"></i></button>';
   box.classList.add('show');
 };
 
@@ -1559,12 +1606,14 @@ Z.submitComposer = async function(){
   if(hasFile){
     Z.toast('Uploading...');
     mu = await Z.storeMedia(fi.files[0]);
+    if(!mu){ Z.toast('Upload failed. Try again.'); return; }
     mt = fi.files[0].type.indexOf('video/')===0 ? 'video' : 'image';
   }
   var row = await Z.DB.createPost({author_id: me.id, content: text, media_url: mu||null, media_type: mt||null});
   if(!row){ Z.toast('Failed.'); return; }
   Z.cancelComposer();
   Z.toast('Post published!');
+  await Z.reloadData();
   Z.showView('home');
 };
 
@@ -1690,7 +1739,7 @@ Z.connectTo = async function(userId){
 };
 
 // ============================================================
-// PROFILE (with Edit + Bounty)
+// PROFILE
 // ============================================================
 Z.renderProfile = function(){
   var u = _cu();
@@ -1758,11 +1807,15 @@ Z.saveProfile = async function(){
 
   if(Z._editImages.avatar){
     Z.toast('Uploading avatar...');
-    patch.avatar = await Z.storeMedia(Z._editImages.avatar);
+    var au = await Z.storeMedia(Z._editImages.avatar);
+    if(!au){ Z.toast('Avatar upload failed.'); return; }
+    patch.avatar = au;
   }
   if(Z._editImages.cover){
     Z.toast('Uploading cover...');
-    patch.cover = await Z.storeMedia(Z._editImages.cover);
+    var cu = await Z.storeMedia(Z._editImages.cover);
+    if(!cu){ Z.toast('Cover upload failed.'); return; }
+    patch.cover = cu;
   }
 
   var result = await Z.DB.updateProfile(me.id, patch);
@@ -1919,7 +1972,7 @@ Z.onCircleSearch = function(v){
 };
 
 // ============================================================
-// NOTIFICATIONS + ADMIN
+// NOTIFICATIONS
 // ============================================================
 Z.renderNotifications = function(){
   var u = _cu();
@@ -1978,6 +2031,34 @@ Z.reloadData = async function(){
 };
 
 // ============================================================
+// FEED VIDEO AUTOPLAY (center-of-viewport)
+// ============================================================
+Z._feedVideoObserver = null;
+Z.setupFeedVideoAutoplay = function(){
+  if(Z._feedVideoObserver) Z._feedVideoObserver.disconnect();
+  var vids = document.querySelectorAll('#app-container video:not([data-spark-id])');
+  if(!vids.length) return;
+  Z._feedVideoObserver = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      var v = en.target;
+      if(en.isIntersecting && en.intersectionRatio > 0.5){
+        v.muted = false;
+        v.volume = 1;
+        var pr = v.play();
+        if(pr && pr.catch) pr.catch(function(){ v.muted = true; v.play().catch(function(){}); });
+      } else {
+        try { v.pause(); } catch(e){}
+      }
+    });
+  }, {threshold:[0, 0.5, 0.75]});
+  vids.forEach(function(v){
+    v.setAttribute('playsinline','');
+    v.setAttribute('loop','');
+    Z._feedVideoObserver.observe(v);
+  });
+};
+
+// ============================================================
 // ROUTER
 // ============================================================
 Z.renderView = function(view, param){
@@ -2011,7 +2092,10 @@ Z.showView = async function(view, param){
     console.error('render err', e);
     container.innerHTML = '<div class="empty-state"><p>Something went wrong.</p><button onclick="Z.showView(\'home\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;margin-top:12px;cursor:pointer;">Home</button></div>';
   }
-  if(view === 'home'){ setTimeout(function(){ Z.renderStatusRow(); }, 80); }
+  if(view === 'home'){
+    setTimeout(function(){ Z.renderStatusRow(); }, 80);
+    setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 150);
+  }
   Z.updateHeader();
 };
 
@@ -2043,4 +2127,3 @@ if(document.readyState === 'loading'){
 </script>
 </body>
 </html>
-
