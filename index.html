@@ -208,6 +208,21 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .stat-label{font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
 .stat-value{font-weight:900;font-size:18px;margin-top:2px}
 
+/* PHASE 1 — Connect state machine UI */
+.connect-btn{background:#10b981;border:none;color:#000;font-weight:700;padding:7px 12px;border-radius:8px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.connect-btn .bounty-tag{background:rgba(0,0,0,.2);padding:1px 6px;border-radius:6px;font-size:10px;font-weight:900}
+.connect-btn.connecting{background:#1e293b;color:#fbbf24;cursor:default}
+.connect-btn.connecting .bounty-tag{background:rgba(251,191,36,.15)}
+.connect-btn.connected{background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.35);cursor:default}
+.connect-btn.connected .bounty-tag{background:rgba(16,185,129,.2)}
+.connect-actions{display:flex;gap:6px}
+.connect-actions button{padding:7px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:none;white-space:nowrap}
+.connect-actions .approve{background:#10b981;color:#000}
+.connect-actions .reject{background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.35)}
+.conn-request-card{background:#111827;border:1px solid rgba(16,185,129,.35);border-radius:14px;padding:12px;margin-bottom:8px}
+.conn-request-card .row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.conn-request-card img{width:42px;height:42px;border-radius:50%;object-fit:cover}
+
 #toast-container{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);z-index:99999;width:90%;max-width:380px;pointer-events:none}
 .toast{background:rgba(17,24,39,.95);border:1px solid rgba(16,185,129,.3);color:#f8fafc;padding:10px 14px;border-radius:12px;font-size:12px;margin-bottom:6px;backdrop-filter:blur(8px);display:flex;align-items:center;gap:8px;opacity:0;transform:translateY(10px);transition:all .3s ease;pointer-events:auto}
 .toast.show{opacity:1;transform:translateY(0)}
@@ -315,7 +330,9 @@ Z.State = {
   allSparks: [],
   allStatuses: [],
   allCircles: [],
-  savedPosts: []
+  savedPosts: [],
+  allConnections: [],
+  allNotifications: []
 };
 
 Z.Reactions = {
@@ -382,7 +399,6 @@ function openMediaDB(){
 }
 
 Z.storeMedia = async function(file){
-  // 1) Try Supabase Storage first
   try {
     var c = sb();
     var me = Z.State.currentUser;
@@ -410,7 +426,6 @@ Z.storeMedia = async function(file){
     }
   } catch(e){ console.warn('storeMedia storage error', e); }
 
-  // 2) Fallback: IndexedDB
   try {
     var db = await openMediaDB();
     var id = 'm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
@@ -480,6 +495,15 @@ Z.DB = {
       Z.State.allPosts = r.data || [];
       return Z.State.allPosts;
     } catch(e){ return []; }
+  },
+  async loadHomeFeed(){
+    var c = sb(); if(!c) return [];
+    try {
+      var r = await c.rpc('get_home_feed', {p_limit: 100});
+      if(r.error) throw r.error;
+      Z.State.allPosts = r.data || [];
+      return Z.State.allPosts;
+    } catch(e){ console.warn('loadHomeFeed', e); return []; }
   },
   async createPost(payload){
     var c = sb(); if(!c) return null;
@@ -561,6 +585,49 @@ Z.DB = {
       await c.rpc('credit_reward', {p_user_id: userId, p_amount: amount, p_reason: reason, p_cash_only: !!cashOnly});
     } catch(e){ console.warn('creditReward', e); }
   },
+
+  // ---------- PHASE 1 — Connection + Notifications ----------
+  async loadConnections(){
+    var c = sb(); var me = Z.State.currentUser; if(!c || !me) { Z.State.allConnections = []; return []; }
+    try {
+      var r = await c.from('connection_requests').select('*')
+        .or('requester_id.eq.' + me.id + ',recipient_id.eq.' + me.id)
+        .order('updated_at',{ascending:false});
+      if(r.error) throw r.error;
+      Z.State.allConnections = r.data || [];
+      return Z.State.allConnections;
+    } catch(e){ console.warn('loadConnections', e); Z.State.allConnections = []; return []; }
+  },
+  async loadNotifications(){
+    var c = sb(); var me = Z.State.currentUser; if(!c || !me) { Z.State.allNotifications = []; return []; }
+    try {
+      var r = await c.from('notifications').select('*')
+        .eq('user_id', me.id)
+        .order('created_at',{ascending:false}).limit(50);
+      if(r.error) throw r.error;
+      Z.State.allNotifications = r.data || [];
+      return Z.State.allNotifications;
+    } catch(e){ console.warn('loadNotifications', e); Z.State.allNotifications = []; return []; }
+  },
+  async sendConnectRequest(recipientId){
+    var c = sb(); if(!c) throw new Error('Supabase not ready');
+    var r = await c.rpc('request_connection', {p_recipient_id: recipientId});
+    if(r.error) throw r.error;
+    return r.data;
+  },
+  async acceptConnectionRequest(requestId){
+    var c = sb(); if(!c) throw new Error('Supabase not ready');
+    var r = await c.rpc('accept_connection', {p_request_id: requestId});
+    if(r.error) throw r.error;
+    return true;
+  },
+  async rejectConnectionRequest(requestId){
+    var c = sb(); if(!c) throw new Error('Supabase not ready');
+    var r = await c.rpc('reject_connection', {p_request_id: requestId});
+    if(r.error) throw r.error;
+    return true;
+  },
+
   getCircles(){
     try {
       var d = localStorage.getItem('zynix_circles');
@@ -600,11 +667,15 @@ Z.addNotification = function(userId, type, message){
 
 Z.updateNotifBadge = function(){
   var u = Z.State.currentUser;
-  if(!u) return;
-  var n = Z.DB.getNotifications().filter(function(x){ return x.userId === u.id && !x.read; });
   var b = document.getElementById('notif-badge');
   if(!b) return;
-  if(n.length > 0){ b.textContent = n.length > 9 ? '9+' : n.length; b.style.display = 'flex'; }
+  if(!u){ b.style.display = 'none'; return; }
+  var unread = (Z.State.allNotifications||[]).filter(function(x){ return !x.read; }).length;
+  var pending = (Z.State.allConnections||[]).filter(function(c){
+    return c.recipient_id === u.id && c.status === 'pending';
+  }).length;
+  var total = unread + pending;
+  if(total > 0){ b.textContent = total > 9 ? '9+' : total; b.style.display = 'flex'; }
   else { b.style.display = 'none'; }
 };
 
@@ -711,6 +782,8 @@ Z.logout = async function(){
   if(c){ await c.auth.signOut(); }
   Z.State.currentUser = null;
   Z.State.allProfiles = [];
+  Z.State.allConnections = [];
+  Z.State.allNotifications = [];
   Z.renderHeaderAuth();
   Z.updateHeader();
   Z.toast('Logged out.');
@@ -907,6 +980,112 @@ Z.pauseAllBackgroundVideos = function(){
 };
 
 // ============================================================
+// PHASE 1 — CONNECTION STATE MACHINE
+// ============================================================
+Z.getConnectionState = function(otherId){
+  var me = _cu();
+  if(!me) return 'guest';
+  if(!otherId || me.id === otherId) return 'self';
+  var list = Z.State.allConnections || [];
+  for(var i=0;i<list.length;i++){
+    var c = list[i];
+    var pairOk = (c.requester_id === me.id && c.recipient_id === otherId)
+              || (c.requester_id === otherId && c.recipient_id === me.id);
+    if(!pairOk) continue;
+    if(c.status === 'accepted') return 'connected';
+    if(c.status === 'pending'){
+      return c.requester_id === me.id ? 'connecting_out' : 'connecting_in';
+    }
+  }
+  return 'none';
+};
+
+Z.getConnectBounty = function(profile){
+  if(!profile) return 0;
+  var bs = profile.bounty_settings || {};
+  var v = bs.connect;
+  if(v == null) return 0;
+  return Number(v) || 0;
+};
+
+Z.renderConnectButton = function(otherId){
+  var other = _p(otherId);
+  if(!other) return '';
+  var state = Z.getConnectionState(otherId);
+  var bounty = Z.getConnectBounty(other);
+  var bountyTag = '<span class="bounty-tag">$' + bounty.toFixed(2) + '</span>';
+
+  if(state === 'guest'){
+    return '<button class="connect-btn" onclick="Z.openAuthModal(\'login\')">Connect ' + bountyTag + '</button>';
+  }
+  if(state === 'self'){
+    return '<span style="font-size:10px;color:#64748b;padding:4px 12px;background:#0f172a;border-radius:8px;">You</span>';
+  }
+  if(state === 'connected'){
+    return '<button class="connect-btn connected">Connected ' + bountyTag + '</button>';
+  }
+  if(state === 'connecting_out'){
+    return '<button class="connect-btn connecting">Connecting ' + bountyTag + '</button>';
+  }
+  if(state === 'connecting_in'){
+    var req = null;
+    var me = _cu();
+    (Z.State.allConnections||[]).forEach(function(c){
+      if(c.requester_id === otherId && c.recipient_id === me.id && c.status === 'pending') req = c;
+    });
+    if(!req){
+      return '<button class="connect-btn" onclick="Z.sendConnectRequest(\'' + Z.escape(otherId) + '\')">Connect ' + bountyTag + '</button>';
+    }
+    return '<div class="connect-actions">' +
+      '<button class="approve" onclick="Z.acceptConnection(\'' + Z.escape(req.id) + '\')">Accept</button>' +
+      '<button class="reject" onclick="Z.rejectConnection(\'' + Z.escape(req.id) + '\')">Reject</button></div>';
+  }
+  return '<button class="connect-btn" onclick="Z.sendConnectRequest(\'' + Z.escape(otherId) + '\')">Connect ' + bountyTag + '</button>';
+};
+
+Z.sendConnectRequest = async function(userId){
+  var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
+  if(me.id === userId){ Z.toast('Cannot connect to yourself.'); return; }
+  try {
+    await Z.DB.sendConnectRequest(userId);
+    Z.toast('Connection request sent.');
+    await Z.reloadData();
+    Z.softRefresh();
+  } catch(e){
+    var msg = e && e.message ? e.message : 'Could not send request.';
+    if(msg.indexOf('Already connected') !== -1) Z.toast('Already connected.');
+    else if(msg.indexOf('pending') !== -1) Z.toast('Request already pending.');
+    else if(msg.indexOf('yourself') !== -1) Z.toast('Cannot connect to yourself.');
+    else Z.toast(msg);
+  }
+};
+
+Z.acceptConnection = async function(requestId){
+  try {
+    await Z.DB.acceptConnectionRequest(requestId);
+    Z.toast('Connected!');
+    await Z.reloadData();
+    Z.softRefresh();
+  } catch(e){
+    Z.toast(e && e.message ? e.message : 'Could not accept.');
+  }
+};
+
+Z.rejectConnection = async function(requestId){
+  try {
+    await Z.DB.rejectConnectionRequest(requestId);
+    Z.toast('Request rejected.');
+    await Z.reloadData();
+    Z.softRefresh();
+  } catch(e){
+    Z.toast(e && e.message ? e.message : 'Could not reject.');
+  }
+};
+
+// Legacy alias (in case old code calls connectTo)
+Z.connectTo = function(userId){ Z.sendConnectRequest(userId); };
+
+// ============================================================
 // STATUS DATA HELPERS
 // ============================================================
 function _liveStatuses(){
@@ -1043,7 +1222,6 @@ Z.renderStatusRow = function(){
 
   var html = '<div id="status-row" class="status-row-wrap"><div class="status-scroll">';
 
-  // My Status
   html += '<button onclick="' + (myCount>0?'Z.openStatusViewer(\'' + Z.escape(me.id) + '\',0)':'Z.openCreateStatusModal()') + '" class="status-item">' +
     '<div style="position:relative;">' +
     '<div class="' + (myCount>0?'status-ring-unseen':'') + '" style="' + (myCount>0?'':'width:58px;height:58px;border-radius:50%;background:#0f172a;border:2px dashed #10b981;display:flex;align-items:center;justify-content:center;margin:0 auto;') + '">' +
@@ -1052,7 +1230,6 @@ Z.renderStatusRow = function(){
     (myCount>0?'<div onclick="event.stopPropagation();Z.openCreateStatusModal()" style="position:absolute;bottom:0;right:-2px;width:22px;height:22px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;border:2px solid #090d16;cursor:pointer;"><i class="fa-solid fa-plus" style="color:#000;font-size:10px;"></i></div>':'') +
     '</div><span class="status-label" style="font-weight:700;color:#cbd5e1;">My Status</span></button>';
 
-  // Other users' statuses
   var others = entries.filter(function(e){ return !e.isSelf; });
   others.forEach(function(entry){
     var u = entry.user;
@@ -1062,7 +1239,6 @@ Z.renderStatusRow = function(){
       '<span class="status-label">' + Z.escape(Z.displayName(u)) + '</span></button>';
   });
 
-  // View All chip at the END
   html += '<button onclick="Z.showView(\'status-home\')" class="status-item" aria-label="View All Statuses">' +
     '<div style="width:58px;height:58px;border-radius:50%;background:rgba(16,185,129,.12);border:2px solid #10b981;display:flex;align-items:center;justify-content:center;margin:0 auto;">' +
     '<i class="fa-solid fa-arrow-right-long" style="color:#10b981;font-size:20px;"></i>' +
@@ -1073,7 +1249,7 @@ Z.renderStatusRow = function(){
 };
 
 // ============================================================
-// STATUS HOME — 3 big circles per row
+// STATUS HOME
 // ============================================================
 Z.renderStatusHome = function(){
   var me = _cu();
@@ -1118,7 +1294,7 @@ Z.renderStatusHome = function(){
 };
 
 // ============================================================
-// OPEN STATUS VIEWER
+// STATUS VIEWER
 // ============================================================
 Z.openStatusViewer = async function(authorId, index){
   var ex = document.getElementById('status-viewer'); if(ex) ex.remove();
@@ -1202,9 +1378,6 @@ Z.showStatusViewer = function(){
   Z.setupViewerGesture();
 };
 
-// ============================================================
-// STATUS TIMER
-// ============================================================
 Z.startStatusTimer = function(){
   Z.clearStatusTimer();
   Z.State.viewerPaused = false;
@@ -1248,9 +1421,6 @@ Z.clearStatusTimer = function(){
   if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; }
 };
 
-// ============================================================
-// STATUS GESTURE — clean, no double-fire, hold-to-pause
-// ============================================================
 Z.setupViewerGesture = function(){
   var body = document.getElementById('status-viewer-body'); if(!body) return;
 
@@ -1280,21 +1450,18 @@ Z.setupViewerGesture = function(){
 
     if(holding){ holding=false; Z.resumeStatusTimer(); return; }
 
-    // horizontal swipe → next/prev status (auto-advance to next contact at end)
     if(ax>SWIPE && ax>ay*1.15){
       if(dx<0) Z.statusNext();
       else Z.statusPrev();
       return;
     }
 
-    // vertical swipe → next/prev contact
     if(ay>SWIPE && ay>ax*1.15){
       if(dy<0) Z.advanceToNextContact();
       else Z.advanceToPrevContact();
       return;
     }
 
-    // tap → next status
     if(!moved && el<TAPTIME){
       Z.statusNext();
       return;
@@ -1436,9 +1603,6 @@ Z.renderSparkSlide = function(spark, index){
     '</div>' + stack + '</div>';
 };
 
-// ============================================================
-// SPARK FEED — one video only + audio unlock persistence
-// ============================================================
 Z._sparkAudioUnlocked = false;
 
 Z.setupSparkFeed = function(sparks){
@@ -1770,9 +1934,6 @@ Z.cancelComposer = function(){
   var i = document.getElementById('composer-input'); if(i) i.value='';
 };
 
-// ============================================================
-// REACT TO POST — optimistic + softRefresh (no jump)
-// ============================================================
 Z.reactToPost = async function(postId, reactionType){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var c = Z.sb(); if(!c) return;
@@ -1821,9 +1982,6 @@ Z.setCommentColor = function(color){
   });
 };
 
-// ============================================================
-// ADD COMMENT — soft update, no jump
-// ============================================================
 Z.addComment = async function(postId){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var el = document.getElementById('comment-input-' + postId);
@@ -1876,7 +2034,7 @@ Z.sharePost = function(postId){
 };
 
 // ============================================================
-// FEED VIDEO AUTOPLAY — only ONE video plays, 75% visibility
+// FEED VIDEO AUTOPLAY
 // ============================================================
 Z._feedVideoObserver = null;
 
@@ -1943,18 +2101,17 @@ Z.renderPeopleList = function(){
   var q = (Z.State.peopleSearch||'').toLowerCase();
   var me = _cu();
   var list = (Z.State.allProfiles||[]).filter(function(u){
+    if(me && u.id === me.id) return false;
     if(!q) return true;
     return String(u.name||'').toLowerCase().indexOf(q) !== -1 || String(u.username||'').toLowerCase().indexOf(q) !== -1;
   });
   var html = '';
   list.forEach(function(u){
-    var isSelf = me && me.id === u.id;
     html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">' +
       '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="display:flex;align-items:center;gap:10px;background:transparent;border:none;cursor:pointer;flex:1;text-align:left;min-width:0;">' +
       '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0;">' +
       '<div style="min-width:0;"><div style="font-weight:700;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(u)) + '</div><div style="font-size:10px;color:#64748b;">@' + Z.escape(u.username||'user') + '</div></div></button>' +
-      (isSelf ? '<span style="font-size:10px;color:#64748b;padding:4px 12px;background:#0f172a;border-radius:8px;">You</span>' :
-        '<button onclick="Z.connectTo(\'' + Z.escape(u.id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:6px 14px;border-radius:8px;font-size:11px;cursor:pointer;">Connect</button>') +
+      Z.renderConnectButton(u.id) +
       '</div>';
   });
   if(!list.length) html = '<div class="empty-state"><i class="fa-solid fa-users"></i><p>No people.</p></div>';
@@ -1966,15 +2123,6 @@ Z.onPeopleSearch = function(v){
   var c = document.getElementById('people-list-container'); if(c) c.innerHTML = Z.renderPeopleList();
 };
 
-Z.connectTo = async function(userId){
-  var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
-  var c = Z.sb(); if(!c) return;
-  var r = await c.from('connections').insert({follower_id: me.id, following_id: userId});
-  if(r.error){ Z.toast('Already connected or error.'); return; }
-  Z.toast('Connected!');
-  await Z.reloadData(); Z.showView('people');
-};
-
 // ============================================================
 // PROFILE
 // ============================================================
@@ -1983,13 +2131,16 @@ Z.renderProfile = function(){
   if(!u){
     return '<div class="empty-state"><i class="fa-regular fa-user"></i><p>Please log in.</p><button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;margin-top:12px;cursor:pointer;">Login</button></div>';
   }
+  var connCount = (Z.State.allConnections||[]).filter(function(c){
+    return c.status === 'accepted' && (c.requester_id === u.id || c.recipient_id === u.id);
+  }).length;
   return '<div style="display:flex;flex-direction:column;gap:14px;">' +
     '<div class="profile-card"><div class="profile-cover"><img src="' + Z.escape(u.cover||'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80') + '"></div>' +
     '<div class="profile-body"><img class="profile-avatar" src="' + Z.escape(Z.displayAvatar(u)) + '">' +
     '<div style="margin-top:6px;"><div class="profile-name">' + Z.escape(Z.displayName(u)) + ' <i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;"></i></div>' +
     '<div class="profile-handle">@' + Z.escape(u.username || u.email || 'user') + (u.profession?' • ' + Z.escape(u.profession):'') + '</div>' +
     '<div class="profile-bio">' + Z.escape(u.bio || '') + '</div>' +
-    '<div class="profile-stats"><span><strong>' + (u.connections_count||0) + '</strong> Connections</span><span><strong>' + Z.escape(u.package||'Free') + '</strong> Package</span></div></div></div></div>' +
+    '<div class="profile-stats"><span><strong>' + connCount + '</strong> Connections</span><span><strong>' + Z.escape(u.package||'Free') + '</strong> Package</span></div></div></div></div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
     '<button onclick="Z.openEditProfileModal()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:14px;border-radius:12px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-pen"></i> Edit Profile</button>' +
     '<button onclick="Z.showView(\'bounty\')" style="background:linear-gradient(135deg,#f59e0b,#ef4444);border:none;color:#fff;font-weight:700;padding:14px;border-radius:12px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-gear"></i> Bounty</button>' +
@@ -2076,7 +2227,7 @@ Z.renderPublicProfile = function(userId){
     '<div style="margin-top:6px;"><div class="profile-name">' + Z.escape(Z.displayName(t)) + '</div>' +
     '<div class="profile-handle">@' + Z.escape(t.username||'user') + (t.profession?' • ' + Z.escape(t.profession):'') + '</div>' +
     '<div class="profile-bio">' + Z.escape(t.bio||'') + '</div>' +
-    (me && me.id !== t.id ? '<div style="margin-top:10px;"><button onclick="Z.connectTo(\'' + Z.escape(t.id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:6px 14px;border-radius:8px;font-size:11px;cursor:pointer;">Connect</button></div>' : '') +
+    (me && me.id !== t.id ? '<div style="margin-top:10px;">' + Z.renderConnectButton(t.id) + '</div>' : '') +
     '</div></div></div></div>';
 };
 
@@ -2088,7 +2239,7 @@ Z.renderWallet = function(){
   var tx = u._walletTx || [];
   var txHtml = tx.length ? tx.map(function(t){
     var m = t.amount < 0;
-    return '<div style="display:flex;justify-content:space-between;background:#0f172a;border:1px solid #1e293b;padding:10px 12px;border-radius:10px;margin-bottom:6px;font-size:11px;"><div><div style="font-weight:600;color:#fff;">' + Z.escape(t.type) + '</div><div style="color:#64748b;font-size:9px;">' + new Date(t.created_at).toLocaleString() + '</div></div><div style="font-weight:700;' + (m?'color:#ef4444;':'color:#10b981;') + '">' + (m?'-':'+') + '$' + Math.abs(t.amount).toFixed(4) + '</div></div>';
+    return '<div style="display:flex;justify-content:space-between;background:#0f172a;border:1px solid #1e293b;padding:10px 12px;border-radius:10px;margin-bottom:6px;font-size:11px;"><div><div style="font-weight:600;color:#fff;">' + Z.escape(t.type || t.reason || '') + '</div><div style="color:#64748b;font-size:9px;">' + new Date(t.created_at).toLocaleString() + '</div></div><div style="font-weight:700;' + (m?'color:#ef4444;':'color:#10b981;') + '">' + (m?'-':'+') + '$' + Math.abs(t.amount).toFixed(4) + '</div></div>';
   }).join('') : '<div style="text-align:center;padding:20px;color:#64748b;font-size:11px;">No transactions.</div>';
   return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div>' +
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
@@ -2116,7 +2267,7 @@ Z.renderBounty = function(){
   }).join('');
   return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div>' +
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
-    '<p style="font-size:11px;color:#64748b;margin-bottom:14px;">Reactions are FIXED: ❤️ $0.05 • 🌹 $0.04 • 🔥 $0.03 • 👏 $0.02 • ⭐ $0.01</p>' +
+    '<p style="font-size:11px;color:#64748b;margin-bottom:14px;">Connect bounty is what others will receive when you accept their connection request.</p>' +
     inputs + '<button onclick="Z.saveBounty()" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:10px;font-size:12px;cursor:pointer;">Save</button></div></div>';
 };
 
@@ -2218,17 +2369,49 @@ Z.onCircleSearch = function(v){
 };
 
 // ============================================================
-// NOTIFICATIONS
+// NOTIFICATIONS — Supabase-backed + Accept/Reject
 // ============================================================
 Z.renderNotifications = function(){
   var u = _cu();
-  var list = u ? Z.DB.getNotifications().filter(function(n){ return n.userId===u.id; }) : [];
-  var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'home\')"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:4px;">Notifications</h2></div>';
-  if(list.length){
-    list.forEach(function(n){
-      html += '<div style="background:#111827;border:1px solid ' + (n.read?'#1e293b':'rgba(16,185,129,.3)') + ';border-radius:12px;padding:12px;"><div style="font-size:12px;color:#e2e8f0;">' + Z.escape(n.message) + '</div><div style="font-size:9px;color:#64748b;margin-top:2px;">' + new Date(n.timestamp).toLocaleString() + '</div></div>';
+  if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
+  var all = Z.State.allNotifications || [];
+
+  var incoming = (Z.State.allConnections||[]).filter(function(c){
+    return c.recipient_id === u.id && c.status === 'pending';
+  });
+
+  var html = '<div style="display:flex;flex-direction:column;gap:12px;">' +
+    '<div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'home\')"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
+    '<h2 class="view-title" style="margin-left:4px;">Notifications</h2></div>';
+
+  if(incoming.length){
+    html += '<div class="section-title">Connection Requests (' + incoming.length + ')</div>';
+    incoming.forEach(function(c){
+      var req = Z.getProfileById(c.requester_id) || {name:'User', id:c.requester_id};
+      html += '<div class="conn-request-card"><div class="row">' +
+        '<img src="' + Z.escape(Z.displayAvatar(req)) + '">' +
+        '<div style="flex:1;"><div style="font-weight:700;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(req)) + '</div>' +
+        '<div style="font-size:10px;color:#10b981;font-weight:700;">$' + Number(c.connection_bounty_amount||0).toFixed(2) + ' bounty</div></div></div>' +
+        '<div class="connect-actions">' +
+        '<button class="approve" onclick="Z.acceptConnection(\'' + Z.escape(c.id) + '\')">Accept</button>' +
+        '<button class="reject" onclick="Z.rejectConnection(\'' + Z.escape(c.id) + '\')">Reject</button></div></div>';
     });
-  } else html += '<div class="empty-state"><i class="fa-regular fa-bell"></i><p>No notifications.</p></div>';
+  }
+
+  html += '<div class="section-title">Recent</div>';
+  if(all.length){
+    all.forEach(function(n){
+      html += '<div style="background:#111827;border:1px solid ' + (n.read?'#1e293b':'rgba(16,185,129,.3)') + ';border-radius:12px;padding:12px;">' +
+        '<div style="font-size:12px;color:#e2e8f0;">' + Z.escape(n.message) + '</div>' +
+        '<div style="font-size:9px;color:#64748b;margin-top:2px;">' + new Date(n.created_at).toLocaleString() + '</div></div>';
+    });
+    var c = Z.sb();
+    if(c){
+      c.from('notifications').update({read:true}).eq('user_id', u.id).eq('read', false).then(function(){});
+    }
+  } else if(!incoming.length){
+    html += '<div class="empty-state"><i class="fa-regular fa-bell"></i><p>No notifications.</p></div>';
+  }
   html += '</div>';
   return html;
 };
@@ -2238,7 +2421,9 @@ Z.renderNotifications = function(){
 // ============================================================
 Z.reloadData = async function(){
   await Z.DB.loadAllProfiles();
-  await Z.DB.loadPosts();
+  await Z.DB.loadHomeFeed();
+  await Z.DB.loadConnections();
+  await Z.DB.loadNotifications();
   await Z.DB.loadStatuses();
   await Z.DB.loadSparks();
   var me = _cu();
@@ -2257,6 +2442,17 @@ Z.reloadData = async function(){
         var post = (Z.State.allPosts||[]).find(function(p){ return p.id === r.post_id; });
         if(post) post._myReaction = r.reaction;
       });
+      // aggregate reaction counts for visible posts
+      var pids = (Z.State.allPosts||[]).map(function(p){ return p.id; });
+      if(pids.length){
+        var pc = await c.from('post_reactions').select('post_id, reaction').in('post_id', pids);
+        var postMap = {};
+        (pc.data||[]).forEach(function(r){
+          postMap[r.post_id] = postMap[r.post_id] || {};
+          postMap[r.post_id][r.reaction] = (postMap[r.post_id][r.reaction]||0)+1;
+        });
+        (Z.State.allPosts||[]).forEach(function(p){ p.reactions = postMap[p.id] || {}; });
+      }
       var sr = await c.from('spark_reactions').select('*').eq('user_id', me.id);
       (sr.data||[]).forEach(function(r){
         var sp = (Z.State.allSparks||[]).find(function(s){ return s.id === r.spark_id; });
@@ -2274,6 +2470,7 @@ Z.reloadData = async function(){
       }
     }
   }
+  Z.updateNotifBadge();
 };
 
 // ============================================================
