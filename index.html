@@ -217,7 +217,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .spark-info-author img{width:36px;height:36px;border-radius:50%;object-fit:cover;border:2px solid #fff}
 .spark-info-author .sname{font-weight:700;font-size:13px}
 .spark-info-author .shandle{font-size:10px;color:#cbd5e1}
-.spark-info-caption{font-size:12px;line-height:1.4;color:#f1f5f9;margin-bottom:6px;max-height:80px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.spark-info-caption{font-size:12px;line-height:1.4;color:#f1f5f9;margin-bottom:6px;position:relative;max-height:80px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 .spark-info-tags{font-size:10px;color:#10b981;font-weight:600}
 .spark-info-tags button{background:transparent;border:none;color:#10b981;font-weight:600;font-size:10px;cursor:pointer;margin-right:4px}
 .spark-action-btn{display:flex;flex-direction:column;align-items:center;gap:2px;background:transparent;border:none;cursor:pointer;color:#fff;font-size:10px;padding:0}
@@ -351,6 +351,34 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .flying-note{position:fixed;z-index:99998;pointer-events:none;top:50%;left:20px;animation:flyNote 1.7s cubic-bezier(.4,0,.2,1) forwards;filter:drop-shadow(0 4px 10px rgba(16,185,129,.5));background:transparent;border:none}
 .flying-note svg{display:block;background:transparent}
 .flying-note .amount{font-size:11px;color:#10b981;font-weight:900;text-align:center;margin-top:2px;background:transparent}
+
+/* ============================================================
+   NEW — CAPTION COLLAPSE / SEE MORE (Issues #4 + #5)
+   ============================================================ */
+.post-content.post-caption{position:relative;margin-bottom:10px}
+.post-caption .pc-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;color:#e2e8f0;line-height:1.6}
+.post-caption .pc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(17,24,39,0), rgba(17,24,39,1) 40%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.6em;line-height:1.6em;border:none}
+.post-caption.has-overflow:not(.expanded) .pc-see-more{display:inline-block}
+.post-caption.expanded .pc-text{display:block;-webkit-line-clamp:unset;overflow:visible}
+.post-caption.expanded .pc-see-more{display:none}
+
+.status-caption-overlay{position:absolute;left:0;right:0;bottom:0;padding:16px;z-index:15;background:linear-gradient(to top,rgba(0,0,0,.85),transparent);pointer-events:none;transition:background .2s}
+.status-caption-overlay .sc-inner{pointer-events:auto;position:relative;max-width:100%}
+.status-caption-overlay .sc-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.5;color:#fff}
+.status-caption-overlay .sc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,1) 40%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.5em;line-height:1.5em;border:none}
+.status-caption-overlay.has-overflow:not(.expanded) .sc-see-more{display:inline-block}
+.status-caption-overlay.expanded{inset:0;background:rgba(0,0,0,.88);padding:24px;display:flex;align-items:center;justify-content:center;pointer-events:auto;overflow-y:auto}
+.status-caption-overlay.expanded .sc-inner{max-height:100%;overflow-y:auto;width:100%}
+.status-caption-overlay.expanded .sc-text{display:block;-webkit-line-clamp:unset;overflow:visible;font-size:15px;line-height:1.6}
+.status-caption-overlay.expanded .sc-see-more{display:none}
+
+.spark-info-caption{font-size:12px;line-height:1.4;color:#f1f5f9;margin-bottom:6px;position:relative}
+.spark-info-caption .sc-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word}
+.spark-info-caption .sc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,0.85) 45%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.4em;line-height:1.4em;border:none}
+.spark-info-caption.has-overflow:not(.expanded) .sc-see-more{display:inline-block}
+.spark-info-caption.expanded{position:fixed;top:56px;left:0;right:0;bottom:80px;max-width:600px;margin:0 auto;background:rgba(0,0,0,.9);padding:24px;display:flex;align-items:center;justify-content:center;z-index:250;overflow-y:auto;cursor:pointer}
+.spark-info-caption.expanded .sc-text{display:block;-webkit-line-clamp:unset;overflow:visible;font-size:15px;line-height:1.6;max-height:100%;width:100%}
+.spark-info-caption.expanded .sc-see-more{display:none}
 </style>
 </head>
 <body>
@@ -427,7 +455,10 @@ Z.State = {
   lastScroll: 0,
   homeAnchorPost: null,
   homeAnchorOffset: 0,
-  sparkSlideIndex: 0
+  sparkSlideIndex: 0,
+  _lastScrollY: 0,
+  _lastSparkScrollY: 0,
+  arrowVisible: false
 };
 
 Z.Reactions = {
@@ -600,9 +631,9 @@ Z.hasBountyReactionGiven = function(myReactions){
 };
 
 // ============================================================
-// SCROLL-TO-LATEST (up arrow)
+// SCROLL-TO-LATEST (up arrow) — Issue #1
 // ============================================================
-Z.updateScrollTopBtn = function(){
+Z.updateScrollTopBtn = function(isScrollEvent){
   var btn = document.getElementById('scroll-top-btn'); if(!btn) return;
   var view = Z.State.currentView;
   var scrollY = 0;
@@ -612,29 +643,119 @@ Z.updateScrollTopBtn = function(){
   } else {
     scrollY = window.scrollY || document.documentElement.scrollTop || 0;
   }
-  btn.style.display = (scrollY > 200) ? 'flex' : 'none';
+  if(isScrollEvent){
+    var prev = (view === 'spark') ? (Z.State._lastSparkScrollY || 0) : (Z.State._lastScrollY || 0);
+    if(scrollY > prev + 1){
+      // Scrolling DOWN → hide instantly
+      Z.State.arrowVisible = false;
+    } else if(scrollY < prev - 1){
+      // Scrolling UP → show instantly (only past small threshold)
+      Z.State.arrowVisible = (scrollY > 60);
+    }
+    if(view === 'spark') Z.State._lastSparkScrollY = scrollY;
+    else Z.State._lastScrollY = scrollY;
+  } else {
+    if(view === 'spark'){ Z.State._lastSparkScrollY = scrollY; }
+    else { Z.State._lastScrollY = scrollY; }
+    if(scrollY <= 60) Z.State.arrowVisible = false;
+  }
+  btn.style.display = Z.State.arrowVisible ? 'flex' : 'none';
 };
+
+if(!Z._arrowScrollHooked){
+  Z._arrowScrollHooked = true;
+  window.addEventListener('scroll', function(){ Z.updateScrollTopBtn(true); }, {passive:true});
+}
+
 Z.scrollToLatest = function(){
   var view = Z.State.currentView;
+  // Reset arrow state immediately
+  Z.State.arrowVisible = false;
+  var btn = document.getElementById('scroll-top-btn'); if(btn) btn.style.display = 'none';
+
   if(view === 'spark'){
     var feed = document.getElementById('spark-feed');
-    if(feed){ feed.scrollTo({top:0, behavior:'smooth'}); }
+    if(feed){ feed.scrollTop = 0; }
     Z.State.sparkSlideIndex = 0;
-    Z.updateScrollTopBtn();
-  } else if(view === 'home'){
-    // Refresh data then scroll to top
-    Z.toast('Loading latest...');
-    Z.reloadData().then(function(){
-      Z.State.homeAnchorPost = null;
-      Z.State.homeAnchorOffset = 0;
-      Z.softRefresh();
-      setTimeout(function(){ window.scrollTo({top:0, behavior:'smooth'}); }, 100);
-      setTimeout(function(){ Z.updateScrollTopBtn(); }, 300);
-    });
-  } else {
-    window.scrollTo({top:0, behavior:'smooth'});
-    setTimeout(function(){ Z.updateScrollTopBtn(); }, 300);
+    Z.State._lastSparkScrollY = 0;
+    setTimeout(function(){ Z.updateScrollTopBtn(); }, 30);
+    return;
   }
+  if(view === 'home'){
+    Z.State.homeAnchorPost = null;
+    Z.State.homeAnchorOffset = 0;
+    Z.State._lastScrollY = 0;
+    // Instant jump
+    window.scrollTo(0, 0);
+    Z.updateScrollTopBtn();
+    // Reload fresh data in background, then re-apply scroll=0
+    Z.reloadData().then(function(){
+      if(Z.State.currentView !== 'home') return;
+      Z.softRefresh();
+      window.scrollTo(0, 0);
+      Z.State._lastScrollY = 0;
+      Z.updateScrollTopBtn();
+    }).catch(function(){});
+    return;
+  }
+  // Any other view (status-home, notifications, wallet, people, circles, profile, etc.)
+  Z.State._lastScrollY = 0;
+  window.scrollTo(0, 0);
+  Z.updateScrollTopBtn();
+};
+
+// ============================================================
+// CAPTION EXPAND/COLLAPSE helpers — Issue #5
+// ============================================================
+Z.toggleCaptionEl = function(ev, el){
+  if(!el) return;
+  if(!el.classList.contains('has-overflow') && !el.classList.contains('expanded')) return;
+  if(el.classList.contains('expanded')){
+    el.classList.remove('expanded');
+    if(ev) ev.stopPropagation();
+    return;
+  }
+  var t = ev && ev.target;
+  if(!t) return;
+  // Expand only when clicking the See-more button, OR directly on the clamped text
+  if(t.classList && (t.classList.contains('pc-see-more') || t.classList.contains('sc-see-more') || t.classList.contains('pc-text') || t.classList.contains('sc-text'))){
+    el.classList.add('expanded');
+    if(ev) ev.stopPropagation();
+  }
+};
+
+Z.detectCaptionOverflow = function(){
+  try {
+    document.querySelectorAll('.post-caption, .status-caption-overlay, .spark-info-caption').forEach(function(el){
+      if(el.classList.contains('expanded')) return;
+      var txt = el.querySelector('.pc-text, .sc-text');
+      if(!txt) return;
+      el.classList.remove('has-overflow');
+      // Force reflow
+      void txt.offsetHeight;
+      if(txt.scrollHeight > txt.clientHeight + 2) el.classList.add('has-overflow');
+    });
+  } catch(e){}
+};
+
+// ============================================================
+// No-caption confirm — Issue #3
+// ============================================================
+Z.confirmNoCaption = function(continueCall){
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box" style="max-width:340px;">' +
+        '<div class="modal-header" style="border-bottom:none;padding-bottom:0;margin-bottom:6px;">' +
+          '<h3 style="font-size:15px;">Continue without caption?</h3>' +
+        '</div>' +
+        '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Your media will be published with no caption text.</div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z.closeModal()">Cancel</button>' +
+          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z.closeModal();' + continueCall + '">Continue</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
 };
 
 // ============================================================
@@ -707,14 +828,14 @@ Z.DB = {
   async loadAllProfiles(){ var c = sb(); if(!c) return []; try { var r = await c.from('profiles').select('*'); if(r.error) throw r.error; Z.State.allProfiles = r.data || []; return Z.State.allProfiles; } catch(e){ return []; } },
   async updateProfile(id, patch){ var c = sb(); if(!c) return null; var r = await c.from('profiles').update(patch).eq('id', id).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } if(Z.State.currentUser && Z.State.currentUser.id === id){ Z.State.currentUser = Object.assign({}, Z.State.currentUser, patch); } var arr = Z.State.allProfiles || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id){ arr[i] = Object.assign({}, arr[i], patch); break; } return r.data; },
   async loadHomeFeed(){ var c = sb(); if(!c) return []; try { var r = await c.rpc('get_home_feed', {p_limit: 100}); if(r.error) throw r.error; Z.State.allPosts = r.data || []; return Z.State.allPosts; } catch(e){ return []; } },
-  async createPost(payload){ var c = sb(); if(!c) return null; var r = await c.from('posts').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } Z.State.allPosts = [r.data].concat(Z.State.allPosts || []); return r.data; },
+  async createPost(payload){ var c = sb(); if(!c) return null; var r = await c.from('posts').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } return r.data; },
   async deletePost(id){ var c = sb(); if(!c) return false; var r = await c.from('posts').delete().eq('id', id); if(r.error){ return false; } Z.State.allPosts = (Z.State.allPosts||[]).filter(function(p){ return p.id !== id; }); return true; },
   async loadStatuses(){ var c = sb(); if(!c) return []; try { var r = await c.from('statuses').select('*').gt('expires_at', new Date().toISOString()).order('created_at',{ascending:false}); if(r.error) throw r.error; Z.State.allStatuses = r.data || []; return Z.State.allStatuses; } catch(e){ return []; } },
-  async createStatus(payload){ var c = sb(); if(!c) return null; var r = await c.from('statuses').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } Z.State.allStatuses = [r.data].concat(Z.State.allStatuses || []); return r.data; },
+  async createStatus(payload){ var c = sb(); if(!c) return null; var r = await c.from('statuses').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } return r.data; },
   async markStatusViewed(statusId, viewerId){ var c = sb(); if(!c) return; await c.from('status_views').upsert({status_id: statusId, viewer_id: viewerId}, {onConflict:'status_id,viewer_id'}); },
   async loadStatusViews(){ var c = sb(); if(!c) return []; try { var r = await c.from('status_views').select('*'); if(r.error) throw r.error; return r.data || []; } catch(e){ return []; } },
   async loadSparks(){ var c = sb(); if(!c) return []; try { var r = await c.from('sparks').select('*').order('created_at',{ascending:false}).limit(60); if(r.error) throw r.error; Z.State.allSparks = r.data || []; return Z.State.allSparks; } catch(e){ return []; } },
-  async createSpark(payload){ var c = sb(); if(!c) return null; var r = await c.from('sparks').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } Z.State.allSparks = [r.data].concat(Z.State.allSparks || []); return r.data; },
+  async createSpark(payload){ var c = sb(); if(!c) return null; var r = await c.from('sparks').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } return r.data; },
   async updateSpark(id, patch){ var c = sb(); if(!c) return null; var r = await c.from('sparks').update(patch).eq('id', id).select().maybeSingle(); if(r.error){ return null; } var arr = Z.State.allSparks || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id){ arr[i] = Object.assign({}, arr[i], patch); break; } return r.data; },
   async loadWalletTx(userId){ var c = sb(); if(!c) return []; try { var r = await c.from('wallet_transactions').select('*').eq('user_id',userId).order('created_at',{ascending:false}).limit(100); if(r.error) throw r.error; return r.data || []; } catch(e){ return []; } },
   async loadConnections(){ var c = sb(); var me = Z.State.currentUser; if(!c || !me){ Z.State.allConnections = []; return []; } try { var r = await c.from('connection_requests').select('*').or('requester_id.eq.' + me.id + ',recipient_id.eq.' + me.id).order('updated_at',{ascending:false}); if(r.error) throw r.error; Z.State.allConnections = r.data || []; return Z.State.allConnections; } catch(e){ Z.State.allConnections = []; return []; } },
@@ -770,9 +891,60 @@ Z.displayAvatar = function(p){ return (p && p.avatar) ? p.avatar : 'https://ui-a
 Z.shareBountyOptions = function(selected){ selected = Number(selected) || 0; return [0, 0.01, 0.02, 0.03, 0.04, 0.05].map(function(v){ return '<option value="' + v + '" ' + (Math.abs(selected - v) < 0.0001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (no bounty)' : '') + '</option>'; }).join(''); };
 Z.openCreateModal = function(){ if(!Z.State.currentUser){ Z.openAuthModal('login'); return; } Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><button class="btn-primary" style="margin-bottom:10px;" onclick="Z.closeModal();Z.openCreateSparkModal();"><i class="fa-solid fa-bolt"></i> Create Spark</button><button class="btn-primary" style="margin-bottom:10px;background:linear-gradient(135deg,#ec4899,#8b5cf6);color:#fff;" onclick="Z.closeModal();Z.openCreateFullVideoModal();"><i class="fa-solid fa-film"></i> Create Full Video</button><button class="btn-primary" style="background:linear-gradient(135deg,#8b5cf6,#3b82f6);color:#fff;" onclick="Z.closeModal();Z.openCreateCircleModal();"><i class="fa-solid fa-shop"></i> Create Circle</button></div></div>'); };
 Z.openCreateSparkModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create Spark</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Caption</label><textarea id="spark-caption" class="form-textarea" placeholder="What\'s happening?"></textarea><label class="form-label">Tags (comma separated)</label><input type="text" id="spark-tags" class="form-input" placeholder="technology, zynix"><label class="form-label">Video File (under 100 MB)</label><input type="file" id="spark-file" accept="video/*" class="form-input"><label class="form-label">Or Video URL</label><input type="text" id="spark-url" class="form-input" placeholder="https://..."><label class="form-label">Share Bounty</label><select id="spark-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select><button class="btn-primary" onclick="Z.submitSpark()">Publish Spark</button></div></div>'); };
-Z.submitSpark = async function(){ var caption = ((document.getElementById('spark-caption')||{}).value || '').trim(); var tagsRaw = ((document.getElementById('spark-tags')||{}).value || '').trim(); var fi = document.getElementById('spark-file'); var url = ((document.getElementById('spark-url')||{}).value || '').trim(); var sb_ = parseFloat((document.getElementById('spark-share-bounty')||{}).value || '0') || 0; if(!caption){ Z.toast('Add a caption.'); return; } var tags = tagsRaw ? tagsRaw.split(',').map(function(t){return t.trim().replace(/^#/,'');}).filter(Boolean) : ['zynix']; var vu = ''; if(fi && fi.files && fi.files[0]){ if(fi.files[0].size > 100*1024*1024){ Z.toast('Video under 100 MB.'); return; } Z.toast('Uploading...'); vu = await Z.storeMedia(fi.files[0]); } else if(url){ vu = url; } else { Z.toast('Provide video.'); return; } var sp = await Z.DB.createSpark({author_id: Z.State.currentUser.id, caption: caption, video_url: vu, tags: tags, type: 'spark', share_bounty: sb_}); if(!sp){ Z.toast('Failed.'); return; } Z.closeModal(); Z.toast('Spark published!'); Z.showView('spark'); };
+Z.submitSpark = async function(forceNoCaption){ Z.submitSparkImpl(forceNoCaption); };
+Z.submitSparkImpl = async function(forceNoCaption){
+  var me = Z.State.currentUser; if(!me) return;
+  var caption = ((document.getElementById('spark-caption')||{}).value || '').trim();
+  var tagsRaw = ((document.getElementById('spark-tags')||{}).value || '').trim();
+  var fi = document.getElementById('spark-file');
+  var url = ((document.getElementById('spark-url')||{}).value || '').trim();
+  var shareBounty = parseFloat((document.getElementById('spark-share-bounty')||{}).value || '0') || 0;
+  var hasFile = !!(fi && fi.files && fi.files[0]);
+  if(!hasFile && !url){ Z.toast('Provide video.'); return; }
+  if(!caption && !forceNoCaption){
+    Z.confirmNoCaption('Z.submitSparkImpl(true)');
+    return;
+  }
+  var tags = tagsRaw ? tagsRaw.split(',').map(function(t){return t.trim().replace(/^#/,'');}).filter(Boolean) : ['zynix'];
+  var fileObj = hasFile ? fi.files[0] : null;
+  if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Video under 100 MB.'); return; }
+  var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
+  var tempId = 'temp_' + Z.uuid();
+  var optimistic = {
+    id: tempId, author_id: me.id, caption: caption, video_url: localUrl,
+    tags: tags, type: 'spark', share_bounty: shareBounty,
+    created_at: new Date().toISOString(), views: 0, shares: 0,
+    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
+    _optimistic: true
+  };
+  Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
+  Z.closeModal();
+  Z.toast('Spark published!');
+  Z.showView('spark');
+  (async function(){
+    var vu = '';
+    if(fileObj){ vu = await Z.storeMedia(fileObj); }
+    else if(url){ vu = url; }
+    var sp = await Z.DB.createSpark({author_id: me.id, caption: caption, video_url: vu, tags: tags, type: 'spark', share_bounty: shareBounty});
+    var arr = Z.State.allSparks || [];
+    var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    if(sp){
+      if(idx >= 0){
+        var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0});
+        arr[idx] = real;
+      }
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      if(Z.State.currentView === 'spark') Z.showView('spark');
+    } else {
+      Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z.toast('Publish failed. Try again.');
+      if(Z.State.currentView === 'spark') Z.showView('spark');
+    }
+  })();
+};
 Z.openCreateFullVideoModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Upload Full Video</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Title</label><input type="text" id="fv-title" class="form-input" placeholder="Video title"><label class="form-label">Description</label><textarea id="fv-desc" class="form-textarea"></textarea><label class="form-label">Video File (under 200 MB)</label><input type="file" id="fv-file" accept="video/*" class="form-input"><label class="form-label">Or Video URL</label><input type="text" id="fv-url" class="form-input" placeholder="https://..."><label class="form-label">Share Bounty</label><select id="fv-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select><button class="btn-primary" onclick="Z.submitFullVideo()">Upload Video</button></div></div>'); };
-Z.submitFullVideo = async function(){ var title = ((document.getElementById('fv-title')||{}).value||'').trim(); var desc = ((document.getElementById('fv-desc')||{}).value||'').trim(); var fi = document.getElementById('fv-file'); var url = ((document.getElementById('fv-url')||{}).value||'').trim(); var sb_ = parseFloat((document.getElementById('fv-share-bounty')||{}).value || '0') || 0; if(!title){ Z.toast('Enter a title.'); return; } var vu = ''; if(fi && fi.files && fi.files[0]){ if(fi.files[0].size > 200*1024*1024){ Z.toast('Video under 200 MB.'); return; } Z.toast('Uploading...'); vu = await Z.storeMedia(fi.files[0]); } else if(url){ vu = url; } else { Z.toast('Provide video.'); return; } var sp = await Z.DB.createSpark({author_id: Z.State.currentUser.id, title: title, caption: desc, video_url: vu, type: 'long_video', tags: [], share_bounty: sb_}); if(!sp){ Z.toast('Failed.'); return; } Z.closeModal(); Z.toast('Video uploaded!'); Z.showView('spark'); };
+Z.submitFullVideo = async function(){ var title = ((document.getElementById('fv-title')||{}).value||'').trim(); var desc = ((document.getElementById('fv-desc')||{}).value||'').trim(); var fi = document.getElementById('fv-file'); var url = ((document.getElementById('fv-url')||{}).value||'').trim(); var sb_ = parseFloat((document.getElementById('fv-share-bounty')||{}).value || '0') || 0; if(!title){ Z.toast('Enter a title.'); return; } var vu = ''; if(fi && fi.files && fi.files[0]){ if(fi.files[0].size > 200*1024*1024){ Z.toast('Video under 200 MB.'); return; } Z.toast('Uploading...'); vu = await Z.storeMedia(fi.files[0]); } else if(url){ vu = url; } else { Z.toast('Provide video.'); return; } var sp = await Z.DB.createSpark({author_id: Z.State.currentUser.id, title: title, caption: desc, video_url: vu, type: 'long_video', tags: [], share_bounty: sb_}); if(!sp){ Z.toast('Failed.'); return; } Z.State.allSparks = [sp].concat(Z.State.allSparks || []); Z.closeModal(); Z.toast('Video uploaded!'); Z.showView('spark'); };
 Z.openCreateCircleModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create Circle</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Name</label><input type="text" id="cc-name" class="form-input"><label class="form-label">Description</label><textarea id="cc-desc" class="form-textarea"></textarea><label class="form-label">Type</label><select id="cc-type" class="form-select"><option value="social">Social</option><option value="services">Services</option><option value="goods">Physical Goods</option><option value="office">Office</option><option value="education">Education</option><option value="events">Events</option></select><label class="form-label">Avatar URL</label><input type="text" id="cc-avatar" class="form-input" placeholder="https://..."><button class="btn-primary" onclick="Z.submitCircle()">Create Circle</button></div></div>'); };
 Z.submitCircle = function(){ var name = ((document.getElementById('cc-name')||{}).value||'').trim(); var desc = ((document.getElementById('cc-desc')||{}).value||'').trim(); var type = (document.getElementById('cc-type')||{}).value || 'social'; var avatar = ((document.getElementById('cc-avatar')||{}).value||'').trim() || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80'; if(!name){ Z.toast('Enter name.'); return; } var circles = Z.DB.getCircles(); circles.unshift({id:'cir_'+Date.now(), name:name, description:desc||'New circle.', members:1, creatorId: Z.State.currentUser.id, avatar:avatar, type:type, shopItems:[]}); Z.DB.saveCircles(circles); Z.closeModal(); Z.toast('Circle created!'); Z.showView('circles'); };
 
@@ -832,8 +1004,8 @@ Z.playExclusive = function(video){
 
 window.Z = Z;
 })();
-  </script>
-    <script>
+</script>
+<script>
 (function(){
 'use strict';
 var Z = window.Z;
@@ -843,7 +1015,6 @@ function _cu(){ return Z.State.currentUser; }
 function _p(id){ return Z.getProfileById(id); }
 function RK(){ return ['love','flower','spark','clap','star','dislike']; }
 function isDislike(k){ return k === 'dislike'; }
-function BOUNTY_REACTIONS(){ return ['love','flower','spark','clap','star']; }
 
 function _timeAgo(ts){
   var d = Date.now() - (ts||0);
@@ -862,6 +1033,53 @@ function _isVideoUrl(url){
   return /\.(mp4|webm|mov|m4v|3gp|avi|mkv|ogv|ogg)$/.test(s);
 }
 
+// ============================================================
+// Override: no-caption confirm dialog appends to <body>
+// (so it never replaces an already-open Create modal)
+// ============================================================
+Z._closeNoCaptionConfirm = function(){
+  var h = document.getElementById('no-caption-confirm-host');
+  if(h) h.remove();
+};
+Z.confirmNoCaption = function(continueCall){
+  Z._closeNoCaptionConfirm();
+  var host = document.createElement('div');
+  host.id = 'no-caption-confirm-host';
+  host.innerHTML =
+    '<div class="modal-overlay" style="z-index:10050;" onclick="if(event.target===this)Z._closeNoCaptionConfirm()">' +
+      '<div class="modal-box" style="max-width:340px;">' +
+        '<div class="modal-header" style="border-bottom:none;padding-bottom:0;margin-bottom:6px;">' +
+          '<h3 style="font-size:15px;">Continue without caption?</h3>' +
+        '</div>' +
+        '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Your media will be published with no caption text.</div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z._closeNoCaptionConfirm()">Cancel</button>' +
+          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z._closeNoCaptionConfirm();' + continueCall + '">Continue</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(host);
+};
+
+// ============================================================
+// Caption overflow detection — call after every render
+// ============================================================
+Z.detectCaptionOverflow = function(){
+  try {
+    document.querySelectorAll('.post-caption, .status-caption-overlay, .spark-info-caption').forEach(function(el){
+      if(el.classList.contains('expanded')) return;
+      var txt = el.querySelector('.pc-text, .sc-text');
+      if(!txt) return;
+      el.classList.remove('has-overflow');
+      void txt.offsetHeight;
+      if(txt.scrollHeight > txt.clientHeight + 2) el.classList.add('has-overflow');
+    });
+  } catch(e){}
+};
+
+// ============================================================
+// softRefresh
+// ============================================================
 Z.softRefresh = function(){
   var container = document.getElementById('app-container'); if(!container) return;
   var savedY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -877,8 +1095,12 @@ Z.softRefresh = function(){
   Z.updateHeader();
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
   if(typeof Z.updateScrollTopBtn === 'function') Z.updateScrollTopBtn();
+  setTimeout(function(){ Z.detectCaptionOverflow(); }, 40);
 };
 
+// ============================================================
+// Save / interests
+// ============================================================
 Z.getSavedPosts = function(){ var me = _cu(); if(!me) return []; try { var d = localStorage.getItem('zynix_saves_' + me.id); if(!d) return []; var p = JSON.parse(d); return Array.isArray(p) ? p : []; } catch(e){ return []; } };
 Z.setSavedPosts = function(arr){ var me = _cu(); if(!me) return; try { localStorage.setItem('zynix_saves_' + me.id, JSON.stringify(arr || [])); } catch(e){} };
 Z.isPostSaved = function(id){ return (Z.State.savedPosts || []).indexOf(id) !== -1; };
@@ -886,6 +1108,9 @@ Z.getInterests = function(){ var me = _cu(); if(!me) return {}; try { var d = lo
 Z.setInterests = function(obj){ var me = _cu(); if(!me) return; try { localStorage.setItem('zynix_interests_' + me.id, JSON.stringify(obj || {})); } catch(e){} };
 Z.getInterestFor = function(postId){ var i = Z.getInterests(); return i['post:' + postId] || ''; };
 
+// ============================================================
+// Connections
+// ============================================================
 Z.getConnectionState = function(otherId){
   var me = _cu(); if(!me) return 'guest';
   if(!otherId || me.id === otherId) return 'self';
@@ -943,6 +1168,9 @@ Z.acceptConnection = async function(requestId){
 Z.rejectConnection = async function(requestId){ try { await Z.DB.rejectConnectionRequest(requestId); Z.toast('Request rejected.'); await Z.reloadData(); Z.softRefresh(); } catch(e){ Z.toast(e && e.message ? e.message : 'Could not reject.'); } };
 Z.connectTo = function(userId){ Z.sendConnectRequest(userId); };
 
+// ============================================================
+// Reactions — post renderer
+// ============================================================
 Z.renderReactionRowForPost = function(post){
   var me = _cu();
   var counts = post.reactions || {};
@@ -1006,6 +1234,9 @@ Z.updatePostReactionUI = function(postId){
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
 };
 
+// ============================================================
+// Status
+// ============================================================
 function _liveStatuses(){ var now = Date.now(); return (Z.State.allStatuses||[]).filter(function(s){ if(!s) return false; var exp = new Date(s.expires_at||0).getTime(); return !(exp && exp <= now); }).sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); }); }
 Z.getStatusContacts = function(){ var me=_cu(); if(!me) return []; return (Z.State.allProfiles||[]).filter(function(p){ return p.id !== me.id; }); };
 Z.getActiveStatuses = function(){ var live = _liveStatuses(); var contacts = Z.getStatusContacts().map(function(p){ return p.id; }); var me = _cu(); var allowed = {}; contacts.forEach(function(id){ allowed[id] = true; }); if(me) allowed[me.id] = true; return live.filter(function(s){ return allowed[s.author_id]; }); };
@@ -1036,24 +1267,50 @@ Z.previewStatusFile = function(input){
   box.classList.add('show');
 };
 Z.removePendingStatusFile = function(){ var i = document.getElementById('status-file'); if(i) i.value=''; var p = document.getElementById('status-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); } };
-Z.submitStatus = async function(){
+
+Z.submitStatus = async function(forceNoCaption){
   var me = _cu(); if(!me) return;
   var text = ((document.getElementById('status-text')||{}).value||'').trim();
   var fi = document.getElementById('status-file');
   var hasFile = fi && fi.files && fi.files[0];
   if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
-  var mr = '', mt = '';
-  if(hasFile){
-    Z.toast('Uploading...');
-    mr = await Z.storeMedia(fi.files[0]);
-    var _isVid = (fi.files[0].type && fi.files[0].type.indexOf('video/')===0) || _isVideoUrl(fi.files[0].name);
-    mt = _isVid ? 'video' : 'image';
+  if(!text && hasFile && !forceNoCaption){
+    Z.confirmNoCaption('Z.submitStatus(true)');
+    return;
   }
+  var fileObj = hasFile ? fi.files[0] : null;
+  var bg = Z.State.statusBg || 'status-bg-deep-blue';
+  var tempId = 'temp_' + Z.uuid();
+  var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
+  var mt = fileObj ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || _isVideoUrl(fileObj.name) ? 'video' : 'image') : null;
   var now = new Date(), exp = new Date(now.getTime() + 24*60*60*1000);
-  var row = await Z.DB.createStatus({author_id: me.id, content: text, media_url: mr||null, media_type: mt||null, background: Z.State.statusBg || 'status-bg-deep-blue', expires_at: exp.toISOString()});
-  if(!row){ Z.toast('Save failed.'); return; }
-  Z.closeModal(); Z.toast('Status published.'); Z.showView('home');
+  var optimistic = {
+    id: tempId, author_id: me.id, content: text, media_url: localUrl,
+    media_type: mt, background: bg, created_at: now.toISOString(),
+    expires_at: exp.toISOString(), _optimistic: true
+  };
+  Z.State.allStatuses = [optimistic].concat(Z.State.allStatuses || []);
+  Z.closeModal();
+  Z.toast('Status published.');
+  Z.showView('home');
+  (async function(){
+    var mr = '';
+    if(fileObj){ mr = await Z.storeMedia(fileObj); }
+    var row = await Z.DB.createStatus({author_id: me.id, content: text, media_url: mr||null, media_type: mt||null, background: bg, expires_at: exp.toISOString()});
+    var arr = Z.State.allStatuses || [];
+    var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    if(row){
+      if(idx >= 0) arr[idx] = row;
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+    } else {
+      Z.State.allStatuses = arr.filter(function(x){ return x.id !== tempId; });
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z.toast('Status publish failed.');
+      if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
+    }
+  })();
 };
+
 Z.renderStatusRow = function(){
   var existing = document.getElementById('status-row'); if(existing) existing.remove();
   var host = document.getElementById('home-status-host'); if(!host) return;
@@ -1087,6 +1344,7 @@ Z.renderStatusHome = function(){
   html += '</div>';
   return html;
 };
+
 Z.openStatusViewer = async function(authorId, index){
   var ex = document.getElementById('status-viewer'); if(ex) ex.remove();
   Z.pauseAllBackgroundVideos();
@@ -1109,10 +1367,21 @@ Z.showStatusViewer = function(){
   if(status.media_url){ stage = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000;color:#64748b;font-size:12px;">Loading...</div>'; }
   else { var bg = status.background || 'status-bg-deep-blue'; stage = '<div class="' + bg + '" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:32px;"><div style="font-size:clamp(1.4rem,5vw,2.4rem);font-weight:700;text-align:center;line-height:1.6;overflow-y:auto;max-height:100%;width:100%;word-break:break-word;">' + Z.escape(status.content||'') + '</div></div>'; }
   var total = Z.State.viewerStatuses.length, cur = Z.State.viewerIndex + 1;
+  // Caption overlay: only when there IS media AND there IS text.
+  var captionOverlay = '';
+  if(status.media_url && status.content){
+    captionOverlay =
+      '<div class="status-caption-overlay" onclick="Z.toggleCaptionEl(event, this)">' +
+        '<div class="sc-inner">' +
+          '<div class="sc-text">' + Z.escape(status.content) + '</div>' +
+          '<button class="sc-see-more" type="button" onclick="Z.toggleCaptionEl(event, this.parentElement.parentElement)">..... See more</button>' +
+        '</div>' +
+      '</div>';
+  }
   document.body.insertAdjacentHTML('beforeend',
     '<div class="status-viewer-overlay" id="status-viewer"><div class="status-progress-track"><div class="status-progress-bar" id="status-progress" style="width:0%;"></div></div>' +
     '<div class="status-viewer-header"><button class="circle-x-btn" onclick="event.stopPropagation();Z.closeStatusViewer();return false;"><i class="fa-solid fa-xmark"></i></button><div style="display:flex;align-items:center;gap:8px;"><img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;"><div><div style="font-weight:700;font-size:13px;">' + Z.escape(Z.displayName(author)) + '</div><div style="font-size:10px;color:#94a3b8;">' + cur + ' / ' + total + ' • ' + _timeAgo(new Date(status.created_at).getTime()) + '</div></div></div><div style="width:38px;"></div></div>' +
-    '<div class="status-viewer-body" id="status-viewer-body"><div class="status-stage" id="status-stage">' + stage + '</div>' +
+    '<div class="status-viewer-body" id="status-viewer-body"><div class="status-stage" id="status-stage">' + stage + captionOverlay + '</div>' +
     '<button onclick="event.stopPropagation();Z.statusPrev();return false;" class="status-nav-btn left"><i class="fa-solid fa-chevron-left"></i></button>' +
     '<button onclick="event.stopPropagation();Z.statusNext();return false;" class="status-nav-btn right"><i class="fa-solid fa-chevron-right"></i></button></div>' +
     '<div class="status-viewer-footer"><button onclick="event.stopPropagation();Z.statusPrev();return false;">‹ Prev</button><span style="font-size:10px;color:#64748b;">24h Status</span><button onclick="event.stopPropagation();Z.statusNext();return false;">Next ›</button></div></div>'
@@ -1120,13 +1389,29 @@ Z.showStatusViewer = function(){
   if(status.media_url){
     var st = document.getElementById('status-stage');
     Z.loadMedia(status.media_url).then(function(url){
-      if(!url){ st.innerHTML = '<div style="color:#64748b;font-size:12px;padding:20px;">Media unavailable</div>'; return; }
-      if(isVid){ st.innerHTML = '<video src="' + Z.escape(url) + '" controls autoplay playsinline style="width:100%;height:100%;object-fit:contain;background:#000;"></video>'; var v = st.querySelector('video'); if(v){ Z.clearStatusTimer(); v.addEventListener('timeupdate', function(){ if(v.duration){ var b = document.getElementById('status-progress'); if(b) b.style.width = ((v.currentTime/v.duration)*100)+'%'; } }); v.addEventListener('ended', function(){ Z.statusNext(); }); } }
-      else { st.innerHTML = '<img src="' + Z.escape(url) + '" style="width:100%;height:100%;object-fit:contain;background:#000;" alt="Status">'; }
+      if(!url){ var mediaLoader = st.querySelector('div'); if(mediaLoader) mediaLoader.innerHTML = '<div style="color:#64748b;font-size:12px;padding:20px;">Media unavailable</div>'; return; }
+      var overlayEl = st.querySelector('.status-caption-overlay');
+      // Build media but keep caption overlay intact
+      var mediaWrap = document.createElement('div');
+      mediaWrap.style.width = '100%'; mediaWrap.style.height = '100%';
+      if(isVid){
+        mediaWrap.innerHTML = '<video src="' + Z.escape(url) + '" controls autoplay playsinline style="width:100%;height:100%;object-fit:contain;background:#000;"></video>';
+      } else {
+        mediaWrap.innerHTML = '<img src="' + Z.escape(url) + '" style="width:100%;height:100%;object-fit:contain;background:#000;" alt="Status">';
+      }
+      // Remove old loader
+      var loader = st.querySelector('div'); if(loader && loader !== overlayEl) loader.remove();
+      if(overlayEl) st.insertBefore(mediaWrap, overlayEl); else st.appendChild(mediaWrap);
+      var v = st.querySelector('video'); if(v){
+        Z.clearStatusTimer();
+        v.addEventListener('timeupdate', function(){ if(v.duration){ var b = document.getElementById('status-progress'); if(b) b.style.width = ((v.currentTime/v.duration)*100)+'%'; } });
+        v.addEventListener('ended', function(){ Z.statusNext(); });
+      }
     });
   }
   if(!isVid) Z.startStatusTimer();
   Z.setupViewerGesture();
+  setTimeout(function(){ Z.detectCaptionOverflow(); }, 60);
 };
 Z.startStatusTimer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; Z.State.viewerDuration = 7000; Z.State.viewerElapsed = 0; Z.State.viewerStartTime = Date.now(); Z.State.viewerTimer = setTimeout(function(){ Z.statusNext(); }, Z.State.viewerDuration); Z.State.viewerProgressInterval = setInterval(function(){ if(Z.State.viewerPaused) return; Z.State.viewerElapsed = Date.now() - Z.State.viewerStartTime; var pct = Math.min(100, (Z.State.viewerElapsed/Z.State.viewerDuration)*100); var b = document.getElementById('status-progress'); if(b) b.style.width = pct + '%'; }, 100); };
 Z.pauseStatusTimer = function(){ if(Z.State.viewerPaused) return; Z.State.viewerPaused = true; if(Z.State.viewerTimer){ clearTimeout(Z.State.viewerTimer); Z.State.viewerTimer = null; } if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; } };
@@ -1147,13 +1432,13 @@ Z.setupViewerGesture = function(){
     if(!moved && el<TAPTIME){ Z.statusNext(); return; }
     Z.resumeStatusTimer();
   }
-  body.addEventListener('touchstart', function(ev){ if(ev.touches.length!==1) return; if(ev.target.closest('button')||ev.target.closest('video')) return; _start(ev.touches[0].clientX, ev.touches[0].clientY); }, {passive:true});
+  body.addEventListener('touchstart', function(ev){ if(ev.touches.length!==1) return; if(ev.target.closest('button')||ev.target.closest('video')||ev.target.closest('.status-caption-overlay')) return; _start(ev.touches[0].clientX, ev.touches[0].clientY); }, {passive:true});
   body.addEventListener('touchmove', function(ev){ if(ev.touches.length!==1) return; _move(ev.touches[0].clientX, ev.touches[0].clientY); }, {passive:true});
-  body.addEventListener('touchend', function(ev){ if(!ev.changedTouches.length) return; if(ev.target.closest('button')||ev.target.closest('video')) return; _end(ev.changedTouches[0].clientX, ev.changedTouches[0].clientY); }, {passive:true});
+  body.addEventListener('touchend', function(ev){ if(!ev.changedTouches.length) return; if(ev.target.closest('button')||ev.target.closest('video')||ev.target.closest('.status-caption-overlay')) return; _end(ev.changedTouches[0].clientX, ev.changedTouches[0].clientY); }, {passive:true});
   var dn=false;
-  body.addEventListener('mousedown', function(ev){ if(ev.target.closest('button')||ev.target.closest('video')) return; dn=true; _start(ev.clientX, ev.clientY); });
+  body.addEventListener('mousedown', function(ev){ if(ev.target.closest('button')||ev.target.closest('video')||ev.target.closest('.status-caption-overlay')) return; dn=true; _start(ev.clientX, ev.clientY); });
   body.addEventListener('mousemove', function(ev){ if(!dn) return; _move(ev.clientX, ev.clientY); });
-  body.addEventListener('mouseup', function(ev){ if(!dn) return; dn=false; if(ev.target.closest('button')||ev.target.closest('video')) return; _end(ev.clientX, ev.clientY); });
+  body.addEventListener('mouseup', function(ev){ if(!dn) return; dn=false; if(ev.target.closest('button')||ev.target.closest('video')||ev.target.closest('.status-caption-overlay')) return; _end(ev.clientX, ev.clientY); });
   body.addEventListener('mouseleave', function(){ if(dn){ dn=false; Z.resumeStatusTimer(); } });
 };
 Z.advanceToNextContact = function(){ var all = Z.getActiveStatuses(); var map = {}; all.forEach(function(s){ if(!map[s.author_id]) map[s.author_id]=[]; map[s.author_id].push(s); }); var keys = Object.keys(map); if(keys.length <= 1){ Z.closeStatusViewer(); return; } var idx = keys.indexOf(Z.State.viewerAuthorId); Z.openStatusViewer(keys[(idx+1)%keys.length], 0); };
@@ -1162,6 +1447,9 @@ Z.statusPrev = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex > 0){ Z.
 Z.statusNext = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex < Z.State.viewerStatuses.length - 1){ Z.State.viewerIndex++; Z.showStatusViewer(); } else Z.advanceToNextContact(); };
 Z.closeStatusViewer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; var v = document.getElementById('status-viewer'); if(v){ v.querySelectorAll('video').forEach(function(vv){ try{vv.pause(); vv.src='';}catch(e){} }); v.remove(); } Z.showView('status-home'); setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 250); };
 
+// ============================================================
+// Spark
+// ============================================================
 Z.renderSpark = function(){
   var sparks = (Z.State.allSparks || []).slice();
   if(!sparks.length){ return '<div style="padding:60px 20px;text-align:center;color:#64748b;"><i class="fa-solid fa-bolt" style="font-size:40px;color:#334155;display:block;margin-bottom:12px;"></i><p style="margin-bottom:16px;">No Sparks yet</p><button onclick="Z.openCreateModal()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:10px 24px;border-radius:10px;font-size:12px;cursor:pointer;">Create First Spark</button></div>'; }
@@ -1196,10 +1484,14 @@ Z.renderSparkSlide = function(spark, index){
   stack += '<button class="spark-action-btn" onclick="event.stopPropagation();Z.openSparkComments(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-regular fa-comment"></i></div><div class="spark-action-count">' + ((spark._commentsCount)||0) + '</div></button>';
   stack += '<button class="spark-action-btn" onclick="event.stopPropagation();Z.openSparkShare(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-solid fa-share-nodes"></i></div><div class="spark-action-count">' + (spark.shares||0) + '</div></button>';
   stack += '</div>';
+  var captionHtml = '';
+  if(spark.caption){
+    captionHtml = '<div class="spark-info-caption" onclick="Z.toggleCaptionEl(event, this)"><div class="sc-text">' + Z.escape(spark.caption) + '</div><button class="sc-see-more" type="button" onclick="Z.toggleCaptionEl(event, this.parentElement)">..... See more</button></div>';
+  }
   return '<div class="spark-slide" data-spark-index="' + index + '">' + videoEl + '<div class="spark-top-gradient"></div><div class="spark-bottom-gradient"></div>' + viewBadge + menuHtml +
     '<div class="spark-info"><div class="spark-info-author"><img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')"><div><div class="sname">' + Z.escape(Z.displayName(a)) + '</div><div class="shandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(spark.created_at).getTime()) + '</div></div></div>' +
     (isFull && spark.title ? '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + Z.escape(spark.title) + '</div>' : '') +
-    '<div class="spark-info-caption">' + Z.escape(spark.caption || '') + '</div>' +
+    captionHtml +
     (tags ? '<div class="spark-info-tags">' + tags + '</div>' : '') + '</div>' + stack + '</div>';
 };
 Z.updateSparkReactionsUI = function(sparkId){
@@ -1286,16 +1578,13 @@ Z.setupSparkFeed = function(sparks){
       vid.addEventListener('seeking', function(){ if(vid.currentTime < 0.5) Z._viewedThisSession[sid] = false; });
     }
   });
-  // Scroll listener for up arrow + slide tracking
   if(!feed._scrollHooked){
     feed._scrollHooked = true;
-    feed.addEventListener('scroll', function(){ 
-      Z.saveSparkSlideIndex(); 
-      Z.updateScrollTopBtn(); 
+    feed.addEventListener('scroll', function(){
+      Z.saveSparkSlideIndex();
+      Z.updateScrollTopBtn(true);
     }, {passive:true});
   }
-  // NOTE: Removed custom touch swipe handler — scroll-snap handles this natively.
-  // This prevents potential auto-scroll side effects.
 };
 Z.recordSparkViewOnProgress = function(videoEl, sparkId){
   if(!sparkId || !videoEl) return;
@@ -1583,6 +1872,9 @@ Z.shareExternal = function(kind, url){
   else if(kind==='youtube'){ navigator.clipboard.writeText(url); Z.toast('Link copied'); setTimeout(function(){window.open('https://studio.youtube.com/','_blank');},500); }
 };
 
+// ============================================================
+// Home render
+// ============================================================
 Z.renderHome = function(){
   var me = _cu();
   var posts = Z.State.allPosts || [];
@@ -1604,6 +1896,11 @@ Z.renderPostCard = function(p, profiles, me){
   var interest = Z.getInterestFor(p.id);
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
+  // Caption at TOP (with See more) — Issue #4 + #5
+  var captionHtml = '';
+  if(p.content){
+    captionHtml = '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)"><div class="pc-text">' + Z.escape(p.content) + '</div><button class="pc-see-more" type="button" onclick="Z.toggleCaptionEl(event, this.parentElement)">..... See more</button></div>';
+  }
   var mHtml = '';
   if(p.media_url){
     var _mt = p.media_type || (_isVideoUrl(p.media_url) ? 'video' : 'image');
@@ -1612,7 +1909,7 @@ Z.renderPostCard = function(p, profiles, me){
   }
   var cp = '<div class="comment-color-picker">' + ['light-green','light-blue','light-yellow','light-pink','light-purple'].map(function(c){ var s = c.replace('light-',''); return '<div class="comment-color-dot c-' + s + ' ' + (Z.State.commentColor===c?'selected':'') + '" data-color="' + c + '" onclick="Z.setCommentColor(\'' + c + '\')"></div>'; }).join('') + '</div>';
   var menuBtn = '<div class="post-menu-wrap"><button class="post-menu-btn" onclick="Z.togglePostMenu(\'' + Z.escape(p.id) + '\', event)" type="button"><i class="fa-solid fa-ellipsis-vertical"></i></button><div class="post-menu" id="post-menu-' + Z.escape(p.id) + '">' + (isMine ? '<button class="danger" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete</button><div class="divider"></div>' : '') + '<button onclick="Z.toggleSavePost(\'' + Z.escape(p.id) + '\')"><i class="fa-' + (isSaved?'solid':'regular') + ' fa-bookmark"></i> ' + (isSaved?'Unsave':'Save') + '</button><button onclick="Z.markInterest(\'' + Z.escape(p.id) + '\',\'interested\')"><i class="fa-solid fa-thumbs-up"></i> Interested' + (interest==='interested'?' ✓':'') + '</button><button onclick="Z.markInterest(\'' + Z.escape(p.id) + '\',\'not_interested\')"><i class="fa-solid fa-thumbs-down"></i> Not Interested' + (interest==='not_interested'?' ✓':'') + '</button></div></div>';
-  return '<div class="post-card" data-post-id="' + Z.escape(p.id) + '"><div class="post-author"><img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;"><div style="flex:1;min-width:0;"><div class="pname">' + Z.escape(Z.displayName(a)) + '</div><div class="phandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(p.created_at).getTime()) + '</div></div>' + menuBtn + '</div>' + (p.content ? '<div class="post-content">' + Z.escape(p.content) + '</div>' : '') + mHtml +
+  return '<div class="post-card" data-post-id="' + Z.escape(p.id) + '"><div class="post-author"><img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;"><div style="flex:1;min-width:0;"><div class="pname">' + Z.escape(Z.displayName(a)) + '</div><div class="phandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(p.created_at).getTime()) + '</div></div>' + menuBtn + '</div>' + captionHtml + mHtml +
     '<div class="post-reactions">' + Z.renderReactionRowForPost(p) + '</div>' +
     '<div class="post-actions"><button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')"><i class="fa-regular fa-comment"></i> Comment ' + countAllComments(comments) + '</button><button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + '</button><button style="cursor:default;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button></div>' +
     '<div class="post-comments" id="comments-' + Z.escape(p.id) + '">' + cHtml + cp + '<div class="comment-input-wrap"><textarea id="comment-input-' + Z.escape(p.id) + '" rows="1" placeholder="Write a comment..." oninput="Z.autoGrow(this)"></textarea><button onclick="Z.addComment(\'' + Z.escape(p.id) + '\')">Send</button></div></div></div>';
@@ -1660,26 +1957,56 @@ Z.previewComposerFile = function(input){
   box.classList.add('show');
 };
 Z.removeComposerFile = function(){ var f = document.getElementById('composer-file'); if(f) f.value=''; var p = document.getElementById('composer-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); } };
-Z.submitComposer = async function(){
+
+Z.submitComposer = async function(forceNoCaption){
   var me = _cu(); if(!me) return;
   var text = ((document.getElementById('composer-text')||{}).value||'').trim();
   var fi = document.getElementById('composer-file');
   var hasFile = fi && fi.files && fi.files[0];
   var shareBounty = parseFloat((document.getElementById('composer-share-bounty')||{}).value || '0') || 0;
   if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
-  var mu = '', mt = '';
-  if(hasFile){
-    Z.toast('Uploading...');
-    mu = await Z.storeMedia(fi.files[0]);
-    if(!mu){ Z.toast('Upload failed. Try again.'); return; }
-    var _isVid = (fi.files[0].type && fi.files[0].type.indexOf('video/')===0) || _isVideoUrl(fi.files[0].name);
-    mt = _isVid ? 'video' : 'image';
+  if(!text && hasFile && !forceNoCaption){
+    Z.confirmNoCaption('Z.submitComposer(true)');
+    return;
   }
-  var row = await Z.DB.createPost({author_id: me.id, content: text, media_url: mu||null, media_type: mt||null, share_bounty: shareBounty});
-  if(!row){ Z.toast('Failed.'); return; }
-  Z.cancelComposer(); Z.toast('Post published!'); await Z.reloadData(); Z.showView('home');
+  var fileObj = hasFile ? fi.files[0] : null;
+  if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); return; }
+  var mt = fileObj ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || _isVideoUrl(fileObj.name) ? 'video' : 'image') : null;
+  var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
+  var tempId = 'temp_' + Z.uuid();
+  var optimistic = {
+    id: tempId, author_id: me.id, content: text, media_url: localUrl,
+    media_type: mt, share_bounty: shareBounty,
+    created_at: new Date().toISOString(), views: 0, shares: 0,
+    reactions: {}, _myReactions: {}, _comments: [], _optimistic: true
+  };
+  Z.State.allPosts = [optimistic].concat(Z.State.allPosts || []);
+  Z.cancelComposer();
+  Z.toast('Post published!');
+  Z.showView('home');
+  (async function(){
+    var mu = '';
+    if(fileObj){ mu = await Z.storeMedia(fileObj); }
+    var row = await Z.DB.createPost({author_id: me.id, content: text, media_url: mu||null, media_type: mt||null, share_bounty: shareBounty});
+    var arr = Z.State.allPosts || [];
+    var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    if(row){
+      if(idx >= 0){
+        var real = Object.assign({}, row, {reactions:{}, _myReactions:{}, _comments:[]});
+        arr[idx] = real;
+      }
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      // Do not re-render — the user's post is already visible at top
+    } else {
+      Z.State.allPosts = arr.filter(function(x){ return x.id !== tempId; });
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z.toast('Publish failed. Try again.');
+      if(Z.State.currentView === 'home') Z.softRefresh();
+    }
+  })();
 };
 Z.cancelComposer = function(){ var c = document.getElementById('composer-expanded'); if(c) c.innerHTML=''; var i = document.getElementById('composer-input'); if(i) i.value=''; };
+
 Z.reactToPost = async function(postId, reactionType){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; }); if(!post) return;
@@ -1886,7 +2213,7 @@ Z.setupFeedVideoAutoplay = function(){
   var vids = document.querySelectorAll('#app-container video:not([data-spark-id])'); if(!vids.length) return;
   Z._feedVideoObserver = new IntersectionObserver(function(){ Z.recomputeFeedVideoPlayback(); }, {threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0]});
   vids.forEach(function(v){ v.setAttribute('playsinline',''); v.setAttribute('loop',''); Z._feedVideoObserver.observe(v); });
-  if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); Z.updateScrollTopBtn(); }, 150); }, {passive:true}); }
+  if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); Z.updateScrollTopBtn(true); }, 100); }, {passive:true}); }
 };
 
 Z.renderPeople = function(){ return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-users" style="color:#10b981;margin-right:8px;"></i>People</h2></div><input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="people-list-container">' + Z.renderPeopleList() + '</div></div>'; };
@@ -2114,6 +2441,7 @@ Z.setupRealtime = function(){
   var me = _cu(); if(!me) return;
   Z.State.realtimeChannels.forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
   Z.State.realtimeChannels = [];
+  // comments
   try {
     var ch1 = c.channel('zynix-comments').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, function(payload){
       var cm = payload.new; if(!cm) return;
@@ -2161,6 +2489,7 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch1);
   } catch(e){ console.warn('ch1', e); }
+  // reactions
   try {
     var ch2 = c.channel('zynix-reactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_reactions' }, function(payload){
@@ -2187,6 +2516,7 @@ Z.setupRealtime = function(){
       .subscribe();
     Z.State.realtimeChannels.push(ch2);
   } catch(e){ console.warn('ch2', e); }
+  // wallet
   try {
     var ch3 = c.channel('zynix-wallet-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wallet_transactions', filter: 'user_id=eq.' + me.id }, function(payload){
       var tx = payload.new; if(!tx) return;
@@ -2202,6 +2532,7 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch3);
   } catch(e){ console.warn('ch3', e); }
+  // notifications
   try {
     var ch4 = c.channel('zynix-notifications-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + me.id }, function(payload){
       var n = payload.new; if(!n) return;
@@ -2211,6 +2542,48 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch4);
   } catch(e){ console.warn('ch4', e); }
+  // NEW: posts (Issue #2 — others see new posts ~5s later)
+  try {
+    var ch5 = c.channel('zynix-posts-stream').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, function(payload){
+      var p = payload.new; if(!p) return;
+      if(p.author_id === me.id) return; // own posts already optimistically added
+      var exists = (Z.State.allPosts||[]).some(function(x){ return x.id === p.id; });
+      if(exists) return;
+      p.reactions = {}; p._myReactions = {}; p._comments = [];
+      Z.State.allPosts = [p].concat(Z.State.allPosts || []);
+      if(Z.State.currentView === 'home'){
+        // Soft insert only if connected feed will accept it — get_home_feed filters, so re-render safest
+        Z.softRefresh();
+      }
+    }).subscribe();
+    Z.State.realtimeChannels.push(ch5);
+  } catch(e){ console.warn('ch5', e); }
+  // NEW: statuses
+  try {
+    var ch6 = c.channel('zynix-statuses-stream').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'statuses' }, function(payload){
+      var s = payload.new; if(!s) return;
+      if(s.author_id === me.id) return;
+      var exists = (Z.State.allStatuses||[]).some(function(x){ return x.id === s.id; });
+      if(exists) return;
+      Z.State.allStatuses = [s].concat(Z.State.allStatuses || []);
+      if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
+      if(Z.State.currentView === 'status-home'){ Z.softRefresh(); }
+    }).subscribe();
+    Z.State.realtimeChannels.push(ch6);
+  } catch(e){ console.warn('ch6', e); }
+  // NEW: sparks
+  try {
+    var ch7 = c.channel('zynix-sparks-stream').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sparks' }, function(payload){
+      var s = payload.new; if(!s) return;
+      if(s.author_id === me.id) return;
+      var exists = (Z.State.allSparks||[]).some(function(x){ return x.id === s.id; });
+      if(exists) return;
+      s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0;
+      Z.State.allSparks = [s].concat(Z.State.allSparks || []);
+      if(Z.State.currentView === 'spark'){ Z.showView('spark'); }
+    }).subscribe();
+    Z.State.realtimeChannels.push(ch7);
+  } catch(e){ console.warn('ch7', e); }
 };
 
 Z.renderView = function(view, param){
@@ -2232,14 +2605,8 @@ Z.renderView = function(view, param){
 };
 Z.showView = async function(view, param){
   var prevView = Z.State.currentView;
-  // Save anchors before switching
-  if(prevView === 'home' && view !== 'home'){ 
-    Z.saveScroll(window.scrollY); 
-    Z.saveHomeAnchor(); 
-  }
-  if(prevView === 'spark' && view !== 'spark'){ 
-    Z.saveSparkSlideIndex(); 
-  }
+  if(prevView === 'home' && view !== 'home'){ Z.saveScroll(window.scrollY); Z.saveHomeAnchor(); }
+  if(prevView === 'spark' && view !== 'spark'){ Z.saveSparkSlideIndex(); }
   if(prevView && prevView !== view){
     try { Z.pauseAllBackgroundVideos(); } catch(e){}
     try { Z._revokeAllObjUrls(); } catch(e){}
@@ -2248,10 +2615,12 @@ Z.showView = async function(view, param){
   Z.State.currentParam = param || null;
   if(view !== 'notifications' && view !== 'wallet') Z.saveCurrentView(view, param);
   window.scrollTo(0,0);
-  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ 
-    b.classList.remove('active'); 
-    try { b.blur(); } catch(e){}
-  });
+  // Reset arrow state on view change
+  Z.State.arrowVisible = false;
+  Z.State._lastScrollY = 0;
+  Z.State._lastSparkScrollY = 0;
+  var _stb = document.getElementById('scroll-top-btn'); if(_stb) _stb.style.display = 'none';
+  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); try { b.blur(); } catch(e){} });
   var map = {home:'nav-home', spark:'nav-spark', circles:'nav-circles', people:'nav-people', profile:'nav-profile'};
   if(map[view]){ var b = document.getElementById(map[view]); if(b) b.classList.add('active'); }
   var container = document.getElementById('app-container');
@@ -2260,20 +2629,24 @@ Z.showView = async function(view, param){
   catch(e){ console.error('render err', e); container.innerHTML = '<div class="empty-state"><p>Something went wrong.</p><button onclick="Z.showView(\'home\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;margin-top:12px;cursor:pointer;">Home</button></div>'; }
   if(view === 'home'){
     setTimeout(function(){ Z.renderStatusRow(); }, 80);
-    setTimeout(function(){ 
-      Z.setupFeedVideoAutoplay(); 
-      Z.observeFreezeDots(); 
+    setTimeout(function(){
+      Z.setupFeedVideoAutoplay();
+      Z.observeFreezeDots();
       Z.restoreHomeAnchorOrScroll();
+      Z.detectCaptionOverflow();
     }, 150);
-    // Second attempt after media loads
-    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); }, 500);
+    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); }, 500);
   }
-  if(view === 'spark'){ 
-    setTimeout(function(){ 
-      Z.setupSparkFeed(Z.State.allSparks); 
-      Z.observeFreezeDots(); 
+  if(view === 'spark'){
+    setTimeout(function(){
+      Z.setupSparkFeed(Z.State.allSparks);
+      Z.observeFreezeDots();
       Z.restoreSparkSlideIndex();
-    }, 150); 
+      Z.detectCaptionOverflow();
+    }, 150);
+  }
+  if(view !== 'spark' && view !== 'home'){
+    setTimeout(function(){ Z.detectCaptionOverflow(); }, 100);
   }
   updateBellColor();
   updateWalletPillState();
@@ -2308,21 +2681,17 @@ async function boot(){
   _authBootDone = true;
   try { var c = Z.sb(); if(c){
     c.auth.onAuthStateChange(async function(event){
-      // Refresh token silently — no view change
       if(event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED'){
         if(event === 'TOKEN_REFRESHED') await Z.refreshSession();
         return;
       }
       if(!_authBootDone) return;
-      
       if(event === 'SIGNED_OUT'){
-        // Update header only — do NOT navigate away
         Z.State.currentUser = null;
         Z.renderHeaderAuth();
         Z.updateHeader();
         return;
       }
-      
       if(event === 'SIGNED_IN'){
         var curView = Z.State.currentView;
         var curParam = Z.State.currentParam;
@@ -2332,7 +2701,6 @@ async function boot(){
         var prevHomeAnchorOffset = Z.State.homeAnchorOffset;
         await Z.refreshSession();
         await Z.reloadData();
-        // If user changed view during async ops, bail
         if(Z.State.currentView !== curView) return;
         if(curView === 'wallet'){
           var pw = Z.State.prevViewBeforeWallet || {view:'home', param:null};
@@ -2341,7 +2709,6 @@ async function boot(){
           var pn = Z.State.prevViewBeforeNotifications || {view:'home', param:null};
           Z.showView(pn.view, pn.param);
         } else {
-          // Restore anchors BEFORE calling showView so it uses them
           if(curView === 'spark') Z.State.sparkSlideIndex = prevSparkSlide;
           if(curView === 'home'){ Z.State.homeAnchorPost = prevHomeAnchorPost; Z.State.homeAnchorOffset = prevHomeAnchorOffset; }
           Z.showView(curView, curParam);
