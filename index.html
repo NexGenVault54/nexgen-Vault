@@ -18,7 +18,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .header-title{font-size:18px;font-weight:900;background:linear-gradient(90deg,#10b981,#3b82f6,#8b5cf6);-webkit-background-clip:text;background-clip:text;color:transparent}
 .header-btn{background:transparent;border:none;color:#3b82f6;cursor:pointer;padding:6px;position:relative;transition:color .2s}
 .header-btn.active{color:#10b981}
-.header-btn:hover{color:#10b981}
+@media(hover:hover){.header-btn:hover{color:#10b981}}
 .wallet-pill{background:rgba(15,23,42,.9);border:1px solid #1e293b;border-radius:20px;padding:4px 10px;font-size:10px;display:flex;align-items:center;gap:6px;transition:box-shadow .3s, border-color .2s;position:relative;cursor:pointer}
 .wallet-pill.active{border-color:#10b981;color:#10b981}
 .wallet-pill.pulse{box-shadow:0 0 24px rgba(16,185,129,.6)}
@@ -26,9 +26,12 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .zynix-footer{position:fixed;bottom:0;left:0;right:0;z-index:1000;background:rgba(9,13,22,.95);backdrop-filter:blur(12px);border-top:1px solid #1e293b;padding:8px 0;display:flex;align-items:center;justify-content:space-around;max-width:600px;margin:0 auto}
 .zynix-footer button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 0;color:#64748b;transition:color .2s;background:transparent;border:none;font-size:9px;cursor:pointer;font-weight:500}
 .zynix-footer button i{font-size:18px;margin-bottom:2px}
-.zynix-footer button:hover,.zynix-footer button.active{color:#10b981}
+.zynix-footer button.active{color:#10b981}
+@media(hover:hover){.zynix-footer button:hover{color:#10b981}}
 .zynix-footer .create-btn{width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-size:20px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:-16px;box-shadow:0 4px 20px rgba(16,185,129,.3);flex:none}
 .zynix-footer .create-btn i{font-size:20px;margin:0}
+#scroll-top-btn{position:fixed;bottom:96px;right:16px;z-index:900;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;border:none;cursor:pointer;box-shadow:0 4px 20px rgba(16,185,129,.45);align-items:center;justify-content:center;font-size:16px;font-weight:900;display:none;transition:transform .15s,opacity .2s}
+#scroll-top-btn:active{transform:scale(.9)}
 #app-container{max-width:600px;margin:0 auto;padding:76px 14px 20px;min-height:calc(100vh - 80px)}
 .status-row-wrap{background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;margin-bottom:14px}
 .status-scroll{display:flex;gap:10px;overflow-x:auto;padding:4px 0;scrollbar-width:none;-ms-overflow-style:none}
@@ -353,7 +356,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 <body>
 
 <header class="zynix-header">
-  <button onclick="Z.showView('home')" style="display:flex;align-items:center;gap:8px;background:transparent;border:none;cursor:pointer;">
+  <button id="header-logo-btn" onclick="Z.showView('home')" style="display:flex;align-items:center;gap:8px;background:transparent;border:none;cursor:pointer;">
     <div class="header-logo">Z</div>
     <span class="header-title">ZYNIX</span>
   </button>
@@ -374,6 +377,10 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 </header>
 
 <main id="app-container"></main>
+
+<button id="scroll-top-btn" onclick="Z.scrollToLatest()" title="Go to latest">
+  <i class="fa-solid fa-arrow-up"></i>
+</button>
 
 <nav class="zynix-footer" id="bottom-nav">
   <button onclick="Z.showView('home')" id="nav-home"><i class="fa-solid fa-house"></i><span>Home</span></button>
@@ -417,7 +424,10 @@ Z.State = {
   walletBadgeCount: 0,
   realtimeChannels: [],
   bootCompleted: false,
-  lastScroll: 0
+  lastScroll: 0,
+  homeAnchorPost: null,
+  homeAnchorOffset: 0,
+  sparkSlideIndex: 0
 };
 
 Z.Reactions = {
@@ -538,9 +548,6 @@ Z.showFreezeTooltip = function(contentId){
   });
 };
 
-// ============================================================
-// AUTO-FREEZE ON SCROLL — IntersectionObserver based
-// ============================================================
 Z._autoFreezeDelays = {};
 Z._freezeObserver = null;
 Z._freezeObserved = new WeakSet();
@@ -550,8 +557,6 @@ Z.initFreezeObserver = function(){
   Z._freezeObserver = new IntersectionObserver(function(entries){
     entries.forEach(function(entry){
       var dot = entry.target;
-      // Skip detached dots (removed by innerHTML replacement) — prevents
-      // false "out of view" callbacks from stale dots.
       if(!dot.isConnected) return;
       var contentId = dot.getAttribute('data-freeze-id');
       if(!contentId) return;
@@ -592,6 +597,110 @@ Z.hasBountyReactionGiven = function(myReactions){
   if(!myReactions) return false;
   for(var i=0;i<BOUNTY_REACTIONS.length;i++){ if(myReactions[BOUNTY_REACTIONS[i]]) return true; }
   return false;
+};
+
+// ============================================================
+// SCROLL-TO-LATEST (up arrow)
+// ============================================================
+Z.updateScrollTopBtn = function(){
+  var btn = document.getElementById('scroll-top-btn'); if(!btn) return;
+  var view = Z.State.currentView;
+  var scrollY = 0;
+  if(view === 'spark'){
+    var feed = document.getElementById('spark-feed');
+    if(feed) scrollY = feed.scrollTop || 0;
+  } else {
+    scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  }
+  btn.style.display = (scrollY > 200) ? 'flex' : 'none';
+};
+Z.scrollToLatest = function(){
+  var view = Z.State.currentView;
+  if(view === 'spark'){
+    var feed = document.getElementById('spark-feed');
+    if(feed){ feed.scrollTo({top:0, behavior:'smooth'}); }
+    Z.State.sparkSlideIndex = 0;
+    Z.updateScrollTopBtn();
+  } else if(view === 'home'){
+    // Refresh data then scroll to top
+    Z.toast('Loading latest...');
+    Z.reloadData().then(function(){
+      Z.State.homeAnchorPost = null;
+      Z.State.homeAnchorOffset = 0;
+      Z.softRefresh();
+      setTimeout(function(){ window.scrollTo({top:0, behavior:'smooth'}); }, 100);
+      setTimeout(function(){ Z.updateScrollTopBtn(); }, 300);
+    });
+  } else {
+    window.scrollTo({top:0, behavior:'smooth'});
+    setTimeout(function(){ Z.updateScrollTopBtn(); }, 300);
+  }
+};
+
+// ============================================================
+// SCROLL ANCHOR / SPARK SLIDE PRESERVATION
+// ============================================================
+Z.saveHomeAnchor = function(){
+  try {
+    var posts = document.querySelectorAll('.post-card[data-post-id]');
+    if(!posts.length) return;
+    var best = null, bestDist = Infinity;
+    posts.forEach(function(p){
+      var rect = p.getBoundingClientRect();
+      if(rect.bottom > 0){
+        var dist = Math.abs(rect.top);
+        if(dist < bestDist){ bestDist = dist; best = {id: p.getAttribute('data-post-id'), top: rect.top}; }
+      }
+    });
+    if(best){
+      Z.State.homeAnchorPost = best.id;
+      Z.State.homeAnchorOffset = best.top;
+    }
+  } catch(e){}
+};
+
+Z.restoreHomeAnchorOrScroll = function(){
+  try {
+    if(Z.State.homeAnchorPost){
+      var el = document.querySelector('.post-card[data-post-id="' + Z.State.homeAnchorPost + '"]');
+      if(el){
+        var rect = el.getBoundingClientRect();
+        var targetY = (window.scrollY || 0) + rect.top - Z.State.homeAnchorOffset;
+        if(targetY < 0) targetY = 0;
+        window.scrollTo(0, targetY);
+        return;
+      }
+    }
+    var y = Z.restoreScroll();
+    if(y > 0) window.scrollTo(0, y);
+  } catch(e){}
+};
+
+Z.saveSparkSlideIndex = function(){
+  try {
+    var feed = document.getElementById('spark-feed'); if(!feed) return;
+    var slides = feed.querySelectorAll('.spark-slide');
+    if(!slides.length) return;
+    var idx = 0;
+    var feedTop = feed.getBoundingClientRect().top;
+    slides.forEach(function(s, i){
+      var r = s.getBoundingClientRect();
+      if(r.top <= feedTop + 10) idx = i;
+    });
+    Z.State.sparkSlideIndex = idx;
+  } catch(e){}
+};
+
+Z.restoreSparkSlideIndex = function(){
+  try {
+    if(!Z.State.sparkSlideIndex) return;
+    var feed = document.getElementById('spark-feed'); if(!feed) return;
+    var slides = feed.querySelectorAll('.spark-slide');
+    if(!slides.length) return;
+    var idx = Math.min(Z.State.sparkSlideIndex, slides.length - 1);
+    var targetSlide = slides[idx];
+    if(targetSlide){ feed.scrollTop = targetSlide.offsetTop; }
+  } catch(e){}
 };
 
 Z.DB = {
@@ -723,8 +832,8 @@ Z.playExclusive = function(video){
 
 window.Z = Z;
 })();
-                               </script>
-                               <script>
+  </script>
+    <script>
 (function(){
 'use strict';
 var Z = window.Z;
@@ -767,6 +876,7 @@ Z.softRefresh = function(){
   setTimeout(function(){ window.scrollTo(0, savedY); }, 20);
   Z.updateHeader();
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
+  if(typeof Z.updateScrollTopBtn === 'function') Z.updateScrollTopBtn();
 };
 
 Z.getSavedPosts = function(){ var me = _cu(); if(!me) return []; try { var d = localStorage.getItem('zynix_saves_' + me.id); if(!d) return []; var p = JSON.parse(d); return Array.isArray(p) ? p : []; } catch(e){ return []; } };
@@ -850,17 +960,12 @@ Z.renderReactionRowForPost = function(post){
     var disabled = false;
     var cls = 'react-btn';
     if(act) cls += ' active';
-    if(dis){
-      if(hasBounty && !act) disabled = true;
-    } else if(isMine){
-      disabled = true;
-    } else if(!unfrozen){
-      cls += ' frozen-reaction';
-    }
+    if(dis){ if(hasBounty && !act) disabled = true; }
+    else if(isMine) disabled = true;
+    else if(!unfrozen) cls += ' frozen-reaction';
     var onclick = disabled ? '' : ' onclick="Z.reactToPost(\'' + Z.escape(post.id) + '\',\'' + k + '\')"';
     var bountyHtml = dis ? '<span class="bounty" style="color:#64748b;">—</span>' : '<span class="bounty">$' + r.reward.toFixed(2) + '</span>';
-    html += '<button class="' + cls + '"' + onclick + ' title="' + r.label + (dis?' (toggle)':' $' + r.reward.toFixed(2)) + '">' +
-      '<span' + cssClass + '>' + r.symbol + '</span><span class="count">' + cnt + '</span>' + bountyHtml + '</button>';
+    html += '<button class="' + cls + '"' + onclick + ' title="' + r.label + (dis?' (toggle)':' $' + r.reward.toFixed(2)) + '">' + '<span' + cssClass + '>' + r.symbol + '</span><span class="count">' + cnt + '</span>' + bountyHtml + '</button>';
   });
   var tip = unfrozen ? 'Unfrozen' : 'Frozen';
   html += '<button type="button" class="freeze-dot' + (unfrozen ? ' unfrozen' : '') + '" data-freeze-id="' + Z.escape(post.id) + '" data-tip="' + tip + '" onclick="Z.toggleFreeze(\'' + Z.escape(post.id) + '\', event)" title="Click to ' + (unfrozen?'freeze':'unfreeze') + ' reactions"></button>';
@@ -883,17 +988,13 @@ Z.renderSparkReactionButtons = function(spark){
     var disabled = false;
     if(dis){ if(hasBounty && !act) disabled = true; }
     else if(isOwn) disabled = true;
-    else if(!unfrozen) { }
     var onclick = disabled ? '' : ' onclick="event.stopPropagation();Z.sparkReact(\'' + Z.escape(spark.id) + '\',\'' + k + '\')"';
     var cls = 'spark-reaction-icon';
     if(act) cls += ' active';
     if(dis && hasBounty && !act) cls += ' disabled-reaction';
     else if(!unfrozen && !dis) cls += ' frozen-reaction';
     var price = dis ? '—' : '$' + r.reward.toFixed(2);
-    html += '<button class="' + cls + '"' + onclick + ' title="' + r.label + ' ' + price + '">' +
-      '<span class="emoji">' + r.symbol + '</span>' +
-      '<span class="rcount">' + (cnt > 0 ? cnt : '&nbsp;') + '</span>' +
-      '<span class="rprice">' + price + '</span></button>';
+    html += '<button class="' + cls + '"' + onclick + ' title="' + r.label + ' ' + price + '">' + '<span class="emoji">' + r.symbol + '</span>' + '<span class="rcount">' + (cnt > 0 ? cnt : '&nbsp;') + '</span>' + '<span class="rprice">' + price + '</span></button>';
   });
   return html;
 };
@@ -931,10 +1032,7 @@ Z.previewStatusFile = function(input){
   var box = document.getElementById('status-preview'); if(!box) return;
   var url = URL.createObjectURL(f);
   var _isVid = (f.type && f.type.indexOf('video/')===0) || _isVideoUrl(f.name);
-  box.innerHTML = (_isVid
-    ? '<video src="' + url + '" controls muted style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>'
-    : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">')
-    + '<button class="media-preview-remove" onclick="Z.removePendingStatusFile()"><i class="fa-solid fa-xmark"></i></button>';
+  box.innerHTML = (_isVid ? '<video src="' + url + '" controls muted style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') + '<button class="media-preview-remove" onclick="Z.removePendingStatusFile()"><i class="fa-solid fa-xmark"></i></button>';
   box.classList.add('show');
 };
 Z.removePendingStatusFile = function(){ var i = document.getElementById('status-file'); if(i) i.value=''; var p = document.getElementById('status-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); } };
@@ -1188,17 +1286,16 @@ Z.setupSparkFeed = function(sparks){
       vid.addEventListener('seeking', function(){ if(vid.currentTime < 0.5) Z._viewedThisSession[sid] = false; });
     }
   });
-  var sY = 0;
-  feed.addEventListener('touchstart', function(e){ sY = e.touches[0].clientY; }, {passive:true});
-  feed.addEventListener('touchend', function(e){
-    var dy = sY - e.changedTouches[0].clientY;
-    if(Math.abs(dy) > 80){
-      var allSlides = feed.querySelectorAll('.spark-slide'); var idx = 0, mx = 0, h = feed.clientHeight;
-      allSlides.forEach(function(s, i){ var r = s.getBoundingClientRect(); var vis = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 56)); var ratio = vis / h; if(ratio > mx){ mx = ratio; idx = i; } });
-      if(dy > 0 && idx < allSlides.length-1) allSlides[idx+1].scrollIntoView({behavior:'smooth', block:'start'});
-      else if(dy < 0 && idx > 0) allSlides[idx-1].scrollIntoView({behavior:'smooth', block:'start'});
-    }
-  }, {passive:true});
+  // Scroll listener for up arrow + slide tracking
+  if(!feed._scrollHooked){
+    feed._scrollHooked = true;
+    feed.addEventListener('scroll', function(){ 
+      Z.saveSparkSlideIndex(); 
+      Z.updateScrollTopBtn(); 
+    }, {passive:true});
+  }
+  // NOTE: Removed custom touch swipe handler — scroll-snap handles this natively.
+  // This prevents potential auto-scroll side effects.
 };
 Z.recordSparkViewOnProgress = function(videoEl, sparkId){
   if(!sparkId || !videoEl) return;
@@ -1789,7 +1886,7 @@ Z.setupFeedVideoAutoplay = function(){
   var vids = document.querySelectorAll('#app-container video:not([data-spark-id])'); if(!vids.length) return;
   Z._feedVideoObserver = new IntersectionObserver(function(){ Z.recomputeFeedVideoPlayback(); }, {threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0]});
   vids.forEach(function(v){ v.setAttribute('playsinline',''); v.setAttribute('loop',''); Z._feedVideoObserver.observe(v); });
-  if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); }, 150); }, {passive:true}); }
+  if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); Z.updateScrollTopBtn(); }, 150); }, {passive:true}); }
 };
 
 Z.renderPeople = function(){ return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-users" style="color:#10b981;margin-right:8px;"></i>People</h2></div><input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="people-list-container">' + Z.renderPeopleList() + '</div></div>'; };
@@ -2135,7 +2232,14 @@ Z.renderView = function(view, param){
 };
 Z.showView = async function(view, param){
   var prevView = Z.State.currentView;
-  if(prevView === 'home' && view !== 'home'){ Z.saveScroll(window.scrollY); }
+  // Save anchors before switching
+  if(prevView === 'home' && view !== 'home'){ 
+    Z.saveScroll(window.scrollY); 
+    Z.saveHomeAnchor(); 
+  }
+  if(prevView === 'spark' && view !== 'spark'){ 
+    Z.saveSparkSlideIndex(); 
+  }
   if(prevView && prevView !== view){
     try { Z.pauseAllBackgroundVideos(); } catch(e){}
     try { Z._revokeAllObjUrls(); } catch(e){}
@@ -2144,7 +2248,10 @@ Z.showView = async function(view, param){
   Z.State.currentParam = param || null;
   if(view !== 'notifications' && view !== 'wallet') Z.saveCurrentView(view, param);
   window.scrollTo(0,0);
-  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
+  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ 
+    b.classList.remove('active'); 
+    try { b.blur(); } catch(e){}
+  });
   var map = {home:'nav-home', spark:'nav-spark', circles:'nav-circles', people:'nav-people', profile:'nav-profile'};
   if(map[view]){ var b = document.getElementById(map[view]); if(b) b.classList.add('active'); }
   var container = document.getElementById('app-container');
@@ -2153,14 +2260,25 @@ Z.showView = async function(view, param){
   catch(e){ console.error('render err', e); container.innerHTML = '<div class="empty-state"><p>Something went wrong.</p><button onclick="Z.showView(\'home\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;margin-top:12px;cursor:pointer;">Home</button></div>'; }
   if(view === 'home'){
     setTimeout(function(){ Z.renderStatusRow(); }, 80);
-    setTimeout(function(){ Z.setupFeedVideoAutoplay(); Z.observeFreezeDots(); }, 150);
-    var y = Z.restoreScroll();
-    if(y > 0){ setTimeout(function(){ window.scrollTo(0, y); }, 60); setTimeout(function(){ window.scrollTo(0, y); }, 200); }
+    setTimeout(function(){ 
+      Z.setupFeedVideoAutoplay(); 
+      Z.observeFreezeDots(); 
+      Z.restoreHomeAnchorOrScroll();
+    }, 150);
+    // Second attempt after media loads
+    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); }, 500);
   }
-  if(view === 'spark'){ setTimeout(function(){ Z.setupSparkFeed(Z.State.allSparks); Z.observeFreezeDots(); }, 150); }
+  if(view === 'spark'){ 
+    setTimeout(function(){ 
+      Z.setupSparkFeed(Z.State.allSparks); 
+      Z.observeFreezeDots(); 
+      Z.restoreSparkSlideIndex();
+    }, 150); 
+  }
   updateBellColor();
   updateWalletPillState();
   Z.updateHeader();
+  Z.updateScrollTopBtn();
 };
 function updateBellColor(){
   var b = document.getElementById('bell-btn'); if(!b) return;
@@ -2190,24 +2308,32 @@ async function boot(){
   _authBootDone = true;
   try { var c = Z.sb(); if(c){
     c.auth.onAuthStateChange(async function(event){
+      // Refresh token silently — no view change
       if(event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED'){
         if(event === 'TOKEN_REFRESHED') await Z.refreshSession();
         return;
       }
       if(!_authBootDone) return;
+      
       if(event === 'SIGNED_OUT'){
+        // Update header only — do NOT navigate away
         Z.State.currentUser = null;
         Z.renderHeaderAuth();
         Z.updateHeader();
-        Z.showView('home');
         return;
       }
+      
       if(event === 'SIGNED_IN'){
         var curView = Z.State.currentView;
         var curParam = Z.State.currentParam;
         var prevScroll = window.scrollY;
+        var prevSparkSlide = Z.State.sparkSlideIndex || 0;
+        var prevHomeAnchorPost = Z.State.homeAnchorPost;
+        var prevHomeAnchorOffset = Z.State.homeAnchorOffset;
         await Z.refreshSession();
         await Z.reloadData();
+        // If user changed view during async ops, bail
+        if(Z.State.currentView !== curView) return;
         if(curView === 'wallet'){
           var pw = Z.State.prevViewBeforeWallet || {view:'home', param:null};
           Z.showView(pw.view, pw.param);
@@ -2215,8 +2341,13 @@ async function boot(){
           var pn = Z.State.prevViewBeforeNotifications || {view:'home', param:null};
           Z.showView(pn.view, pn.param);
         } else {
+          // Restore anchors BEFORE calling showView so it uses them
+          if(curView === 'spark') Z.State.sparkSlideIndex = prevSparkSlide;
+          if(curView === 'home'){ Z.State.homeAnchorPost = prevHomeAnchorPost; Z.State.homeAnchorOffset = prevHomeAnchorOffset; }
           Z.showView(curView, curParam);
-          setTimeout(function(){ window.scrollTo(0, prevScroll); }, 200);
+          if(curView !== 'spark' && curView !== 'home'){
+            setTimeout(function(){ window.scrollTo(0, prevScroll); }, 200);
+          }
         }
         Z.setupRealtime();
       }
@@ -2228,4 +2359,4 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 })();
 </script>
 </body>
-</html>. 
+</html>
