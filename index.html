@@ -485,9 +485,6 @@ Z.loadMedia = async function(ref){
   } catch(e){ return ''; }
 };
 
-// ============================================================
-// FREEZE STATE
-// ============================================================
 Z.getUnfrozenKey = function(){ var me = Z.State.currentUser; return me ? ('zynix_unfrozen_' + me.id) : ''; };
 Z.loadUnfrozen = function(){
   var key = Z.getUnfrozenKey(); if(!key){ Z.State.unfrozenContent = {}; return; }
@@ -543,20 +540,18 @@ Z.showFreezeTooltip = function(contentId){
 
 // ============================================================
 // AUTO-FREEZE ON SCROLL — IntersectionObserver based
-// FIX: Set instead of WeakSet (for cleanup), skip detached dots,
-// 3s grace period, cleanup of removed dots.
 // ============================================================
 Z._autoFreezeDelays = {};
 Z._freezeObserver = null;
-Z._freezeObserved = new Set();
+Z._freezeObserved = new WeakSet();
 Z.initFreezeObserver = function(){
   if(Z._freezeObserver) return;
   if(typeof IntersectionObserver === 'undefined') return;
   Z._freezeObserver = new IntersectionObserver(function(entries){
     entries.forEach(function(entry){
       var dot = entry.target;
-      // FIX: Skip dots that are no longer in DOM — prevents stale callbacks
-      // from removed (re-rendered) dots triggering a false auto-freeze.
+      // Skip detached dots (removed by innerHTML replacement) — prevents
+      // false "out of view" callbacks from stale dots.
       if(!dot.isConnected) return;
       var contentId = dot.getAttribute('data-freeze-id');
       if(!contentId) return;
@@ -586,36 +581,19 @@ Z.initFreezeObserver = function(){
 Z.observeFreezeDots = function(){
   Z.initFreezeObserver();
   if(!Z._freezeObserver) return;
-  var currentDots = document.querySelectorAll('.freeze-dot[data-freeze-id]');
-  var currentSet = new Set();
-  currentDots.forEach(function(d){ currentSet.add(d); });
-  // FIX: Unobserve dots that are no longer in DOM (prevents memory leak + stale callbacks)
-  Z._freezeObserved.forEach(function(oldDot){
-    if(!currentSet.has(oldDot)){
-      try { Z._freezeObserver.unobserve(oldDot); } catch(e){}
-      Z._freezeObserved.delete(oldDot);
-    }
-  });
-  // Observe new dots
-  currentDots.forEach(function(dot){
+  document.querySelectorAll('.freeze-dot[data-freeze-id]').forEach(function(dot){
     if(Z._freezeObserved.has(dot)) return;
     Z._freezeObserved.add(dot);
     try { Z._freezeObserver.observe(dot); } catch(e){}
   });
 };
 
-// ============================================================
-// DISLIKE logic
-// ============================================================
 Z.hasBountyReactionGiven = function(myReactions){
   if(!myReactions) return false;
   for(var i=0;i<BOUNTY_REACTIONS.length;i++){ if(myReactions[BOUNTY_REACTIONS[i]]) return true; }
   return false;
 };
 
-// ============================================================
-// DB
-// ============================================================
 Z.DB = {
   async loadAllProfiles(){ var c = sb(); if(!c) return []; try { var r = await c.from('profiles').select('*'); if(r.error) throw r.error; Z.State.allProfiles = r.data || []; return Z.State.allProfiles; } catch(e){ return []; } },
   async updateProfile(id, patch){ var c = sb(); if(!c) return null; var r = await c.from('profiles').update(patch).eq('id', id).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } if(Z.State.currentUser && Z.State.currentUser.id === id){ Z.State.currentUser = Object.assign({}, Z.State.currentUser, patch); } var arr = Z.State.allProfiles || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id){ arr[i] = Object.assign({}, arr[i], patch); break; } return r.data; },
@@ -689,9 +667,6 @@ Z.submitFullVideo = async function(){ var title = ((document.getElementById('fv-
 Z.openCreateCircleModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create Circle</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Name</label><input type="text" id="cc-name" class="form-input"><label class="form-label">Description</label><textarea id="cc-desc" class="form-textarea"></textarea><label class="form-label">Type</label><select id="cc-type" class="form-select"><option value="social">Social</option><option value="services">Services</option><option value="goods">Physical Goods</option><option value="office">Office</option><option value="education">Education</option><option value="events">Events</option></select><label class="form-label">Avatar URL</label><input type="text" id="cc-avatar" class="form-input" placeholder="https://..."><button class="btn-primary" onclick="Z.submitCircle()">Create Circle</button></div></div>'); };
 Z.submitCircle = function(){ var name = ((document.getElementById('cc-name')||{}).value||'').trim(); var desc = ((document.getElementById('cc-desc')||{}).value||'').trim(); var type = (document.getElementById('cc-type')||{}).value || 'social'; var avatar = ((document.getElementById('cc-avatar')||{}).value||'').trim() || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80'; if(!name){ Z.toast('Enter name.'); return; } var circles = Z.DB.getCircles(); circles.unshift({id:'cir_'+Date.now(), name:name, description:desc||'New circle.', members:1, creatorId: Z.State.currentUser.id, avatar:avatar, type:type, shopItems:[]}); Z.DB.saveCircles(circles); Z.closeModal(); Z.toast('Circle created!'); Z.showView('circles'); };
 
-// ============================================================
-// NOTIFICATIONS / WALLET TOGGLE
-// ============================================================
 Z.toggleNotifications = function(){
   if(Z.State.currentView === 'notifications'){
     var prev = Z.State.prevViewBeforeNotifications || {view:'home', param:null};
@@ -719,9 +694,6 @@ Z.closeWallet = function(){
   Z.showView(prev.view, prev.param);
 };
 
-// ============================================================
-// WALLET BADGE
-// ============================================================
 Z.getWalletBadgeKey = function(){ var me = Z.State.currentUser; return me ? ('zynix_wallet_badge_' + me.id) : ''; };
 Z.loadWalletBadge = function(){ var key = Z.getWalletBadgeKey(); if(!key) return 0; try { var v = parseInt(localStorage.getItem(key) || '0', 10); Z.State.walletBadgeCount = isNaN(v) ? 0 : v; return Z.State.walletBadgeCount; } catch(e){ return 0; } };
 Z.setWalletBadge = function(n){ var key = Z.getWalletBadgeKey(); if(!key) return; try { localStorage.setItem(key, String(n)); } catch(e){} Z.State.walletBadgeCount = n; Z.updateNotifBadge(); };
@@ -751,8 +723,8 @@ Z.playExclusive = function(video){
 
 window.Z = Z;
 })();
-</script>
-<script>
+                               </script>
+                               <script>
 (function(){
 'use strict';
 var Z = window.Z;
@@ -925,7 +897,6 @@ Z.renderSparkReactionButtons = function(spark){
   });
   return html;
 };
-// FIX: Re-observe freeze-dots after innerHTML replacement
 Z.updatePostReactionUI = function(postId){
   var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; }); if(!post) return;
   var card = document.querySelector('.post-card[data-post-id="' + postId + '"]'); if(!card) return;
@@ -1133,7 +1104,6 @@ Z.renderSparkSlide = function(spark, index){
     '<div class="spark-info-caption">' + Z.escape(spark.caption || '') + '</div>' +
     (tags ? '<div class="spark-info-tags">' + tags + '</div>' : '') + '</div>' + stack + '</div>';
 };
-// FIX: Re-observe freeze-dots after innerHTML replacement
 Z.updateSparkReactionsUI = function(sparkId){
   var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; }); if(!spark) return;
   var stack = document.querySelector('[data-spark-actions="' + sparkId + '"]'); if(!stack) return;
@@ -2258,4 +2228,4 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 })();
 </script>
 </body>
-</html>
+</html>. 
