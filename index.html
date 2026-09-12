@@ -368,7 +368,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .status-caption-overlay .sc-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.5;color:#fff}
 .status-caption-overlay .sc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,1) 40%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.5em;line-height:1.5em;border:none}
 .status-caption-overlay.has-overflow:not(.expanded) .sc-see-more{display:inline-block}
-.status-caption-overlay.expanded{inset:0;bottom:0;background:rgba(0,0,0,.88);padding:24px;display:flex;align-items:center;justify-content:center;pointer-events:auto;overflow-y:auto}
+.status-caption-overlay.expanded{inset:0;background:rgba(0,0,0,.88);padding:24px;display:flex;align-items:center;justify-content:center;pointer-events:auto;overflow-y:auto}
 .status-caption-overlay.expanded .sc-inner{max-height:100%;overflow-y:auto;width:100%}
 .status-caption-overlay.expanded .sc-text{display:block;-webkit-line-clamp:unset;overflow:visible;font-size:15px;line-height:1.6}
 .status-caption-overlay.expanded .sc-see-more{display:none}
@@ -380,7 +380,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .spark-info-caption .sc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,0.85) 45%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.4em;line-height:1.4em;border:none}
 .spark-info-caption.has-overflow .sc-see-more{display:inline-block}
 
-/* NEW: Spark caption full-screen overlay, appended to body, escapes feed container */
+/* Spark caption full-screen overlay, appended to body, escapes feed container */
 #zynix-spark-caption-overlay{
   position:fixed;top:56px;left:0;right:0;bottom:80px;
   max-width:600px;margin:0 auto;
@@ -436,7 +436,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .media-pick-row button i{font-size:12px}
 
 /* ============================================================
-   Refresh spinner (honest background-refresh indicator)
+   Refresh spinner
    ============================================================ */
 .zynix-refresh-spinner{
   position:fixed;top:64px;right:16px;z-index:1100;
@@ -541,14 +541,8 @@ Z.State = {
   captionWasPaused: false,
   manualAuthInProgress: false,
   _manualAuthCompletedAt: 0,
-  peopleSeed: 0,
-  circlesSeed: 0,
-  peopleData: [],
-  circlesData: [],
   snapshotLoaded: false,
-  /* NEW: track global first-user-gesture so status autoplay-with-sound is unlocked */
-  _userGestureUnlocked: false,
-  _pendingVideoUnlock: false
+  _userGestureUnlocked: false
 };
 
 Z.Reactions = {
@@ -635,7 +629,7 @@ Z.resolveIdbRefs = function(root){
   } catch(e){ console.warn('resolveIdbRefs', e); }
 };
 
-/* NEW: global first-gesture listener — unlocks autoplay-with-sound for the rest of the session */
+/* Global first-gesture listener — unlocks autoplay-with-sound for the session */
 (function(){
   function unlock(){
     if(Z.State._userGestureUnlocked) return;
@@ -643,10 +637,6 @@ Z.resolveIdbRefs = function(root){
     document.removeEventListener('touchstart', unlock, true);
     document.removeEventListener('click', unlock, true);
     document.removeEventListener('keydown', unlock, true);
-    /* If a video is waiting to be unmuted, unmute it now */
-    if(Z.State._pendingVideoUnlock){
-      Z.State._pendingVideoUnlock = false;
-    }
   }
   document.addEventListener('touchstart', unlock, true);
   document.addEventListener('click', unlock, true);
@@ -682,14 +672,6 @@ function updateReactionsForContent(contentId){
   var cm = Z.findCommentInState ? Z.findCommentInState(contentId) : null;
   if(cm){ Z.updateCommentReactionUI(contentId); }
 }
-Z.blinkFreezeDot = function(contentId){
-  document.querySelectorAll('[data-freeze-id="' + contentId + '"]').forEach(function(el){
-    el.classList.remove('blink');
-    void el.offsetWidth;
-    el.classList.add('blink');
-    setTimeout(function(){ el.classList.remove('blink'); }, 1200);
-  });
-};
 Z.showFreezeTooltip = function(contentId){
   document.querySelectorAll('[data-freeze-id="' + contentId + '"]').forEach(function(el){
     var old = el.querySelector('.freeze-tooltip-top');
@@ -823,67 +805,13 @@ Z.scrollToLatest = function(){
   Z.updateScrollTopBtn();
 };
 
-/* Close any open spark caption overlay. Called from scroll + view switches. */
+/* Close spark caption overlay + restore controls */
 Z.closeSparkCaptionOverlay = function(){
   var ov = document.getElementById('zynix-spark-caption-overlay');
   if(ov) ov.remove();
-  /* Restore native controls on the visible spark video */
   var feed = document.getElementById('spark-feed');
   if(feed){
     feed.querySelectorAll('video').forEach(function(v){ try { v.controls = true; } catch(e){} });
-  }
-};
-
-/* ============================================================
-   CAPTION EXPAND/COLLAPSE
-   - post: inline (unchanged)
-   - status: overlay inside stage + pauses status timer AND video
-   - spark: creates separate body-attached full-screen overlay
-   ============================================================ */
-Z.toggleCaptionEl = function(ev, el){
-  if(!el) return;
-  if(!el.classList.contains('has-overflow') && !el.classList.contains('expanded')) return;
-
-  var isStatus = el.classList.contains('status-caption-overlay');
-  var isSpark  = el.classList.contains('spark-info-caption');
-
-  if(isSpark){
-    if(ev) ev.stopPropagation();
-    Z._openSparkCaptionOverlay(el);
-    return;
-  }
-
-  if(el.classList.contains('expanded')){
-    el.classList.remove('expanded');
-    if(ev) ev.stopPropagation();
-    if(isStatus){
-      if(Z.State.captionWasPaused){
-        Z.State.captionWasPaused = false;
-        if(typeof Z.resumeStatusTimer === 'function') Z.resumeStatusTimer();
-      }
-      var stage = document.getElementById('status-stage');
-      if(stage){
-        var v = stage.querySelector('video');
-        if(v){ try { if(v.paused && v.currentTime < ((v.duration||0) - 0.2)) v.play().catch(function(){}); } catch(e){} }
-      }
-    }
-    return;
-  }
-
-  var t = ev && ev.target;
-  if(!t) return;
-  if(t.classList && (t.classList.contains('pc-see-more') || t.classList.contains('sc-see-more') || t.classList.contains('pc-text') || t.classList.contains('sc-text'))){
-    el.classList.add('expanded');
-    if(ev) ev.stopPropagation();
-    if(isStatus){
-      Z.State.captionWasPaused = true;
-      if(typeof Z.pauseStatusTimer === 'function') Z.pauseStatusTimer();
-      var stage = document.getElementById('status-stage');
-      if(stage){
-        var v = stage.querySelector('video');
-        if(v && !v.paused){ try { v.pause(); } catch(e){} }
-      }
-    }
   }
 };
 
@@ -895,7 +823,6 @@ Z._openSparkCaptionOverlay = function(captionEl){
   var text = textEl ? textEl.textContent : '';
   if(!text) return;
 
-  /* Hide native video chrome so nothing overlaps */
   var feed = document.getElementById('spark-feed');
   if(feed){
     feed.querySelectorAll('video').forEach(function(v){ try { v.controls = false; } catch(e){} });
@@ -916,41 +843,10 @@ Z._openSparkCaptionOverlay = function(captionEl){
   document.body.appendChild(overlay);
 };
 
-Z.detectCaptionOverflow = function(){
-  try {
-    document.querySelectorAll('.post-caption, .status-caption-overlay, .spark-info-caption').forEach(function(el){
-      var txt = el.querySelector('.pc-text, .sc-text');
-      if(!txt) return;
-      el.classList.remove('has-overflow');
-      void txt.offsetHeight;
-      if(txt.scrollHeight > txt.clientHeight + 2) el.classList.add('has-overflow');
-    });
-  } catch(e){}
-};
-
-/* No-caption confirm dialog */
+/* No-caption confirm dialog (kept — appended to body) */
 Z._closeNoCaptionConfirm = function(){
   var h = document.getElementById('no-caption-confirm-host');
   if(h) h.remove();
-};
-Z.confirmNoCaption = function(continueCall){
-  Z._closeNoCaptionConfirm();
-  var host = document.createElement('div');
-  host.id = 'no-caption-confirm-host';
-  host.innerHTML =
-    '<div class="modal-overlay" style="z-index:10050;" onclick="if(event.target===this)Z._closeNoCaptionConfirm()">' +
-      '<div class="modal-box" style="max-width:340px;">' +
-        '<div class="modal-header" style="border-bottom:none;padding-bottom:0;margin-bottom:6px;">' +
-          '<h3 style="font-size:15px;">Continue without caption?</h3>' +
-        '</div>' +
-        '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Your media will be published with no caption text.</div>' +
-        '<div style="display:flex;gap:8px;">' +
-          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z._closeNoCaptionConfirm()">Cancel</button>' +
-          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z._closeNoCaptionConfirm();' + continueCall + '">Continue</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(host);
 };
 
 /* SCROLL ANCHOR / SPARK SLIDE PRESERVATION */
@@ -1191,14 +1087,6 @@ Z.DB = {
     for(var i=0;i<arr.length;i++) if(arr[i].id === circleId){ arr[i].member_count = (arr[i].member_count||0)+1; break; }
     return true;
   },
-  async leaveCircle(circleId){
-    var c = sb(); var me = Z.State.currentUser; if(!c || !me) return false;
-    var r = await c.from('circle_members').delete().eq('circle_id', circleId).eq('user_id', me.id);
-    if(r.error) return false;
-    var arr = Z.State.allCircles || [];
-    for(var i=0;i<arr.length;i++) if(arr[i].id === circleId){ arr[i].member_count = Math.max(0, (arr[i].member_count||0)-1); break; }
-    return true;
-  },
   async getPeopleFeed(limit, offset, seed){
     var c = sb(); if(!c) return [];
     try {
@@ -1219,8 +1107,7 @@ Z.DB = {
   getCircles(){
     if(Z.State.allCircles && Z.State.allCircles.length) return Z.State.allCircles;
     return Z.SeedData.circles;
-  },
-  saveCirclesLegacy(c){ if(c) localStorage.setItem('zynix_circles', JSON.stringify(c)); }
+  }
 };
 
 Z.SeedData = { circles: [
@@ -1307,8 +1194,7 @@ Z.displayAvatar = function(p){ return (p && p.avatar) ? p.avatar : 'https://ui-a
 Z.shareBountyOptions = function(selected){ selected = Number(selected) || 0; return [0, 0.01, 0.02, 0.03, 0.04, 0.05].map(function(v){ return '<option value="' + v + '" ' + (Math.abs(selected - v) < 0.0001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (no bounty)' : '') + '</option>'; }).join(''); };
 Z.openCreateModal = function(){ if(!Z.State.currentUser){ Z.openAuthModal('login'); return; } Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><button class="btn-primary" style="margin-bottom:10px;" onclick="Z.closeModal();Z.openCreateSparkModal();"><i class="fa-solid fa-bolt"></i> Create Spark</button><button class="btn-primary" style="margin-bottom:10px;background:linear-gradient(135deg,#ec4899,#8b5cf6);color:#fff;" onclick="Z.closeModal();Z.openCreateFullVideoModal();"><i class="fa-solid fa-film"></i> Create Full Video</button><button class="btn-primary" style="background:linear-gradient(135deg,#8b5cf6,#3b82f6);color:#fff;" onclick="Z.closeModal();Z.openCreateCircleModal();"><i class="fa-solid fa-shop"></i> Create Circle</button></div></div>'); };
 
-/* NOTE: openCreateSparkModal + openCreateFullVideoModal are overridden in Part 2 with the media preview + Remove UI */
-
+/* --- Spark publish (submits from modal that Part 2 renders) --- */
 Z.submitSpark = async function(forceNoCaption){ Z.submitSparkImpl(forceNoCaption); };
 Z.submitSparkImpl = async function(forceNoCaption){
   var me = Z.State.currentUser; if(!me) return;
@@ -1362,9 +1248,10 @@ Z.submitSparkImpl = async function(forceNoCaption){
   })();
 };
 
-/* NOTE: submitFullVideo is called by Part 2's updated modal; function itself kept here */
+/* --- Full video submit (called by Part 2's modal) --- */
 Z.submitFullVideo = async function(){ var title = ((document.getElementById('fv-title')||{}).value||'').trim(); var desc = ((document.getElementById('fv-desc')||{}).value||'').trim(); var fi = document.getElementById('fv-file'); var url = ((document.getElementById('fv-url')||{}).value||'').trim(); var sb_ = parseFloat((document.getElementById('fv-share-bounty')||{}).value || '0') || 0; if(!title){ Z.toast('Enter a title.'); return; } var vu = ''; if(fi && fi.files && fi.files[0]){ if(fi.files[0].size > 200*1024*1024){ Z.toast('Video under 200 MB.'); return; } Z.toast('Uploading...'); vu = await Z.storeMedia(fi.files[0]); } else if(url){ vu = url; } else { Z.toast('Provide video.'); return; } var sp = await Z.DB.createSpark({author_id: Z.State.currentUser.id, title: title, caption: desc, video_url: vu, type: 'long_video', tags: [], share_bounty: sb_}); if(!sp){ Z.toast('Failed.'); return; } Z.State.allSparks = [sp].concat(Z.State.allSparks || []); Z.closeModal(); Z.toast('Video uploaded!'); Z.showView('spark'); };
 
+/* --- Create Circle --- */
 Z.openCreateCircleModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create Circle</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Name</label><input type="text" id="cc-name" class="form-input"><label class="form-label">Description</label><textarea id="cc-desc" class="form-textarea"></textarea><label class="form-label">Type</label><select id="cc-type" class="form-select"><option value="social">Social</option><option value="services">Services</option><option value="goods">Physical Goods</option><option value="office">Office</option><option value="education">Education</option><option value="events">Events</option></select><label class="form-label">Avatar URL</label><input type="text" id="cc-avatar" class="form-input" placeholder="https://..."><button class="btn-primary" onclick="Z.submitCircle()">Create Circle</button></div></div>'); };
 Z.submitCircle = async function(){
   var me = Z.State.currentUser; if(!me) return;
@@ -1378,6 +1265,7 @@ Z.submitCircle = async function(){
   Z.closeModal(); Z.toast('Circle created!'); Z.showView('circles');
 };
 
+/* --- Notifications / Wallet toggles --- */
 Z.toggleNotifications = function(){
   if(Z.State.currentView === 'notifications'){
     var prev = Z.State.prevViewBeforeNotifications || {view:'home', param:null};
@@ -1817,7 +1705,6 @@ Z.showStatusViewer = function(){
       var mediaWrap = document.createElement('div');
       mediaWrap.style.width = '100%'; mediaWrap.style.height = '100%';
       if(isVid){
-        /* Video: try autoplay with sound first. Fallback to muted + unlock on user gesture. */
         mediaWrap.innerHTML = '<video playsinline preload="auto" style="width:100%;height:100%;object-fit:contain;background:#000;"></video>';
       } else {
         mediaWrap.innerHTML = '<img src="' + Z.escape(url) + '" style="width:100%;height:100%;object-fit:contain;background:#000;" alt="Status">';
@@ -1828,16 +1715,13 @@ Z.showStatusViewer = function(){
       if(v){
         Z.clearStatusTimer();
         v.setAttribute('src', url);
-        /* 1) Try unmuted autoplay (works if tab already has user gesture) */
         v.muted = false;
         var attempt = v.play();
         if(attempt && attempt.catch){
           attempt.catch(function(){
-            /* 2) Fallback: muted autoplay, then unmute immediately after playing starts */
             v.muted = true;
             var p2 = v.play();
-            if(p2 && p2.catch) p2.catch(function(){ /* browser fully blocked — show tiny tap hint */ });
-            /* Try unmute once playback begins */
+            if(p2 && p2.catch) p2.catch(function(){});
             var tryUnmute = function(){
               try { v.muted = false; v.volume = 1; } catch(e){}
               v.removeEventListener('playing', tryUnmute);
@@ -1845,7 +1729,6 @@ Z.showStatusViewer = function(){
             v.addEventListener('playing', tryUnmute, {once:true});
           });
         }
-        /* Native controls hidden for cleaner look; user still has sound */
         v.setAttribute('controls','');
         v.addEventListener('timeupdate', function(){ if(v.duration){ var b = document.getElementById('status-progress'); if(b) b.style.width = ((v.currentTime/v.duration)*100)+'%'; } });
         v.addEventListener('ended', function(){ Z.statusNext(); });
@@ -1891,7 +1774,90 @@ Z.statusNext = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex < Z.Stat
 Z.closeStatusViewer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; Z.State.captionWasPaused = false; var v = document.getElementById('status-viewer'); if(v){ v.querySelectorAll('video').forEach(function(vv){ try{vv.pause(); vv.src='';}catch(e){} }); v.remove(); } Z.showView('status-home'); setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 250); };
 
 /* ============================================================
-   Spark render — caption "Unfold" opens SEPARATE body-attached overlay
+   Caption expand/collapse
+   ============================================================ */
+Z.toggleCaptionEl = function(ev, el){
+  if(!el) return;
+  if(!el.classList.contains('has-overflow') && !el.classList.contains('expanded')) return;
+
+  var isStatus = el.classList.contains('status-caption-overlay');
+  var isSpark  = el.classList.contains('spark-info-caption');
+
+  if(isSpark){
+    if(ev) ev.stopPropagation();
+    Z._openSparkCaptionOverlay(el);
+    return;
+  }
+
+  if(el.classList.contains('expanded')){
+    el.classList.remove('expanded');
+    if(ev) ev.stopPropagation();
+    if(isStatus){
+      if(Z.State.captionWasPaused){
+        Z.State.captionWasPaused = false;
+        if(typeof Z.resumeStatusTimer === 'function') Z.resumeStatusTimer();
+      }
+      var stage = document.getElementById('status-stage');
+      if(stage){
+        var v = stage.querySelector('video');
+        if(v){ try { if(v.paused && v.currentTime < ((v.duration||0) - 0.2)) v.play().catch(function(){}); } catch(e){} }
+      }
+    }
+    return;
+  }
+
+  var t = ev && ev.target;
+  if(!t) return;
+  if(t.classList && (t.classList.contains('pc-see-more') || t.classList.contains('sc-see-more') || t.classList.contains('pc-text') || t.classList.contains('sc-text'))){
+    el.classList.add('expanded');
+    if(ev) ev.stopPropagation();
+    if(isStatus){
+      Z.State.captionWasPaused = true;
+      if(typeof Z.pauseStatusTimer === 'function') Z.pauseStatusTimer();
+      var stage = document.getElementById('status-stage');
+      if(stage){
+        var v = stage.querySelector('video');
+        if(v && !v.paused){ try { v.pause(); } catch(e){} }
+      }
+    }
+  }
+};
+
+Z.detectCaptionOverflow = function(){
+  try {
+    document.querySelectorAll('.post-caption, .status-caption-overlay, .spark-info-caption').forEach(function(el){
+      var txt = el.querySelector('.pc-text, .sc-text');
+      if(!txt) return;
+      el.classList.remove('has-overflow');
+      void txt.offsetHeight;
+      if(txt.scrollHeight > txt.clientHeight + 2) el.classList.add('has-overflow');
+    });
+  } catch(e){}
+};
+
+/* No-caption confirm (appends to body — keeps active modal intact) */
+Z.confirmNoCaption = function(continueCall){
+  Z._closeNoCaptionConfirm();
+  var host = document.createElement('div');
+  host.id = 'no-caption-confirm-host';
+  host.innerHTML =
+    '<div class="modal-overlay" style="z-index:10050;" onclick="if(event.target===this)Z._closeNoCaptionConfirm()">' +
+      '<div class="modal-box" style="max-width:340px;">' +
+        '<div class="modal-header" style="border-bottom:none;padding-bottom:0;margin-bottom:6px;">' +
+          '<h3 style="font-size:15px;">Continue without caption?</h3>' +
+        '</div>' +
+        '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Your media will be published with no caption text.</div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z._closeNoCaptionConfirm()">Cancel</button>' +
+          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z._closeNoCaptionConfirm();' + continueCall + '">Continue</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(host);
+};
+
+/* ============================================================
+   Spark render
    ============================================================ */
 Z.renderSpark = function(){
   var sparks = (Z.State.allSparks || []).slice();
@@ -2030,7 +1996,6 @@ Z.setupSparkFeed = function(sparks){
     feed.addEventListener('scroll', function(){
       Z.saveSparkSlideIndex();
       Z.updateScrollTopBtn(true);
-      /* Auto-close caption overlay when user scrolls to a different slide */
       Z.closeSparkCaptionOverlay();
     }, {passive:true});
   }
@@ -2323,7 +2288,7 @@ Z.shareExternal = function(kind, url){
 };
 
 /* ============================================================
-   OVERRIDE — Spark modals with media preview + Remove (Issue from SS4)
+   Spark modals with media preview + Remove
    ============================================================ */
 Z.openCreateSparkModal = function(){
   Z.openModal(
@@ -3349,7 +3314,7 @@ function updateBellColor(){ var b = document.getElementById('bell-btn'); if(!b) 
 function updateWalletPillState(){ var w = document.getElementById('wallet-pill'); if(!w) return; if(Z.State.currentView === 'wallet') w.classList.add('active'); else w.classList.remove('active'); }
 
 /* ============================================================
-   Boot — snapshot renders BEFORE any network await (fixes blank page)
+   Boot — snapshot renders BEFORE any network await
    ============================================================ */
 var _authBootDone = false;
 async function boot(){
@@ -3357,14 +3322,12 @@ async function boot(){
   Z.State.currentView = restored.view;
   Z.State.currentParam = restored.param;
 
-  /* 1) Render shell immediately */
   var container = document.getElementById('app-container');
   if(container) container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div>';
   document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
   var map = {home:'nav-home', spark:'nav-spark', circles:'nav-circles', people:'nav-people', profile:'nav-profile'};
   if(map[restored.view]){ var b = document.getElementById(map[restored.view]); if(b) b.classList.add('active'); }
 
-  /* 2) Get cached session instantly (no await on network — Supabase reads localStorage) */
   var cachedUser = null;
   try {
     var cc = sb();
@@ -3374,20 +3337,16 @@ async function boot(){
     }
   } catch(e){}
 
-  /* 3) If we have a cached user, try snapshot FIRST — before any profile fetch */
   var hadSnapshot = false;
   if(cachedUser){
-    /* Pre-populate a minimal user so snapshot key + displayAvatar work */
     Z.State.currentUser = Z.State.currentUser || { id: cachedUser.id, email: cachedUser.email, name: (cachedUser.user_metadata && cachedUser.user_metadata.name) || 'You', wallet_cash: 0, wallet_bounty: 0 };
     Z.renderHeaderAuth();
     hadSnapshot = Z.loadSnapshot();
     if(hadSnapshot){
-      /* Render immediately — no blank page */
       Z.showView(restored.view, restored.param);
     }
   }
 
-  /* 4) Now do the real work: fetch fresh profile + data */
   await Z.refreshSession();
 
   if(Z.State.currentUser){
@@ -3458,4 +3417,4 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 })();
 </script>
 </body>
-  </html>
+</html>
