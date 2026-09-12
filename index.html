@@ -353,7 +353,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .flying-note .amount{font-size:11px;color:#10b981;font-weight:900;text-align:center;margin-top:2px;background:transparent}
 
 /* ============================================================
-   NEW — CAPTION COLLAPSE / SEE MORE (Issues #4 + #5)
+   CAPTION COLLAPSE / SEE MORE (Issues #4 + #5 from prior round)
    ============================================================ */
 .post-content.post-caption{position:relative;margin-bottom:10px}
 .post-caption .pc-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;color:#e2e8f0;line-height:1.6}
@@ -379,6 +379,47 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .spark-info-caption.expanded{position:fixed;top:56px;left:0;right:0;bottom:80px;max-width:600px;margin:0 auto;background:rgba(0,0,0,.9);padding:24px;display:flex;align-items:center;justify-content:center;z-index:250;overflow-y:auto;cursor:pointer}
 .spark-info-caption.expanded .sc-text{display:block;-webkit-line-clamp:unset;overflow:visible;font-size:15px;line-height:1.6;max-height:100%;width:100%}
 .spark-info-caption.expanded .sc-see-more{display:none}
+
+/* ============================================================
+   NEW — Media remove control (Issue #2 of this round)
+   Makes the "Remove" button clearly visible next to attached media.
+   The existing top-right X still closes the whole composer/modal.
+   ============================================================ */
+.media-preview-remove{
+  position:absolute;top:8px;right:8px;
+  width:auto;height:30px;padding:0 12px;
+  border-radius:15px;background:rgba(239,68,68,.95);color:#fff;
+  cursor:pointer;font-size:11px;font-weight:700;
+  display:flex;align-items:center;gap:6px;
+  border:1px solid rgba(255,255,255,.3);
+  box-shadow:0 4px 14px rgba(0,0,0,.55);
+}
+.media-preview-remove i{font-size:11px}
+.media-preview-remove:active{transform:scale(.95)}
+.media-remove-row{display:flex;justify-content:flex-end;margin-top:6px}
+.media-remove-row button{
+  background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);
+  color:#fca5a5;cursor:pointer;font-size:11px;font-weight:700;
+  padding:6px 12px;border-radius:8px;display:inline-flex;
+  align-items:center;gap:6px;
+}
+.media-remove-row button:active{transform:scale(.97)}
+.media-remove-row button i{font-size:11px}
+
+/* ============================================================
+   NEW — Dual photo/video pick buttons (Issue #3 of this round)
+   Fixes Android camera UI glitch when opening from Status/Home.
+   ============================================================ */
+.media-pick-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.media-pick-row button{
+  background:#1e293b;border:1px solid #1e293b;color:#94a3b8;
+  padding:7px 14px;border-radius:8px;font-size:11px;font-weight:600;
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.media-pick-row button:hover{background:#0f172a;border-color:#10b981;color:#10b981}
+.media-pick-row button:active{transform:scale(.97)}
+.media-pick-row button i{font-size:12px}
 </style>
 </head>
 <body>
@@ -458,7 +499,8 @@ Z.State = {
   sparkSlideIndex: 0,
   _lastScrollY: 0,
   _lastSparkScrollY: 0,
-  arrowVisible: false
+  arrowVisible: false,
+  captionWasPaused: false
 };
 
 Z.Reactions = {
@@ -500,6 +542,7 @@ Z.storeMedia = async function(file){
     var path = me.id + '/upload/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
     var up = await c.storage.from('media').upload(path, file, {cacheControl:'31536000', upsert:false, contentType:file.type||'application/octet-stream'});
     if(!up.error){ var pub = c.storage.from('media').getPublicUrl(path); var url = (pub && pub.data && pub.data.publicUrl) || null; if(url) return url; }
+    else { console.warn('storeMedia upload error', up.error); }
   }} catch(e){ console.warn('storeMedia', e); }
   try { var db = await openMediaDB(); var id = 'm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8); return new Promise(function(resolve,reject){ var tx = db.transaction(MEDIA_STORE,'readwrite'); tx.objectStore(MEDIA_STORE).put({id:id, blob:file, type:file.type||'', name:file.name||'', ts:Date.now()}); tx.oncomplete = function(){ resolve('idb:'+id); }; tx.onerror = function(){ reject(tx.error); }; }); }
   catch(e){ return new Promise(function(resolve,reject){ var r = new FileReader(); r.onload = function(){ resolve(String(r.result||'')); }; r.onerror = reject; r.readAsDataURL(file); }); }
@@ -524,6 +567,25 @@ Z.loadMedia = async function(ref){
       req.onerror = function(){ resolve(''); };
     });
   } catch(e){ return ''; }
+};
+
+/* NEW — Issue #1 fix: walk the DOM and replace any src="idb:..." with a resolved blob URL */
+Z.resolveIdbRefs = function(root){
+  try {
+    root = root || document;
+    var els = root.querySelectorAll('img[src^="idb:"], video[src^="idb:"], source[src^="idb:"]');
+    if(!els.length) return;
+    els.forEach(function(el){
+      var ref = el.getAttribute('src');
+      if(!ref || ref.indexOf('idb:') !== 0) return;
+      if(el._idbResolving) return;
+      el._idbResolving = true;
+      Z.loadMedia(ref).then(function(url){
+        if(url){ el.setAttribute('src', url); try { if(el.tagName === 'VIDEO') el.load(); } catch(e){} }
+        el._idbResolving = false;
+      });
+    });
+  } catch(e){ console.warn('resolveIdbRefs', e); }
 };
 
 Z.getUnfrozenKey = function(){ var me = Z.State.currentUser; return me ? ('zynix_unfrozen_' + me.id) : ''; };
@@ -630,9 +692,7 @@ Z.hasBountyReactionGiven = function(myReactions){
   return false;
 };
 
-// ============================================================
-// SCROLL-TO-LATEST (up arrow) — Issue #1
-// ============================================================
+/* SCROLL-TO-LATEST (up arrow) */
 Z.updateScrollTopBtn = function(isScrollEvent){
   var btn = document.getElementById('scroll-top-btn'); if(!btn) return;
   var view = Z.State.currentView;
@@ -646,10 +706,8 @@ Z.updateScrollTopBtn = function(isScrollEvent){
   if(isScrollEvent){
     var prev = (view === 'spark') ? (Z.State._lastSparkScrollY || 0) : (Z.State._lastScrollY || 0);
     if(scrollY > prev + 1){
-      // Scrolling DOWN → hide instantly
       Z.State.arrowVisible = false;
     } else if(scrollY < prev - 1){
-      // Scrolling UP → show instantly (only past small threshold)
       Z.State.arrowVisible = (scrollY > 60);
     }
     if(view === 'spark') Z.State._lastSparkScrollY = scrollY;
@@ -669,7 +727,6 @@ if(!Z._arrowScrollHooked){
 
 Z.scrollToLatest = function(){
   var view = Z.State.currentView;
-  // Reset arrow state immediately
   Z.State.arrowVisible = false;
   var btn = document.getElementById('scroll-top-btn'); if(btn) btn.style.display = 'none';
 
@@ -685,10 +742,8 @@ Z.scrollToLatest = function(){
     Z.State.homeAnchorPost = null;
     Z.State.homeAnchorOffset = 0;
     Z.State._lastScrollY = 0;
-    // Instant jump
     window.scrollTo(0, 0);
     Z.updateScrollTopBtn();
-    // Reload fresh data in background, then re-apply scroll=0
     Z.reloadData().then(function(){
       if(Z.State.currentView !== 'home') return;
       Z.softRefresh();
@@ -698,29 +753,35 @@ Z.scrollToLatest = function(){
     }).catch(function(){});
     return;
   }
-  // Any other view (status-home, notifications, wallet, people, circles, profile, etc.)
   Z.State._lastScrollY = 0;
   window.scrollTo(0, 0);
   Z.updateScrollTopBtn();
 };
 
-// ============================================================
-// CAPTION EXPAND/COLLAPSE helpers — Issue #5
-// ============================================================
+/* CAPTION EXPAND/COLLAPSE helpers — Issue #6 fix applied here */
 Z.toggleCaptionEl = function(ev, el){
   if(!el) return;
   if(!el.classList.contains('has-overflow') && !el.classList.contains('expanded')) return;
   if(el.classList.contains('expanded')){
     el.classList.remove('expanded');
     if(ev) ev.stopPropagation();
+    // Issue #6: if this was the status overlay, resume the timer from where user paused
+    if(el.classList.contains('status-caption-overlay') && Z.State.captionWasPaused){
+      Z.State.captionWasPaused = false;
+      if(typeof Z.resumeStatusTimer === 'function') Z.resumeStatusTimer();
+    }
     return;
   }
   var t = ev && ev.target;
   if(!t) return;
-  // Expand only when clicking the See-more button, OR directly on the clamped text
   if(t.classList && (t.classList.contains('pc-see-more') || t.classList.contains('sc-see-more') || t.classList.contains('pc-text') || t.classList.contains('sc-text'))){
     el.classList.add('expanded');
     if(ev) ev.stopPropagation();
+    // Issue #6: pause the status timer while caption is expanded
+    if(el.classList.contains('status-caption-overlay')){
+      Z.State.captionWasPaused = true;
+      if(typeof Z.pauseStatusTimer === 'function') Z.pauseStatusTimer();
+    }
   }
 };
 
@@ -731,36 +792,38 @@ Z.detectCaptionOverflow = function(){
       var txt = el.querySelector('.pc-text, .sc-text');
       if(!txt) return;
       el.classList.remove('has-overflow');
-      // Force reflow
       void txt.offsetHeight;
       if(txt.scrollHeight > txt.clientHeight + 2) el.classList.add('has-overflow');
     });
   } catch(e){}
 };
 
-// ============================================================
-// No-caption confirm — Issue #3
-// ============================================================
+/* No-caption confirm dialog appended to body (overlays without destroying open Create modal) */
+Z._closeNoCaptionConfirm = function(){
+  var h = document.getElementById('no-caption-confirm-host');
+  if(h) h.remove();
+};
 Z.confirmNoCaption = function(continueCall){
-  Z.openModal(
-    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+  Z._closeNoCaptionConfirm();
+  var host = document.createElement('div');
+  host.id = 'no-caption-confirm-host';
+  host.innerHTML =
+    '<div class="modal-overlay" style="z-index:10050;" onclick="if(event.target===this)Z._closeNoCaptionConfirm()">' +
       '<div class="modal-box" style="max-width:340px;">' +
         '<div class="modal-header" style="border-bottom:none;padding-bottom:0;margin-bottom:6px;">' +
           '<h3 style="font-size:15px;">Continue without caption?</h3>' +
         '</div>' +
         '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Your media will be published with no caption text.</div>' +
         '<div style="display:flex;gap:8px;">' +
-          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z.closeModal()">Cancel</button>' +
-          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z.closeModal();' + continueCall + '">Continue</button>' +
+          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z._closeNoCaptionConfirm()">Cancel</button>' +
+          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z._closeNoCaptionConfirm();' + continueCall + '">Continue</button>' +
         '</div>' +
       '</div>' +
-    '</div>'
-  );
+    '</div>';
+  document.body.appendChild(host);
 };
 
-// ============================================================
-// SCROLL ANCHOR / SPARK SLIDE PRESERVATION
-// ============================================================
+/* SCROLL ANCHOR / SPARK SLIDE PRESERVATION */
 Z.saveHomeAnchor = function(){
   try {
     var posts = document.querySelectorAll('.post-card[data-post-id]');
@@ -882,7 +945,36 @@ Z.renderHeaderAuth = function(){
   else { c.innerHTML = '<button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;font-size:11px;padding:6px 14px;border-radius:20px;cursor:pointer;">Login</button>'; }
 };
 Z.openAuthModal = function(mode){ var isLogin = mode === 'login'; Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>' + (isLogin ? 'Login' : 'Create Account') + '</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div>' + (!isLogin ? '<label class="form-label">Full Name</label><input type="text" id="auth-name" class="form-input" placeholder="Your name">' : '') + '<label class="form-label">Email</label><input type="email" id="auth-email" class="form-input" placeholder="email@example.com" autocomplete="email"><label class="form-label">Password</label><input type="password" id="auth-password" class="form-input" placeholder="••••••••" autocomplete="' + (isLogin?'current-password':'new-password') + '">' + (!isLogin ? '<label class="form-label">Referral Code (Optional)</label><input type="text" id="auth-refcode" class="form-input" placeholder="ZYNIX-XXXXXX">' : '') + '<button class="btn-primary" id="auth-submit" onclick="Z.handleAuth(\'' + mode + '\')">' + (isLogin?'Login':'Sign Up') + '</button><button class="btn-secondary" onclick="Z.openAuthModal(\'' + (isLogin?'signup':'login') + '\')">' + (isLogin?"Don't have account? Sign Up":"Have account? Login") + '</button></div></div>'); };
-Z.handleAuth = async function(mode){ var email = ((document.getElementById('auth-email')||{}).value || '').trim(); var pass = ((document.getElementById('auth-password')||{}).value || ''); if(!email || !pass){ Z.toast('Please enter email and password.'); return; } var btn = document.getElementById('auth-submit'); if(btn){ btn.disabled = true; btn.textContent = 'Please wait...'; } var c = sb(); if(!c){ if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; } Z.toast('Supabase not ready.'); return; } try { if(mode === 'login'){ var r = await c.auth.signInWithPassword({email: email, password: pass}); if(r.error) throw r.error; Z.toast('Logged in!'); } else { var name = ((document.getElementById('auth-name')||{}).value || 'New User').trim() || 'New User'; var ref = ((document.getElementById('auth-refcode')||{}).value || '').trim(); var refId = null; if(ref){ var pr = await c.from('profiles').select('id').eq('referral_code', ref.toUpperCase()).maybeSingle(); if(pr.data) refId = pr.data.id; } var sr = await c.auth.signUp({email: email, password: pass, options:{data:{name: name, referred_by: refId}}}); if(sr.error) throw sr.error; Z.toast('Account created!'); } Z.closeModal(); await Z.refreshSession(); await Z.reloadData(); Z.showView('home'); } catch(e){ Z.toast(e.message || 'Authentication failed.'); } finally { if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; } } };
+Z.handleAuth = async function(mode){
+  var email = ((document.getElementById('auth-email')||{}).value || '').trim();
+  var pass = ((document.getElementById('auth-password')||{}).value || '');
+  if(!email || !pass){ Z.toast('Please enter email and password.'); return; }
+  var btn = document.getElementById('auth-submit');
+  if(btn){ btn.disabled = true; btn.textContent = 'Please wait...'; }
+  var c = sb(); if(!c){ if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; } Z.toast('Supabase not ready.'); return; }
+  try {
+    if(mode === 'login'){
+      var r = await c.auth.signInWithPassword({email: email, password: pass});
+      if(r.error) throw r.error;
+      Z.toast('Logged in!');
+    } else {
+      var name = ((document.getElementById('auth-name')||{}).value || 'New User').trim() || 'New User';
+      var ref = ((document.getElementById('auth-refcode')||{}).value || '').trim();
+      var refId = null;
+      if(ref){ var pr = await c.from('profiles').select('id').eq('referral_code', ref.toUpperCase()).maybeSingle(); if(pr.data) refId = pr.data.id; }
+      var sr = await c.auth.signUp({email: email, password: pass, options:{data:{name: name, referred_by: refId}}});
+      if(sr.error) throw sr.error;
+      Z.toast('Account created!');
+    }
+    Z.closeModal();
+    // Close the modal so UI responds instantly, then fetch in background
+    // Boot flow will already be fast due to batched reloadData.
+    await Z.refreshSession();
+    await Z.reloadData();
+    Z.showView('home');
+  } catch(e){ Z.toast(e.message || 'Authentication failed.'); }
+  finally { if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; } }
+};
 Z.logout = async function(){ var c = sb(); if(c){ await c.auth.signOut(); } Z.State.currentUser = null; Z.State.allProfiles = []; Z.State.allConnections = []; Z.State.allNotifications = []; Z.State.unfrozenContent = {}; Z.renderHeaderAuth(); Z.updateHeader(); Z.toast('Logged out.'); Z.showView('home'); };
 Z.refreshSession = async function(){ var c = sb(); if(!c){ Z.renderHeaderAuth(); return; } try { var s = await c.auth.getSession(); var user = s.data && s.data.session ? s.data.session.user : null; if(!user){ Z.State.currentUser = null; Z.renderHeaderAuth(); Z.updateHeader(); return; } var pr = await c.from('profiles').select('*').eq('id', user.id).maybeSingle(); var profile = pr.data || { id: user.id, name: (user.user_metadata && user.user_metadata.name) || 'New User', email: user.email, referral_code: '', wallet_cash: 0, wallet_bounty: 0, wallet_total: 0, reactions_locked: false }; Z.State.currentUser = profile; Z.renderHeaderAuth(); Z.updateHeader(); } catch(e){ console.warn('refreshSession', e); } };
 Z.getProfileById = function(id){ var arr = Z.State.allProfiles || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id) return arr[i]; return null; };
@@ -1004,8 +1096,8 @@ Z.playExclusive = function(video){
 
 window.Z = Z;
 })();
-</script>
-<script>
+  </script>
+  <script>
 (function(){
 'use strict';
 var Z = window.Z;
@@ -1034,51 +1126,7 @@ function _isVideoUrl(url){
 }
 
 // ============================================================
-// Override: no-caption confirm dialog appends to <body>
-// (so it never replaces an already-open Create modal)
-// ============================================================
-Z._closeNoCaptionConfirm = function(){
-  var h = document.getElementById('no-caption-confirm-host');
-  if(h) h.remove();
-};
-Z.confirmNoCaption = function(continueCall){
-  Z._closeNoCaptionConfirm();
-  var host = document.createElement('div');
-  host.id = 'no-caption-confirm-host';
-  host.innerHTML =
-    '<div class="modal-overlay" style="z-index:10050;" onclick="if(event.target===this)Z._closeNoCaptionConfirm()">' +
-      '<div class="modal-box" style="max-width:340px;">' +
-        '<div class="modal-header" style="border-bottom:none;padding-bottom:0;margin-bottom:6px;">' +
-          '<h3 style="font-size:15px;">Continue without caption?</h3>' +
-        '</div>' +
-        '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Your media will be published with no caption text.</div>' +
-        '<div style="display:flex;gap:8px;">' +
-          '<button class="btn-secondary" style="flex:1;margin:0;padding:12px;background:#1e293b;color:#fff;" onclick="Z._closeNoCaptionConfirm()">Cancel</button>' +
-          '<button class="btn-primary" style="flex:1;margin:0;padding:12px;" onclick="Z._closeNoCaptionConfirm();' + continueCall + '">Continue</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(host);
-};
-
-// ============================================================
-// Caption overflow detection — call after every render
-// ============================================================
-Z.detectCaptionOverflow = function(){
-  try {
-    document.querySelectorAll('.post-caption, .status-caption-overlay, .spark-info-caption').forEach(function(el){
-      if(el.classList.contains('expanded')) return;
-      var txt = el.querySelector('.pc-text, .sc-text');
-      if(!txt) return;
-      el.classList.remove('has-overflow');
-      void txt.offsetHeight;
-      if(txt.scrollHeight > txt.clientHeight + 2) el.classList.add('has-overflow');
-    });
-  } catch(e){}
-};
-
-// ============================================================
-// softRefresh
+// softRefresh — with Issue #1 fix (resolveIdbRefs)
 // ============================================================
 Z.softRefresh = function(){
   var container = document.getElementById('app-container'); if(!container) return;
@@ -1096,6 +1144,9 @@ Z.softRefresh = function(){
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
   if(typeof Z.updateScrollTopBtn === 'function') Z.updateScrollTopBtn();
   setTimeout(function(){ Z.detectCaptionOverflow(); }, 40);
+  // Issue #1 fix — resolve any idb: references after render
+  setTimeout(function(){ Z.resolveIdbRefs(container); }, 50);
+  if(view === 'spark'){ setTimeout(function(){ Z.resolveIdbRefs(container); }, 200); }
 };
 
 // ============================================================
@@ -1169,7 +1220,7 @@ Z.rejectConnection = async function(requestId){ try { await Z.DB.rejectConnectio
 Z.connectTo = function(userId){ Z.sendConnectRequest(userId); };
 
 // ============================================================
-// Reactions — post renderer
+// Reactions rendering
 // ============================================================
 Z.renderReactionRowForPost = function(post){
   var me = _cu();
@@ -1250,10 +1301,35 @@ Z.getStatusContactList = function(){
   return entries;
 };
 Z.STATUS_BGS = ['status-bg-deep-blue','status-bg-navy','status-bg-purple','status-bg-teal','status-bg-green','status-bg-burgundy','status-bg-rose','status-bg-plum','status-bg-slate'];
+
+// Issue #3 fix — dual photo / video buttons + hidden inputs
 Z.openCreateStatusModal = function(){
   if(!_cu()){ Z.openAuthModal('login'); return; }
   var sw = Z.STATUS_BGS.map(function(bg, i){ return '<button type="button" class="' + bg + '" data-bg="' + bg + '" onclick="Z.selectStatusBg(\'' + bg + '\')" style="width:36px;height:36px;border-radius:50%;border:2px solid ' + (i===0?'#10b981':'transparent') + ';cursor:pointer;"></button>'; }).join('');
-  Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Add Status</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><div id="status-preview-wrap" class="status-bg-deep-blue" style="border-radius:12px;padding:24px 20px;min-height:140px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;"><textarea id="status-text" style="width:100%;background:transparent;border:none;color:#fff;font-size:18px;font-weight:700;text-align:center;resize:none;outline:none;font-family:inherit;" rows="3" placeholder="Type your status..."></textarea></div><label class="form-label">Background</label><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">' + sw + '</div><label class="form-label">Photo / Video (optional)</label><input type="file" id="status-file" accept="image/*,video/*" class="form-input" onchange="Z.previewStatusFile(this)"><div id="status-preview" class="media-preview-box"></div><button class="btn-primary" onclick="Z.submitStatus()">Publish Status</button></div></div>');
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Add Status</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div id="status-preview-wrap" class="status-bg-deep-blue" style="border-radius:12px;padding:24px 20px;min-height:140px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;">' +
+          '<textarea id="status-text" style="width:100%;background:transparent;border:none;color:#fff;font-size:18px;font-weight:700;text-align:center;resize:none;outline:none;font-family:inherit;" rows="3" placeholder="Type your status..."></textarea>' +
+        '</div>' +
+        '<label class="form-label">Background</label>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">' + sw + '</div>' +
+        '<label class="form-label">Photo / Video (optional)</label>' +
+        '<div class="media-pick-row">' +
+          '<button type="button" onclick="document.getElementById(\'status-file-photo\').click()"><i class="fa-solid fa-camera"></i> Photo</button>' +
+          '<button type="button" onclick="document.getElementById(\'status-file-video\').click()"><i class="fa-solid fa-video"></i> Video</button>' +
+        '</div>' +
+        '<input type="file" id="status-file-photo" accept="image/*" style="display:none;" onchange="Z.previewStatusFile(this)">' +
+        '<input type="file" id="status-file-video" accept="video/*" style="display:none;" onchange="Z.previewStatusFile(this)">' +
+        '<div id="status-preview" class="media-preview-box"></div>' +
+        '<div id="status-remove-row" class="media-remove-row" style="display:none;">' +
+          '<button type="button" onclick="Z.removePendingStatusFile()"><i class="fa-solid fa-trash"></i> Remove media</button>' +
+        '</div>' +
+        '<button class="btn-primary" style="margin-top:10px;" onclick="Z.submitStatus()">Publish Status</button>' +
+      '</div>' +
+    '</div>'
+  );
   setTimeout(function(){ var t = document.getElementById('status-text'); if(t) t.focus(); }, 100);
 };
 Z.selectStatusBg = function(bg){ Z.State.statusBg = bg; var w = document.getElementById('status-preview-wrap'); if(w){ Z.STATUS_BGS.forEach(function(b){ w.classList.remove(b); }); w.classList.add(bg); } document.querySelectorAll('#modal-container button[data-bg]').forEach(function(s){ s.style.borderColor = s.getAttribute('data-bg') === bg ? '#10b981' : 'transparent'; }); };
@@ -1263,22 +1339,38 @@ Z.previewStatusFile = function(input){
   var box = document.getElementById('status-preview'); if(!box) return;
   var url = URL.createObjectURL(f);
   var _isVid = (f.type && f.type.indexOf('video/')===0) || _isVideoUrl(f.name);
-  box.innerHTML = (_isVid ? '<video src="' + url + '" controls muted style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') + '<button class="media-preview-remove" onclick="Z.removePendingStatusFile()"><i class="fa-solid fa-xmark"></i></button>';
+  box.innerHTML = (_isVid ? '<video src="' + url + '" controls muted style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') +
+    '<button class="media-preview-remove" type="button" onclick="Z.removePendingStatusFile()"><i class="fa-solid fa-xmark"></i> Remove</button>';
   box.classList.add('show');
+  var rr = document.getElementById('status-remove-row'); if(rr) rr.style.display = 'flex';
+  // Clear the other input so only one file is attached
+  var other = (input.id === 'status-file-photo') ? document.getElementById('status-file-video') : document.getElementById('status-file-photo');
+  if(other) other.value = '';
 };
-Z.removePendingStatusFile = function(){ var i = document.getElementById('status-file'); if(i) i.value=''; var p = document.getElementById('status-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); } };
+Z.removePendingStatusFile = function(){
+  var p1 = document.getElementById('status-file-photo'); if(p1) p1.value='';
+  var p2 = document.getElementById('status-file-video'); if(p2) p2.value='';
+  var p = document.getElementById('status-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); }
+  var rr = document.getElementById('status-remove-row'); if(rr) rr.style.display = 'none';
+};
+Z._getStatusFile = function(){
+  var vi = document.getElementById('status-file-video');
+  if(vi && vi.files && vi.files[0]) return vi.files[0];
+  var pi = document.getElementById('status-file-photo');
+  if(pi && pi.files && pi.files[0]) return pi.files[0];
+  return null;
+};
 
 Z.submitStatus = async function(forceNoCaption){
   var me = _cu(); if(!me) return;
   var text = ((document.getElementById('status-text')||{}).value||'').trim();
-  var fi = document.getElementById('status-file');
-  var hasFile = fi && fi.files && fi.files[0];
+  var fileObj = Z._getStatusFile();
+  var hasFile = !!fileObj;
   if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
   if(!text && hasFile && !forceNoCaption){
     Z.confirmNoCaption('Z.submitStatus(true)');
     return;
   }
-  var fileObj = hasFile ? fi.files[0] : null;
   var bg = Z.State.statusBg || 'status-bg-deep-blue';
   var tempId = 'temp_' + Z.uuid();
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
@@ -1367,7 +1459,6 @@ Z.showStatusViewer = function(){
   if(status.media_url){ stage = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000;color:#64748b;font-size:12px;">Loading...</div>'; }
   else { var bg = status.background || 'status-bg-deep-blue'; stage = '<div class="' + bg + '" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:32px;"><div style="font-size:clamp(1.4rem,5vw,2.4rem);font-weight:700;text-align:center;line-height:1.6;overflow-y:auto;max-height:100%;width:100%;word-break:break-word;">' + Z.escape(status.content||'') + '</div></div>'; }
   var total = Z.State.viewerStatuses.length, cur = Z.State.viewerIndex + 1;
-  // Caption overlay: only when there IS media AND there IS text.
   var captionOverlay = '';
   if(status.media_url && status.content){
     captionOverlay =
@@ -1391,7 +1482,6 @@ Z.showStatusViewer = function(){
     Z.loadMedia(status.media_url).then(function(url){
       if(!url){ var mediaLoader = st.querySelector('div'); if(mediaLoader) mediaLoader.innerHTML = '<div style="color:#64748b;font-size:12px;padding:20px;">Media unavailable</div>'; return; }
       var overlayEl = st.querySelector('.status-caption-overlay');
-      // Build media but keep caption overlay intact
       var mediaWrap = document.createElement('div');
       mediaWrap.style.width = '100%'; mediaWrap.style.height = '100%';
       if(isVid){
@@ -1399,7 +1489,6 @@ Z.showStatusViewer = function(){
       } else {
         mediaWrap.innerHTML = '<img src="' + Z.escape(url) + '" style="width:100%;height:100%;object-fit:contain;background:#000;" alt="Status">';
       }
-      // Remove old loader
       var loader = st.querySelector('div'); if(loader && loader !== overlayEl) loader.remove();
       if(overlayEl) st.insertBefore(mediaWrap, overlayEl); else st.appendChild(mediaWrap);
       var v = st.querySelector('video'); if(v){
@@ -1411,7 +1500,7 @@ Z.showStatusViewer = function(){
   }
   if(!isVid) Z.startStatusTimer();
   Z.setupViewerGesture();
-  setTimeout(function(){ Z.detectCaptionOverflow(); }, 60);
+  setTimeout(function(){ Z.detectCaptionOverflow(); Z.resolveIdbRefs(document.getElementById('status-stage')); }, 60);
 };
 Z.startStatusTimer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; Z.State.viewerDuration = 7000; Z.State.viewerElapsed = 0; Z.State.viewerStartTime = Date.now(); Z.State.viewerTimer = setTimeout(function(){ Z.statusNext(); }, Z.State.viewerDuration); Z.State.viewerProgressInterval = setInterval(function(){ if(Z.State.viewerPaused) return; Z.State.viewerElapsed = Date.now() - Z.State.viewerStartTime; var pct = Math.min(100, (Z.State.viewerElapsed/Z.State.viewerDuration)*100); var b = document.getElementById('status-progress'); if(b) b.style.width = pct + '%'; }, 100); };
 Z.pauseStatusTimer = function(){ if(Z.State.viewerPaused) return; Z.State.viewerPaused = true; if(Z.State.viewerTimer){ clearTimeout(Z.State.viewerTimer); Z.State.viewerTimer = null; } if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; } };
@@ -1445,7 +1534,7 @@ Z.advanceToNextContact = function(){ var all = Z.getActiveStatuses(); var map = 
 Z.advanceToPrevContact = function(){ var all = Z.getActiveStatuses(); var map = {}; all.forEach(function(s){ if(!map[s.author_id]) map[s.author_id]=[]; map[s.author_id].push(s); }); var keys = Object.keys(map); if(keys.length <= 1){ Z.closeStatusViewer(); return; } var idx = keys.indexOf(Z.State.viewerAuthorId); Z.openStatusViewer(keys[(idx-1+keys.length)%keys.length], 0); };
 Z.statusPrev = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex > 0){ Z.State.viewerIndex--; Z.showStatusViewer(); } else Z.advanceToPrevContact(); };
 Z.statusNext = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex < Z.State.viewerStatuses.length - 1){ Z.State.viewerIndex++; Z.showStatusViewer(); } else Z.advanceToNextContact(); };
-Z.closeStatusViewer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; var v = document.getElementById('status-viewer'); if(v){ v.querySelectorAll('video').forEach(function(vv){ try{vv.pause(); vv.src='';}catch(e){} }); v.remove(); } Z.showView('status-home'); setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 250); };
+Z.closeStatusViewer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; Z.State.captionWasPaused = false; var v = document.getElementById('status-viewer'); if(v){ v.querySelectorAll('video').forEach(function(vv){ try{vv.pause(); vv.src='';}catch(e){} }); v.remove(); } Z.showView('status-home'); setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 250); };
 
 // ============================================================
 // Spark
@@ -1456,7 +1545,12 @@ Z.renderSpark = function(){
   var html = '<div class="spark-feed-container" id="spark-feed">';
   sparks.forEach(function(sp, i){ html += Z.renderSparkSlide(sp, i); });
   html += '</div>';
-  setTimeout(function(){ Z.setupSparkFeed(sparks); Z.observeFreezeDots(); }, 100);
+  setTimeout(function(){
+    Z.setupSparkFeed(sparks);
+    Z.observeFreezeDots();
+    // Issue #1 fix — resolve any idb: refs in the spark feed
+    Z.resolveIdbRefs(document.getElementById('spark-feed'));
+  }, 100);
   return html;
 };
 Z.renderSparkSlide = function(spark, index){
@@ -1896,7 +1990,6 @@ Z.renderPostCard = function(p, profiles, me){
   var interest = Z.getInterestFor(p.id);
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
-  // Caption at TOP (with See more) — Issue #4 + #5
   var captionHtml = '';
   if(p.content){
     captionHtml = '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)"><div class="pc-text">' + Z.escape(p.content) + '</div><button class="pc-see-more" type="button" onclick="Z.toggleCaptionEl(event, this.parentElement)">..... See more</button></div>';
@@ -1946,30 +2039,73 @@ Z.renderComment = function(cm, post, profiles, isReply){
   var editorHtml = '<div id="reply-editor-' + Z.escape(cm.id) + '"></div>';
   return '<div class="comment-item ' + (cm.color||'light-green') + (cm.hidden?' hidden-comment':'') + '" data-comment-id="' + Z.escape(cm.id) + '"><span class="cname">' + Z.escape(ca.name) + '</span><span class="ctext">' + Z.escape(cm.text) + '</span>' + (cm.hidden ? '<div style="font-size:10px;margin-top:4px;opacity:.7;"><i class="fa-solid fa-eye-slash"></i> Hidden</div>' : '') + '<div class="comment-reactions">' + rr + '</div>' + actions + editorHtml + repliesHtml + '</div>';
 };
-Z.expandComposer = function(){ var c = document.getElementById('composer-expanded'); if(!c) return; if(!_cu()){ Z.openAuthModal('login'); return; } if(c.innerHTML) return; c.innerHTML = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;"><textarea id="composer-text" class="form-textarea" placeholder="What\'s on your mind?"></textarea><div style="display:flex;gap:8px;margin-top:8px;"><button onclick="document.getElementById(\'composer-file\').click()" style="background:#1e293b;border:none;color:#94a3b8;padding:6px 12px;border-radius:8px;font-size:11px;cursor:pointer;"><i class="fa-solid fa-image"></i> Media</button><input type="file" id="composer-file" accept="image/*,video/*" style="display:none;" onchange="Z.previewComposerFile(this)"></div><div id="composer-preview" class="media-preview-box"></div><label class="form-label" style="margin-top:10px;">Share Bounty (paid to whoever shares your post)</label><select id="composer-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select><div style="display:flex;gap:8px;margin-top:6px;"><button onclick="Z.submitComposer()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;font-size:12px;cursor:pointer;">Publish</button><button onclick="Z.cancelComposer()" style="background:transparent;border:none;color:#64748b;padding:8px 12px;font-size:12px;cursor:pointer;">Cancel</button></div></div>'; setTimeout(function(){ var e = document.getElementById('composer-text'); if(e) e.focus(); }, 50); };
+
+// Issue #2 + #3 fix — composer with dual Photo/Video buttons + explicit Remove media row
+Z.expandComposer = function(){
+  var c = document.getElementById('composer-expanded'); if(!c) return;
+  if(!_cu()){ Z.openAuthModal('login'); return; }
+  if(c.innerHTML) return;
+  c.innerHTML =
+    '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
+      '<textarea id="composer-text" class="form-textarea" placeholder="What\'s on your mind?"></textarea>' +
+      '<div class="media-pick-row">' +
+        '<button type="button" onclick="document.getElementById(\'composer-file-photo\').click()"><i class="fa-solid fa-camera"></i> Photo</button>' +
+        '<button type="button" onclick="document.getElementById(\'composer-file-video\').click()"><i class="fa-solid fa-video"></i> Video</button>' +
+      '</div>' +
+      '<input type="file" id="composer-file-photo" accept="image/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
+      '<input type="file" id="composer-file-video" accept="video/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
+      '<div id="composer-preview" class="media-preview-box"></div>' +
+      '<div id="composer-remove-row" class="media-remove-row" style="display:none;">' +
+        '<button type="button" onclick="Z.removeComposerFile()"><i class="fa-solid fa-trash"></i> Remove media</button>' +
+      '</div>' +
+      '<label class="form-label" style="margin-top:10px;">Share Bounty (paid to whoever shares your post)</label>' +
+      '<select id="composer-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
+      '<div style="display:flex;gap:8px;margin-top:6px;">' +
+        '<button onclick="Z.submitComposer()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;font-size:12px;cursor:pointer;">Publish</button>' +
+        '<button onclick="Z.cancelComposer()" style="background:transparent;border:none;color:#64748b;padding:8px 12px;font-size:12px;cursor:pointer;">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  setTimeout(function(){ var e = document.getElementById('composer-text'); if(e) e.focus(); }, 50);
+};
 Z.previewComposerFile = function(input){
   var f = input && input.files && input.files[0]; if(!f) return;
   if(f.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); input.value=''; return; }
   var box = document.getElementById('composer-preview'); if(!box) return;
   var url = URL.createObjectURL(f);
   var _isVid = (f.type && f.type.indexOf('video/')===0) || _isVideoUrl(f.name);
-  box.innerHTML = (_isVid ? '<video src="' + url + '" controls muted playsinline style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') + '<button class="media-preview-remove" onclick="Z.removeComposerFile()"><i class="fa-solid fa-xmark"></i></button>';
+  box.innerHTML = (_isVid ? '<video src="' + url + '" controls muted playsinline style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') +
+    '<button class="media-preview-remove" type="button" onclick="Z.removeComposerFile()"><i class="fa-solid fa-xmark"></i> Remove</button>';
   box.classList.add('show');
+  var rr = document.getElementById('composer-remove-row'); if(rr) rr.style.display = 'flex';
+  // Clear the other input so only one file is attached
+  var other = (input.id === 'composer-file-photo') ? document.getElementById('composer-file-video') : document.getElementById('composer-file-photo');
+  if(other) other.value = '';
 };
-Z.removeComposerFile = function(){ var f = document.getElementById('composer-file'); if(f) f.value=''; var p = document.getElementById('composer-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); } };
+Z.removeComposerFile = function(){
+  var p1 = document.getElementById('composer-file-photo'); if(p1) p1.value='';
+  var p2 = document.getElementById('composer-file-video'); if(p2) p2.value='';
+  var p = document.getElementById('composer-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); }
+  var rr = document.getElementById('composer-remove-row'); if(rr) rr.style.display = 'none';
+};
+Z._getComposerFile = function(){
+  var vi = document.getElementById('composer-file-video');
+  if(vi && vi.files && vi.files[0]) return vi.files[0];
+  var pi = document.getElementById('composer-file-photo');
+  if(pi && pi.files && pi.files[0]) return pi.files[0];
+  return null;
+};
 
 Z.submitComposer = async function(forceNoCaption){
   var me = _cu(); if(!me) return;
   var text = ((document.getElementById('composer-text')||{}).value||'').trim();
-  var fi = document.getElementById('composer-file');
-  var hasFile = fi && fi.files && fi.files[0];
+  var fileObj = Z._getComposerFile();
+  var hasFile = !!fileObj;
   var shareBounty = parseFloat((document.getElementById('composer-share-bounty')||{}).value || '0') || 0;
   if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
   if(!text && hasFile && !forceNoCaption){
     Z.confirmNoCaption('Z.submitComposer(true)');
     return;
   }
-  var fileObj = hasFile ? fi.files[0] : null;
   if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); return; }
   var mt = fileObj ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || _isVideoUrl(fileObj.name) ? 'video' : 'image') : null;
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
@@ -1996,7 +2132,6 @@ Z.submitComposer = async function(forceNoCaption){
         arr[idx] = real;
       }
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      // Do not re-render — the user's post is already visible at top
     } else {
       Z.State.allPosts = arr.filter(function(x){ return x.id !== tempId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
@@ -2382,66 +2517,129 @@ Z.renderNotifications = function(){
   return html;
 };
 
+// ============================================================
+// reloadData — BATCHED (Issue #4 / #5 fix)
+// All independent loads fire in parallel. All per-post / per-spark
+// comment queries are collapsed into a single batched .in() query.
+// ============================================================
 Z.reloadData = async function(){
-  await Z.DB.loadAllProfiles();
-  await Z.DB.loadHomeFeed();
-  await Z.DB.loadConnections();
-  await Z.DB.loadNotifications();
-  await Z.DB.loadStatuses();
-  await Z.DB.loadSparks();
+  var c = Z.sb();
+  var me = _cu();
+
+  // Step 1 — fire all top-level loads in parallel
+  var topLevel = [
+    Z.DB.loadAllProfiles(),
+    Z.DB.loadHomeFeed(),
+    Z.DB.loadConnections(),
+    Z.DB.loadNotifications(),
+    Z.DB.loadStatuses(),
+    Z.DB.loadSparks()
+  ];
+  if(me && c){
+    topLevel.push(Z.DB.loadWalletTx(me.id).then(function(tx){ me._walletTx = tx || []; return tx; }));
+    topLevel.push(Z.DB.loadStatusViews());
+  }
+  var results = await Promise.all(topLevel);
+  var statusViews = (me && c) ? (results[results.length - 1] || []) : [];
+  if(me){
+    (Z.State.allStatuses||[]).forEach(function(s){ if(s.author_id === me.id) return; var seen = statusViews.find(function(v){ return v.status_id === s.id && v.viewer_id === me.id; }); if(seen) s._viewedByMe = true; });
+  }
+
   Z.loadUnfrozen();
   Z.loadSavedSparks();
-  var me = _cu();
-  if(me){
-    Z.State.savedPosts = Z.getSavedPosts();
-    me._walletTx = await Z.DB.loadWalletTx(me.id);
-    var views = await Z.DB.loadStatusViews();
-    (Z.State.allStatuses||[]).forEach(function(s){ if(s.author_id === me.id) return; var seen = views.find(function(v){ return v.status_id === s.id && v.viewer_id === me.id; }); if(seen) s._viewedByMe = true; });
-    var c = Z.sb();
-    if(c){
-      var pr = await c.from('post_reactions').select('*').eq('user_id', me.id);
+  if(me){ Z.State.savedPosts = Z.getSavedPosts(); }
+
+  // Step 2 — reactions & comments in parallel batched queries
+  if(me && c){
+    var posts = Z.State.allPosts || [];
+    var sparks = Z.State.allSparks || [];
+    var postIds = posts.map(function(p){ return p.id; });
+    var sparkIds = sparks.map(function(s){ return s.id; });
+
+    var parallelJobs = [];
+
+    // My own post reactions
+    parallelJobs.push((async function(){
+      var r = await c.from('post_reactions').select('*').eq('user_id', me.id);
       var myPostR = {};
-      (pr.data||[]).forEach(function(r){ if(!myPostR[r.post_id]) myPostR[r.post_id] = {}; myPostR[r.post_id][r.reaction] = true; });
-      (Z.State.allPosts||[]).forEach(function(p){ p._myReactions = myPostR[p.id] || {}; });
-      var pids = (Z.State.allPosts||[]).map(function(p){ return p.id; });
-      if(pids.length){
-        var pc = await c.from('post_reactions').select('post_id, reaction').in('post_id', pids);
+      (r.data||[]).forEach(function(x){ if(!myPostR[x.post_id]) myPostR[x.post_id] = {}; myPostR[x.post_id][x.reaction] = true; });
+      posts.forEach(function(p){ p._myReactions = myPostR[p.id] || {}; });
+    })());
+
+    // All post reactions aggregate
+    if(postIds.length){
+      parallelJobs.push((async function(){
+        var r = await c.from('post_reactions').select('post_id, reaction').in('post_id', postIds);
         var pm = {};
-        (pc.data||[]).forEach(function(r){ pm[r.post_id] = pm[r.post_id] || {}; pm[r.post_id][r.reaction] = (pm[r.post_id][r.reaction]||0)+1; });
-        (Z.State.allPosts||[]).forEach(function(p){ p.reactions = pm[p.id] || {}; });
-      }
-      var sr = await c.from('spark_reactions').select('*');
-      var mySparkR = {}, sparkCounts = {};
-      (sr.data||[]).forEach(function(r){ sparkCounts[r.spark_id] = sparkCounts[r.spark_id] || {}; sparkCounts[r.spark_id][r.reaction] = (sparkCounts[r.spark_id][r.reaction]||0)+1; if(r.user_id === me.id){ if(!mySparkR[r.spark_id]) mySparkR[r.spark_id] = {}; mySparkR[r.spark_id][r.reaction] = true; } });
-      (Z.State.allSparks||[]).forEach(function(sp){ sp._myReactions = mySparkR[sp.id] || {}; sp._reactions = sparkCounts[sp.id] || {}; });
-      for(var i=0;i<(Z.State.allSparks||[]).length;i++){ var sp2 = Z.State.allSparks[i]; var cm = await c.from('comments').select('id').eq('spark_id', sp2.id); sp2._commentsCount = (cm.data||[]).length; }
-      for(var j=0;j<(Z.State.allPosts||[]).length;j++){
-        var pp = Z.State.allPosts[j];
-        var cmr = await c.from('comments').select('*').eq('post_id', pp.id).order('created_at',{ascending:true});
-        var allCm = cmr.data || [];
-        var cIds = allCm.map(function(x){ return x.id; });
+        (r.data||[]).forEach(function(x){ pm[x.post_id] = pm[x.post_id] || {}; pm[x.post_id][x.reaction] = (pm[x.post_id][x.reaction]||0)+1; });
+        posts.forEach(function(p){ p.reactions = pm[p.id] || {}; });
+      })());
+    }
+
+    // All spark reactions
+    parallelJobs.push((async function(){
+      var r = await c.from('spark_reactions').select('*');
+      var sparkCounts = {}, mySparkR = {};
+      (r.data||[]).forEach(function(x){
+        sparkCounts[x.spark_id] = sparkCounts[x.spark_id] || {};
+        sparkCounts[x.spark_id][x.reaction] = (sparkCounts[x.spark_id][x.reaction]||0)+1;
+        if(x.user_id === me.id){ if(!mySparkR[x.spark_id]) mySparkR[x.spark_id] = {}; mySparkR[x.spark_id][x.reaction] = true; }
+      });
+      sparks.forEach(function(s){ s._reactions = sparkCounts[s.id] || {}; s._myReactions = mySparkR[s.id] || {}; });
+    })());
+
+    // Spark comment counts (ONE query)
+    if(sparkIds.length){
+      parallelJobs.push((async function(){
+        var r = await c.from('comments').select('spark_id').in('spark_id', sparkIds);
+        var counts = {};
+        (r.data||[]).forEach(function(x){ counts[x.spark_id] = (counts[x.spark_id]||0)+1; });
+        sparks.forEach(function(s){ s._commentsCount = counts[s.id] || 0; });
+      })());
+    }
+
+    // All post comments + their reactions (2 batched queries, then grouped in-memory)
+    if(postIds.length){
+      parallelJobs.push((async function(){
+        var r = await c.from('comments').select('*').in('post_id', postIds).order('created_at', {ascending:true});
+        var cmts = r.data || [];
+        var cIds = cmts.map(function(x){ return x.id; });
         var crMap = {}, myCrMap = {};
         if(cIds.length){
           var cr = await c.from('comment_reactions').select('*').in('comment_id', cIds);
-          (cr.data||[]).forEach(function(r){ crMap[r.comment_id] = crMap[r.comment_id] || {}; crMap[r.comment_id][r.reaction] = (crMap[r.comment_id][r.reaction]||0)+1; if(r.user_id === me.id){ myCrMap[r.comment_id] = myCrMap[r.comment_id] || {}; myCrMap[r.comment_id][r.reaction] = true; } });
+          (cr.data||[]).forEach(function(x){
+            crMap[x.comment_id] = crMap[x.comment_id] || {};
+            crMap[x.comment_id][x.reaction] = (crMap[x.comment_id][x.reaction]||0)+1;
+            if(x.user_id === me.id){ myCrMap[x.comment_id] = myCrMap[x.comment_id] || {}; myCrMap[x.comment_id][x.reaction] = true; }
+          });
         }
-        allCm.forEach(function(cm){ cm._reactionCounts = crMap[cm.id] || {}; cm._myReactions = myCrMap[cm.id] || {}; cm._replies = []; });
-        var byId = {}; allCm.forEach(function(x){ byId[x.id] = x; });
-        allCm.forEach(function(x){ if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x); });
-        pp._comments = allCm.filter(function(x){ return !x.parent_id; });
-      }
+        var byPost = {};
+        cmts.forEach(function(cm){ if(!byPost[cm.post_id]) byPost[cm.post_id] = []; byPost[cm.post_id].push(cm); });
+        posts.forEach(function(p){
+          var list = byPost[p.id] || [];
+          list.forEach(function(cm){ cm._reactionCounts = crMap[cm.id] || {}; cm._myReactions = myCrMap[cm.id] || {}; cm._replies = []; });
+          var byId = {}; list.forEach(function(x){ byId[x.id] = x; });
+          list.forEach(function(x){ if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x); });
+          p._comments = list.filter(function(x){ return !x.parent_id; });
+        });
+      })());
     }
+
+    await Promise.all(parallelJobs);
   }
+
   Z.loadWalletBadge();
   Z.updateNotifBadge();
 };
 
+// ============================================================
+// Realtime
+// ============================================================
 Z.setupRealtime = function(){
   var c = Z.sb(); if(!c) return;
   var me = _cu(); if(!me) return;
   Z.State.realtimeChannels.forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
   Z.State.realtimeChannels = [];
-  // comments
   try {
     var ch1 = c.channel('zynix-comments').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, function(payload){
       var cm = payload.new; if(!cm) return;
@@ -2489,7 +2687,6 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch1);
   } catch(e){ console.warn('ch1', e); }
-  // reactions
   try {
     var ch2 = c.channel('zynix-reactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_reactions' }, function(payload){
@@ -2516,7 +2713,6 @@ Z.setupRealtime = function(){
       .subscribe();
     Z.State.realtimeChannels.push(ch2);
   } catch(e){ console.warn('ch2', e); }
-  // wallet
   try {
     var ch3 = c.channel('zynix-wallet-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wallet_transactions', filter: 'user_id=eq.' + me.id }, function(payload){
       var tx = payload.new; if(!tx) return;
@@ -2532,7 +2728,6 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch3);
   } catch(e){ console.warn('ch3', e); }
-  // notifications
   try {
     var ch4 = c.channel('zynix-notifications-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + me.id }, function(payload){
       var n = payload.new; if(!n) return;
@@ -2542,23 +2737,18 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch4);
   } catch(e){ console.warn('ch4', e); }
-  // NEW: posts (Issue #2 — others see new posts ~5s later)
   try {
     var ch5 = c.channel('zynix-posts-stream').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, function(payload){
       var p = payload.new; if(!p) return;
-      if(p.author_id === me.id) return; // own posts already optimistically added
+      if(p.author_id === me.id) return;
       var exists = (Z.State.allPosts||[]).some(function(x){ return x.id === p.id; });
       if(exists) return;
       p.reactions = {}; p._myReactions = {}; p._comments = [];
       Z.State.allPosts = [p].concat(Z.State.allPosts || []);
-      if(Z.State.currentView === 'home'){
-        // Soft insert only if connected feed will accept it — get_home_feed filters, so re-render safest
-        Z.softRefresh();
-      }
+      if(Z.State.currentView === 'home'){ Z.softRefresh(); }
     }).subscribe();
     Z.State.realtimeChannels.push(ch5);
   } catch(e){ console.warn('ch5', e); }
-  // NEW: statuses
   try {
     var ch6 = c.channel('zynix-statuses-stream').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'statuses' }, function(payload){
       var s = payload.new; if(!s) return;
@@ -2571,7 +2761,6 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch6);
   } catch(e){ console.warn('ch6', e); }
-  // NEW: sparks
   try {
     var ch7 = c.channel('zynix-sparks-stream').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sparks' }, function(payload){
       var s = payload.new; if(!s) return;
@@ -2586,6 +2775,9 @@ Z.setupRealtime = function(){
   } catch(e){ console.warn('ch7', e); }
 };
 
+// ============================================================
+// View routing
+// ============================================================
 Z.renderView = function(view, param){
   switch(view){
     case 'home': return Z.renderHome();
@@ -2615,7 +2807,6 @@ Z.showView = async function(view, param){
   Z.State.currentParam = param || null;
   if(view !== 'notifications' && view !== 'wallet') Z.saveCurrentView(view, param);
   window.scrollTo(0,0);
-  // Reset arrow state on view change
   Z.State.arrowVisible = false;
   Z.State._lastScrollY = 0;
   Z.State._lastSparkScrollY = 0;
@@ -2634,8 +2825,9 @@ Z.showView = async function(view, param){
       Z.observeFreezeDots();
       Z.restoreHomeAnchorOrScroll();
       Z.detectCaptionOverflow();
+      Z.resolveIdbRefs(container);
     }, 150);
-    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); }, 500);
+    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); }, 500);
   }
   if(view === 'spark'){
     setTimeout(function(){
@@ -2643,7 +2835,9 @@ Z.showView = async function(view, param){
       Z.observeFreezeDots();
       Z.restoreSparkSlideIndex();
       Z.detectCaptionOverflow();
+      Z.resolveIdbRefs(container);
     }, 150);
+    setTimeout(function(){ Z.resolveIdbRefs(container); }, 600);
   }
   if(view !== 'spark' && view !== 'home'){
     setTimeout(function(){ Z.detectCaptionOverflow(); }, 100);
@@ -2662,6 +2856,9 @@ function updateWalletPillState(){
   if(Z.State.currentView === 'wallet') w.classList.add('active'); else w.classList.remove('active');
 }
 
+// ============================================================
+// Boot
+// ============================================================
 var _authBootDone = false;
 async function boot(){
   if(!localStorage.getItem('zynix_circles')) Z.DB.saveCircles(Z.SeedData.circles);
@@ -2726,4 +2923,4 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 })();
 </script>
 </body>
-</html>
+</html> 
