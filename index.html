@@ -436,7 +436,6 @@ Z.openSheet = function(html){ var c=document.getElementById('sheet-container'); 
 var MEDIA_DB = 'zynix_media_v1', MEDIA_STORE = 'media', _dbPromise = null;
 function openMediaDB(){ if(_dbPromise) return _dbPromise; _dbPromise = new Promise(function(resolve,reject){ if(!window.indexedDB){ reject(new Error('No IDB')); return; } var req = indexedDB.open(MEDIA_DB,1); req.onupgradeneeded = function(e){ var db = e.target.result; if(!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE,{keyPath:'id'}); }; req.onsuccess = function(){ resolve(req.result); }; req.onerror = function(){ reject(req.error); }; }); return _dbPromise; }
 
-// Object URL tracking — caps at 150, revokes oldest to prevent memory leak
 Z._objUrls = [];
 Z._trackObjUrl = function(url){
   if(!url || typeof url !== 'string' || url.indexOf('blob:') !== 0) return url;
@@ -544,28 +543,30 @@ Z.showFreezeTooltip = function(contentId){
 
 // ============================================================
 // AUTO-FREEZE ON SCROLL — IntersectionObserver based
+// FIX: Set instead of WeakSet (for cleanup), skip detached dots,
+// 3s grace period, cleanup of removed dots.
 // ============================================================
 Z._autoFreezeDelays = {};
 Z._freezeObserver = null;
-Z._freezeObserved = new WeakSet();
+Z._freezeObserved = new Set();
 Z.initFreezeObserver = function(){
   if(Z._freezeObserver) return;
   if(typeof IntersectionObserver === 'undefined') return;
   Z._freezeObserver = new IntersectionObserver(function(entries){
     entries.forEach(function(entry){
       var dot = entry.target;
+      // FIX: Skip dots that are no longer in DOM — prevents stale callbacks
+      // from removed (re-rendered) dots triggering a false auto-freeze.
+      if(!dot.isConnected) return;
       var contentId = dot.getAttribute('data-freeze-id');
       if(!contentId) return;
       if(!Z.isUnfrozen(contentId)){
-        // Already frozen — clear any pending action
         if(Z._autoFreezeDelays[contentId]){ clearTimeout(Z._autoFreezeDelays[contentId]); delete Z._autoFreezeDelays[contentId]; }
         return;
       }
       if(entry.isIntersecting){
-        // Visible — cancel pending auto-freeze
         if(Z._autoFreezeDelays[contentId]){ clearTimeout(Z._autoFreezeDelays[contentId]); delete Z._autoFreezeDelays[contentId]; }
       } else {
-        // Out of view — schedule auto-freeze after grace period (1.5s)
         if(Z._autoFreezeDelays[contentId]) clearTimeout(Z._autoFreezeDelays[contentId]);
         Z._autoFreezeDelays[contentId] = setTimeout(function(){
           delete Z._autoFreezeDelays[contentId];
@@ -577,7 +578,7 @@ Z.initFreezeObserver = function(){
           });
           if(Z.State.currentView === 'home') Z.updatePostReactionUI(contentId);
           if(Z.State.currentView === 'spark') Z.updateSparkReactionsUI(contentId);
-        }, 1500);
+        }, 3000);
       }
     });
   }, {threshold: [0, 0.01], rootMargin: '0px'});
@@ -585,7 +586,18 @@ Z.initFreezeObserver = function(){
 Z.observeFreezeDots = function(){
   Z.initFreezeObserver();
   if(!Z._freezeObserver) return;
-  document.querySelectorAll('.freeze-dot[data-freeze-id]').forEach(function(dot){
+  var currentDots = document.querySelectorAll('.freeze-dot[data-freeze-id]');
+  var currentSet = new Set();
+  currentDots.forEach(function(d){ currentSet.add(d); });
+  // FIX: Unobserve dots that are no longer in DOM (prevents memory leak + stale callbacks)
+  Z._freezeObserved.forEach(function(oldDot){
+    if(!currentSet.has(oldDot)){
+      try { Z._freezeObserver.unobserve(oldDot); } catch(e){}
+      Z._freezeObserved.delete(oldDot);
+    }
+  });
+  // Observe new dots
+  currentDots.forEach(function(dot){
     if(Z._freezeObserved.has(dot)) return;
     Z._freezeObserved.add(dot);
     try { Z._freezeObserver.observe(dot); } catch(e){}
@@ -721,13 +733,11 @@ Z.restoreView = function(){ try { var v = localStorage.getItem('zynix_last_view'
 Z.saveScroll = function(y){ try { Z.State.lastScroll = y; localStorage.setItem('zynix_last_scroll', String(y||0)); } catch(e){} };
 Z.restoreScroll = function(){ try { var v = parseInt(localStorage.getItem('zynix_last_scroll') || '0', 10); return isNaN(v) ? 0 : v; } catch(e){ return 0; } };
 
-// Pause every video on the page (used when leaving a view)
 Z.pauseAllBackgroundVideos = function(){
   try { document.querySelectorAll('video').forEach(function(v){ try { v.pause(); } catch(e){} }); } catch(e){}
   Z._currentlyPlayingVideo = null;
 };
 
-// Exclusive play helper — only one video plays at a time globally
 Z._currentlyPlayingVideo = null;
 Z.playExclusive = function(video){
   if(!video) return;
@@ -765,16 +775,12 @@ function _timeAgo(ts){
 }
 function _fmtDate(ts){ try { return new Date(ts).toLocaleString(); } catch(e){ return ''; } }
 
-// Video MIME detection fallback (used when media_type missing)
 function _isVideoUrl(url){
   if(!url) return false;
   var s = String(url).toLowerCase().split('?')[0].split('#')[0];
   return /\.(mp4|webm|mov|m4v|3gp|avi|mkv|ogv|ogg)$/.test(s);
 }
 
-// ============================================================
-// SOFT REFRESH — full DOM replacement of current view
-// ============================================================
 Z.softRefresh = function(){
   var container = document.getElementById('app-container'); if(!container) return;
   var savedY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -788,13 +794,9 @@ Z.softRefresh = function(){
   requestAnimationFrame(function(){ window.scrollTo(0, savedY); });
   setTimeout(function(){ window.scrollTo(0, savedY); }, 20);
   Z.updateHeader();
-  // Attach freeze-dot auto-freeze observer to new DOM
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
 };
 
-// ============================================================
-// SAVES / INTERESTS
-// ============================================================
 Z.getSavedPosts = function(){ var me = _cu(); if(!me) return []; try { var d = localStorage.getItem('zynix_saves_' + me.id); if(!d) return []; var p = JSON.parse(d); return Array.isArray(p) ? p : []; } catch(e){ return []; } };
 Z.setSavedPosts = function(arr){ var me = _cu(); if(!me) return; try { localStorage.setItem('zynix_saves_' + me.id, JSON.stringify(arr || [])); } catch(e){} };
 Z.isPostSaved = function(id){ return (Z.State.savedPosts || []).indexOf(id) !== -1; };
@@ -802,9 +804,6 @@ Z.getInterests = function(){ var me = _cu(); if(!me) return {}; try { var d = lo
 Z.setInterests = function(obj){ var me = _cu(); if(!me) return; try { localStorage.setItem('zynix_interests_' + me.id, JSON.stringify(obj || {})); } catch(e){} };
 Z.getInterestFor = function(postId){ var i = Z.getInterests(); return i['post:' + postId] || ''; };
 
-// ============================================================
-// CONNECTION
-// ============================================================
 Z.getConnectionState = function(otherId){
   var me = _cu(); if(!me) return 'guest';
   if(!otherId || me.id === otherId) return 'self';
@@ -842,7 +841,6 @@ Z.sendConnectRequest = async function(userId){
   try { await Z.DB.sendConnectRequest(userId); Z.toast('Connection request sent.'); await Z.reloadData(); Z.softRefresh(); }
   catch(e){ var msg = e && e.message ? e.message : 'Could not send request.'; if(msg.indexOf('Already connected') !== -1) Z.toast('Already connected.'); else if(msg.indexOf('pending') !== -1) Z.toast('Request already pending.'); else Z.toast(msg); }
 };
-// Accept connection — with insufficient balance warning
 Z.acceptConnection = async function(requestId){
   try {
     await Z.DB.acceptConnectionRequest(requestId);
@@ -863,10 +861,6 @@ Z.acceptConnection = async function(requestId){
 Z.rejectConnection = async function(requestId){ try { await Z.DB.rejectConnectionRequest(requestId); Z.toast('Request rejected.'); await Z.reloadData(); Z.softRefresh(); } catch(e){ Z.toast(e && e.message ? e.message : 'Could not reject.'); } };
 Z.connectTo = function(userId){ Z.sendConnectRequest(userId); };
 
-// ============================================================
-// REACTION ROW RENDERERS
-// FIX: frozen reactions are NOT disabled — clicking shows tooltip
-// ============================================================
 Z.renderReactionRowForPost = function(post){
   var me = _cu();
   var counts = post.reactions || {};
@@ -885,12 +879,10 @@ Z.renderReactionRowForPost = function(post){
     var cls = 'react-btn';
     if(act) cls += ' active';
     if(dis){
-      // Dislike always clickable (toggle or remove). Only disabled if a bounty reaction already taken and dislike not active.
       if(hasBounty && !act) disabled = true;
     } else if(isMine){
-      disabled = true; // can't react to own post
+      disabled = true;
     } else if(!unfrozen){
-      // Frozen: still clickable — handler shows tooltip + blinks freeze dot
       cls += ' frozen-reaction';
     }
     var onclick = disabled ? '' : ' onclick="Z.reactToPost(\'' + Z.escape(post.id) + '\',\'' + k + '\')"';
@@ -919,7 +911,7 @@ Z.renderSparkReactionButtons = function(spark){
     var disabled = false;
     if(dis){ if(hasBounty && !act) disabled = true; }
     else if(isOwn) disabled = true;
-    else if(!unfrozen) { /* frozen — keep clickable, show tooltip */ }
+    else if(!unfrozen) { }
     var onclick = disabled ? '' : ' onclick="event.stopPropagation();Z.sparkReact(\'' + Z.escape(spark.id) + '\',\'' + k + '\')"';
     var cls = 'spark-reaction-icon';
     if(act) cls += ' active';
@@ -933,16 +925,15 @@ Z.renderSparkReactionButtons = function(spark){
   });
   return html;
 };
+// FIX: Re-observe freeze-dots after innerHTML replacement
 Z.updatePostReactionUI = function(postId){
   var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; }); if(!post) return;
   var card = document.querySelector('.post-card[data-post-id="' + postId + '"]'); if(!card) return;
   var row = card.querySelector('.post-reactions'); if(!row) return;
   row.innerHTML = Z.renderReactionRowForPost(post);
+  if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
 };
 
-// ============================================================
-// STATUS
-// ============================================================
 function _liveStatuses(){ var now = Date.now(); return (Z.State.allStatuses||[]).filter(function(s){ if(!s) return false; var exp = new Date(s.expires_at||0).getTime(); return !(exp && exp <= now); }).sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); }); }
 Z.getStatusContacts = function(){ var me=_cu(); if(!me) return []; return (Z.State.allProfiles||[]).filter(function(p){ return p.id !== me.id; }); };
 Z.getActiveStatuses = function(){ var live = _liveStatuses(); var contacts = Z.getStatusContacts().map(function(p){ return p.id; }); var me = _cu(); var allowed = {}; contacts.forEach(function(id){ allowed[id] = true; }); if(me) allowed[me.id] = true; return live.filter(function(s){ return allowed[s.author_id]; }); };
@@ -1044,7 +1035,6 @@ Z.showStatusViewer = function(){
   var old = document.getElementById('status-viewer'); if(old) old.remove();
   var status = Z.State.viewerStatuses[Z.State.viewerIndex]; if(!status){ Z.closeStatusViewer(); return; }
   var author = _p(status.author_id); if(!author){ Z.closeStatusViewer(); return; }
-  // FIX: fallback detection via URL extension when media_type missing
   var isVid = status.media_type === 'video' || (status.media_type == null && _isVideoUrl(status.media_url));
   var stage = '';
   if(status.media_url){ stage = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000;color:#64748b;font-size:12px;">Loading...</div>'; }
@@ -1103,9 +1093,6 @@ Z.statusPrev = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex > 0){ Z.
 Z.statusNext = function(){ Z.clearStatusTimer(); if(Z.State.viewerIndex < Z.State.viewerStatuses.length - 1){ Z.State.viewerIndex++; Z.showStatusViewer(); } else Z.advanceToNextContact(); };
 Z.closeStatusViewer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; var v = document.getElementById('status-viewer'); if(v){ v.querySelectorAll('video').forEach(function(vv){ try{vv.pause(); vv.src='';}catch(e){} }); v.remove(); } Z.showView('status-home'); setTimeout(function(){ Z.setupFeedVideoAutoplay(); }, 250); };
 
-// ============================================================
-// SPARK — render + feed
-// ============================================================
 Z.renderSpark = function(){
   var sparks = (Z.State.allSparks || []).slice();
   if(!sparks.length){ return '<div style="padding:60px 20px;text-align:center;color:#64748b;"><i class="fa-solid fa-bolt" style="font-size:40px;color:#334155;display:block;margin-bottom:12px;"></i><p style="margin-bottom:16px;">No Sparks yet</p><button onclick="Z.openCreateModal()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:10px 24px;border-radius:10px;font-size:12px;cursor:pointer;">Create First Spark</button></div>'; }
@@ -1146,6 +1133,7 @@ Z.renderSparkSlide = function(spark, index){
     '<div class="spark-info-caption">' + Z.escape(spark.caption || '') + '</div>' +
     (tags ? '<div class="spark-info-tags">' + tags + '</div>' : '') + '</div>' + stack + '</div>';
 };
+// FIX: Re-observe freeze-dots after innerHTML replacement
 Z.updateSparkReactionsUI = function(sparkId){
   var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; }); if(!spark) return;
   var stack = document.querySelector('[data-spark-actions="' + sparkId + '"]'); if(!stack) return;
@@ -1155,6 +1143,7 @@ Z.updateSparkReactionsUI = function(sparkId){
     var unfrozen = Z.isUnfrozen(sparkId);
     if(unfrozen){ dot.classList.add('unfrozen'); dot.setAttribute('data-tip','Unfrozen'); } else { dot.classList.remove('unfrozen'); dot.setAttribute('data-tip','Frozen'); }
   }
+  if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
 };
 Z.toggleSparkMenu = function(sparkId, ev){
   if(ev) ev.stopPropagation();
@@ -1305,9 +1294,6 @@ Z.deleteSpark = async function(sparkId){
   Z.toast('Deleted.'); Z.State.allSparks = (Z.State.allSparks||[]).filter(function(s){ return s.id !== sparkId; }); Z.showView('spark');
 };
 
-// ============================================================
-// SPARK COMMENTS
-// ============================================================
 Z.findSparkCommentInState = function(commentId){
   var found = null;
   (Z.State.allSparks||[]).forEach(function(sp){
@@ -1393,16 +1379,14 @@ Z.addSparkComment = async function(sparkId){
     if(spark) spark._commentsCount = (spark._commentsCount||0) + 1;
   }
 };
-// Single reply editor guard — aggressively close all others first
 Z.openInlineSparkReply = function(sparkId, parentId){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var host = document.getElementById('spark-reply-editor-' + parentId); if(!host) return;
   var wasOpen = host.innerHTML.trim() !== '';
-  // ALWAYS close every reply editor (post + spark) before toggling
   document.querySelectorAll('.reply-editor').forEach(function(e){
     if(e.parentElement){ try { e.parentElement.innerHTML = ''; } catch(err){} }
   });
-  if(wasOpen) return; // user clicked same Reply twice — toggle closed
+  if(wasOpen) return;
   host.innerHTML = '<div class="reply-editor"><textarea id="spark-reply-input-' + parentId + '" rows="1" placeholder="Write a reply..." oninput="Z.autoGrow(this)"></textarea><button class="save" onclick="Z.submitSparkReply(\'' + Z.escape(sparkId) + '\',\'' + Z.escape(parentId) + '\')">Send</button><button class="cancel" onclick="document.getElementById(\'spark-reply-editor-' + parentId + '\').innerHTML=\'\'">×</button></div>';
   setTimeout(function(){ var i = document.getElementById('spark-reply-input-' + parentId); if(i) i.focus(); }, 50);
 };
@@ -1532,9 +1516,6 @@ Z.shareExternal = function(kind, url){
   else if(kind==='youtube'){ navigator.clipboard.writeText(url); Z.toast('Link copied'); setTimeout(function(){window.open('https://studio.youtube.com/','_blank');},500); }
 };
 
-// ============================================================
-// HOME
-// ============================================================
 Z.renderHome = function(){
   var me = _cu();
   var posts = Z.State.allPosts || [];
@@ -1556,7 +1537,6 @@ Z.renderPostCard = function(p, profiles, me){
   var interest = Z.getInterestFor(p.id);
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
-  // FIX: video MIME fallback detection
   var mHtml = '';
   if(p.media_url){
     var _mt = p.media_type || (_isVideoUrl(p.media_url) ? 'video' : 'image');
@@ -1574,9 +1554,6 @@ function countAllComments(arr){ var n = 0; (function walk(list){ list.forEach(fu
 Z.togglePostMenu = function(postId, ev){ if(ev) ev.stopPropagation(); var menu = document.getElementById('post-menu-' + postId); if(!menu) return; var wasOpen = menu.classList.contains('open'); document.querySelectorAll('.post-menu.open').forEach(function(m){ m.classList.remove('open'); }); if(!wasOpen) menu.classList.add('open'); };
 document.addEventListener('click', function(e){ if(!e.target.closest('.post-menu-wrap')){ document.querySelectorAll('.post-menu.open').forEach(function(m){ m.classList.remove('open'); }); } });
 
-// ============================================================
-// POST COMMENTS
-// ============================================================
 Z.renderComment = function(cm, post, profiles, isReply){
   profiles = profiles || Z.State.allProfiles || [];
   var me = _cu();
@@ -1744,12 +1721,10 @@ Z.addComment = async function(postId){
   var r = await c.from('comments').insert({id:newId, post_id:postId, author_id:me.id, text:t, color:color});
   if(r.error){ if(post && post._comments){ post._comments = post._comments.filter(function(x){ return x.id !== newId; }); } var domEl = document.querySelector('[data-comment-id="' + newId + '"]'); if(domEl) domEl.remove(); var card2 = document.querySelector('.post-card[data-post-id="' + postId + '"]'); if(card2 && post){ var b2 = card2.querySelector('.post-actions button'); if(b2) b2.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + countAllComments(post._comments || []); } Z.toast('Failed.'); }
 };
-// Single reply editor guard — aggressively close all others first
 Z.openInlineReply = function(postId, parentId){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var host = document.getElementById('reply-editor-' + parentId); if(!host) return;
   var wasOpen = host.innerHTML.trim() !== '';
-  // ALWAYS close every reply editor (post + spark) before toggling
   document.querySelectorAll('.reply-editor').forEach(function(e){
     if(e.parentElement){ try { e.parentElement.innerHTML = ''; } catch(err){} }
   });
@@ -1832,9 +1807,6 @@ Z.sharePost = async function(postId){
   Z.openSheet('<div class="modal-overlay" style="background:transparent;align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()"><div class="bottom-sheet"><div class="sheet-handle"></div><div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Share Post</h3><button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div><div class="sheet-body"><div class="share-grid"><div class="share-item wa" onclick="Z.shareExternal(\'whatsapp\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-whatsapp"></i>WhatsApp</div><div class="share-item fb" onclick="Z.shareExternal(\'facebook\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-facebook"></i>Facebook</div><div class="share-item tw" onclick="Z.shareExternal(\'twitter\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-x-twitter"></i>Twitter</div><div class="share-item cp" onclick="Z.shareExternal(\'copy\',\'' + Z.escape(url) + '\')"><i class="fa-solid fa-copy"></i>Copy</div></div></div></div></div>');
 };
 
-// ============================================================
-// FEED VIDEO AUTOPLAY — Home only, exclusive play
-// ============================================================
 Z._feedVideoObserver = null;
 Z.recomputeFeedVideoPlayback = function(){
   var vids = document.querySelectorAll('#app-container video:not([data-spark-id])'); if(!vids.length) return;
@@ -1850,9 +1822,6 @@ Z.setupFeedVideoAutoplay = function(){
   if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); }, 150); }, {passive:true}); }
 };
 
-// ============================================================
-// PEOPLE / PROFILE
-// ============================================================
 Z.renderPeople = function(){ return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-users" style="color:#10b981;margin-right:8px;"></i>People</h2></div><input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="people-list-container">' + Z.renderPeopleList() + '</div></div>'; };
 Z.renderPeopleList = function(){
   var q = (Z.State.peopleSearch||'').toLowerCase();
@@ -1895,9 +1864,6 @@ Z.renderPublicProfile = function(userId){
   return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'people\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div><div class="profile-card"><div class="profile-cover"><img src="' + Z.escape(t.cover||'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80') + '"></div><div class="profile-body"><img class="profile-avatar" src="' + Z.escape(Z.displayAvatar(t)) + '"><div style="margin-top:6px;"><div class="profile-name">' + Z.escape(Z.displayName(t)) + '</div><div class="profile-handle">@' + Z.escape(t.username||'user') + (t.profession?' • ' + Z.escape(t.profession):'') + '</div><div class="profile-bio">' + Z.escape(t.bio||'') + '</div>' + (me && me.id !== t.id ? '<div style="margin-top:10px;">' + Z.renderConnectButton(t.id) + '</div>' : '') + '</div></div></div></div>';
 };
 
-// ============================================================
-// WALLET / BOUNTY / PACKAGES / REFERRALS / CIRCLES
-// ============================================================
 Z.renderWalletNotification = function(t){
   var meta = t.metadata || {};
   var isIncome = (t.amount > 0);
@@ -1994,9 +1960,6 @@ Z.onCircleSearch = function(v){
   c.innerHTML = h;
 };
 
-// ============================================================
-// NOTIFICATIONS
-// ============================================================
 Z.renderNotifications = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   var all = Z.State.allNotifications || [];
@@ -2025,9 +1988,6 @@ Z.renderNotifications = function(){
   return html;
 };
 
-// ============================================================
-// RELOAD DATA
-// ============================================================
 Z.reloadData = async function(){
   await Z.DB.loadAllProfiles();
   await Z.DB.loadHomeFeed();
@@ -2082,15 +2042,11 @@ Z.reloadData = async function(){
   Z.updateNotifBadge();
 };
 
-// ============================================================
-// REALTIME — FIXED postgres_changes syntax + no softRefresh for comments
-// ============================================================
 Z.setupRealtime = function(){
   var c = Z.sb(); if(!c) return;
   var me = _cu(); if(!me) return;
   Z.State.realtimeChannels.forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
   Z.State.realtimeChannels = [];
-  // ---- Channel 1: Comments (INSERT) — in-place DOM update ----
   try {
     var ch1 = c.channel('zynix-comments').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, function(payload){
       var cm = payload.new; if(!cm) return;
@@ -2110,7 +2066,6 @@ Z.setupRealtime = function(){
       if(!post._comments) post._comments = [];
       if(cm.parent_id){ var parent = Z.findCommentInState(cm.parent_id); if(parent){ if(!parent._replies) parent._replies = []; parent._replies.push(cm); } else post._comments.push(cm); }
       else post._comments.push(cm);
-      // FIX: in-place DOM insert — no more softRefresh (prevents screen shiver)
       var container = document.getElementById('comments-' + cm.post_id);
       if(container){
         try {
@@ -2131,7 +2086,6 @@ Z.setupRealtime = function(){
           }
         } catch(err){ console.warn('comment insert', err); }
       }
-      // Update comment count on card
       var card = document.querySelector('.post-card[data-post-id="' + cm.post_id + '"]');
       if(card && post){
         var btn = card.querySelector('.post-actions button');
@@ -2140,7 +2094,6 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch1);
   } catch(e){ console.warn('ch1', e); }
-  // ---- Channel 2: Reactions (post + spark + comment) — FIXED syntax ----
   try {
     var ch2 = c.channel('zynix-reactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_reactions' }, function(payload){
@@ -2167,7 +2120,6 @@ Z.setupRealtime = function(){
       .subscribe();
     Z.State.realtimeChannels.push(ch2);
   } catch(e){ console.warn('ch2', e); }
-  // ---- Channel 3: Wallet ----
   try {
     var ch3 = c.channel('zynix-wallet-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wallet_transactions', filter: 'user_id=eq.' + me.id }, function(payload){
       var tx = payload.new; if(!tx) return;
@@ -2183,7 +2135,6 @@ Z.setupRealtime = function(){
     }).subscribe();
     Z.State.realtimeChannels.push(ch3);
   } catch(e){ console.warn('ch3', e); }
-  // ---- Channel 4: Notifications ----
   try {
     var ch4 = c.channel('zynix-notifications-' + me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + me.id }, function(payload){
       var n = payload.new; if(!n) return;
@@ -2195,9 +2146,6 @@ Z.setupRealtime = function(){
   } catch(e){ console.warn('ch4', e); }
 };
 
-// ============================================================
-// ROUTER
-// ============================================================
 Z.renderView = function(view, param){
   switch(view){
     case 'home': return Z.renderHome();
@@ -2218,7 +2166,6 @@ Z.renderView = function(view, param){
 Z.showView = async function(view, param){
   var prevView = Z.State.currentView;
   if(prevView === 'home' && view !== 'home'){ Z.saveScroll(window.scrollY); }
-  // FIX: pause all videos when view changes + revoke pending object URLs (audio leak fix)
   if(prevView && prevView !== view){
     try { Z.pauseAllBackgroundVideos(); } catch(e){}
     try { Z._revokeAllObjUrls(); } catch(e){}
@@ -2254,9 +2201,6 @@ function updateWalletPillState(){
   if(Z.State.currentView === 'wallet') w.classList.add('active'); else w.classList.remove('active');
 }
 
-// ============================================================
-// BOOT
-// ============================================================
 var _authBootDone = false;
 async function boot(){
   if(!localStorage.getItem('zynix_circles')) Z.DB.saveCircles(Z.SeedData.circles);
