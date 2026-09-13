@@ -3632,5 +3632,187 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 
 })();
 </script>
+  <script>
+/* ============================================================
+   ZYNIX media-persistence patch
+   Fix: media disappearing after refresh / logout+login
+   for Posts, Sparks, Long Videos, and Statuses.
+   Safe to include; idempotent.
+   ============================================================ */
+(function(){
+'use strict';
+if (window.__ZYNIX_MEDIA_PATCH__) return;
+window.__ZYNIX_MEDIA_PATCH__ = true;
+
+var tries = 0;
+var wait = setInterval(function(){
+  tries++;
+  if (window.Z && Z.State && Z.DB && typeof Z.DB.createPost === 'function'){
+    clearInterval(wait);
+    try { applyPatch(); } catch(e){ console.error('[ZYNIX patch] failed', e); }
+  } else if (tries > 200){
+    clearInterval(wait);
+    console.warn('[ZYNIX patch] Z never became ready');
+  }
+}, 50);
+
+function applyPatch(){
+  var Z = window.Z;
+
+  /* ---- 1. Persistent media map (localStorage, per user) ---- */
+  function mapKey(){
+    var me = Z.State.currentUser;
+    return me ? ('zynix_media_map_v1_' + me.id) : 'zynix_media_map_v1_guest';
+  }
+  Z.loadMediaMap = function(){
+    try {
+      var raw = localStorage.getItem(mapKey());
+      var m = raw ? JSON.parse(raw) : {};
+      return (m && typeof m === 'object') ? m : {};
+    } catch(e){ return {}; }
+  };
+  Z.saveMediaMap = function(m){
+    try { localStorage.setItem(mapKey(), JSON.stringify(m || {})); } catch(e){}
+  };
+  Z.recordMediaUrl = function(contentId, url){
+    if (!contentId || !url || typeof url !== 'string') return;
+    if (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) return;
+    var m = Z.loadMediaMap();
+    m[contentId] = { url: url, ts: Date.now() };
+    var keys = Object.keys(m);
+    if (keys.length > 500){
+      keys.sort(function(a,b){ return (m[a].ts||0) - (m[b].ts||0); });
+      while (keys.length > 500){ delete m[keys.shift()]; }
+    }
+    Z.saveMediaMap(m);
+  };
+
+  /* ---- 2. Per-item backfill from local map ---- */
+  Z.backfillItem = function(item, kind){
+    if (!item || !item.id) return;
+    if (kind === 'video'){
+      if (item.video_url) return;
+      var rec = Z.loadMediaMap()[item.id];
+      if (rec && rec.url) item.video_url = rec.url;
+    } else {
+      if (item.media_url) return;
+      var rec2 = Z.loadMediaMap()[item.id];
+      if (rec2 && rec2.url){
+        item.media_url = rec2.url;
+        if (!item.media_type){
+          var u = rec2.url.toLowerCase().split('?')[0].split('#')[0];
+          item.media_type = /\.(mp4|webm|mov|m4v|3gp|ogv|ogg)$/.test(u) ? 'video' : 'image';
+        }
+      }
+    }
+  };
+  Z.backfillAllMedia = function(){
+    try { (Z.State.allPosts||[]).forEach(function(p){ Z.backfillItem(p, 'media'); }); } catch(e){}
+    try { (Z.State.allSparks||[]).forEach(function(s){ Z.backfillItem(s, 'video'); }); } catch(e){}
+    try { (Z.State.allStatuses||[]).forEach(function(s){ Z.backfillItem(s, 'media'); }); } catch(e){}
+  };
+
+  /* ---- 3. Record URL on every successful DB write ---- */
+  var oCreatePost = Z.DB.createPost;
+  Z.DB.createPost = async function(payload){
+    var res = await oCreatePost.call(Z.DB, payload);
+    try { if (payload && payload.media_url && res && res.id) Z.recordMediaUrl(res.id, payload.media_url); } catch(e){}
+    return res;
+  };
+  var oCreateSpark = Z.DB.createSpark;
+  Z.DB.createSpark = async function(payload){
+    var res = await oCreateSpark.call(Z.DB, payload);
+    try { if (payload && payload.video_url && res && res.id) Z.recordMediaUrl(res.id, payload.video_url); } catch(e){}
+    return res;
+  };
+  var oCreateStatus = Z.DB.createStatus;
+  Z.DB.createStatus = async function(payload){
+    var res = await oCreateStatus.call(Z.DB, payload);
+    try { if (payload && payload.media_url && res && res.id) Z.recordMediaUrl(res.id, payload.media_url); } catch(e){}
+    return res;
+  };
+
+  /* ---- 4. Backfill right after each load ---- */
+  var oLoadHomeFeed = Z.DB.loadHomeFeed;
+  Z.DB.loadHomeFeed = async function(){
+    var res = await oLoadHomeFeed.call(Z.DB);
+    try { (Z.State.allPosts||[]).forEach(function(p){ Z.backfillItem(p, 'media'); }); } catch(e){}
+    return res;
+  };
+  var oLoadSparks = Z.DB.loadSparks;
+  Z.DB.loadSparks = async function(){
+    var res = await oLoadSparks.call(Z.DB);
+    try { (Z.State.allSparks||[]).forEach(function(s){ Z.backfillItem(s, 'video'); }); } catch(e){}
+    return res;
+  };
+  var oLoadStatuses = Z.DB.loadStatuses;
+  Z.DB.loadStatuses = async function(){
+    var res = await oLoadStatuses.call(Z.DB);
+    try { (Z.State.allStatuses||[]).forEach(function(s){ Z.backfillItem(s, 'media'); }); } catch(e){}
+    return res;
+  };
+
+  /* ---- 5. Direct DB backfill after reloadData (old items not in map) ---- */
+  var oReloadData = Z.reloadData;
+  Z.reloadData = async function(){
+    var res = await oReloadData.call(Z);
+    try { Z.backfillAllMedia(); } catch(e){}
+    try {
+      var c = (Z.sb && Z.sb()) || null;
+      if (c) {
+        var pm = (Z.State.allPosts||[]).filter(function(p){ return p.id && !p.media_url && String(p.id).indexOf('temp_') !== 0; });
+        if (pm.length){
+          var ids = pm.map(function(p){ return p.id; });
+          var rp = await c.from('posts').select('id, media_url, media_type').in('id', ids);
+          if (!rp.error && rp.data){
+            var mp = {}; rp.data.forEach(function(x){ mp[x.id] = x; });
+            pm.forEach(function(p){
+              if (mp[p.id] && mp[p.id].media_url){
+                p.media_url = mp[p.id].media_url;
+                if (!p.media_type && mp[p.id].media_type) p.media_type = mp[p.id].media_type;
+              }
+            });
+          }
+        }
+        var sm = (Z.State.allSparks||[]).filter(function(s){ return s.id && !s.video_url && String(s.id).indexOf('temp_') !== 0; });
+        if (sm.length){
+          var ids2 = sm.map(function(s){ return s.id; });
+          var rs = await c.from('sparks').select('id, video_url').in('id', ids2);
+          if (!rs.error && rs.data){
+            var ms = {}; rs.data.forEach(function(x){ ms[x.id] = x; });
+            sm.forEach(function(s){ if (ms[s.id] && ms[s.id].video_url) s.video_url = ms[s.id].video_url; });
+          }
+        }
+        var stm = (Z.State.allStatuses||[]).filter(function(s){ return s.id && !s.media_url && String(s.id).indexOf('temp_') !== 0; });
+        if (stm.length){
+          var ids3 = stm.map(function(s){ return s.id; });
+          var rst = await c.from('statuses').select('id, media_url, media_type').in('id', ids3);
+          if (!rst.error && rst.data){
+            var mst = {}; rst.data.forEach(function(x){ mst[x.id] = x; });
+            stm.forEach(function(s){
+              if (mst[s.id] && mst[s.id].media_url){
+                s.media_url = mst[s.id].media_url;
+                if (!s.media_type && mst[s.id].media_type) s.media_type = mst[s.id].media_type;
+              }
+            });
+          }
+        }
+      }
+    } catch(e){ console.warn('[ZYNIX patch] direct DB backfill error', e); }
+    return res;
+  };
+
+  /* ---- 6. Also backfill right after snapshot load ---- */
+  var oLoadSnapshot = Z.loadSnapshot;
+  Z.loadSnapshot = function(){
+    var res = oLoadSnapshot.call(Z);
+    try { Z.backfillAllMedia(); } catch(e){}
+    return res;
+  };
+
+  console.log('%c[ZYNIX] media-persistence patch active', 'color:#10b981;font-weight:bold');
+}
+})();
+</script>
 </body>
 </html>
