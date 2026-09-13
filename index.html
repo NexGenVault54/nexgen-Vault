@@ -3315,7 +3315,66 @@ function updateWalletPillState(){ var w = document.getElementById('wallet-pill')
 
 /* ============================================================
    Boot — snapshot renders BEFORE any network await
+   ============================================================
+   S1 CHANGE SUMMARY (relative to the previous file):
+   1. New helper readCachedUserIdSync() — reads Supabase's own
+      localStorage auth key synchronously (no network) inside
+      try/catch. Returns the user id string or null.
+   2. boot() reordered:
+      a) restoreView()
+      b) readCachedUserIdSync() → if user id exists:
+           - set Z.State.currentUser minimal
+           - Z.loadSnapshot() → if snapshot exists: render it NOW
+             (before any await, before any spinner, before any
+             "Loading..." text)
+      c) Only if NO snapshot could be rendered AND no cached user,
+         show the logged-out Home view immediately (Q1=b).
+      d) Then, in the background:
+           - await getSession()  (validation only)
+           - await refreshSession()
+           - showRefreshSpinner()
+           - await reloadData()
+           - hideRefreshSpinner()
+           - softRefresh() (preserves scroll + anchor)
+           - setupRealtime()
+      e) If no user: show logged-out view immediately, no spinner.
+   3. SIGNED_IN handler now does the same snapshot-first swap.
+   4. All else unchanged.
    ============================================================ */
+
+/* Reads Supabase v2's own localStorage auth token and returns the
+   user id synchronously. No network. Wrapped in try/catch. Returns
+   null on any failure — caller falls back to the slow path. */
+function readCachedUserIdSync(){
+  try {
+    if(!window.localStorage) return null;
+    var projRef = null;
+    try {
+      var u = Z.SUPABASE_URL || '';
+      var m = u.match(/^https:\/\/([^.]+)\.supabase\.co/);
+      if(m && m[1]) projRef = m[1];
+    } catch(e){}
+    if(!projRef) return null;
+    var key = 'sb-' + projRef + '-auth-token';
+    var raw = localStorage.getItem(key);
+    if(!raw) return null;
+    var parsed = JSON.parse(raw);
+    if(!parsed) return null;
+    /* Supabase v2 shape: { access_token, refresh_token, user: {...} }
+       Sometimes wrapped: { currentSession: {...}, ... } */
+    var user = null;
+    if(parsed.user && parsed.user.id) user = parsed.user;
+    else if(parsed.currentSession && parsed.currentSession.user && parsed.currentSession.user.id) user = parsed.currentSession.user;
+    else if(parsed.session && parsed.session.user && parsed.session.user.id) user = parsed.session.user;
+    if(!user || !user.id) return null;
+    /* Optional expiry check — if token is clearly expired AND has no
+       refresh token, we still return it; refreshSession() will handle.
+       We prefer to attempt render than to sit on a blank screen. */
+    return { id: user.id, email: user.email || null, user_metadata: user.user_metadata || {} };
+  } catch(e){ return null; }
+}
+Z._readCachedUserIdSync = readCachedUserIdSync;
+
 var _authBootDone = false;
 async function boot(){
   var restored = Z.restoreView();
@@ -3323,28 +3382,62 @@ async function boot(){
   Z.State.currentParam = restored.param;
 
   var container = document.getElementById('app-container');
-  if(container) container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div>';
-  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
-  var map = {home:'nav-home', spark:'nav-spark', circles:'nav-circles', people:'nav-people', profile:'nav-profile'};
-  if(map[restored.view]){ var b = document.getElementById(map[restored.view]); if(b) b.classList.add('active'); }
 
-  var cachedUser = null;
+  /* ---- STEP 1: SYNCHRONOUS fast path (no awaits, no spinner) ---- */
+  var cached = readCachedUserIdSync();
+  var renderedFromSnapshot = false;
+
+  if(cached && cached.id){
+    /* Minimal user shape so snapshot key + header avatar work. */
+    Z.State.currentUser = {
+      id: cached.id,
+      email: cached.email,
+      name: (cached.user_metadata && cached.user_metadata.name) || 'You',
+      wallet_cash: 0,
+      wallet_bounty: 0
+    };
+    try { Z.renderHeaderAuth(); } catch(e){}
+    try {
+      var hadSnap = Z.loadSnapshot();
+      if(hadSnap){
+        /* Render immediately — synchronous, before any await. */
+        Z.showView(restored.view, restored.param);
+        renderedFromSnapshot = true;
+      }
+    } catch(e){ console.warn('snapshot fast path', e); }
+  }
+
+  /* ---- STEP 2: NO cached user → show logged-out view instantly ---- */
+  if(!cached && !renderedFromSnapshot){
+    /* New / logged-out user: no "Loading..." placeholder per Q1=b. */
+    try { Z.showView(restored.view, restored.param); } catch(e){}
+  }
+
+  /* If cached user but snapshot missing (first run on a device),
+     show a minimal placeholder — but ONLY then, and only briefly. */
+  if(cached && !renderedFromSnapshot && container){
+    container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div>';
+  }
+
+  /* ---- STEP 3: BACKGROUND validation + fresh data (non-blocking) ---- */
+  var sessionUser = null;
   try {
     var cc = sb();
     if(cc){
       var sres = await cc.auth.getSession();
-      cachedUser = sres && sres.data && sres.data.session ? sres.data.session.user : null;
+      sessionUser = sres && sres.data && sres.data.session ? sres.data.session.user : null;
     }
   } catch(e){}
 
-  var hadSnapshot = false;
-  if(cachedUser){
-    Z.State.currentUser = Z.State.currentUser || { id: cachedUser.id, email: cachedUser.email, name: (cachedUser.user_metadata && cachedUser.user_metadata.name) || 'You', wallet_cash: 0, wallet_bounty: 0 };
-    Z.renderHeaderAuth();
-    hadSnapshot = Z.loadSnapshot();
-    if(hadSnapshot){
-      Z.showView(restored.view, restored.param);
-    }
+  /* If cached user no longer has a real session (logged out elsewhere),
+     clear the stale fast-path render and show logged-out view. */
+  if(cached && !sessionUser){
+    Z.State.currentUser = null;
+    Z.State.allPosts = []; Z.State.allSparks = []; Z.State.allProfiles = []; Z.State.allCircles = [];
+    Z.State.snapshotLoaded = false;
+    try { Z.renderHeaderAuth(); } catch(e){}
+    try { Z.showView(restored.view, restored.param); } catch(e){}
+    renderedFromSnapshot = false;
   }
 
   await Z.refreshSession();
@@ -3355,7 +3448,8 @@ async function boot(){
     try {
       await Z.reloadData();
       Z.hideRefreshSpinner();
-      if(hadSnapshot && Z.State.currentView === restored.view){
+      if(renderedFromSnapshot && Z.State.currentView === restored.view){
+        /* Fresh data swapped in — preserves scroll + anchor. */
         Z.softRefresh();
       } else {
         Z.showView(restored.view, restored.param);
@@ -3364,16 +3458,17 @@ async function boot(){
     } catch(e){
       console.warn('boot reloadData', e);
       Z.hideRefreshSpinner();
-      if(!hadSnapshot) Z.showView(restored.view, restored.param);
+      if(!renderedFromSnapshot) Z.showView(restored.view, restored.param);
       Z.setupRealtime();
     }
   } else {
-    if(!hadSnapshot) Z.showView(restored.view, restored.param);
+    if(!renderedFromSnapshot && !cached) Z.showView(restored.view, restored.param);
   }
 
   Z.State.bootCompleted = true;
   _authBootDone = true;
 
+  /* ---- STEP 4: auth state change handler (with snapshot-first swap) ---- */
   try { var c = sb(); if(c){
     c.auth.onAuthStateChange(async function(event){
       if(event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED'){
@@ -3396,6 +3491,33 @@ async function boot(){
         var prevSparkSlide = Z.State.sparkSlideIndex || 0;
         var prevHomeAnchorPost = Z.State.homeAnchorPost;
         var prevHomeAnchorOffset = Z.State.homeAnchorOffset;
+
+        /* Snapshot-first swap: if the newly-signed-in user has a
+           snapshot on this device, render it BEFORE any await. */
+        var snapRendered = false;
+        try {
+          var quick = readCachedUserIdSync();
+          if(quick && quick.id && (!Z.State.currentUser || Z.State.currentUser.id !== quick.id)){
+            Z.State.currentUser = {
+              id: quick.id,
+              email: quick.email,
+              name: (quick.user_metadata && quick.user_metadata.name) || 'You',
+              wallet_cash: 0,
+              wallet_bounty: 0
+            };
+            Z.renderHeaderAuth();
+          }
+          if(Z.State.currentUser){
+            var hadSnap2 = Z.loadSnapshot();
+            if(hadSnap2){
+              if(curView === 'spark') Z.State.sparkSlideIndex = prevSparkSlide;
+              if(curView === 'home'){ Z.State.homeAnchorPost = prevHomeAnchorPost; Z.State.homeAnchorOffset = prevHomeAnchorOffset; }
+              Z.showView(curView, curParam);
+              snapRendered = true;
+            }
+          }
+        } catch(e){ console.warn('signed-in fast path', e); }
+
         await Z.refreshSession();
         await Z.reloadData();
         if(Z.State.currentView !== curView) return;
@@ -3404,8 +3526,12 @@ async function boot(){
         else {
           if(curView === 'spark') Z.State.sparkSlideIndex = prevSparkSlide;
           if(curView === 'home'){ Z.State.homeAnchorPost = prevHomeAnchorPost; Z.State.homeAnchorOffset = prevHomeAnchorOffset; }
-          Z.showView(curView, curParam);
-          if(curView !== 'spark' && curView !== 'home'){ setTimeout(function(){ window.scrollTo(0, prevScroll); }, 200); }
+          if(snapRendered && Z.State.currentView === curView){
+            Z.softRefresh();
+          } else {
+            Z.showView(curView, curParam);
+            if(curView !== 'spark' && curView !== 'home'){ setTimeout(function(){ window.scrollTo(0, prevScroll); }, 200); }
+          }
         }
         Z.setupRealtime();
       }
@@ -3417,4 +3543,4 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 })();
 </script>
 </body>
-</html>
+  </html>
