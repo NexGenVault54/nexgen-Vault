@@ -81,7 +81,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .post-author .pname{font-weight:700;font-size:13px;color:#fff}
 .post-author .phandle{font-size:10px;color:#64748b}
 .post-content{font-size:13px;color:#e2e8f0;line-height:1.6;margin-bottom:10px;white-space:pre-wrap;word-break:break-word}
-.post-media{border-radius:12px;overflow:hidden;margin-bottom:10px;background:#000}
+.post-media{border-radius:12px;overflow:hidden;margin-bottom:10px;background:#000;position:relative}
 .post-media img{width:100%;max-height:400px;object-fit:cover;display:block}
 .post-media video{width:100%;max-height:400px;object-fit:contain;display:block;background:#000}
 .post-reactions{display:flex;flex-wrap:wrap;gap:4px;padding:8px 0;border-top:1px solid #1e293b;align-items:center;min-height:44px}
@@ -459,8 +459,25 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 @keyframes zynixSpin{to{transform:rotate(360deg)}}
 
 /* ============================================================
+   Video buffering overlay — only shows when browser signals
+   a stall. Disappears instantly when playback resumes.
+   ============================================================ */
+.video-buffer-wrap{position:relative}
+.video-buffer-spinner{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:38px;height:38px;border-radius:50%;
+  border:3px solid rgba(255,255,255,.18);
+  border-top-color:#10b981;
+  animation:zynixSpin .8s linear infinite;
+  pointer-events:none;opacity:0;
+  transition:opacity .18s ease;
+  z-index:3;
+}
+.video-buffer-spinner.show{opacity:1}
+
+/* ============================================================
    S1-A — WELCOME / SPLASH SCREEN
-   Uses only existing theme colors.
    ============================================================ */
 #zynix-welcome{
   position:fixed;inset:0;z-index:20000;
@@ -525,7 +542,6 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
    ============================================================ */
 .zn-public-wrap{display:flex;flex-direction:column;gap:16px;}
 
-/* ---- Build timeline notice board (top box) ---- */
 .zn-build-panel{
   background:#111827;border:1px solid #1e293b;border-radius:16px;
   padding:20px 16px;
@@ -562,7 +578,6 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 }
 .zn-build-bar-pct{font-weight:900;color:#fff;font-size:13px}
 
-/* ---- Timeline phases list ---- */
 .zn-timeline{
   display:flex;flex-direction:column;gap:10px;
   border-top:1px solid #1e293b;padding-top:16px;
@@ -608,7 +623,6 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 }
 .zn-phase.pending .zn-phase-desc{color:#64748b}
 
-/* ---- Hero ---- */
 .zn-public-hero{
   background:#111827;border:1px solid #1e293b;border-radius:16px;
   padding:22px 18px;text-align:center;
@@ -759,7 +773,6 @@ Z.State = {
   snapshotLoaded: false,
   _userGestureUnlocked: false,
   _freshLoginPending: false,
-  /* S1-A: cached timeline data loaded from Supabase for Public Home. */
   buildTimeline: { loaded: false, phases: [], percent: 41, currentPhaseLabel: 'Building Core Features' }
 };
 
@@ -785,8 +798,31 @@ Z.closeModal = function(){ var c=document.getElementById('modal-container'); if(
 Z.openModal = function(html){ var c=document.getElementById('modal-container'); if(c) c.innerHTML=html; };
 Z.closeSheet = function(){ var c=document.getElementById('sheet-container'); if(c) c.innerHTML=''; };
 Z.openSheet = function(html){ var c=document.getElementById('sheet-container'); if(c) c.innerHTML=html; };
+
+/* ============================================================
+   Media layer
+
+   Read-only IndexedDB path kept for legacy "idb:" refs that may
+   exist in old rows. No new idb: refs are ever written now.
+
+   New uploads ALWAYS go to Supabase Storage via Z.uploadOrFail,
+   which returns the real public URL or throws.
+   ============================================================ */
 var MEDIA_DB = 'zynix_media_v1', MEDIA_STORE = 'media', _dbPromise = null;
-function openMediaDB(){ if(_dbPromise) return _dbPromise; _dbPromise = new Promise(function(resolve,reject){ if(!window.indexedDB){ reject(new Error('No IDB')); return; } var req = indexedDB.open(MEDIA_DB,1); req.onupgradeneeded = function(e){ var db = e.target.result; if(!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE,{keyPath:'id'}); }; req.onsuccess = function(){ resolve(req.result); }; req.onerror = function(){ reject(req.error); }; }); return _dbPromise; }
+function openMediaDB(){
+  if(_dbPromise) return _dbPromise;
+  _dbPromise = new Promise(function(resolve,reject){
+    if(!window.indexedDB){ reject(new Error('No IDB')); return; }
+    var req = indexedDB.open(MEDIA_DB, 1);
+    req.onupgradeneeded = function(e){
+      var db = e.target.result;
+      if(!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE, {keyPath:'id'});
+    };
+    req.onsuccess = function(){ resolve(req.result); };
+    req.onerror = function(){ reject(req.error); };
+  });
+  return _dbPromise;
+}
 
 Z._objUrls = [];
 Z._trackObjUrl = function(url){
@@ -803,17 +839,6 @@ Z._revokeAllObjUrls = function(){
   Z._objUrls = [];
 };
 
-/* ============================================================
-   S1-A — STRICT media upload (no silent fallback)
-
-   Z.uploadOrFail(file) — uploads to Supabase Storage and returns
-   the real public URL, or throws an Error. Callers must not
-   create DB rows until this resolves.
-
-   Z.storeMedia — kept as a thin wrapper for backward compatibility
-   with any legacy call sites, but now routes through uploadOrFail
-   and ONLY returns a real Supabase URL. It never returns idb:.
-   ============================================================ */
 Z.uploadOrFail = async function(file){
   if(!file) throw new Error('No file provided.');
   var c = sb();
@@ -833,10 +858,7 @@ Z.uploadOrFail = async function(file){
   return url;
 };
 
-Z.storeMedia = async function(file){
-  return Z.uploadOrFail(file);
-};
-
+/* Legacy idb: refs are readable but never written. */
 Z.loadMedia = async function(ref){
   if(!ref) return '';
   ref = String(ref);
@@ -891,756 +913,48 @@ Z.resolveIdbRefs = function(root){
   document.addEventListener('keydown', unlock, true);
 })();
 
-Z.getUnfrozenKey = function(){ var me = Z.State.currentUser; return me ? ('zynix_unfrozen_' + me.id) : ''; };
-Z.loadUnfrozen = function(){
-  var key = Z.getUnfrozenKey(); if(!key){ Z.State.unfrozenContent = {}; return; }
-  try { var d = localStorage.getItem(key); if(!d){ Z.State.unfrozenContent = {}; return; } var p = JSON.parse(d); Z.State.unfrozenContent = (p && typeof p === 'object') ? p : {}; } catch(e){ Z.State.unfrozenContent = {}; }
-};
-Z.saveUnfrozen = function(){ var key = Z.getUnfrozenKey(); if(!key) return; try { localStorage.setItem(key, JSON.stringify(Z.State.unfrozenContent || {})); } catch(e){} };
-Z.isUnfrozen = function(contentId){ return !!(Z.State.unfrozenContent && Z.State.unfrozenContent[contentId]); };
-Z.setUnfrozen = function(contentId, val){
-  if(!Z.State.unfrozenContent) Z.State.unfrozenContent = {};
-  if(val) Z.State.unfrozenContent[contentId] = true; else delete Z.State.unfrozenContent[contentId];
-  Z.saveUnfrozen();
-};
-Z.toggleFreeze = function(contentId, ev){
-  if(ev) ev.stopPropagation();
-  var wasFrozen = !Z.isUnfrozen(contentId);
-  Z.setUnfrozen(contentId, wasFrozen);
-  document.querySelectorAll('[data-freeze-id="' + contentId + '"]').forEach(function(el){
-    if(wasFrozen){ el.classList.add('unfrozen'); el.setAttribute('data-tip','Unfrozen'); } else { el.classList.remove('unfrozen'); el.setAttribute('data-tip','Frozen'); }
-  });
-  if(Z.State.currentView === 'home'){ updateReactionsForContent(contentId); }
-  if(Z.State.currentView === 'spark'){ Z.updateSparkReactionsUI(contentId); }
-  Z.toast(wasFrozen ? 'Reactions unfrozen — you can now react' : 'Reactions frozen', wasFrozen ? null : 'freeze');
-};
-function updateReactionsForContent(contentId){
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === contentId; });
-  if(post){ Z.updatePostReactionUI(contentId); return; }
-  var cm = Z.findCommentInState ? Z.findCommentInState(contentId) : null;
-  if(cm){ Z.updateCommentReactionUI(contentId); }
-}
-Z.showFreezeTooltip = function(contentId){
-  document.querySelectorAll('[data-freeze-id="' + contentId + '"]').forEach(function(el){
-    var old = el.querySelector('.freeze-tooltip-top');
-    if(old) old.remove();
-    el.classList.remove('blink');
-    void el.offsetWidth;
-    el.classList.add('blink');
-    setTimeout(function(){ el.classList.remove('blink'); }, 1200);
-    var tip = document.createElement('div');
-    tip.className = 'freeze-tooltip-top';
-    tip.textContent = 'Unfreeze Reactions';
-    el.appendChild(tip);
-    setTimeout(function(){ if(tip.parentNode) tip.parentNode.removeChild(tip); }, 2000);
-  });
-};
-
-Z._autoFreezeDelays = {};
-Z._freezeObserver = null;
-Z._freezeObserved = new WeakSet();
-Z.initFreezeObserver = function(){
-  if(Z._freezeObserver) return;
-  if(typeof IntersectionObserver === 'undefined') return;
-  Z._freezeObserver = new IntersectionObserver(function(entries){
-    entries.forEach(function(entry){
-      var dot = entry.target;
-      if(!dot.isConnected) return;
-      var contentId = dot.getAttribute('data-freeze-id');
-      if(!contentId) return;
-      if(!Z.isUnfrozen(contentId)){
-        if(Z._autoFreezeDelays[contentId]){ clearTimeout(Z._autoFreezeDelays[contentId]); delete Z._autoFreezeDelays[contentId]; }
-        return;
-      }
-      if(entry.isIntersecting){
-        if(Z._autoFreezeDelays[contentId]){ clearTimeout(Z._autoFreezeDelays[contentId]); delete Z._autoFreezeDelays[contentId]; }
-      } else {
-        if(Z._autoFreezeDelays[contentId]) clearTimeout(Z._autoFreezeDelays[contentId]);
-        Z._autoFreezeDelays[contentId] = setTimeout(function(){
-          delete Z._autoFreezeDelays[contentId];
-          if(!Z.isUnfrozen(contentId)) return;
-          Z.setUnfrozen(contentId, false);
-          document.querySelectorAll('[data-freeze-id="' + contentId + '"]').forEach(function(el){
-            el.classList.remove('unfrozen');
-            el.setAttribute('data-tip','Frozen');
-          });
-          if(Z.State.currentView === 'home') Z.updatePostReactionUI(contentId);
-          if(Z.State.currentView === 'spark') Z.updateSparkReactionsUI(contentId);
-        }, 3000);
-      }
-    });
-  }, {threshold: [0, 0.01], rootMargin: '0px'});
-};
-Z.observeFreezeDots = function(){
-  Z.initFreezeObserver();
-  if(!Z._freezeObserver) return;
-  document.querySelectorAll('.freeze-dot[data-freeze-id]').forEach(function(dot){
-    if(Z._freezeObserved.has(dot)) return;
-    Z._freezeObserved.add(dot);
-    try { Z._freezeObserver.observe(dot); } catch(e){}
-  });
-};
-
-Z.hasBountyReactionGiven = function(myReactions){
-  if(!myReactions) return false;
-  for(var i=0;i<BOUNTY_REACTIONS.length;i++){ if(myReactions[BOUNTY_REACTIONS[i]]) return true; }
-  return false;
-};
-
-/* SCROLL-TO-LATEST (up arrow) */
-Z.updateScrollTopBtn = function(isScrollEvent){
-  var btn = document.getElementById('scroll-top-btn'); if(!btn) return;
-  var view = Z.State.currentView;
-  var scrollY = 0;
-  if(view === 'spark'){
-    var feed = document.getElementById('spark-feed');
-    if(feed) scrollY = feed.scrollTop || 0;
-  } else {
-    scrollY = window.scrollY || document.documentElement.scrollTop || 0;
-  }
-  if(isScrollEvent){
-    var prev = (view === 'spark') ? (Z.State._lastSparkScrollY || 0) : (Z.State._lastScrollY || 0);
-    if(scrollY > prev + 1){
-      Z.State.arrowVisible = false;
-    } else if(scrollY < prev - 1){
-      Z.State.arrowVisible = (scrollY > 60);
-    }
-    if(view === 'spark') Z.State._lastSparkScrollY = scrollY;
-    else Z.State._lastScrollY = scrollY;
-  } else {
-    if(view === 'spark'){ Z.State._lastSparkScrollY = scrollY; }
-    else { Z.State._lastScrollY = scrollY; }
-    if(scrollY <= 60) Z.State.arrowVisible = false;
-  }
-  btn.style.display = Z.State.arrowVisible ? 'flex' : 'none';
-};
-
-if(!Z._arrowScrollHooked){
-  Z._arrowScrollHooked = true;
-  window.addEventListener('scroll', function(){ Z.updateScrollTopBtn(true); }, {passive:true});
-}
-
-Z.scrollToLatest = function(){
-  var view = Z.State.currentView;
-  Z.State.arrowVisible = false;
-  var btn = document.getElementById('scroll-top-btn'); if(btn) btn.style.display = 'none';
-
-  if(view === 'spark'){
-    var feed = document.getElementById('spark-feed');
-    if(feed){ feed.scrollTop = 0; }
-    Z.State.sparkSlideIndex = 0;
-    Z.State._lastSparkScrollY = 0;
-    setTimeout(function(){ Z.updateScrollTopBtn(); }, 30);
-    return;
-  }
-  if(view === 'home'){
-    Z.State.homeAnchorPost = null;
-    Z.State.homeAnchorOffset = 0;
-    Z.State._lastScrollY = 0;
-    window.scrollTo(0, 0);
-    Z.updateScrollTopBtn();
-    Z.reloadData().then(function(){
-      if(Z.State.currentView !== 'home') return;
-      Z.softRefresh();
-      window.scrollTo(0, 0);
-      Z.State._lastScrollY = 0;
-      Z.updateScrollTopBtn();
-    }).catch(function(){});
-    return;
-  }
-  Z.State._lastScrollY = 0;
-  window.scrollTo(0, 0);
-  Z.updateScrollTopBtn();
-};
-
-/* Close spark caption overlay + restore controls */
-Z.closeSparkCaptionOverlay = function(){
-  var ov = document.getElementById('zynix-spark-caption-overlay');
-  if(ov) ov.remove();
-  var feed = document.getElementById('spark-feed');
-  if(feed){
-    feed.querySelectorAll('video').forEach(function(v){ try { v.controls = true; } catch(e){} });
-  }
-};
-
-/* Creates a full-screen overlay appended to <body> so it escapes
-   the spark feed's fixed/overflow container. Video keeps playing. */
-Z._openSparkCaptionOverlay = function(captionEl){
-  Z.closeSparkCaptionOverlay();
-  var textEl = captionEl.querySelector('.sc-text');
-  var text = textEl ? textEl.textContent : '';
-  if(!text) return;
-
-  var feed = document.getElementById('spark-feed');
-  if(feed){
-    feed.querySelectorAll('video').forEach(function(v){ try { v.controls = false; } catch(e){} });
-  }
-
-  var overlay = document.createElement('div');
-  overlay.id = 'zynix-spark-caption-overlay';
-  overlay.setAttribute('aria-label','Full caption');
-  overlay.innerHTML =
-    '<div class="zc-inner">' +
-      '<div class="zc-text">' + Z.escape(text) + '</div>' +
-      '<div class="zc-hint">Tap anywhere to close</div>' +
-    '</div>';
-  overlay.addEventListener('click', function(e){
-    e.stopPropagation();
-    Z.closeSparkCaptionOverlay();
-  });
-  document.body.appendChild(overlay);
-};
-
-/* No-caption confirm dialog (kept — appended to body) */
-Z._closeNoCaptionConfirm = function(){
-  var h = document.getElementById('no-caption-confirm-host');
-  if(h) h.remove();
-};
-
-/* SCROLL ANCHOR / SPARK SLIDE PRESERVATION */
-Z.saveHomeAnchor = function(){
-  try {
-    var posts = document.querySelectorAll('.post-card[data-post-id]');
-    if(!posts.length) return;
-    var best = null, bestDist = Infinity;
-    posts.forEach(function(p){
-      var rect = p.getBoundingClientRect();
-      if(rect.bottom > 0){
-        var dist = Math.abs(rect.top);
-        if(dist < bestDist){ bestDist = dist; best = {id: p.getAttribute('data-post-id'), top: rect.top}; }
-      }
-    });
-    if(best){
-      Z.State.homeAnchorPost = best.id;
-      Z.State.homeAnchorOffset = best.top;
-    }
-  } catch(e){}
-};
-
-Z.restoreHomeAnchorOrScroll = function(){
-  try {
-    if(Z.State.homeAnchorPost){
-      var el = document.querySelector('.post-card[data-post-id="' + Z.State.homeAnchorPost + '"]');
-      if(el){
-        var rect = el.getBoundingClientRect();
-        var targetY = (window.scrollY || 0) + rect.top - Z.State.homeAnchorOffset;
-        if(targetY < 0) targetY = 0;
-        window.scrollTo(0, targetY);
-        return;
-      }
-    }
-    var y = Z.restoreScroll();
-    if(y > 0) window.scrollTo(0, y);
-  } catch(e){}
-};
-
-Z.saveSparkSlideIndex = function(){
-  try {
-    var feed = document.getElementById('spark-feed'); if(!feed) return;
-    var slides = feed.querySelectorAll('.spark-slide');
-    if(!slides.length) return;
-    var idx = 0;
-    var feedTop = feed.getBoundingClientRect().top;
-    slides.forEach(function(s, i){
-      var r = s.getBoundingClientRect();
-      if(r.top <= feedTop + 10) idx = i;
-    });
-    Z.State.sparkSlideIndex = idx;
-  } catch(e){}
-};
-
-Z.restoreSparkSlideIndex = function(){
-  try {
-    if(!Z.State.sparkSlideIndex) return;
-    var feed = document.getElementById('spark-feed'); if(!feed) return;
-    var slides = feed.querySelectorAll('.spark-slide');
-    if(!slides.length) return;
-    var idx = Math.min(Z.State.sparkSlideIndex, slides.length - 1);
-    var targetSlide = slides[idx];
-    if(targetSlide){ feed.scrollTop = targetSlide.offsetTop; }
-  } catch(e){}
-};
-
 /* ============================================================
-   Snapshot cache (kept for scroll restoration legacy)
+   Buffering spinner attach/detach helpers
+
+   Attach the spinner to any <video> parent (must be position:relative).
+   The spinner fades in only on 'waiting'/'stalled' and out on
+   'playing'/'canplay'/'playing' so the user sees feedback but the
+   video plays smooth once buffered.
    ============================================================ */
-var SNAPSHOT_VERSION = 'v1';
-Z._snapshotKey = function(){ var me = Z.State.currentUser; return me ? ('zynix_snapshot_' + SNAPSHOT_VERSION + '_' + me.id) : ''; };
-
-Z.saveSnapshot = function(){
-  var me = Z.State.currentUser; if(!me) return;
-  var key = Z._snapshotKey(); if(!key) return;
-  try {
-    var snap = {
-      ts: Date.now(),
-      posts: (Z.State.allPosts||[]).slice(0, 30).map(function(p){
-        return { id:p.id, author_id:p.author_id, content:p.content, media_url:p.media_url, media_type:p.media_type,
-                 created_at:p.created_at, views:p.views, shares:p.shares, reactions:p.reactions||{} };
-      }),
-      sparks: (Z.State.allSparks||[]).slice(0, 10).map(function(s){
-        return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title, video_url:s.video_url,
-                 tags:s.tags||[], type:s.type, created_at:s.created_at, views:s.views, shares:s.shares };
-      }),
-      profiles: (Z.State.allProfiles||[]).slice(0, 50).map(function(p){
-        return { id:p.id, name:p.name, username:p.username, avatar:p.avatar, profession:p.profession,
-                 bio:p.bio, package:p.package, bounty_settings:p.bounty_settings };
-      }),
-      circles: (Z.State.allCircles||[]).slice(0, 30).map(function(c){
-        return { id:c.id, name:c.name, description:c.description, type:c.type, avatar:c.avatar,
-                 creator_id:c.creator_id, member_count:c.member_count, created_at:c.created_at };
-      })
-    };
-    localStorage.setItem(key, JSON.stringify(snap));
-  } catch(e){ console.warn('saveSnapshot', e); }
+Z.attachVideoBuffer = function(video){
+  if(!video || video._bufHooked) return;
+  video._bufHooked = true;
+  var wrap = video.closest('.post-media, .spark-slide, .status-stage, .media-preview-box');
+  if(!wrap) wrap = video.parentElement;
+  if(!wrap) return;
+  if(getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+  var spin = wrap.querySelector('.video-buffer-spinner');
+  if(!spin){
+    spin = document.createElement('div');
+    spin.className = 'video-buffer-spinner';
+    wrap.appendChild(spin);
+  }
+  function show(){ spin.classList.add('show'); }
+  function hide(){ spin.classList.remove('show'); }
+  video.addEventListener('waiting', show);
+  video.addEventListener('stalled', show);
+  video.addEventListener('playing', hide);
+  video.addEventListener('canplay', hide);
+  video.addEventListener('canplaythrough', hide);
+  video.addEventListener('seeking', show);
+  video.addEventListener('seeked', hide);
+  if(video.readyState < 3 && !video.paused) show();
 };
-
-Z.loadSnapshot = function(){
-  var me = Z.State.currentUser; if(!me) return false;
-  var key = Z._snapshotKey(); if(!key) return false;
+Z.attachAllVideoBuffers = function(root){
   try {
-    var raw = localStorage.getItem(key); if(!raw) return false;
-    var snap = JSON.parse(raw); if(!snap || !snap.ts) return false;
-    if(Date.now() - snap.ts > 7*24*60*60*1000) return false;
-    Z.State.allPosts = (snap.posts || []).map(function(p){ p.reactions = p.reactions || {}; p._myReactions = {}; p._comments = []; return p; });
-    Z.State.allSparks = (snap.sparks || []).map(function(s){ s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0; return s; });
-    var existingProfiles = Z.State.allProfiles || [];
-    var snapProfiles = snap.profiles || [];
-    var byId = {}; snapProfiles.forEach(function(p){ byId[p.id] = p; });
-    existingProfiles.forEach(function(p){ if(byId[p.id]) byId[p.id] = Object.assign({}, p, byId[p.id]); });
-    if(!byId[me.id]) byId[me.id] = { id:me.id, name:me.name, username:me.username, avatar:me.avatar, profession:me.profession, bio:me.bio, package:me.package, bounty_settings:me.bounty_settings };
-    Z.State.allProfiles = Object.keys(byId).map(function(k){ return byId[k]; });
-    if(snap.circles && snap.circles.length) Z.State.allCircles = snap.circles;
-    Z.State.snapshotLoaded = true;
-    return true;
-  } catch(e){ console.warn('loadSnapshot', e); return false; }
-};
-
-Z.clearSnapshot = function(){
-  try {
-    var keysToRemove = [];
-    for(var i=0;i<localStorage.length;i++){
-      var k = localStorage.key(i);
-      if(k && k.indexOf('zynix_snapshot_') === 0) keysToRemove.push(k);
-    }
-    keysToRemove.forEach(function(k){ localStorage.removeItem(k); });
+    (root || document).querySelectorAll('video').forEach(function(v){ Z.attachVideoBuffer(v); });
   } catch(e){}
-};
-
-/* ============================================================
-   Refresh spinner control
-   ============================================================ */
-Z._spinnerTimeout = null;
-Z.showRefreshSpinner = function(){
-  var el = document.getElementById('zynix-refresh-spinner'); if(!el) return;
-  if(Z._spinnerTimeout) clearTimeout(Z._spinnerTimeout);
-  Z._spinnerTimeout = setTimeout(function(){ el.classList.add('show'); }, 400);
-};
-Z.hideRefreshSpinner = function(){
-  var el = document.getElementById('zynix-refresh-spinner'); if(!el) return;
-  if(Z._spinnerTimeout){ clearTimeout(Z._spinnerTimeout); Z._spinnerTimeout = null; }
-  el.classList.remove('show');
-};
-
-/* ============================================================
-   One-time localStorage circles → DB migration
-   ============================================================ */
-Z.migrateLocalCirclesOnce = function(){
-  var me = Z.State.currentUser; if(!me) return;
-  var marker = 'zynix_circles_migrated_v1_' + me.id;
-  if(localStorage.getItem(marker)) return;
-  var c = sb(); if(!c) return;
-  var raw = localStorage.getItem('zynix_circles');
-  if(!raw){ localStorage.setItem(marker, '1'); return; }
-  var localCircles;
-  try { localCircles = JSON.parse(raw); } catch(e){ localStorage.setItem(marker, '1'); return; }
-  if(!Array.isArray(localCircles) || !localCircles.length){ localStorage.setItem(marker, '1'); return; }
-  var toMigrate = localCircles.filter(function(x){
-    return x && x.creatorId && x.creatorId !== 'seed' && String(x.creatorId) === me.id && String(x.id).indexOf('cir_') === 0;
-  });
-  if(!toMigrate.length){ localStorage.setItem(marker, '1'); return; }
-  (async function(){
-    try {
-      for(var i=0;i<toMigrate.length;i++){
-        var lc = toMigrate[i];
-        var payload = {
-          name: lc.name || 'Untitled Circle',
-          description: lc.description || '',
-          type: (['social','services','goods','office','education','events'].indexOf(lc.type) >= 0) ? lc.type : 'social',
-          avatar: lc.avatar || null,
-          creator_id: me.id,
-          member_count: 1
-        };
-        var ins = await c.from('circles').insert(payload).select().maybeSingle();
-        if(ins.data && ins.data.id){
-          try { await c.from('circle_members').insert({ circle_id: ins.data.id, user_id: me.id, role: 'admin' }); } catch(e){}
-        }
-      }
-      localStorage.setItem(marker, '1');
-      localStorage.removeItem('zynix_circles');
-    } catch(e){
-      console.warn('migrateLocalCirclesOnce', e);
-    }
-  })();
-};
-
-/* ============================================================
-   DB layer
-   ============================================================ */
-Z.DB = {
-  async loadAllProfiles(){ var c = sb(); if(!c) return []; try { var r = await c.from('profiles').select('*'); if(r.error) throw r.error; Z.State.allProfiles = r.data || []; return Z.State.allProfiles; } catch(e){ return []; } },
-  async updateProfile(id, patch){ var c = sb(); if(!c) return null; var r = await c.from('profiles').update(patch).eq('id', id).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } if(Z.State.currentUser && Z.State.currentUser.id === id){ Z.State.currentUser = Object.assign({}, Z.State.currentUser, patch); } var arr = Z.State.allProfiles || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id){ arr[i] = Object.assign({}, arr[i], patch); break; } return r.data; },
-  async loadHomeFeed(){ var c = sb(); if(!c) return []; try { var r = await c.rpc('get_home_feed', {p_limit: 100}); if(r.error) throw r.error; Z.State.allPosts = r.data || []; return Z.State.allPosts; } catch(e){ return []; } },
-  async createPost(payload){ var c = sb(); if(!c) return null; var r = await c.from('posts').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } return r.data; },
-  async deletePost(id){ var c = sb(); if(!c) return false; var r = await c.from('posts').delete().eq('id', id); if(r.error){ return false; } Z.State.allPosts = (Z.State.allPosts||[]).filter(function(p){ return p.id !== id; }); return true; },
-  async loadStatuses(){ var c = sb(); if(!c) return []; try { var r = await c.from('statuses').select('*').gt('expires_at', new Date().toISOString()).order('created_at',{ascending:false}); if(r.error) throw r.error; Z.State.allStatuses = r.data || []; return Z.State.allStatuses; } catch(e){ return []; } },
-  async createStatus(payload){ var c = sb(); if(!c) return null; var r = await c.from('statuses').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } return r.data; },
-  async markStatusViewed(statusId, viewerId){ var c = sb(); if(!c) return; await c.from('status_views').upsert({status_id: statusId, viewer_id: viewerId}, {onConflict:'status_id,viewer_id'}); },
-  async loadStatusViews(){ var c = sb(); if(!c) return []; try { var r = await c.from('status_views').select('*'); if(r.error) throw r.error; return r.data || []; } catch(e){ return []; } },
-  async loadSparks(){ var c = sb(); if(!c) return []; try { var r = await c.from('sparks').select('*').order('created_at',{ascending:false}).limit(60); if(r.error) throw r.error; Z.State.allSparks = r.data || []; return Z.State.allSparks; } catch(e){ return []; } },
-  async createSpark(payload){ var c = sb(); if(!c) return null; var r = await c.from('sparks').insert(payload).select().maybeSingle(); if(r.error){ console.warn(r.error); return null; } return r.data; },
-  async updateSpark(id, patch){ var c = sb(); if(!c) return null; var r = await c.from('sparks').update(patch).eq('id', id).select().maybeSingle(); if(r.error){ return null; } var arr = Z.State.allSparks || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id){ arr[i] = Object.assign({}, arr[i], patch); break; } return r.data; },
-  async loadWalletTx(userId){ var c = sb(); if(!c) return []; try { var r = await c.from('wallet_transactions').select('*').eq('user_id',userId).order('created_at',{ascending:false}).limit(100); if(r.error) throw r.error; return r.data || []; } catch(e){ return []; } },
-  async loadConnections(){ var c = sb(); var me = Z.State.currentUser; if(!c || !me){ Z.State.allConnections = []; return []; } try { var r = await c.from('connection_requests').select('*').or('requester_id.eq.' + me.id + ',recipient_id.eq.' + me.id).order('updated_at',{ascending:false}); if(r.error) throw r.error; Z.State.allConnections = r.data || []; return Z.State.allConnections; } catch(e){ Z.State.allConnections = []; return []; } },
-  async loadNotifications(){ var c = sb(); var me = Z.State.currentUser; if(!c || !me){ Z.State.allNotifications = []; return []; } try { var r = await c.from('notifications').select('*').eq('user_id', me.id).order('created_at',{ascending:false}).limit(50); if(r.error) throw r.error; Z.State.allNotifications = r.data || []; return Z.State.allNotifications; } catch(e){ Z.State.allNotifications = []; return []; } },
-  async sendConnectRequest(recipientId){ var c = sb(); if(!c) throw new Error('Supabase not ready'); var r = await c.rpc('request_connection', {p_recipient_id: recipientId}); if(r.error) throw r.error; return r.data; },
-  async acceptConnectionRequest(requestId){ var c = sb(); if(!c) throw new Error('Supabase not ready'); var r = await c.rpc('accept_connection', {p_request_id: requestId}); if(r.error) throw r.error; return true; },
-  async rejectConnectionRequest(requestId){ var c = sb(); if(!c) throw new Error('Supabase not ready'); var r = await c.rpc('reject_connection', {p_request_id: requestId}); if(r.error) throw r.error; return true; },
-  async awardReactionBounty(contentType, contentId, reactionType){ var c = sb(); if(!c) return 0; try { var r = await c.rpc('award_reaction_bounty', {p_content_type: contentType, p_content_id: contentId, p_reaction_type: reactionType}); if(r.error){ return 0; } return Number(r.data) || 0; } catch(e){ return 0; } },
-  async awardShareBounty(contentType, contentId){ var c = sb(); if(!c) return 0; try { var r = await c.rpc('award_share_bounty', {p_content_type: contentType, p_content_id: contentId}); if(r.error){ return 0; } return Number(r.data) || 0; } catch(e){ return 0; } },
-
-  async loadCirclesFromDB(){
-    var c = sb(); if(!c) return [];
-    try {
-      var r = await c.from('circles').select('*').order('member_count',{ascending:false}).limit(120);
-      if(r.error) throw r.error;
-      Z.State.allCircles = r.data || [];
-      return Z.State.allCircles;
-    } catch(e){ return Z.State.allCircles || []; }
-  },
-  async createCircleDB(payload){
-    var c = sb(); if(!c) return null;
-    var r = await c.from('circles').insert(payload).select().maybeSingle();
-    if(r.error){ console.warn('createCircleDB', r.error); return null; }
-    if(r.data){
-      try { await c.from('circle_members').insert({ circle_id: r.data.id, user_id: Z.State.currentUser.id, role: 'admin' }); } catch(e){}
-      Z.State.allCircles = [r.data].concat(Z.State.allCircles || []);
-    }
-    return r.data;
-  },
-  async joinCircle(circleId){
-    var c = sb(); var me = Z.State.currentUser; if(!c || !me) return false;
-    var r = await c.from('circle_members').insert({ circle_id: circleId, user_id: me.id, role: 'member' });
-    if(r.error && r.error.code !== '23505'){ return false; }
-    var arr = Z.State.allCircles || [];
-    for(var i=0;i<arr.length;i++) if(arr[i].id === circleId){ arr[i].member_count = (arr[i].member_count||0)+1; break; }
-    return true;
-  },
-  async getPeopleFeed(limit, offset, seed){
-    var c = sb(); if(!c) return [];
-    try {
-      var r = await c.rpc('get_people_feed', { p_limit: limit||20, p_offset: offset||0, p_seed: seed||0 });
-      if(r.error){ console.warn('getPeopleFeed', r.error); return []; }
-      return r.data || [];
-    } catch(e){ console.warn('getPeopleFeed', e); return []; }
-  },
-  async getCirclesFeed(limit, offset, seed){
-    var c = sb(); if(!c) return [];
-    try {
-      var r = await c.rpc('get_circles_feed', { p_limit: limit||30, p_offset: offset||0, p_seed: seed||0 });
-      if(r.error){ console.warn('getCirclesFeed', r.error); return []; }
-      return r.data || [];
-    } catch(e){ console.warn('getCirclesFeed', e); return []; }
-  },
-
-  getCircles(){
-    return Z.State.allCircles || [];
-  }
-};
-
-/* Removed: Z.SeedData fake circles. Real data comes from Supabase only. */
-
-Z.updateNotifBadge = function(){
-  var u = Z.State.currentUser;
-  var b = document.getElementById('notif-badge');
-  var wb = document.getElementById('wallet-badge');
-  if(!u){ if(b) b.style.display = 'none'; if(wb) wb.style.display = 'none'; return; }
-  var unread = (Z.State.allNotifications||[]).filter(function(x){ return !x.read; }).length;
-  var pending = (Z.State.allConnections||[]).filter(function(c){ return c.recipient_id === u.id && c.status === 'pending'; }).length;
-  var total = unread + pending;
-  if(b){ if(total > 0){ b.textContent = total > 9 ? '9+' : total; b.style.display = 'flex'; } else b.style.display = 'none'; }
-  var walletCount = Z.State.walletBadgeCount || 0;
-  if(wb){ if(walletCount > 0){ wb.textContent = walletCount > 9 ? '9+' : walletCount; wb.style.display = 'flex'; } else wb.style.display = 'none'; }
-};
-Z.updateHeader = function(){
-  var u = Z.State.currentUser;
-  var c = document.getElementById('header-cash');
-  var b = document.getElementById('header-bounty');
-  if(c) c.innerText = '$' + (u && u.wallet_cash != null ? Number(u.wallet_cash).toFixed(2) : '0.00');
-  if(b) b.innerText = '$' + (u && u.wallet_bounty != null ? Number(u.wallet_bounty).toFixed(2) : '0.00');
-  Z.updateNotifBadge();
-};
-Z.toggleTheme = function(){ var h = document.documentElement, i = document.getElementById('theme-icon'); if(h.classList.contains('dark')){ h.classList.remove('dark'); h.classList.add('light'); if(i) i.className='fa-solid fa-sun'; } else { h.classList.remove('light'); h.classList.add('dark'); if(i) i.className='fa-solid fa-moon'; } };
-Z.animateDollar = function(amount){ var ts = Date.now(); var svg = '<svg width="52" height="32" viewBox="0 0 52 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="billg_' + ts + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="0.5" stop-color="#10b981"/><stop offset="1" stop-color="#059669"/></linearGradient></defs><rect x="1" y="1" width="50" height="30" rx="4" fill="url(#billg_' + ts + ')" stroke="#065f46" stroke-width="0.8" opacity="0.92"/><circle cx="26" cy="16" r="9" fill="none" stroke="#ecfdf5" stroke-width="1.2" opacity="0.75"/><text x="26" y="21" font-size="13" font-weight="900" fill="#ecfdf5" text-anchor="middle" font-family="Arial">$</text></svg>'; var wrap = document.createElement('div'); wrap.className = 'flying-note'; wrap.innerHTML = svg + '<div class="amount">+$' + amount.toFixed(2) + '</div>'; (document.getElementById('flying-container')||document.body).appendChild(wrap); var wp = document.getElementById('wallet-pill'); if(wp){ setTimeout(function(){ wp.classList.add('pulse'); }, 1200); setTimeout(function(){ wp.classList.remove('pulse'); }, 1800); } setTimeout(function(){ wrap.remove(); }, 1800); };
-Z.renderHeaderAuth = function(){
-  var c = document.getElementById('header-auth-container'); if(!c) return;
-  var u = Z.State.currentUser;
-  if(u){ c.innerHTML = '<div style="display:flex;align-items:center;gap:6px;"><button onclick="Z.showView(\'profile\')" style="background:transparent;border:none;cursor:pointer;padding:0;"><img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(16,185,129,.5);"></button><button onclick="Z.logout()" style="background:#1e293b;border:none;color:#94a3b8;cursor:pointer;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-power-off" style="font-size:10px;"></i></button></div>'; }
-  else { c.innerHTML = '<button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;font-size:11px;padding:6px 14px;border-radius:20px;cursor:pointer;">Login</button>'; }
-};
-Z.openAuthModal = function(mode){ var isLogin = mode === 'login'; Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>' + (isLogin ? 'Login' : 'Create Account') + '</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div>' + (!isLogin ? '<label class="form-label">Full Name</label><input type="text" id="auth-name" class="form-input" placeholder="Your name">' : '') + '<label class="form-label">Email</label><input type="email" id="auth-email" class="form-input" placeholder="email@example.com" autocomplete="email"><label class="form-label">Password</label><input type="password" id="auth-password" class="form-input" placeholder="••••••••" autocomplete="' + (isLogin?'current-password':'new-password') + '">' + (!isLogin ? '<label class="form-label">Referral Code (Optional)</label><input type="text" id="auth-refcode" class="form-input" placeholder="ZYNIX-XXXXXX">' : '') + '<button class="btn-primary" id="auth-submit" onclick="Z.handleAuth(\'' + mode + '\')">' + (isLogin?'Login':'Sign Up') + '</button><button class="btn-secondary" onclick="Z.openAuthModal(\'' + (isLogin?'signup':'login') + '\')">' + (isLogin?"Don't have account? Sign Up":"Have account? Login") + '</button></div></div>'); };
-
-Z.handleAuth = async function(mode){
-  var email = ((document.getElementById('auth-email')||{}).value || '').trim();
-  var pass = ((document.getElementById('auth-password')||{}).value || '');
-  if(!email || !pass){ Z.toast('Please enter email and password.'); return; }
-  var btn = document.getElementById('auth-submit');
-  if(btn){ btn.disabled = true; btn.textContent = 'Please wait...'; }
-  var c = sb(); if(!c){ if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; } Z.toast('Supabase not ready.'); return; }
-  Z.State.manualAuthInProgress = true;
-  try {
-    if(mode === 'login'){
-      var r = await c.auth.signInWithPassword({email: email, password: pass});
-      if(r.error) throw r.error;
-      Z.toast('Logged in!');
-    } else {
-      var name = ((document.getElementById('auth-name')||{}).value || 'New User').trim() || 'New User';
-      var ref = ((document.getElementById('auth-refcode')||{}).value || '').trim();
-      var refId = null;
-      if(ref){ var pr = await c.from('profiles').select('id').eq('referral_code', ref.toUpperCase()).maybeSingle(); if(pr.data) refId = pr.data.id; }
-      var sr = await c.auth.signUp({email: email, password: pass, options:{data:{name: name, referred_by: refId}}});
-      if(sr.error) throw sr.error;
-      Z.toast('Account created!');
-    }
-    Z.State._freshLoginPending = true;
-    Z.closeModal();
-    await Z.refreshSession();
-    await Z.reloadData();
-    Z.goPublicHome();
-  } catch(e){ Z.toast(e.message || 'Authentication failed.', 'error'); }
-  finally {
-    Z.State.manualAuthInProgress = false;
-    Z.State._manualAuthCompletedAt = Date.now();
-    if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; }
-  }
-};
-
-Z.logout = async function(){
-  var c = sb(); if(c){ await c.auth.signOut(); }
-  Z.clearSnapshot();
-  Z.State.currentUser = null; Z.State.allProfiles = []; Z.State.allConnections = []; Z.State.allNotifications = []; Z.State.unfrozenContent = {};
-  Z.State.allPosts = []; Z.State.allSparks = []; Z.State.allStatuses = []; Z.State.allCircles = []; Z.State.snapshotLoaded = false;
-  Z.State._freshLoginPending = false;
-  Z.renderHeaderAuth(); Z.updateHeader(); Z.toast('Logged out.'); Z.goPublicHome();
-};
-
-Z.refreshSession = async function(){ var c = sb(); if(!c){ Z.renderHeaderAuth(); return; } try { var s = await c.auth.getSession(); var user = s.data && s.data.session ? s.data.session.user : null; if(!user){ Z.State.currentUser = null; Z.renderHeaderAuth(); Z.updateHeader(); return; } var pr = await c.from('profiles').select('*').eq('id', user.id).maybeSingle(); var profile = pr.data || { id: user.id, name: (user.user_metadata && user.user_metadata.name) || 'New User', email: user.email, referral_code: '', wallet_cash: 0, wallet_bounty: 0, wallet_total: 0, reactions_locked: false }; Z.State.currentUser = profile; Z.renderHeaderAuth(); Z.updateHeader(); } catch(e){ console.warn('refreshSession', e); } };
-Z.getProfileById = function(id){ var arr = Z.State.allProfiles || []; for(var i=0;i<arr.length;i++) if(arr[i].id === id) return arr[i]; return null; };
-Z.displayName = function(p){ return p ? (p.name || p.username || 'User') : 'User'; };
-Z.displayAvatar = function(p){ return (p && p.avatar) ? p.avatar : 'https://ui-avatars.com/api/?name='+encodeURIComponent(p? (p.name||'U') : 'U')+'&background=111827&color=34d399'; };
-Z.shareBountyOptions = function(selected){ selected = Number(selected) || 0; return [0, 0.01, 0.02, 0.03, 0.04, 0.05].map(function(v){ return '<option value="' + v + '" ' + (Math.abs(selected - v) < 0.0001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (no bounty)' : '') + '</option>'; }).join(''); };
-Z.openCreateModal = function(){ if(!Z.State.currentUser){ Z.openAuthModal('login'); return; } Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><button class="btn-primary" style="margin-bottom:10px;" onclick="Z.closeModal();Z.openCreateSparkModal();"><i class="fa-solid fa-bolt"></i> Create Spark</button><button class="btn-primary" style="margin-bottom:10px;background:linear-gradient(135deg,#ec4899,#8b5cf6);color:#fff;" onclick="Z.closeModal();Z.openCreateFullVideoModal();"><i class="fa-solid fa-film"></i> Create Full Video</button><button class="btn-primary" style="background:linear-gradient(135deg,#8b5cf6,#3b82f6);color:#fff;" onclick="Z.closeModal();Z.openCreateCircleModal();"><i class="fa-solid fa-shop"></i> Create Circle</button></div></div>'); };
-
-/* --- Spark publish (upload-then-save, no orphan rows) --- */
-Z.submitSpark = async function(forceNoCaption){ Z.submitSparkImpl(forceNoCaption); };
-Z.submitSparkImpl = async function(forceNoCaption){
-  var me = Z.State.currentUser; if(!me) return;
-  var caption = ((document.getElementById('spark-caption')||{}).value || '').trim();
-  var tagsRaw = ((document.getElementById('spark-tags')||{}).value || '').trim();
-  var fi = document.getElementById('spark-file');
-  var url = ((document.getElementById('spark-url')||{}).value || '').trim();
-  var shareBounty = parseFloat((document.getElementById('spark-share-bounty')||{}).value || '0') || 0;
-  var hasFile = !!(fi && fi.files && fi.files[0]);
-  if(!hasFile && !url){ Z.toast('Provide video.'); return; }
-  if(!caption && !forceNoCaption){
-    Z.confirmNoCaption('Z.submitSparkImpl(true)');
-    return;
-  }
-  var tags = tagsRaw ? tagsRaw.split(',').map(function(t){return t.trim().replace(/^#/,'');}).filter(Boolean) : ['zynix'];
-  var fileObj = hasFile ? fi.files[0] : null;
-  if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Video under 100 MB.'); return; }
-
-  /* Upload FIRST. If it fails, do not create anything. */
-  var videoUrl = url;
-  if(fileObj){
-    Z.toast('Uploading video...');
-    try { videoUrl = await Z.uploadOrFail(fileObj); }
-    catch(err){ Z.toast('Upload failed — Spark not published.', 'error'); return; }
-  }
-
-  var tempId = 'temp_' + Z.uuid();
-  var optimistic = {
-    id: tempId, author_id: me.id, caption: caption, video_url: videoUrl,
-    tags: tags, type: 'spark', share_bounty: shareBounty,
-    created_at: new Date().toISOString(), views: 0, shares: 0,
-    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
-    _optimistic: true
-  };
-  Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
-  Z.closeModal();
-
-  var sp = await Z.DB.createSpark({author_id: me.id, caption: caption, video_url: videoUrl, tags: tags, type: 'spark', share_bounty: shareBounty});
-  var arr = Z.State.allSparks || [];
-  var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-  if(sp){
-    if(idx >= 0){ var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0}); arr[idx] = real; }
-    Z.toast('Spark published!');
-    if(Z.State.currentView === 'spark') Z.showView('spark');
-  } else {
-    Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
-    Z.toast('Publish failed. Try again.', 'error');
-    if(Z.State.currentView === 'spark') Z.showView('spark');
-  }
-};
-
-/* --- Full video submit --- */
-Z.submitFullVideo = async function(){
-  var title = ((document.getElementById('fv-title')||{}).value||'').trim();
-  var desc = ((document.getElementById('fv-desc')||{}).value||'').trim();
-  var fi = document.getElementById('fv-file');
-  var url = ((document.getElementById('fv-url')||{}).value||'').trim();
-  var sb_ = parseFloat((document.getElementById('fv-share-bounty')||{}).value || '0') || 0;
-  if(!title){ Z.toast('Enter a title.'); return; }
-  var fileObj = fi && fi.files && fi.files[0];
-  if(fileObj && fileObj.size > 200*1024*1024){ Z.toast('Video under 200 MB.'); return; }
-  if(!fileObj && !url){ Z.toast('Provide video.'); return; }
-  var videoUrl = url;
-  if(fileObj){
-    Z.toast('Uploading video...');
-    try { videoUrl = await Z.uploadOrFail(fileObj); }
-    catch(err){ Z.toast('Upload failed — video not uploaded.', 'error'); return; }
-  }
-  var sp = await Z.DB.createSpark({author_id: Z.State.currentUser.id, title: title, caption: desc, video_url: videoUrl, type: 'long_video', tags: [], share_bounty: sb_});
-  if(!sp){ Z.toast('Save failed. Try again.', 'error'); return; }
-  Z.State.allSparks = [sp].concat(Z.State.allSparks || []);
-  Z.closeModal(); Z.toast('Video uploaded!'); Z.showView('spark');
-};
-
-/* --- Create Circle --- */
-Z.openCreateCircleModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create Circle</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Name</label><input type="text" id="cc-name" class="form-input"><label class="form-label">Description</label><textarea id="cc-desc" class="form-textarea"></textarea><label class="form-label">Type</label><select id="cc-type" class="form-select"><option value="social">Social</option><option value="services">Services</option><option value="goods">Physical Goods</option><option value="office">Office</option><option value="education">Education</option><option value="events">Events</option></select><label class="form-label">Avatar URL</label><input type="text" id="cc-avatar" class="form-input" placeholder="https://..."><button class="btn-primary" onclick="Z.submitCircle()">Create Circle</button></div></div>'); };
-Z.submitCircle = async function(){
-  var me = Z.State.currentUser; if(!me) return;
-  var name = ((document.getElementById('cc-name')||{}).value||'').trim();
-  var desc = ((document.getElementById('cc-desc')||{}).value||'').trim();
-  var type = (document.getElementById('cc-type')||{}).value || 'social';
-  var avatar = ((document.getElementById('cc-avatar')||{}).value||'').trim() || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
-  if(!name){ Z.toast('Enter name.'); return; }
-  var row = await Z.DB.createCircleDB({ name:name, description:desc||'New circle.', type:type, avatar:avatar, creator_id:me.id, member_count:1 });
-  if(!row){ Z.toast('Could not create circle.', 'error'); return; }
-  Z.closeModal(); Z.toast('Circle created!'); Z.showView('circles');
-};
-
-/* --- Notifications / Wallet toggles --- */
-Z.toggleNotifications = function(){
-  if(Z.State.currentView === 'notifications'){
-    var prev = Z.State.prevViewBeforeNotifications || {view:'home', param:null};
-    Z.State.prevViewBeforeNotifications = null;
-    Z.showView(prev.view, prev.param);
-  } else {
-    Z.State.prevViewBeforeNotifications = {view: Z.State.currentView, param: Z.State.currentParam};
-    Z.showView('notifications');
-  }
-};
-Z.toggleWallet = function(){
-  if(Z.State.currentView === 'wallet'){
-    var prev = Z.State.prevViewBeforeWallet || {view:'home', param:null};
-    if(!prev || !prev.view || prev.view === 'wallet'){ var r = Z.restoreView(); prev = {view: r.view === 'wallet' ? 'home' : r.view, param: r.param}; }
-    Z.State.prevViewBeforeWallet = null;
-    Z.showView(prev.view, prev.param);
-  } else {
-    Z.State.prevViewBeforeWallet = {view: Z.State.currentView, param: Z.State.currentParam};
-    Z.showView('wallet');
-  }
-};
-Z.closeWallet = function(){
-  var prev = Z.State.prevViewBeforeWallet || {view:'home', param:null};
-  Z.State.prevViewBeforeWallet = null;
-  Z.showView(prev.view, prev.param);
-};
-
-Z.getWalletBadgeKey = function(){ var me = Z.State.currentUser; return me ? ('zynix_wallet_badge_' + me.id) : ''; };
-Z.loadWalletBadge = function(){ var key = Z.getWalletBadgeKey(); if(!key) return 0; try { var v = parseInt(localStorage.getItem(key) || '0', 10); Z.State.walletBadgeCount = isNaN(v) ? 0 : v; return Z.State.walletBadgeCount; } catch(e){ return 0; } };
-Z.setWalletBadge = function(n){ var key = Z.getWalletBadgeKey(); if(!key) return; try { localStorage.setItem(key, String(n)); } catch(e){} Z.State.walletBadgeCount = n; Z.updateNotifBadge(); };
-Z.incWalletBadge = function(n){ var cur = Z.State.walletBadgeCount || 0; Z.setWalletBadge(cur + (n||1)); };
-Z.clearWalletBadge = function(){ Z.setWalletBadge(0); };
-
-Z.saveCurrentView = function(view, param){ if(view === 'notifications' || view === 'wallet' || view === 'public-home') return; try { localStorage.setItem('zynix_last_view', view); localStorage.setItem('zynix_last_param', param ? String(param) : ''); } catch(e){} };
-Z.restoreView = function(){ try { var v = localStorage.getItem('zynix_last_view') || 'home'; var p = localStorage.getItem('zynix_last_param') || ''; if(v === 'public-profile' && !p) v = 'people'; if(v === 'notifications' || v === 'wallet') v = 'home'; if(v === 'public-home') v = 'home'; return {view: v, param: p || null}; } catch(e){ return {view:'home', param:null}; } };
-Z.saveScroll = function(y){ try { Z.State.lastScroll = y; localStorage.setItem('zynix_last_scroll', String(y||0)); } catch(e){} };
-Z.restoreScroll = function(){ try { var v = parseInt(localStorage.getItem('zynix_last_scroll') || '0', 10); return isNaN(v) ? 0 : v; } catch(e){ return 0; } };
-
-Z.pauseAllBackgroundVideos = function(){
-  try { document.querySelectorAll('video').forEach(function(v){ try { v.pause(); } catch(e){} }); } catch(e){}
-  Z._currentlyPlayingVideo = null;
-};
-
-Z._currentlyPlayingVideo = null;
-Z.playExclusive = function(video){
-  if(!video) return;
-  if(Z._currentlyPlayingVideo && Z._currentlyPlayingVideo !== video){
-    try { Z._currentlyPlayingVideo.pause(); } catch(e){}
-  }
-  Z._currentlyPlayingVideo = video;
-  var p = video.play();
-  if(p && p.catch) p.catch(function(){ video.muted = true; var p2 = video.play(); if(p2 && p2.catch) p2.catch(function(){}); });
-};
-
-/* ============================================================
-   S1-A — WELCOME + PUBLIC HOME helpers
-   ============================================================ */
-Z.showWelcome = function(greeting){
-  var w = document.getElementById('zynix-welcome');
-  if(!w) return;
-  var g = document.getElementById('zw-greeting-text');
-  if(g && greeting) g.textContent = greeting;
-  w.classList.remove('zynix-welcome-fadeout');
-  w.setAttribute('aria-hidden','false');
-};
-Z.hideWelcome = function(){
-  var w = document.getElementById('zynix-welcome');
-  if(!w) return;
-  w.classList.add('zynix-welcome-fadeout');
-  w.setAttribute('aria-hidden','true');
-};
-
-/* Smart navigation:
-   - On public-home   → go to ZYNIX Home (feed)
-   - On any other view → go to public-home */
-Z.goPublicHome = function(){
-  if(!Z.showView) return;
-  if(Z.State.currentView === 'public-home'){ Z.showView('home'); }
-  else { Z.showView('public-home'); }
-};
-
-/* Load timeline + headline from Supabase. Cached in State.
-   Called once during boot and once when public-home renders. */
-Z.loadBuildTimeline = async function(){
-  var c = sb();
-  if(!c) return;
-  try {
-    var phasesRes = await c.from('timeline_phases').select('*').order('id', {ascending:true});
-    if(!phasesRes.error && Array.isArray(phasesRes.data)){
-      Z.State.buildTimeline.phases = phasesRes.data;
-    }
-    var pctRes = await c.from('app_settings').select('value').eq('key', 'loading_millionaires_percent').maybeSingle();
-    var pctFromSettings = pctRes && pctRes.data && pctRes.data.value ? parseInt(pctRes.data.value, 10) : null;
-    var computed = 0;
-    (Z.State.buildTimeline.phases||[]).forEach(function(p){
-      var w = Number(p.weight) || 0;
-      var pr = Number(p.progress) || 0;
-      computed += (w * pr / 100);
-    });
-    computed = Math.round(computed);
-    Z.State.buildTimeline.percent = (pctFromSettings != null && !isNaN(pctFromSettings)) ? pctFromSettings : (computed || 41);
-    var current = (Z.State.buildTimeline.phases||[]).filter(function(p){ return p.status === 'in_progress'; })[0];
-    Z.State.buildTimeline.currentPhaseLabel = current ? current.title : 'Building Core Features';
-    Z.State.buildTimeline.loaded = true;
-  } catch(e){ console.warn('loadBuildTimeline', e); }
 };
 
 window.Z = Z;
 })();
 </script>
-<script>
+  <script>
 (function(){
 'use strict';
 var Z = window.Z;
@@ -1687,7 +1001,8 @@ Z.softRefresh = function(){
   if(typeof Z.updateScrollTopBtn === 'function') Z.updateScrollTopBtn();
   setTimeout(function(){ Z.detectCaptionOverflow(); }, 40);
   setTimeout(function(){ Z.resolveIdbRefs(container); }, 50);
-  if(view === 'spark'){ setTimeout(function(){ Z.resolveIdbRefs(container); }, 200); }
+  setTimeout(function(){ Z.attachAllVideoBuffers(container); }, 60);
+  if(view === 'spark'){ setTimeout(function(){ Z.resolveIdbRefs(container); Z.attachAllVideoBuffers(container); }, 200); }
 };
 
 /* ============================================================
@@ -1900,6 +1215,17 @@ Z._getStatusFile = function(){
   return null;
 };
 
+/* ------------------------------------------------------------
+   submitStatus — INSTANT modal close + optimistic UI
+   Flow:
+     1. Validate
+     2. Read the file (if any) into a local blob URL
+     3. Close modal IMMEDIATELY (before any await)
+     4. Add optimistic status with blob URL to home row
+     5. Kick off background upload + DB insert
+     6. On success: swap optimistic for real row
+     7. On failure: remove optimistic + red toast
+   ------------------------------------------------------------ */
 Z.submitStatus = async function(forceNoCaption){
   var me = _cu(); if(!me) return;
   var text = ((document.getElementById('status-text')||{}).value||'').trim();
@@ -1912,34 +1238,52 @@ Z.submitStatus = async function(forceNoCaption){
   }
   var bg = Z.State.statusBg || 'status-bg-deep-blue';
   var mt = fileObj ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || _isVideoUrl(fileObj.name) ? 'video' : 'image') : null;
+
+  /* Snapshot BEFORE any await. */
+  var snapshotBlobUrl = fileObj ? URL.createObjectURL(fileObj) : null;
   var now = new Date(), exp = new Date(now.getTime() + 24*60*60*1000);
-
-  /* Upload FIRST if media present. */
-  var mediaUrl = null;
-  if(fileObj){
-    Z.toast('Uploading media...');
-    try { mediaUrl = await Z.uploadOrFail(fileObj); }
-    catch(err){ Z.toast('Upload failed — Status not published.', 'error'); return; }
-  }
-
   var tempId = 'temp_' + Z.uuid();
-  var optimistic = { id: tempId, author_id: me.id, content: text, media_url: mediaUrl, media_type: mt, background: bg, created_at: now.toISOString(), expires_at: exp.toISOString(), _optimistic: true };
+  var optimistic = {
+    id: tempId, author_id: me.id, content: text, media_url: snapshotBlobUrl,
+    media_type: mt, background: bg, created_at: now.toISOString(),
+    expires_at: exp.toISOString(), _optimistic: true
+  };
+
+  /* Add optimistic + close modal — SYNCHRONOUS, no await. */
   Z.State.allStatuses = [optimistic].concat(Z.State.allStatuses || []);
   Z.closeModal();
+  Z.toast('Uploading...');
+  if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
 
-  var row = await Z.DB.createStatus({author_id: me.id, content: text, media_url: mediaUrl, media_type: mt, background: bg, expires_at: exp.toISOString()});
-  var arr = Z.State.allStatuses || [];
-  var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-  if(row){
-    if(idx >= 0) arr[idx] = row;
-    Z.toast('Status published.');
-    Z.showView('home');
-    Z.saveSnapshot();
-  } else {
-    Z.State.allStatuses = arr.filter(function(x){ return x.id !== tempId; });
-    Z.toast('Status publish failed.', 'error');
-    if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
-  }
+  /* Background upload + DB save. */
+  (async function(){
+    var mediaUrl = null;
+    if(fileObj){
+      try { mediaUrl = await Z.uploadOrFail(fileObj); }
+      catch(err){
+        Z.State.allStatuses = (Z.State.allStatuses || []).filter(function(x){ return x.id !== tempId; });
+        if(snapshotBlobUrl && snapshotBlobUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(snapshotBlobUrl); } catch(e){} }
+        Z.toast('Upload failed — Status not published.', 'error');
+        if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
+        return;
+      }
+    }
+    var row = await Z.DB.createStatus({author_id: me.id, content: text, media_url: mediaUrl, media_type: mt, background: bg, expires_at: exp.toISOString()});
+    var arr = Z.State.allStatuses || [];
+    var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    if(row){
+      if(idx >= 0) arr[idx] = row;
+      if(snapshotBlobUrl && snapshotBlobUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(snapshotBlobUrl); } catch(e){} }
+      Z.toast('Status published.');
+      if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
+      Z.saveSnapshot();
+    } else {
+      Z.State.allStatuses = arr.filter(function(x){ return x.id !== tempId; });
+      if(snapshotBlobUrl && snapshotBlobUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(snapshotBlobUrl); } catch(e){} }
+      Z.toast('Status publish failed.', 'error');
+      if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
+    }
+  })();
 };
 
 Z.renderStatusRow = function(){
@@ -2056,7 +1400,7 @@ Z.showStatusViewer = function(){
   }
   if(!isVid) Z.startStatusTimer();
   Z.setupViewerGesture();
-  setTimeout(function(){ Z.detectCaptionOverflow(); Z.resolveIdbRefs(document.getElementById('status-stage')); }, 60);
+  setTimeout(function(){ Z.detectCaptionOverflow(); Z.resolveIdbRefs(document.getElementById('status-stage')); Z.attachAllVideoBuffers(document.getElementById('status-stage')); }, 60);
 };
 Z.startStatusTimer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; Z.State.viewerDuration = 7000; Z.State.viewerElapsed = 0; Z.State.viewerStartTime = Date.now(); Z.State.viewerTimer = setTimeout(function(){ Z.statusNext(); }, Z.State.viewerDuration); Z.State.viewerProgressInterval = setInterval(function(){ if(Z.State.viewerPaused) return; Z.State.viewerElapsed = Date.now() - Z.State.viewerStartTime; var pct = Math.min(100, (Z.State.viewerElapsed/Z.State.viewerDuration)*100); var b = document.getElementById('status-progress'); if(b) b.style.width = pct + '%'; }, 100); };
 Z.pauseStatusTimer = function(){ if(Z.State.viewerPaused) return; Z.State.viewerPaused = true; if(Z.State.viewerTimer){ clearTimeout(Z.State.viewerTimer); Z.State.viewerTimer = null; } if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; } };
@@ -2188,6 +1532,7 @@ Z.renderSpark = function(){
     Z.setupSparkFeed(sparks);
     Z.observeFreezeDots();
     Z.resolveIdbRefs(document.getElementById('spark-feed'));
+    Z.attachAllVideoBuffers(document.getElementById('spark-feed'));
   }, 100);
   return html;
 };
@@ -2199,7 +1544,7 @@ Z.renderSparkSlide = function(spark, index){
   var unfrozen = Z.isUnfrozen(spark.id);
   var freezeTip = unfrozen ? 'Unfrozen' : 'Frozen';
   var isSaved = (Z.State.savedSparks || []).indexOf(spark.id) !== -1;
-  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
+  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="auto" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
   var tags = '';
   if(spark.tags && spark.tags.length){ tags = spark.tags.map(function(t){ return '<button onclick="event.stopPropagation()">#' + Z.escape(t) + '</button>'; }).join(' '); }
   var viewBadge = '<div class="spark-view-badge"><i class="fa-solid fa-eye"></i><span>' + (spark.views||0) + '</span></div>';
@@ -2213,7 +1558,7 @@ Z.renderSparkSlide = function(spark, index){
   stack += '<div class="spark-action-reactions">';
   stack += Z.renderSparkReactionButtons(spark);
   stack += '</div>';
-  stack += '<button class="spark-action-btn" onclick="event.stopPropagation();Z.openSparkComments(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-regular fa-comment"></i></div><div class="spark-action-count">' + ((spark._commentsCount)||0) + '</div></button>';
+  stack += '<button class="spark-action-btn" data-spark-comments-btn="' + Z.escape(spark.id) + '" onclick="event.stopPropagation();Z.openSparkComments(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-regular fa-comment"></i></div><div class="spark-action-count">' + ((spark._commentsCount)||0) + '</div></button>';
   stack += '<button class="spark-action-btn" onclick="event.stopPropagation();Z.openSparkShare(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-solid fa-share-nodes"></i></div><div class="spark-action-count">' + (spark.shares||0) + '</div></button>';
   stack += '</div>';
   var captionHtml = '';
@@ -2237,6 +1582,19 @@ Z.updateSparkReactionsUI = function(sparkId){
   }
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
 };
+
+/* Update the comment counter on a Spark's action stack from state. */
+Z.refreshSparkCommentCount = function(sparkId){
+  try {
+    var btn = document.querySelector('[data-spark-comments-btn="' + sparkId + '"] .spark-action-count');
+    if(!btn) return;
+    var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
+    if(!spark) return;
+    var n = spark._commentsCount || 0;
+    btn.textContent = n;
+  } catch(e){}
+};
+
 Z.toggleSparkMenu = function(sparkId, ev){
   if(ev) ev.stopPropagation();
   var menu = document.getElementById('spark-menu-' + sparkId); if(!menu) return;
@@ -2302,12 +1660,15 @@ Z.setupSparkFeed = function(sparks){
   slides.forEach(function(sl){
     Z.State.sparkObserver.observe(sl);
     var vid = sl.querySelector('video');
-    if(vid && !vid._viewHooked){
-      vid._viewHooked = true;
-      var sid = vid.getAttribute('data-spark-id');
-      vid.addEventListener('timeupdate', function(){ Z.recordSparkViewOnProgress(vid, sid); });
-      vid.addEventListener('ended', function(){ Z._viewedThisSession[sid] = false; });
-      vid.addEventListener('seeking', function(){ if(vid.currentTime < 0.5) Z._viewedThisSession[sid] = false; });
+    if(vid){
+      Z.attachVideoBuffer(vid);
+      if(!vid._viewHooked){
+        vid._viewHooked = true;
+        var sid = vid.getAttribute('data-spark-id');
+        vid.addEventListener('timeupdate', function(){ Z.recordSparkViewOnProgress(vid, sid); });
+        vid.addEventListener('ended', function(){ Z._viewedThisSession[sid] = false; });
+        vid.addEventListener('seeking', function(){ if(vid.currentTime < 0.5) Z._viewedThisSession[sid] = false; });
+      }
     }
   });
   if(!feed._scrollHooked){
@@ -2384,7 +1745,7 @@ Z.deleteSpark = async function(sparkId){
 };
 
 /* ============================================================
-   Spark comments — S1-A: instant optimistic + realtime
+   Spark comments — instant optimistic + realtime + instant counter
    ============================================================ */
 Z.findSparkCommentInState = function(commentId){
   var found = null;
@@ -2399,8 +1760,6 @@ Z.findSparkCommentInState = function(commentId){
   return found;
 };
 
-/* Track which Spark's comments sheet is currently open. Used by
-   realtime to inject new comments into the open sheet. */
 Z._openSparkCommentsId = null;
 
 Z.renderSparkComment = function(cm, spark, isReply){
@@ -2434,9 +1793,6 @@ Z.renderSparkComment = function(cm, spark, isReply){
   return '<div class="comment-item ' + (cm.color||'light-green') + (cm.hidden?' hidden-comment':'') + '" data-spark-comment-id="' + Z.escape(cm.id) + '"><span class="cname">' + Z.escape(ca.name) + '</span><span class="ctext">' + Z.escape(cm.text) + '</span>' + (cm.hidden ? '<div style="font-size:10px;margin-top:4px;opacity:.7;"><i class="fa-solid fa-eye-slash"></i> Hidden</div>' : '') + '<div class="comment-reactions">' + rr + '</div>' + actions + editorHtml + repliesHtml + '</div>';
 };
 
-/* Re-render the entire Spark comments sheet body from state.
-   This is bullet-proof: any optimistic/real DOM update is
-   guaranteed to reflect the actual state array. */
 Z.rerenderSparkCommentsBody = function(sparkId){
   var body = document.getElementById('spark-comments-body');
   if(!body) return;
@@ -2448,6 +1804,7 @@ Z.rerenderSparkCommentsBody = function(sparkId){
   if(header) header.textContent = 'Comments (' + total + ')';
   var list = roots.length ? roots.map(function(cm){ return Z.renderSparkComment(cm, spark, false); }).join('') : '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
   body.innerHTML = list;
+  Z.refreshSparkCommentCount(sparkId);
 };
 
 Z.openSparkComments = async function(sparkId){
@@ -2466,16 +1823,16 @@ Z.openSparkComments = async function(sparkId){
   cmts.forEach(function(x){ if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x); });
   var roots = cmts.filter(function(x){ return !x.parent_id; });
   var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
-  if(spark){ spark._comments = roots; }
+  if(spark){ spark._comments = roots; spark._commentsCount = cmts.length; }
   var list = roots.length ? roots.map(function(cm){ return Z.renderSparkComment(cm, spark, false); }).join('') : '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
   var input = me ? '<div style="display:flex;gap:8px;align-items:flex-end;width:100%;"><textarea id="spark-comment-input" rows="1" placeholder="Write a comment..." style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:10px 12px;font-size:12px;color:#fff;outline:none;resize:none;max-height:120px;font-family:inherit;min-height:38px;" oninput="Z.autoGrow(this)"></textarea><button onclick="Z.addSparkComment(\'' + Z.escape(sparkId) + '\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:10px 20px;border-radius:8px;font-size:12px;cursor:pointer;height:38px;">Send</button></div>' : '<button onclick="Z.closeSheet();Z.openAuthModal(\'login\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:10px;font-size:13px;cursor:pointer;">Login to comment</button>';
   Z.openSheet('<div class="spark-comments-overlay" onclick="if(event.target===this)Z.closeSheet()"><div class="bottom-sheet" onclick="event.stopPropagation()"><div class="sheet-handle"></div><div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Comments (' + cmts.length + ')</h3><button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div><div class="sheet-body" id="spark-comments-body">' + list + '</div><div class="sheet-footer">' + input + '</div></div></div>');
   Z._openSparkCommentsId = sparkId;
+  Z.refreshSparkCommentCount(sparkId);
   if(me) setTimeout(function(){ var i = document.getElementById('spark-comment-input'); if(i) i.focus(); }, 200);
 };
 
-/* Patch: wrap closeSheet so we clear _openSparkCommentsId when the
-   Spark comments sheet is dismissed. Keeps realtime gated properly. */
+/* clear _openSparkCommentsId when the sheet closes */
 (function(){
   var orig = Z.closeSheet;
   Z.closeSheet = function(){
@@ -2495,7 +1852,6 @@ Z.addSparkComment = async function(sparkId){
   var optimistic = {id:newId, spark_id:sparkId, author_id:me.id, text:t, color:color, _reactionCounts:{}, _myReactions:{}, _replies:[]};
   if(spark){ if(!spark._comments) spark._comments = []; spark._comments.push(optimistic); spark._commentsCount = (spark._commentsCount||0) + 1; }
 
-  /* Re-render the whole body — bullet-proof. */
   Z.rerenderSparkCommentsBody(sparkId);
 
   var r = await c.from('comments').insert({id:newId, spark_id: sparkId, author_id: me.id, text: t, color: color});
@@ -2529,7 +1885,7 @@ Z.submitSparkReply = async function(sparkId, parentId){
   if(spark && spark._comments){ function walk(arr){ for(var i=0;i<arr.length;i++){ if(arr[i].id === parentId) return arr[i]; if(arr[i]._replies){ var r2 = walk(arr[i]._replies); if(r2) return r2; } } return null; } parent = walk(spark._comments); }
   var newRep = {id:newId, spark_id:sparkId, parent_id:parentId, author_id:me.id, text:t, color:color, _reactionCounts:{}, _myReactions:{}, _replies:[]};
   if(parent){ if(!parent._replies) parent._replies = []; parent._replies.push(newRep); }
-  /* Re-render whole body — bullet-proof. */
+  if(spark) spark._commentsCount = (spark._commentsCount||0) + 1;
   Z.rerenderSparkCommentsBody(sparkId);
 };
 Z.reactToSparkComment = async function(commentId, reactionType){
@@ -2637,7 +1993,7 @@ Z.shareExternal = function(kind, url){
 };
 
 /* ============================================================
-   Spark modals with media preview + Remove
+   Spark modals
    ============================================================ */
 Z.openCreateSparkModal = function(){
   Z.openModal(
@@ -2758,7 +2114,7 @@ Z.renderPostCard = function(p, profiles, me){
   var mHtml = '';
   if(p.media_url){
     var _mt = p.media_type || (_isVideoUrl(p.media_url) ? 'video' : 'image');
-    if(_mt === 'video') mHtml = '<div class="post-media"><video src="' + Z.escape(p.media_url) + '" controls playsinline preload="metadata" loop></video></div>';
+    if(_mt === 'video') mHtml = '<div class="post-media"><video src="' + Z.escape(p.media_url) + '" controls playsinline preload="auto" loop></video></div>';
     else mHtml = '<div class="post-media"><img src="' + Z.escape(p.media_url) + '" alt="Post" loading="lazy"></div>';
   }
   var cp = '<div class="comment-color-picker">' + ['light-green','light-blue','light-yellow','light-pink','light-purple'].map(function(c){ var s = c.replace('light-',''); return '<div class="comment-color-dot c-' + s + ' ' + (Z.State.commentColor===c?'selected':'') + '" data-color="' + c + '" onclick="Z.setCommentColor(\'' + c + '\')"></div>'; }).join('') + '</div>';
@@ -2854,7 +2210,10 @@ Z._getComposerFile = function(){
   return null;
 };
 
-/* S1-A: upload-then-save. No orphan rows. No silent failures. */
+/* ------------------------------------------------------------
+   submitComposer — INSTANT composer close + optimistic UI
+   Same pattern as submitStatus.
+   ------------------------------------------------------------ */
 Z.submitComposer = async function(forceNoCaption){
   var me = _cu(); if(!me) return;
   var text = ((document.getElementById('composer-text')||{}).value||'').trim();
@@ -2869,37 +2228,51 @@ Z.submitComposer = async function(forceNoCaption){
   if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); return; }
   var mt = fileObj ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || _isVideoUrl(fileObj.name) ? 'video' : 'image') : null;
 
-  /* Upload FIRST. If it fails, nothing is created. */
-  var mediaUrl = null;
-  if(fileObj){
-    Z.toast('Uploading media...');
-    try { mediaUrl = await Z.uploadOrFail(fileObj); }
-    catch(err){ Z.toast('Upload failed — post not published.', 'error'); return; }
-  }
-
+  /* Snapshot BEFORE any await. */
+  var snapshotBlobUrl = fileObj ? URL.createObjectURL(fileObj) : null;
   var tempId = 'temp_' + Z.uuid();
   var optimistic = {
-    id: tempId, author_id: me.id, content: text, media_url: mediaUrl,
+    id: tempId, author_id: me.id, content: text, media_url: snapshotBlobUrl,
     media_type: mt, share_bounty: shareBounty,
     created_at: new Date().toISOString(), views: 0, shares: 0,
     reactions: {}, _myReactions: {}, _comments: [], _optimistic: true
   };
+
+  /* Add optimistic + close composer — SYNCHRONOUS. */
   Z.State.allPosts = [optimistic].concat(Z.State.allPosts || []);
   Z.cancelComposer();
+  Z.toast('Uploading...');
+  if(Z.State.currentView === 'home') Z.softRefresh();
 
-  var row = await Z.DB.createPost({author_id: me.id, content: text, media_url: mediaUrl, media_type: mt, share_bounty: shareBounty});
-  var arr = Z.State.allPosts || [];
-  var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-  if(row){
-    if(idx >= 0){ var real = Object.assign({}, row, {reactions:{}, _myReactions:{}, _comments:[]}); arr[idx] = real; }
-    Z.toast('Post published!');
-    Z.showView('home');
-    Z.saveSnapshot();
-  } else {
-    Z.State.allPosts = arr.filter(function(x){ return x.id !== tempId; });
-    Z.toast('Publish failed. Try again.', 'error');
-    if(Z.State.currentView === 'home') Z.softRefresh();
-  }
+  /* Background upload + DB save. */
+  (async function(){
+    var mediaUrl = null;
+    if(fileObj){
+      try { mediaUrl = await Z.uploadOrFail(fileObj); }
+      catch(err){
+        Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== tempId; });
+        if(snapshotBlobUrl && snapshotBlobUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(snapshotBlobUrl); } catch(e){} }
+        Z.toast('Upload failed — post not published.', 'error');
+        if(Z.State.currentView === 'home') Z.softRefresh();
+        return;
+      }
+    }
+    var row = await Z.DB.createPost({author_id: me.id, content: text, media_url: mediaUrl, media_type: mt, share_bounty: shareBounty});
+    var arr = Z.State.allPosts || [];
+    var idx = -1; for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    if(row){
+      if(idx >= 0){ var real = Object.assign({}, row, {reactions:{}, _myReactions:{}, _comments:[]}); arr[idx] = real; }
+      if(snapshotBlobUrl && snapshotBlobUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(snapshotBlobUrl); } catch(e){} }
+      Z.toast('Post published!');
+      if(Z.State.currentView === 'home') Z.softRefresh();
+      Z.saveSnapshot();
+    } else {
+      Z.State.allPosts = arr.filter(function(x){ return x.id !== tempId; });
+      if(snapshotBlobUrl && snapshotBlobUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(snapshotBlobUrl); } catch(e){} }
+      Z.toast('Publish failed. Try again.', 'error');
+      if(Z.State.currentView === 'home') Z.softRefresh();
+    }
+  })();
 };
 Z.cancelComposer = function(){ var c = document.getElementById('composer-expanded'); if(c) c.innerHTML=''; var i = document.getElementById('composer-input'); if(i) i.value=''; };
 
@@ -3106,15 +2479,12 @@ Z.setupFeedVideoAutoplay = function(){
   if(Z._feedVideoObserver) Z._feedVideoObserver.disconnect();
   var vids = document.querySelectorAll('#app-container video:not([data-spark-id])'); if(!vids.length) return;
   Z._feedVideoObserver = new IntersectionObserver(function(){ Z.recomputeFeedVideoPlayback(); }, {threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0]});
-  vids.forEach(function(v){ v.setAttribute('playsinline',''); v.setAttribute('loop',''); Z._feedVideoObserver.observe(v); });
+  vids.forEach(function(v){ v.setAttribute('playsinline',''); v.setAttribute('loop',''); Z._feedVideoObserver.observe(v); Z.attachVideoBuffer(v); });
   if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); Z.updateScrollTopBtn(true); }, 100); }, {passive:true}); }
 };
 
 /* ============================================================
-   S1-A — PUBLIC HOME RENDER
-
-   Top box: "Something is being built." + spinner + bar + timeline.
-   Read from Supabase (timeline_phases + app_settings).
+   Public Home (unchanged from S1-A)
    ============================================================ */
 Z.renderPublicHome = function(){
   var me = _cu();
@@ -3124,7 +2494,6 @@ Z.renderPublicHome = function(){
 
   var html = '<div class="zn-public-wrap">';
 
-  /* --- 1) Build timeline panel --- */
   html += '<div class="zn-build-panel">';
   html += '<div class="zn-build-spinner">Z</div>';
   html += '<div class="zn-build-headline">Something is being built.</div>';
@@ -3152,7 +2521,6 @@ Z.renderPublicHome = function(){
 
   html += '</div>';
 
-  /* --- 2) Hero --- */
   html +=
     '<div class="zn-public-hero">' +
       '<div class="zn-hero-logo">Z</div>' +
@@ -3161,7 +2529,6 @@ Z.renderPublicHome = function(){
       '<div class="zn-hero-desc">A quieter social space. Real connections. Real rewards for real engagement.</div>' +
     '</div>';
 
-  /* --- 3) Value cards --- */
   html +=
     '<div class="zn-public-cards">' +
       '<div class="zn-public-card">' +
@@ -3178,7 +2545,6 @@ Z.renderPublicHome = function(){
       '</div>' +
     '</div>';
 
-  /* --- 4) Actions --- */
   html += '<div class="zn-public-actions">';
   if(me){
     html += '<button class="zn-public-enter-btn" onclick="Z.showView(\'home\')"><i class="fa-solid fa-arrow-right"></i> Enter ZYNIX</button>';
@@ -3193,7 +2559,7 @@ Z.renderPublicHome = function(){
 };
 
 /* ============================================================
-   People page — RPC + seed rotation
+   People page
    ============================================================ */
 Z.renderPeople = function(){
   var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-users" style="color:#10b981;margin-right:8px;"></i>People</h2></div><input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="people-list-container"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div></div>';
@@ -3266,7 +2632,7 @@ Z.renderPublicProfile = function(userId){
 };
 
 /* ============================================================
-   Wallet
+   Wallet / Bounty / Packages / Referrals
    ============================================================ */
 Z.renderWalletNotification = function(t){
   var meta = t.metadata || {};
@@ -3345,7 +2711,7 @@ Z.renderReferrals = function(){
 };
 
 /* ============================================================
-   Circles page — RPC + seed rotation
+   Circles page
    ============================================================ */
 Z.renderCircles = function(){
   var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-circle-nodes" style="color:#10b981;margin-right:8px;"></i>Circles</h2></div><input type="text" id="circle-search-input" placeholder="Search circles..." value="' + Z.escape(Z.State.circleSearch||'') + '" oninput="Z.onCircleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="circles-list-container"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div><button onclick="Z.openCreateCircleModal()" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:12px;font-size:12px;cursor:pointer;">+ Create Circle</button></div>';
@@ -3418,7 +2784,7 @@ Z.renderNotifications = function(){
 };
 
 /* ============================================================
-   reloadData — BATCHED + snapshot save + spinner
+   reloadData
    ============================================================ */
 Z.reloadData = async function(){
   var c = Z.sb();
@@ -3538,10 +2904,9 @@ Z.setupRealtime = function(){
       var cm = payload.new; if(!cm) return;
       if(cm.author_id === me.id) return;
 
-      /* Spark comments: increment counter AND inject into open sheet. */
       if(cm.spark_id){
         var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === cm.spark_id; });
-        if(sp){ sp._commentsCount = (sp._commentsCount||0)+1; }
+        if(sp){ sp._commentsCount = (sp._commentsCount||0)+1; Z.refreshSparkCommentCount(cm.spark_id); }
         if(Z._openSparkCommentsId === cm.spark_id && sp){
           cm._reactionCounts = {}; cm._myReactions = {}; cm._replies = [];
           if(!sp._comments) sp._comments = [];
@@ -3743,15 +3108,15 @@ Z.showView = async function(view, param){
   if(view === 'home'){
     setTimeout(function(){ Z.renderStatusRow(); }, 80);
     setTimeout(function(){
-      Z.setupFeedVideoAutoplay(); Z.observeFreezeDots(); Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container);
+      Z.setupFeedVideoAutoplay(); Z.observeFreezeDots(); Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); Z.attachAllVideoBuffers(container);
     }, 150);
-    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); }, 500);
+    setTimeout(function(){ Z.restoreHomeAnchorOrScroll(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); Z.attachAllVideoBuffers(container); }, 500);
   }
   if(view === 'spark'){
     setTimeout(function(){
-      Z.setupSparkFeed(Z.State.allSparks); Z.observeFreezeDots(); Z.restoreSparkSlideIndex(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container);
+      Z.setupSparkFeed(Z.State.allSparks); Z.observeFreezeDots(); Z.restoreSparkSlideIndex(); Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); Z.attachAllVideoBuffers(container);
     }, 150);
-    setTimeout(function(){ Z.resolveIdbRefs(container); }, 600);
+    setTimeout(function(){ Z.resolveIdbRefs(container); Z.attachAllVideoBuffers(container); }, 600);
   }
   if(view === 'people'){ setTimeout(function(){ Z.refreshPeopleList(); }, 60); }
   if(view === 'circles'){ setTimeout(function(){ Z.refreshCirclesList(); }, 60); }
@@ -3765,7 +3130,7 @@ function updateBellColor(){ var b = document.getElementById('bell-btn'); if(!b) 
 function updateWalletPillState(){ var w = document.getElementById('wallet-pill'); if(!w) return; if(Z.State.currentView === 'wallet') w.classList.add('active'); else w.classList.remove('active'); }
 
 /* ============================================================
-   Boot — Welcome-First, zero blank page
+   Boot — untouched. Auto-redirect after login preserved.
    ============================================================ */
 function readCachedUserIdSync(){
   try {
@@ -3851,7 +3216,6 @@ async function boot(){
     }
   }
 
-  /* Load timeline for Public Home (cached in State). */
   try { await Z.loadBuildTimeline(); } catch(e){}
 
   var destView, destParam;
@@ -3900,4 +3264,4 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 })();
 </script>
 </body>
-</html 
+</html>
