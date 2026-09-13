@@ -3814,5 +3814,182 @@ function applyPatch(){
 }
 })();
 </script>
+  <script>
+/* ============================================================
+   ZYNIX Share Bounty — Frontend alignment (Step 2B)
+   - External shares no longer pay (bounty is backend-triggered only)
+   - Internal "Repost to Wall" creates a real shared_from_* post
+   - Backend trigger pays the bounty automatically
+   Safe to include; idempotent.
+   ============================================================ */
+(function(){
+'use strict';
+if (window.__ZYNIX_SHARE_PATCH__) return;
+window.__ZYNIX_SHARE_PATCH__ = true;
+
+var tries = 0;
+var wait = setInterval(function(){
+  tries++;
+  if (window.Z && typeof Z.sharePost === 'function' && Z.DB && typeof Z.DB.createPost === 'function'){
+    clearInterval(wait);
+    try { apply(); } catch(e){ console.error('[ZYNIX share patch] failed', e); }
+  } else if (tries > 200){
+    clearInterval(wait);
+    console.warn('[ZYNIX share patch] Z never became ready');
+  }
+}, 50);
+
+function apply(){
+  var Z = window.Z;
+
+  /* ---------- 1. Replace Z.sharePost — no early bounty, add Repost to Wall ---------- */
+  Z.sharePost = async function(postId){
+    var me = (Z.State && Z.State.currentUser) || null;
+    if (!me){ Z.openAuthModal('login'); return; }
+
+    var post = (Z.State.allPosts || []).find(function(x){ return x.id === postId; });
+    var isOwn = post && post.author_id === me.id;
+    var url = location.href.split('#')[0] + '#post-' + encodeURIComponent(postId);
+
+    var repostBtn = isOwn
+      ? ''
+      : '<button onclick="Z.postPostToWall(\'' + Z.escape(postId) + '\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;margin-bottom:10px;"><i class="fa-solid fa-share-nodes"></i> Repost to My Wall</button>' +
+        '<div style="font-size:10px;color:#64748b;text-align:center;margin:10px 0;">— or share externally (no bounty) —</div>';
+
+    Z.openSheet(
+      '<div class="modal-overlay" style="background:transparent;align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">' +
+        '<div class="bottom-sheet">' +
+          '<div class="sheet-handle"></div>' +
+          '<div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Share Post</h3>' +
+            '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>' +
+          '</div>' +
+          '<div class="sheet-body">' +
+            repostBtn +
+            '<div class="share-grid">' +
+              '<div class="share-item wa" onclick="Z.shareExternal(\'whatsapp\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-whatsapp"></i>WhatsApp</div>' +
+              '<div class="share-item fb" onclick="Z.shareExternal(\'facebook\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-facebook"></i>Facebook</div>' +
+              '<div class="share-item tw" onclick="Z.shareExternal(\'twitter\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-x-twitter"></i>Twitter</div>' +
+              '<div class="share-item cp" onclick="Z.shareExternal(\'copy\',\'' + Z.escape(url) + '\')"><i class="fa-solid fa-copy"></i>Copy</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  };
+
+  /* ---------- 2. New: Z.postPostToWall — repost a post with shared_from_* ---------- */
+  Z.postPostToWall = async function(postId){
+    var me = (Z.State && Z.State.currentUser) || null;
+    if (!me){ Z.openAuthModal('login'); return; }
+    var c = Z.sb && Z.sb();
+    if (!c) return;
+    var src = (Z.State.allPosts || []).find(function(x){ return x.id === postId; });
+    if (!src){ Z.toast('Post not found.', 'error'); return; }
+    if (src.author_id === me.id){ Z.toast('Cannot repost your own post.'); return; }
+
+    Z.closeSheet();
+    Z.toast('Reposting...');
+
+    var srcAuthor = Z.getProfileById(src.author_id);
+    var creditLine = '@' + ((srcAuthor && srcAuthor.username) || 'user');
+    var baseText = src.content ? src.content : '';
+    var newContent = baseText ? (baseText + '\n\n— reposted from ' + creditLine) : ('Reposted from ' + creditLine);
+
+    var payload = {
+      author_id: me.id,
+      content: newContent,
+      media_url: src.media_url || null,
+      media_type: src.media_type || null,
+      share_bounty: 0,
+      shared_from_id: src.id,
+      shared_from_type: 'post'
+    };
+
+    var r = await c.from('posts').insert(payload).select().maybeSingle();
+    if (r.error || !r.data){
+      console.warn('postPostToWall', r.error);
+      Z.toast('Repost failed.', 'error');
+      return;
+    }
+
+    var row = Object.assign({}, r.data, { reactions: {}, _myReactions: {}, _comments: [] });
+    Z.State.allPosts = [row].concat(Z.State.allPosts || []);
+
+    /* Show local dollar animation immediately — the backend trigger has already paid */
+    try {
+      var amt = 0;
+      var owner = src.author_id;
+      var ownerProf = Z.getProfileById(owner);
+      if (ownerProf && ownerProf.bounty_settings && typeof ownerProf.bounty_settings.share === 'number'){
+        amt = ownerProf.bounty_settings.share;
+      }
+      if (amt > 0) {
+        Z.animateDollar(amt);
+        setTimeout(async function(){ await Z.refreshSession(); Z.updateHeader(); }, 500);
+      }
+    } catch(e){}
+
+    if (Z.State.currentView === 'home') Z.softRefresh();
+    Z.toast('Reposted to your wall.');
+  };
+
+  /* ---------- 3. Patch Z.postSparkToWall to include shared_from_* ---------- */
+  var oPostSparkToWall = Z.postSparkToWall;
+  Z.postSparkToWall = async function(sparkId){
+    var me = (Z.State && Z.State.currentUser) || null;
+    if (!me){ Z.openAuthModal('login'); return; }
+    var s = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
+    if (!s){ Z.toast('Not found.'); return; }
+    if (s.author_id === me.id){ Z.toast('Cannot share your own Spark.'); return; }
+
+    var c = Z.sb && Z.sb();
+    if (!c) return;
+
+    var srcAuthor = Z.getProfileById(s.author_id);
+    var creditLine = '@' + ((srcAuthor && srcAuthor.username) || 'user');
+    var baseText = s.caption || s.title || '';
+    var newContent = baseText ? (baseText + '\n\n— spark from ' + creditLine) : ('Spark from ' + creditLine);
+
+    var payload = {
+      author_id: me.id,
+      content: newContent,
+      media_url: s.video_url || null,
+      media_type: 'video',
+      share_bounty: 0,
+      shared_from_id: s.id,
+      shared_from_type: 'spark'
+    };
+
+    var r = await c.from('posts').insert(payload).select().maybeSingle();
+    if (r.error || !r.data){
+      console.warn('postSparkToWall', r.error);
+      Z.toast('Share failed.', 'error');
+      return;
+    }
+
+    var row = Object.assign({}, r.data, { reactions: {}, _myReactions: {}, _comments: [] });
+    Z.State.allPosts = [row].concat(Z.State.allPosts || []);
+
+    try {
+      var amt = 0;
+      var ownerProf = Z.getProfileById(s.author_id);
+      if (ownerProf && ownerProf.bounty_settings && typeof ownerProf.bounty_settings.share === 'number'){
+        amt = ownerProf.bounty_settings.share;
+      }
+      if (amt > 0) {
+        Z.animateDollar(amt);
+        setTimeout(async function(){ await Z.refreshSession(); Z.updateHeader(); }, 500);
+      }
+    } catch(e){}
+
+    Z.closeSheet();
+    Z.toast('Spark shared to your wall.');
+    if (Z.State.currentView === 'home') Z.softRefresh();
+  };
+
+  console.log('%c[ZYNIX] share-bounty frontend aligned', 'color:#10b981;font-weight:bold');
+}
+})();
+</script>
 </body>
 </html>
