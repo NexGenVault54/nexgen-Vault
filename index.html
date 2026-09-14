@@ -1454,7 +1454,7 @@ Z.loadBuildTimeline = async function(){
 window.Z = Z;
 })();
 </script>
-  <script>
+<script>
 (function(){
 'use strict';
 var Z = window.Z;
@@ -3022,10 +3022,162 @@ Z.saveProfile = async function(){
   Z._editImages = {avatar: null, cover: null};
   Z.closeModal(); Z.toast('Profile updated!'); await Z.refreshSession(); await Z.reloadData(); Z.showView('profile');
 };
+
+/* ============================================================
+   SPACE — Step 1.1
+   Public page shell. Replaces the old renderPublicProfile.
+   Consumes RPC public.get_public_space(uuid) from Step 1.0.
+   No writes. No new tables. No new realtime channels.
+   ============================================================ */
 Z.renderPublicProfile = function(userId){
-  var t = Z.getProfileById(userId); if(!t) return '<div class="empty-state"><p>User not found.</p></div>';
+  if(!userId){
+    return '<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>User not specified.</p></div>';
+  }
+
+  var shell =
+    '<div id="space-root" style="display:flex;flex-direction:column;gap:14px;">' +
+      '<div class="view-header">' +
+        '<button class="colored-back-btn" onclick="Z.showView(\'people\')">' +
+          '<i class="fa-solid fa-arrow-left"></i> Back' +
+        '</button>' +
+      '</div>' +
+      '<div id="space-identity">' + Z._renderSpaceSkeleton() + '</div>' +
+      '<div id="space-posts-band"></div>' +
+      '<div id="space-sparks-band"></div>' +
+      '<div id="space-videos-band"></div>' +
+    '</div>';
+
+  setTimeout(function(){ Z._loadSpace(userId); }, 30);
+  return shell;
+};
+
+Z._renderSpaceSkeleton = function(){
+  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:28px 20px;text-align:center;color:#64748b;">' +
+    '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#3b82f6;"></i>' +
+    '<p style="font-size:12px;margin-top:10px;">Loading SPACE...</p>' +
+  '</div>';
+};
+
+Z._loadSpace = async function(userId){
+  var container = document.getElementById('space-identity');
+  if(!container) return;
+
   var me = _cu();
-  return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'people\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div><div class="profile-card"><div class="profile-cover"><img src="' + Z.escape(t.cover||'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80') + '"></div><div class="profile-body"><img class="profile-avatar" src="' + Z.escape(Z.displayAvatar(t)) + '"><div style="margin-top:6px;"><div class="profile-name">' + Z.escape(Z.displayName(t)) + '</div><div class="profile-handle">@' + Z.escape(t.username||'user') + (t.profession?' • ' + Z.escape(t.profession):'') + '</div><div class="profile-bio">' + Z.escape(t.bio||'') + '</div>' + (me && me.id !== t.id ? '<div style="margin-top:10px;">' + Z.renderConnectButton(t.id) + '</div>' : '') + '</div></div></div></div>';
+  var c = (Z.sb && Z.sb()) || null;
+  var data = null;
+
+  try {
+    if(c){
+      var r = await c.rpc('get_public_space', { p_user_id: userId });
+      if(r.error) throw r.error;
+      if(Array.isArray(r.data) && r.data.length) data = r.data[0];
+    }
+  } catch(e){
+    console.warn('[SPACE] rpc failed, falling back to local state', e);
+  }
+
+  if(!data){
+    var local = Z.getProfileById(userId);
+    if(local){
+      data = {
+        id: local.id, name: local.name, username: local.username,
+        avatar: local.avatar, cover: local.cover,
+        profession: local.profession, bio: local.bio, package: local.package,
+        connection_count: 0, posts_count: 0, sparks_count: 0, videos_count: 0
+      };
+    }
+  }
+
+  if(!data){
+    container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>User not found.</p></div>';
+    return;
+  }
+
+  var arr = Z.State.allProfiles || [];
+  var exists = arr.some(function(x){ return x && x.id === data.id; });
+  if(!exists){
+    Z.State.allProfiles = arr.concat([{
+      id: data.id, name: data.name, username: data.username,
+      avatar: data.avatar, cover: data.cover,
+      profession: data.profession, bio: data.bio, package: data.package
+    }]);
+  }
+
+  container.innerHTML = Z._renderSpaceIdentity(data, me);
+  Z._renderSpaceEmptyBands();
+};
+
+Z._renderSpaceEmptyBands = function(){
+  var placeholder = function(label, icon){
+    return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+        '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;">' +
+          '<i class="' + icon + '" style="color:#10b981;margin-right:6px;"></i>' + label +
+        '</div>' +
+      '</div>' +
+      '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px;">' +
+        'Coming in next step' +
+      '</div>' +
+    '</div>';
+  };
+  var postsBand  = document.getElementById('space-posts-band');
+  var sparksBand = document.getElementById('space-sparks-band');
+  var videosBand = document.getElementById('space-videos-band');
+  if(postsBand)  postsBand.innerHTML  = placeholder('Posts', 'fa-regular fa-newspaper');
+  if(sparksBand) sparksBand.innerHTML = placeholder('Sparks', 'fa-solid fa-bolt');
+  if(videosBand) videosBand.innerHTML = placeholder('Full Videos', 'fa-solid fa-film');
+};
+
+Z._renderSpaceIdentity = function(data, me){
+  var isMe = me && me.id === data.id;
+  var coverUrl = data.cover || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80';
+  var avatarUrl = data.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(data.name || 'U') + '&background=111827&color=34d399');
+  var handle = data.username ? ('@' + data.username) : '@user';
+  var pkg = data.package || 'Free';
+
+  var statCell = function(value, label){
+    return '<div style="flex:1;text-align:center;">' +
+      '<div style="font-size:16px;font-weight:900;color:#fff;">' + value + '</div>' +
+      '<div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-top:2px;">' + label + '</div>' +
+    '</div>';
+  };
+
+  var connectBtn = '';
+  if(!isMe){
+    connectBtn = '<div style="margin-top:14px;">' + Z.renderConnectButton(data.id) + '</div>';
+  }
+
+  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;overflow:hidden;">' +
+    '<div style="height:130px;background:#0f172a;position:relative;overflow:hidden;">' +
+      '<img src="' + Z.escape(coverUrl) + '" style="width:100%;height:100%;object-fit:cover;" alt="Cover">' +
+      '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(9,13,22,0) 40%,rgba(17,24,39,.95));"></div>' +
+    '</div>' +
+    '<div style="padding:0 16px 18px;margin-top:-40px;position:relative;">' +
+      '<img src="' + Z.escape(avatarUrl) + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:4px solid #111827;background:#0f172a;display:block;">' +
+      '<div style="margin-top:10px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+          '<div style="font-weight:900;font-size:18px;color:#fff;">' + Z.escape(data.name || 'User') + '</div>' +
+          '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;" title="Verified profile"></i>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#64748b;margin-top:2px;">' +
+          Z.escape(handle) + (data.profession ? ' • ' + Z.escape(data.profession) : '') +
+        '</div>' +
+        (data.bio
+          ? '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.55;white-space:pre-wrap;word-break:break-word;">' + Z.escape(data.bio) + '</div>'
+          : '') +
+        '<div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;">' +
+          '<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;border:1px solid rgba(16,185,129,.28);">' + Z.escape(pkg) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;padding:14px 0 4px;margin-top:14px;border-top:1px solid #1e293b;">' +
+        statCell(data.connection_count || 0, 'Connections') +
+        statCell(data.posts_count || 0, 'Posts') +
+        statCell(data.sparks_count || 0, 'Sparks') +
+        statCell(data.videos_count || 0, 'Videos') +
+      '</div>' +
+      connectBtn +
+    '</div>' +
+  '</div>';
 };
 
 Z.renderWalletNotification = function(t){
@@ -3632,7 +3784,7 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 
 })();
 </script>
-  <script>
+<script>
 /* ============================================================
    ZYNIX media-persistence patch
    Fix: media disappearing after refresh / logout+login
@@ -3814,7 +3966,7 @@ function applyPatch(){
 }
 })();
 </script>
-  <script>
+<script>
 /* ============================================================
    ZYNIX Share Bounty — Frontend alignment (Step 2B)
    - External shares no longer pay (bounty is backend-triggered only)
