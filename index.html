@@ -489,10 +489,10 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 <nav class="zynix-footer" id="bottom-nav">
   <button onclick="Z.showView('home')" id="nav-home"><i class="fa-solid fa-house"></i><span>Home</span></button>
   <button onclick="Z.showView('spark')" id="nav-spark"><i class="fa-solid fa-bolt"></i><span>Spark</span></button>
-  <button onclick="Z.openCreateModal()" class="create-btn"><i class="fa-solid fa-plus"></i></button>
+  <button onclick="Z.showView('galleria')" id="nav-galleria"><i class="fa-solid fa-store"></i><span>Galleria</span></button>
   <button onclick="Z.showView('circles')" id="nav-circles"><i class="fa-solid fa-circle-nodes"></i><span>Circles</span></button>
-  <button onclick="Z.showView('people')" id="nav-people"><i class="fa-solid fa-users"></i><span>People</span></button>
-  <button onclick="Z.showView('profile')" id="nav-profile"><i class="fa-solid fa-user"></i><span>Profile</span></button>
+  <button onclick="Z.goMySpace()" id="nav-space"><i class="fa-solid fa-user"></i><span>SPACE</span></button>
+  <button onclick="Z.openCreateModal()" class="create-btn"><i class="fa-solid fa-plus"></i></button>
 </nav>
 
 <div id="toast-container"></div>
@@ -599,7 +599,6 @@ Z._revokeAllObjUrls = function(){
   Z._objUrls = [];
 };
 
-/* Strict upload: returns a real Supabase URL or throws. No silent IDB fallback. */
 Z.storeMedia = async function(file){
   if(!file) throw new Error('No file provided.');
   var c = sb();
@@ -619,7 +618,6 @@ Z.storeMedia = async function(file){
   return url;
 };
 
-/* Legacy idb: refs still resolve here (read-only) */
 Z.loadMedia = async function(ref){
   if(!ref) return '';
   ref = String(ref);
@@ -1480,6 +1478,55 @@ function _isVideoUrl(url){
   var s = String(url).toLowerCase().split('?')[0].split('#')[0];
   return /\.(mp4|webm|mov|m4v|3gp|avi|mkv|ogv|ogg)$/.test(s);
 }
+function countAllComments(arr){ var n = 0; (function walk(list){ list.forEach(function(c){ n++; if(c._replies) walk(c._replies); }); })(arr || []); return n; }
+
+/* ---------- SPACE state ---------- */
+Z.State.spaceUserId = null;
+Z.State.spacePosts = [];
+Z.State.spaceSparks = [];
+Z.State.spaceVideos = [];
+Z.State.prevViewBeforeSpace = null;
+
+Z.goMySpace = function(){
+  var me = _cu();
+  if(!me){ Z.openAuthModal('login'); return; }
+  Z.showView('public-profile', me.id);
+};
+
+Z.spaceBack = function(){
+  var prev = Z.State.prevViewBeforeSpace || { view: 'home', param: null };
+  Z.State.prevViewBeforeSpace = null;
+  Z.showView(prev.view, prev.param);
+};
+
+Z.findPostInState = function(postId){
+  var p = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+  if(p) return p;
+  if(Z.State.spacePosts) return Z.State.spacePosts.find(function(x){ return x.id === postId; }) || null;
+  return null;
+};
+
+/* ---------- Fix B — Header avatar → own SPACE · Gear → Settings ---------- */
+Z.renderHeaderAuth = function(){
+  var c = document.getElementById('header-auth-container'); if(!c) return;
+  var u = Z.State.currentUser;
+  if(u){
+    c.innerHTML =
+      '<div style="display:flex;align-items:center;gap:6px;">' +
+        '<button onclick="Z.goMySpace()" title="My SPACE" style="background:transparent;border:none;cursor:pointer;padding:0;">' +
+          '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(16,185,129,.5);">' +
+        '</button>' +
+        '<button onclick="Z.showView(\'profile\')" title="Settings" style="background:#1e293b;border:none;color:#94a3b8;cursor:pointer;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' +
+          '<i class="fa-solid fa-gear" style="font-size:11px;"></i>' +
+        '</button>' +
+        '<button onclick="Z.logout()" title="Logout" style="background:#1e293b;border:none;color:#94a3b8;cursor:pointer;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' +
+          '<i class="fa-solid fa-power-off" style="font-size:10px;"></i>' +
+        '</button>' +
+      '</div>';
+  } else {
+    c.innerHTML = '<button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;font-size:11px;padding:6px 14px;border-radius:20px;cursor:pointer;">Login</button>';
+  }
+};
 
 Z.softRefresh = function(){
   var container = document.getElementById('app-container'); if(!container) return;
@@ -1620,8 +1667,9 @@ Z.renderSparkReactionButtons = function(spark){
   });
   return html;
 };
+
 Z.updatePostReactionUI = function(postId){
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; }); if(!post) return;
+  var post = Z.findPostInState(postId); if(!post) return;
   var card = document.querySelector('.post-card[data-post-id="' + postId + '"]'); if(!card) return;
   var row = card.querySelector('.post-reactions'); if(!row) return;
   row.innerHTML = Z.renderReactionRowForPost(post);
@@ -1815,7 +1863,7 @@ Z.showStatusViewer = function(){
   }
   document.body.insertAdjacentHTML('beforeend',
     '<div class="status-viewer-overlay" id="status-viewer"><div class="status-progress-track"><div class="status-progress-bar" id="status-progress" style="width:0%;"></div></div>' +
-    '<div class="status-viewer-header"><button class="circle-x-btn" onclick="event.stopPropagation();Z.closeStatusViewer();return false;"><i class="fa-solid fa-xmark"></i></button><div style="display:flex;align-items:center;gap:8px;"><img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;"><div><div style="font-weight:700;font-size:13px;">' + Z.escape(Z.displayName(author)) + '</div><div style="font-size:10px;color:#94a3b8;">' + cur + ' / ' + total + ' • ' + _timeAgo(new Date(status.created_at).getTime()) + '</div></div></div><div style="width:38px;"></div></div>' +
+    '<div class="status-viewer-header"><button class="circle-x-btn" onclick="event.stopPropagation();Z.closeStatusViewer();return false;"><i class="fa-solid fa-xmark"></i></button><div style="display:flex;align-items:center;gap:8px;"><img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;cursor:pointer;" onclick="event.stopPropagation();Z.closeStatusViewer();Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')"><div><div style="font-weight:700;font-size:13px;">' + Z.escape(Z.displayName(author)) + '</div><div style="font-size:10px;color:#94a3b8;">' + cur + ' / ' + total + ' • ' + _timeAgo(new Date(status.created_at).getTime()) + '</div></div></div><div style="width:38px;"></div></div>' +
     '<div class="status-viewer-body" id="status-viewer-body"><div class="status-stage" id="status-stage">' + stage + captionOverlay + '</div>' +
     '<button onclick="event.stopPropagation();Z.statusPrev();return false;" class="status-nav-btn left"><i class="fa-solid fa-chevron-left"></i></button>' +
     '<button onclick="event.stopPropagation();Z.statusNext();return false;" class="status-nav-btn right"><i class="fa-solid fa-chevron-right"></i></button></div>' +
@@ -1828,7 +1876,7 @@ Z.showStatusViewer = function(){
       var overlayEl = st.querySelector('.status-caption-overlay');
       var mediaWrap = document.createElement('div');
       mediaWrap.style.width = '100%'; mediaWrap.style.height = '100%';
-      if(isVid){ mediaWrap.innerHTML = '<video playsinline preload="auto" style="width:100%;height:100%;object-fit:contain;background:#000;"></video>'; }
+      if(isVid){ mediaWrap.innerHTML = '<video playsinline preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;"></video>'; }
       else { mediaWrap.innerHTML = '<img src="' + Z.escape(url) + '" style="width:100%;height:100%;object-fit:contain;background:#000;" alt="Status">'; }
       var loader = st.querySelector('div'); if(loader && loader !== overlayEl) loader.remove();
       if(overlayEl) st.insertBefore(mediaWrap, overlayEl); else st.appendChild(mediaWrap);
@@ -1857,10 +1905,12 @@ Z.showStatusViewer = function(){
   Z.setupViewerGesture();
   setTimeout(function(){ Z.detectCaptionOverflow(); Z.resolveIdbRefs(document.getElementById('status-stage')); }, 60);
 };
+
 Z.startStatusTimer = function(){ Z.clearStatusTimer(); Z.State.viewerPaused = false; Z.State.viewerDuration = 7000; Z.State.viewerElapsed = 0; Z.State.viewerStartTime = Date.now(); Z.State.viewerTimer = setTimeout(function(){ Z.statusNext(); }, Z.State.viewerDuration); Z.State.viewerProgressInterval = setInterval(function(){ if(Z.State.viewerPaused) return; Z.State.viewerElapsed = Date.now() - Z.State.viewerStartTime; var pct = Math.min(100, (Z.State.viewerElapsed/Z.State.viewerDuration)*100); var b = document.getElementById('status-progress'); if(b) b.style.width = pct + '%'; }, 100); };
 Z.pauseStatusTimer = function(){ if(Z.State.viewerPaused) return; Z.State.viewerPaused = true; if(Z.State.viewerTimer){ clearTimeout(Z.State.viewerTimer); Z.State.viewerTimer = null; } if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; } };
 Z.resumeStatusTimer = function(){ if(!Z.State.viewerPaused) return; var st = Z.State.viewerStatuses[Z.State.viewerIndex]; if(st && (st.media_type === 'video' || (st.media_type == null && _isVideoUrl(st.media_url)))) return; Z.State.viewerPaused = false; var rem = Z.State.viewerDuration - Z.State.viewerElapsed; Z.State.viewerStartTime = Date.now() - Z.State.viewerElapsed; Z.State.viewerTimer = setTimeout(function(){ Z.statusNext(); }, Math.max(100, rem)); Z.State.viewerProgressInterval = setInterval(function(){ if(Z.State.viewerPaused) return; Z.State.viewerElapsed = Date.now() - Z.State.viewerStartTime; var pct = Math.min(100, (Z.State.viewerElapsed/Z.State.viewerDuration)*100); var b = document.getElementById('status-progress'); if(b) b.style.width = pct + '%'; }, 100); };
 Z.clearStatusTimer = function(){ if(Z.State.viewerTimer){ clearTimeout(Z.State.viewerTimer); Z.State.viewerTimer = null; } if(Z.State.viewerProgressInterval){ clearInterval(Z.State.viewerProgressInterval); Z.State.viewerProgressInterval = null; } };
+
 Z.setupViewerGesture = function(){
   var body = document.getElementById('status-viewer-body'); if(!body) return;
   var sx=0, sy=0, st=0, moved=false, holding=false, holdTimer=null;
@@ -1953,6 +2003,9 @@ Z.confirmNoCaption = function(continueCall){
   document.body.appendChild(host);
 };
 
+/* =========================================================
+   SPARK FEED
+   ========================================================= */
 Z.renderSpark = function(){
   var sparks = (Z.State.allSparks || []).slice();
   if(!sparks.length){ return '<div style="padding:60px 20px;text-align:center;color:#64748b;"><i class="fa-solid fa-bolt" style="font-size:40px;color:#334155;display:block;margin-bottom:12px;"></i><p style="margin-bottom:16px;">No Sparks yet</p><button onclick="Z.openCreateModal()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:10px 24px;border-radius:10px;font-size:12px;cursor:pointer;">Create First Spark</button></div>'; }
@@ -1974,7 +2027,7 @@ Z.renderSparkSlide = function(spark, index){
   var unfrozen = Z.isUnfrozen(spark.id);
   var freezeTip = unfrozen ? 'Unfrozen' : 'Frozen';
   var isSaved = (Z.State.savedSparks || []).indexOf(spark.id) !== -1;
-  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="auto" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
+  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
   var tags = '';
   if(spark.tags && spark.tags.length){ tags = spark.tags.map(function(t){ return '<button onclick="event.stopPropagation()">#' + Z.escape(t) + '</button>'; }).join(' '); }
   var viewBadge = '<div class="spark-view-badge"><i class="fa-solid fa-eye"></i><span>' + (spark.views||0) + '</span></div>';
@@ -1996,19 +2049,31 @@ Z.renderSparkSlide = function(spark, index){
     captionHtml = '<div class="spark-info-caption" onclick="Z.toggleCaptionEl(event, this)"><div class="sc-text">' + Z.escape(spark.caption) + '</div><button class="sc-see-more" type="button" aria-label="Unfold caption" onclick="Z.toggleCaptionEl(event, this.parentElement)">' + Z.UNFOLD_LABEL + '</button></div>';
   }
   return '<div class="spark-slide" data-spark-index="' + index + '">' + videoEl + '<div class="spark-top-gradient"></div><div class="spark-bottom-gradient"></div>' + viewBadge + menuHtml +
-    '<div class="spark-info"><div class="spark-info-author"><img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')"><div><div class="sname">' + Z.escape(Z.displayName(a)) + '</div><div class="shandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(spark.created_at).getTime()) + '</div></div></div>' +
-    (isFull && spark.title ? '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + Z.escape(spark.title) + '</div>' : '') +
-    captionHtml +
-    (tags ? '<div class="spark-info-tags">' + tags + '</div>' : '') + '</div>' + stack + '</div>';
+    '<div class="spark-info">' +
+      '<div class="spark-info-author">' +
+        '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
+        '<div onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
+          '<div class="sname">' + Z.escape(Z.displayName(a)) + '</div>' +
+          '<div class="shandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(spark.created_at).getTime()) + '</div>' +
+        '</div>' +
+      '</div>' +
+      (isFull && spark.title ? '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + Z.escape(spark.title) + '</div>' : '') +
+      captionHtml +
+      (tags ? '<div class="spark-info-tags">' + tags + '</div>' : '') +
+    '</div>' + stack + '</div>';
 };
+
 Z.updateSparkReactionsUI = function(sparkId){
-  var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; }); if(!spark) return;
+  var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
+  if(!spark && Z.State.spaceSparks){ spark = Z.State.spaceSparks.find(function(x){ return x.id === sparkId; }); }
+  if(!spark) return;
   var stack = document.querySelector('[data-spark-actions="' + sparkId + '"]'); if(!stack) return;
   var wrap = stack.querySelector('.spark-action-reactions');
   if(wrap){ wrap.innerHTML = Z.renderSparkReactionButtons(spark); }
   var dot = stack.querySelector('.freeze-dot'); if(dot){
     var unfrozen = Z.isUnfrozen(sparkId);
-    if(unfrozen){ dot.classList.add('unfrozen'); dot.setAttribute('data-tip','Unfrozen'); } else { dot.classList.remove('unfrozen'); dot.setAttribute('data-tip','Frozen'); }
+    if(unfrozen){ dot.classList.add('unfrozen'); dot.setAttribute('data-tip','Unfrozen'); }
+    else { dot.classList.remove('unfrozen'); dot.setAttribute('data-tip','Frozen'); }
   }
   if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
 };
@@ -2018,8 +2083,7 @@ Z.refreshSparkCommentCount = function(sparkId){
     if(!btn) return;
     var spark = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
     if(!spark) return;
-    var n = spark._commentsCount || 0;
-    btn.textContent = n;
+    btn.textContent = spark._commentsCount || 0;
   } catch(e){}
 };
 Z.toggleSparkMenu = function(sparkId, ev){
@@ -2163,10 +2227,15 @@ Z.deleteSpark = async function(sparkId){
   var c = Z.sb(); if(!c) return;
   var r = await c.from('sparks').delete().eq('id', sparkId);
   if(r.error){ Z.toast('Cannot delete.'); return; }
-  Z.toast('Deleted.'); Z.State.allSparks = (Z.State.allSparks||[]).filter(function(s){ return s.id !== sparkId; }); Z.showView('spark');
+  Z.toast('Deleted.');
+  Z.State.allSparks = (Z.State.allSparks||[]).filter(function(s){ return s.id !== sparkId; });
+  Z.State.spaceSparks = (Z.State.spaceSparks||[]).filter(function(s){ return s.id !== sparkId; });
+  Z.showView('spark');
 };
 
-/* SPARK COMMENTS — instant counter + rerender body */
+/* =========================================================
+   SPARK COMMENTS (avatar + clickable name)
+   ========================================================= */
 Z.findSparkCommentInState = function(commentId){
   var found = null;
   (Z.State.allSparks||[]).forEach(function(sp){
@@ -2184,7 +2253,7 @@ Z._openSparkCommentsId = null;
 
 Z.renderSparkComment = function(cm, spark, isReply){
   var me = _cu();
-  var ca = _p(cm.author_id) || {name:'User'};
+  var ca = _p(cm.author_id) || {name:'User', id:cm.author_id};
   var isMyComment = me && me.id === cm.author_id;
   var isMySpark = me && spark && me.id === spark.author_id;
   var counts = cm._reactionCounts || {};
@@ -2210,7 +2279,17 @@ Z.renderSparkComment = function(cm, spark, isReply){
   var repliesHtml = '';
   if(replies.length){ repliesHtml = '<div class="comment-replies">'; replies.forEach(function(rep){ repliesHtml += Z.renderSparkComment(rep, spark, true); }); repliesHtml += '</div>'; }
   var editorHtml = '<div id="spark-reply-editor-' + Z.escape(cm.id) + '"></div>';
-  return '<div class="comment-item ' + (cm.color||'light-green') + (cm.hidden?' hidden-comment':'') + '" data-spark-comment-id="' + Z.escape(cm.id) + '"><span class="cname">' + Z.escape(ca.name) + '</span><span class="ctext">' + Z.escape(cm.text) + '</span>' + (cm.hidden ? '<div style="font-size:10px;margin-top:4px;opacity:.7;"><i class="fa-solid fa-eye-slash"></i> Hidden</div>' : '') + '<div class="comment-reactions">' + rr + '</div>' + actions + editorHtml + repliesHtml + '</div>';
+  var bubble = '<div class="comment-item ' + (cm.color||'light-green') + (cm.hidden?' hidden-comment':'') + '" data-spark-comment-id="' + Z.escape(cm.id) + '" style="margin-bottom:0;flex:1;min-width:0;">' +
+    '<span class="cname" onclick="Z.showView(\'public-profile\',\'' + Z.escape(cm.author_id) + '\')" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(0,0,0,.2);text-underline-offset:2px;">' + Z.escape(ca.name || 'User') + '</span>' +
+    '<span class="ctext">' + Z.escape(cm.text) + '</span>' +
+    (cm.hidden ? '<div style="font-size:10px;margin-top:4px;opacity:.7;"><i class="fa-solid fa-eye-slash"></i> Hidden</div>' : '') +
+    '<div class="comment-reactions">' + rr + '</div>' + actions + editorHtml + repliesHtml +
+  '</div>';
+  var av = isReply ? 24 : 30;
+  return '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
+    '<img src="' + Z.escape(Z.displayAvatar(ca)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(cm.author_id) + '\')" style="width:' + av + 'px;height:' + av + 'px;border-radius:50%;object-fit:cover;flex-shrink:0;cursor:pointer;margin-top:2px;">' +
+    bubble +
+  '</div>';
 };
 
 Z.rerenderSparkCommentsBody = function(sparkId){
@@ -2409,6 +2488,9 @@ Z.shareExternal = function(kind, url){
   else if(kind==='youtube'){ navigator.clipboard.writeText(url); Z.toast('Link copied'); setTimeout(function(){window.open('https://studio.youtube.com/','_blank');},500); }
 };
 
+/* =========================================================
+   CREATE SPARK / FULL VIDEO MODALS
+   ========================================================= */
 Z.openCreateSparkModal = function(){
   Z.openModal(
     '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
@@ -2497,22 +2579,32 @@ Z.removeFvFile = function(){
   var rr = document.getElementById('fv-remove-row'); if(rr) rr.style.display = 'none';
 };
 
+/* =========================================================
+   HOME + POST CARD + COMMENT (clickable name/avatar)
+   ========================================================= */
 Z.renderHome = function(){
   var me = _cu();
   var posts = Z.State.allPosts || [];
   var profiles = Z.State.allProfiles || [];
   var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
   html += '<div id="home-status-host"></div>';
-  if(me){ html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;display:flex;align-items:center;gap:10px;"><img src="' + Z.escape(Z.displayAvatar(me)) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;"><input type="text" id="composer-input" placeholder="What do you think?" style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:9px 14px;font-size:12px;color:#fff;outline:none;" onfocus="Z.expandComposer()"></div>'; }
-  else { html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;text-align:center;"><button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:10px;font-size:12px;cursor:pointer;">Login to post</button></div>'; }
+  if(me){
+    html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;display:flex;align-items:center;gap:10px;">' +
+      '<img src="' + Z.escape(Z.displayAvatar(me)) + '" onclick="Z.goMySpace()" style="width:36px;height:36px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">' +
+      '<input type="text" id="composer-input" placeholder="What do you think?" style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:9px 14px;font-size:12px;color:#fff;outline:none;" onfocus="Z.expandComposer()">' +
+    '</div>';
+  } else {
+    html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;text-align:center;"><button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:10px;font-size:12px;cursor:pointer;">Login to post</button></div>';
+  }
   html += '<div id="composer-expanded"></div>';
   if(posts.length){ posts.forEach(function(p){ html += Z.renderPostCard(p, profiles, me); }); }
   else { html += '<div class="empty-state"><i class="fa-regular fa-newspaper"></i><p>No posts yet. Connect with people to see their posts.</p></div>'; }
   html += '</div>';
   return html;
 };
+
 Z.renderPostCard = function(p, profiles, me){
-  var a = profiles.find(function(x){ return x.id === p.author_id; }) || {id:p.author_id, name:'User', avatar:''};
+  var a = (profiles || []).find(function(x){ return x.id === p.author_id; }) || {id:p.author_id, name:'User', avatar:''};
   var isSaved = Z.isPostSaved(p.id);
   var isMine = me && me.id === p.author_id;
   var interest = Z.getInterestFor(p.id);
@@ -2525,24 +2617,36 @@ Z.renderPostCard = function(p, profiles, me){
   var mHtml = '';
   if(p.media_url){
     var _mt = p.media_type || (_isVideoUrl(p.media_url) ? 'video' : 'image');
-    if(_mt === 'video') mHtml = '<div class="post-media"><video src="' + Z.escape(p.media_url) + '" controls playsinline preload="auto" loop></video></div>';
+    if(_mt === 'video') mHtml = '<div class="post-media"><video src="' + Z.escape(p.media_url) + '" controls playsinline preload="metadata" loop></video></div>';
     else mHtml = '<div class="post-media"><img src="' + Z.escape(p.media_url) + '" alt="Post" loading="lazy"></div>';
   }
   var cp = '<div class="comment-color-picker">' + ['light-green','light-blue','light-yellow','light-pink','light-purple'].map(function(c){ var s = c.replace('light-',''); return '<div class="comment-color-dot c-' + s + ' ' + (Z.State.commentColor===c?'selected':'') + '" data-color="' + c + '" onclick="Z.setCommentColor(\'' + c + '\')"></div>'; }).join('') + '</div>';
   var menuBtn = '<div class="post-menu-wrap"><button class="post-menu-btn" onclick="Z.togglePostMenu(\'' + Z.escape(p.id) + '\', event)" type="button"><i class="fa-solid fa-ellipsis-vertical"></i></button><div class="post-menu" id="post-menu-' + Z.escape(p.id) + '">' + (isMine ? '<button class="danger" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete</button><div class="divider"></div>' : '') + '<button onclick="Z.toggleSavePost(\'' + Z.escape(p.id) + '\')"><i class="fa-' + (isSaved?'solid':'regular') + ' fa-bookmark"></i> ' + (isSaved?'Unsave':'Save') + '</button><button onclick="Z.markInterest(\'' + Z.escape(p.id) + '\',\'interested\')"><i class="fa-solid fa-thumbs-up"></i> Interested' + (interest==='interested'?' ✓':'') + '</button><button onclick="Z.markInterest(\'' + Z.escape(p.id) + '\',\'not_interested\')"><i class="fa-solid fa-thumbs-down"></i> Not Interested' + (interest==='not_interested'?' ✓':'') + '</button></div></div>';
-  return '<div class="post-card" data-post-id="' + Z.escape(p.id) + '"><div class="post-author"><img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;"><div style="flex:1;min-width:0;"><div class="pname">' + Z.escape(Z.displayName(a)) + '</div><div class="phandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(p.created_at).getTime()) + '</div></div>' + menuBtn + '</div>' + captionHtml + mHtml +
+  return '<div class="post-card" data-post-id="' + Z.escape(p.id) + '">' +
+    '<div class="post-author">' +
+      '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
+      '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
+        '<div class="pname">' + Z.escape(Z.displayName(a)) + '</div>' +
+        '<div class="phandle">@' + Z.escape(a.username || 'user') + ' • ' + _timeAgo(new Date(p.created_at).getTime()) + '</div>' +
+      '</div>' + menuBtn +
+    '</div>' + captionHtml + mHtml +
     '<div class="post-reactions">' + Z.renderReactionRowForPost(p) + '</div>' +
-    '<div class="post-actions"><button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')"><i class="fa-regular fa-comment"></i> Comment ' + countAllComments(comments) + '</button><button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + '</button><button style="cursor:default;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button></div>' +
-    '<div class="post-comments" id="comments-' + Z.escape(p.id) + '">' + cHtml + cp + '<div class="comment-input-wrap"><textarea id="comment-input-' + Z.escape(p.id) + '" rows="1" placeholder="Write a comment..." oninput="Z.autoGrow(this)"></textarea><button onclick="Z.addComment(\'' + Z.escape(p.id) + '\')">Send</button></div></div></div>';
+    '<div class="post-actions">' +
+      '<button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')"><i class="fa-regular fa-comment"></i> Comment ' + countAllComments(comments) + '</button>' +
+      '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + '</button>' +
+      '<button style="cursor:default;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button>' +
+    '</div>' +
+    '<div class="post-comments" id="comments-' + Z.escape(p.id) + '">' + cHtml + cp + '<div class="comment-input-wrap"><textarea id="comment-input-' + Z.escape(p.id) + '" rows="1" placeholder="Write a comment..." oninput="Z.autoGrow(this)"></textarea><button onclick="Z.addComment(\'' + Z.escape(p.id) + '\')">Send</button></div></div>' +
+  '</div>';
 };
-function countAllComments(arr){ var n = 0; (function walk(list){ list.forEach(function(c){ n++; if(c._replies) walk(c._replies); }); })(arr); return n; }
+
 Z.togglePostMenu = function(postId, ev){ if(ev) ev.stopPropagation(); var menu = document.getElementById('post-menu-' + postId); if(!menu) return; var wasOpen = menu.classList.contains('open'); document.querySelectorAll('.post-menu.open').forEach(function(m){ m.classList.remove('open'); }); if(!wasOpen) menu.classList.add('open'); };
 document.addEventListener('click', function(e){ if(!e.target.closest('.post-menu-wrap')){ document.querySelectorAll('.post-menu.open').forEach(function(m){ m.classList.remove('open'); }); } });
 
 Z.renderComment = function(cm, post, profiles, isReply){
   profiles = profiles || Z.State.allProfiles || [];
   var me = _cu();
-  var ca = profiles.find(function(x){ return x.id === cm.author_id; }) || {name:'User'};
+  var ca = profiles.find(function(x){ return x.id === cm.author_id; }) || {name:'User', id:cm.author_id};
   var isMyComment = me && me.id === cm.author_id;
   var isMyPost = me && post && me.id === post.author_id;
   var counts = cm._reactionCounts || {};
@@ -2565,9 +2669,22 @@ Z.renderComment = function(cm, post, profiles, isReply){
   var repliesHtml = '';
   if(replies.length){ repliesHtml = '<div class="comment-replies">'; replies.forEach(function(rep){ repliesHtml += Z.renderComment(rep, post, profiles, true); }); repliesHtml += '</div>'; }
   var editorHtml = '<div id="reply-editor-' + Z.escape(cm.id) + '"></div>';
-  return '<div class="comment-item ' + (cm.color||'light-green') + (cm.hidden?' hidden-comment':'') + '" data-comment-id="' + Z.escape(cm.id) + '"><span class="cname">' + Z.escape(ca.name) + '</span><span class="ctext">' + Z.escape(cm.text) + '</span>' + (cm.hidden ? '<div style="font-size:10px;margin-top:4px;opacity:.7;"><i class="fa-solid fa-eye-slash"></i> Hidden</div>' : '') + '<div class="comment-reactions">' + rr + '</div>' + actions + editorHtml + repliesHtml + '</div>';
+  var bubble = '<div class="comment-item ' + (cm.color||'light-green') + (cm.hidden?' hidden-comment':'') + '" data-comment-id="' + Z.escape(cm.id) + '" style="margin-bottom:0;flex:1;min-width:0;">' +
+    '<span class="cname" onclick="Z.showView(\'public-profile\',\'' + Z.escape(cm.author_id) + '\')" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(0,0,0,.2);text-underline-offset:2px;">' + Z.escape(ca.name || 'User') + '</span>' +
+    '<span class="ctext">' + Z.escape(cm.text) + '</span>' +
+    (cm.hidden ? '<div style="font-size:10px;margin-top:4px;opacity:.7;"><i class="fa-solid fa-eye-slash"></i> Hidden</div>' : '') +
+    '<div class="comment-reactions">' + rr + '</div>' + actions + editorHtml + repliesHtml +
+  '</div>';
+  var av = isReply ? 24 : 30;
+  return '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
+    '<img src="' + Z.escape(Z.displayAvatar(ca)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(cm.author_id) + '\')" style="width:' + av + 'px;height:' + av + 'px;border-radius:50%;object-fit:cover;flex-shrink:0;cursor:pointer;margin-top:2px;">' +
+    bubble +
+  '</div>';
 };
 
+/* =========================================================
+   COMPOSER
+   ========================================================= */
 Z.expandComposer = function(){
   var c = document.getElementById('composer-expanded'); if(!c) return;
   if(!_cu()){ Z.openAuthModal('login'); return; }
@@ -2675,9 +2792,12 @@ Z.submitComposer = async function(forceNoCaption){
 };
 Z.cancelComposer = function(){ var c = document.getElementById('composer-expanded'); if(c) c.innerHTML=''; var i = document.getElementById('composer-input'); if(i) i.value=''; };
 
+/* =========================================================
+   POST / COMMENT REACTIONS
+   ========================================================= */
 Z.reactToPost = async function(postId, reactionType){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; }); if(!post) return;
+  var post = Z.findPostInState(postId); if(!post) return;
   if(post.author_id === me.id){ Z.toast('Cannot react to your own post.'); return; }
   if(!Z.isUnfrozen(postId)){ Z.showFreezeTooltip(postId); return; }
   var c = Z.sb(); if(!c) return;
@@ -2710,7 +2830,13 @@ Z.reactToPost = async function(postId, reactionType){
 };
 Z.toggleComments = function(postId){ var el = document.getElementById('comments-' + postId); if(el) el.classList.toggle('open'); };
 Z.setCommentColor = function(color){ Z.State.commentColor = color; document.querySelectorAll('.comment-color-dot').forEach(function(d){ d.classList.toggle('selected', d.getAttribute('data-color') === color); }); };
-Z.findCommentInState = function(commentId){ var found = null; function scan(arr){ for(var i=0;i<arr.length;i++){ if(arr[i].id === commentId){ found = arr[i]; return; } if(arr[i]._replies) scan(arr[i]._replies); if(found) return; } } (Z.State.allPosts||[]).forEach(function(p){ if(!found && p._comments) scan(p._comments); }); return found; };
+Z.findCommentInState = function(commentId){
+  var found = null;
+  function scan(arr){ for(var i=0;i<arr.length;i++){ if(arr[i].id === commentId){ found = arr[i]; return; } if(arr[i]._replies) scan(arr[i]._replies); if(found) return; } }
+  (Z.State.allPosts||[]).forEach(function(p){ if(!found && p._comments) scan(p._comments); });
+  if(!found && Z.State.spacePosts){ Z.State.spacePosts.forEach(function(p){ if(!found && p._comments) scan(p._comments); }); }
+  return found;
+};
 Z.reactToComment = async function(commentId, reactionType){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var cm = Z.findCommentInState(commentId); if(!cm){ Z.toast('Comment not found.'); return; }
@@ -2768,7 +2894,7 @@ Z.addComment = async function(postId){
   var c = Z.sb(); if(!c) return;
   var newId = Z.uuid();
   var color = Z.State.commentColor||'light-green';
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+  var post = Z.findPostInState(postId);
   var optimistic = {id:newId, post_id:postId, author_id:me.id, text:t, color:color, _reactionCounts:{}, _myReactions:{}, _replies:[]};
   if(post){ if(!post._comments) post._comments = []; post._comments.push(optimistic); }
   var container = document.getElementById('comments-' + postId);
@@ -2781,7 +2907,14 @@ Z.addComment = async function(postId){
     if(card && post){ var b = card.querySelector('.post-actions button'); if(b) b.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + countAllComments(post._comments || []); }
   }
   var r = await c.from('comments').insert({id:newId, post_id:postId, author_id:me.id, text:t, color:color});
-  if(r.error){ if(post && post._comments){ post._comments = post._comments.filter(function(x){ return x.id !== newId; }); } var domEl = document.querySelector('[data-comment-id="' + newId + '"]'); if(domEl) domEl.remove(); var card2 = document.querySelector('.post-card[data-post-id="' + postId + '"]'); if(card2 && post){ var b2 = card2.querySelector('.post-actions button'); if(b2) b2.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + countAllComments(post._comments || []); } Z.toast('Failed.', 'error'); }
+  if(r.error){
+    if(post && post._comments){ post._comments = post._comments.filter(function(x){ return x.id !== newId; }); }
+    var domEl = document.querySelector('[data-comment-id="' + newId + '"]');
+    if(domEl && domEl.parentNode) domEl.parentNode.remove();
+    var card2 = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+    if(card2 && post){ var b2 = card2.querySelector('.post-actions button'); if(b2) b2.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + countAllComments(post._comments || []); }
+    Z.toast('Failed.', 'error');
+  }
 };
 Z.openInlineReply = function(postId, parentId){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
@@ -2800,7 +2933,7 @@ Z.submitReply = async function(postId, parentId){
   var color = Z.State.commentColor||'light-green';
   var r = await c.from('comments').insert({id:newId, post_id:postId, parent_id:parentId, author_id:me.id, text:t, color:color});
   if(r.error){ Z.toast('Failed.', 'error'); return; }
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+  var post = Z.findPostInState(postId);
   var parentComment = Z.findCommentInState(parentId);
   var newRep = {id:newId, post_id:postId, parent_id:parentId, author_id:me.id, text:t, color:color, _reactionCounts:{}, _myReactions:{}, _replies:[]};
   if(parentComment){ if(!parentComment._replies) parentComment._replies = []; parentComment._replies.push(newRep); }
@@ -2818,10 +2951,11 @@ Z.deleteComment = async function(commentId, postId){
   var c = Z.sb(); if(!c) return;
   var r = await c.from('comments').delete().eq('id', commentId);
   if(r.error){ Z.toast('Delete failed.'); return; }
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+  var post = Z.findPostInState(postId);
   function removeRec(arr){ for(var i=0;i<arr.length;i++){ if(arr[i].id === commentId){ arr.splice(i,1); return true; } if(arr[i]._replies && removeRec(arr[i]._replies)) return true; } return false; }
   if(post && post._comments) removeRec(post._comments);
-  var el = document.querySelector('[data-comment-id="' + commentId + '"]'); if(el) el.remove();
+  var el = document.querySelector('[data-comment-id="' + commentId + '"]');
+  if(el && el.parentNode) el.parentNode.remove();
   if(post){ var card = document.querySelector('.post-card[data-post-id="' + postId + '"]'); if(card){ var b = card.querySelector('.post-actions button'); if(b) b.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + countAllComments(post._comments || []); } }
   Z.toast('Deleted.');
 };
@@ -2831,8 +2965,8 @@ Z.hideComment = async function(commentId, postId){
   var r = await c.from('comments').update({hidden:true}).eq('id', commentId);
   if(r.error){ Z.toast('Failed.'); return; }
   var cm = Z.findCommentInState(commentId); if(cm) cm.hidden = true;
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
-  if(cm && post){ var el = document.querySelector('[data-comment-id="' + commentId + '"]'); if(el){ var isReply = !!el.closest('.comment-replies'); var temp = document.createElement('div'); temp.innerHTML = Z.renderComment(cm, post, Z.State.allProfiles, isReply); el.parentNode.replaceChild(temp.firstChild, el); } }
+  var post = Z.findPostInState(postId);
+  if(cm && post){ var el = document.querySelector('[data-comment-id="' + commentId + '"]'); if(el){ var isReply = !!el.closest('.comment-replies'); var wrapper = el.parentNode; var temp = document.createElement('div'); temp.innerHTML = Z.renderComment(cm, post, Z.State.allProfiles, isReply); wrapper.parentNode.replaceChild(temp.firstChild, wrapper); } }
   Z.toast('Hidden.');
 };
 Z.unhideComment = async function(commentId, postId){
@@ -2840,11 +2974,16 @@ Z.unhideComment = async function(commentId, postId){
   var r = await c.from('comments').update({hidden:false}).eq('id', commentId);
   if(r.error){ Z.toast('Failed.'); return; }
   var cm = Z.findCommentInState(commentId); if(cm) cm.hidden = false;
-  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
-  if(cm && post){ var el = document.querySelector('[data-comment-id="' + commentId + '"]'); if(el){ var isReply = !!el.closest('.comment-replies'); var temp = document.createElement('div'); temp.innerHTML = Z.renderComment(cm, post, Z.State.allProfiles, isReply); el.parentNode.replaceChild(temp.firstChild, el); } }
+  var post = Z.findPostInState(postId);
+  if(cm && post){ var el = document.querySelector('[data-comment-id="' + commentId + '"]'); if(el){ var isReply = !!el.closest('.comment-replies'); var wrapper = el.parentNode; var temp = document.createElement('div'); temp.innerHTML = Z.renderComment(cm, post, Z.State.allProfiles, isReply); wrapper.parentNode.replaceChild(temp.firstChild, wrapper); } }
   Z.toast('Unhidden.');
 };
-Z.deletePost = async function(postId){ if(!confirm('Delete this post?')) return; var ok = await Z.DB.deletePost(postId); if(ok){ Z.toast('Deleted.'); Z.softRefresh(); Z.saveSnapshot(); } };
+
+Z.deletePost = async function(postId){
+  if(!confirm('Delete this post?')) return;
+  var ok = await Z.DB.deletePost(postId);
+  if(ok){ Z.toast('Deleted.'); Z.softRefresh(); Z.saveSnapshot(); }
+};
 Z.toggleSavePost = function(postId){
   var saved = Z.State.savedPosts || []; var idx = saved.indexOf(postId);
   if(idx === -1){ saved.push(postId); Z.toast('Saved.'); } else { saved.splice(idx,1); Z.toast('Unsaved.'); }
@@ -2859,6 +2998,7 @@ Z.markInterest = function(postId, kind){
   document.querySelectorAll('.post-menu.open').forEach(function(m){ m.classList.remove('open'); });
   Z.softRefresh();
 };
+
 Z.sharePost = async function(postId){
   var me = _cu(); if(!me){ Z.openAuthModal('login'); return; }
   var url = location.href.split('#')[0] + '#post-' + encodeURIComponent(postId);
@@ -2867,30 +3007,33 @@ Z.sharePost = async function(postId){
   Z.openSheet('<div class="modal-overlay" style="background:transparent;align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()"><div class="bottom-sheet"><div class="sheet-handle"></div><div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Share Post</h3><button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div><div class="sheet-body"><div class="share-grid"><div class="share-item wa" onclick="Z.shareExternal(\'whatsapp\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-whatsapp"></i>WhatsApp</div><div class="share-item fb" onclick="Z.shareExternal(\'facebook\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-facebook"></i>Facebook</div><div class="share-item tw" onclick="Z.shareExternal(\'twitter\',\'' + Z.escape(url) + '\')"><i class="fa-brands fa-x-twitter"></i>Twitter</div><div class="share-item cp" onclick="Z.shareExternal(\'copy\',\'' + Z.escape(url) + '\')"><i class="fa-solid fa-copy"></i>Copy</div></div></div></div></div>');
 };
 
+/* =========================================================
+   FEED VIDEO AUTOPLAY
+   ========================================================= */
 Z._feedVideoObserver = null;
 Z.recomputeFeedVideoPlayback = function(){
-  var vids = document.querySelectorAll('#app-container video:not([data-spark-id])'); if(!vids.length) return;
+  var vids = document.querySelectorAll('#app-container video:not([data-spark-id]):not([data-space-spark])'); if(!vids.length) return;
   var vh = window.innerHeight, best = null, bestRatio = 0;
   vids.forEach(function(v){ var r = v.getBoundingClientRect(); var visible = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top)); var ratio = r.height > 0 ? visible / r.height : 0; if(ratio > bestRatio){ bestRatio = ratio; best = v; } });
   vids.forEach(function(v){ if(v === best && bestRatio >= 0.75){ v.muted = false; v.volume = 1; Z.playExclusive(v); } else { if(!v.paused){ try { v.pause(); } catch(e){} } } });
 };
 Z.setupFeedVideoAutoplay = function(){
   if(Z._feedVideoObserver) Z._feedVideoObserver.disconnect();
-  var vids = document.querySelectorAll('#app-container video:not([data-spark-id])'); if(!vids.length) return;
+  var vids = document.querySelectorAll('#app-container video:not([data-spark-id]):not([data-space-spark])'); if(!vids.length) return;
   Z._feedVideoObserver = new IntersectionObserver(function(){ Z.recomputeFeedVideoPlayback(); }, {threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0]});
   vids.forEach(function(v){ v.setAttribute('playsinline',''); v.setAttribute('loop',''); Z._feedVideoObserver.observe(v); });
   if(!Z._feedScrollHooked){ Z._feedScrollHooked = true; var t = null; window.addEventListener('scroll', function(){ if(t) return; t = setTimeout(function(){ t = null; if(Z.State.currentView === 'home') Z.recomputeFeedVideoPlayback(); Z.updateScrollTopBtn(true); }, 100); }, {passive:true}); }
 };
 
-/* PUBLIC HOME */
+/* =========================================================
+   PUBLIC HOME
+   ========================================================= */
 Z.renderPublicHome = function(){
   var me = _cu();
   var tl = Z.State.buildTimeline || { phases: [], percent: 41, currentPhaseLabel: 'Building Core Features' };
   var phases = tl.phases || [];
   var pct = Math.max(0, Math.min(100, Number(tl.percent) || 0));
-
   var html = '<div class="zn-public-wrap">';
-
   html += '<div class="zn-build-panel">';
   html += '<div class="zn-build-spinner">Z</div>';
   html += '<div class="zn-build-headline">Something is being built.</div>';
@@ -2901,45 +3044,13 @@ Z.renderPublicHome = function(){
     phases.forEach(function(p){
       var cls = p.status === 'completed' ? 'done' : (p.status === 'in_progress' ? 'current' : 'pending');
       var dot = p.status === 'completed' ? '<i class="fa-solid fa-check"></i>' : (p.status === 'in_progress' ? '<i class="fa-solid fa-play"></i>' : '');
-      html += '<div class="zn-phase ' + cls + '">' +
-        '<div class="zn-phase-dot">' + dot + '</div>' +
-        '<div class="zn-phase-body">' +
-          '<div class="zn-phase-top">' +
-            '<div class="zn-phase-title">' + Z.escape(p.title || '') + '</div>' +
-            '<div class="zn-phase-target">' + Z.escape(p.target_label || '') + '</div>' +
-          '</div>' +
-          (p.description ? '<div class="zn-phase-desc">' + Z.escape(p.description) + '</div>' : '') +
-        '</div>' +
-      '</div>';
+      html += '<div class="zn-phase ' + cls + '"><div class="zn-phase-dot">' + dot + '</div><div class="zn-phase-body"><div class="zn-phase-top"><div class="zn-phase-title">' + Z.escape(p.title || '') + '</div><div class="zn-phase-target">' + Z.escape(p.target_label || '') + '</div></div>' + (p.description ? '<div class="zn-phase-desc">' + Z.escape(p.description) + '</div>' : '') + '</div></div>';
     });
     html += '</div>';
   }
   html += '</div>';
-
-  html +=
-    '<div class="zn-public-hero">' +
-      '<div class="zn-hero-logo">Z</div>' +
-      '<div class="zn-hero-title">ZYNIX</div>' +
-      '<div class="zn-hero-tagline">Connect · Create · Earn</div>' +
-      '<div class="zn-hero-desc">A quieter social space. Real connections. Real rewards for real engagement.</div>' +
-    '</div>';
-
-  html +=
-    '<div class="zn-public-cards">' +
-      '<div class="zn-public-card">' +
-        '<div class="zn-card-icon green"><i class="fa-solid fa-user-plus"></i></div>' +
-        '<div class="zn-card-body"><div class="zn-card-title">Connect</div><div class="zn-card-desc">Meet real people. No noise, no ads, no algorithm fighting you.</div></div>' +
-      '</div>' +
-      '<div class="zn-public-card">' +
-        '<div class="zn-card-icon blue"><i class="fa-solid fa-wand-magic-sparkles"></i></div>' +
-        '<div class="zn-card-body"><div class="zn-card-title">Create</div><div class="zn-card-desc">Share Posts, Sparks, and Status in one place. Your voice, your pace.</div></div>' +
-      '</div>' +
-      '<div class="zn-public-card">' +
-        '<div class="zn-card-icon purple"><i class="fa-solid fa-coins"></i></div>' +
-        '<div class="zn-card-body"><div class="zn-card-title">Earn</div><div class="zn-card-desc">Get rewarded for reactions and shares — real bounty, settled server-side.</div></div>' +
-      '</div>' +
-    '</div>';
-
+  html += '<div class="zn-public-hero"><div class="zn-hero-logo">Z</div><div class="zn-hero-title">ZYNIX</div><div class="zn-hero-tagline">Connect · Create · Earn</div><div class="zn-hero-desc">A quieter social space. Real connections. Real rewards for real engagement.</div></div>';
+  html += '<div class="zn-public-cards"><div class="zn-public-card"><div class="zn-card-icon green"><i class="fa-solid fa-user-plus"></i></div><div class="zn-card-body"><div class="zn-card-title">Connect</div><div class="zn-card-desc">Meet real people. No noise, no ads, no algorithm fighting you.</div></div></div><div class="zn-public-card"><div class="zn-card-icon blue"><i class="fa-solid fa-wand-magic-sparkles"></i></div><div class="zn-card-body"><div class="zn-card-title">Create</div><div class="zn-card-desc">Share Posts, Sparks, and Status in one place. Your voice, your pace.</div></div></div><div class="zn-public-card"><div class="zn-card-icon purple"><i class="fa-solid fa-coins"></i></div><div class="zn-card-body"><div class="zn-card-title">Earn</div><div class="zn-card-desc">Get rewarded for reactions and shares — real bounty, settled server-side.</div></div></div></div>';
   html += '<div class="zn-public-actions">';
   if(me){
     html += '<button class="zn-public-enter-btn" onclick="Z.showView(\'home\')"><i class="fa-solid fa-arrow-right"></i> Enter ZYNIX</button>';
@@ -2947,14 +3058,387 @@ Z.renderPublicHome = function(){
     html += '<button class="zn-public-enter-btn" onclick="Z.openAuthModal(\'login\')"><i class="fa-solid fa-right-to-bracket"></i> Login</button>';
     html += '<button class="btn-secondary" style="margin-top:0;" onclick="Z.openAuthModal(\'signup\')">Create Account</button>';
   }
-  html += '</div>';
+  html += '</div></div>';
+  return html;
+};
 
+/* =========================================================
+   GALLERIA
+   ========================================================= */
+Z.renderGalleria = function(){
+  var cats = [
+    { key:'freelance', icon:'fa-solid fa-briefcase',      title:'Freelance',        desc:'Hire pros, post jobs, escrow-backed orders.' },
+    { key:'shops',     icon:'fa-solid fa-store',          title:'Shops',            desc:'Online & physical stores under one roof.' },
+    { key:'property',  icon:'fa-solid fa-house-chimney',  title:'Property',         desc:'Buy and sell homes, land, and offices.' },
+    { key:'rentals',   icon:'fa-solid fa-key',            title:'Rentals',          desc:'Rooms, houses, short stays, equipment.' },
+    { key:'bookings',  icon:'fa-solid fa-calendar-check', title:'Bookings',         desc:'Rides, hotels, appointments, seats.' },
+    { key:'jobs',      icon:'fa-solid fa-user-tie',       title:'Jobs',             desc:'Hiring board for full-time & part-time.' },
+    { key:'ads',       icon:'fa-solid fa-bullhorn',       title:'Ads',              desc:'Post ads. View ads. Earn as you scroll.' },
+    { key:'events',    icon:'fa-solid fa-ticket',         title:'Events & Tickets', desc:'Create events, sell tickets, RSVP.' },
+    { key:'streaming', icon:'fa-solid fa-satellite-dish', title:'Streaming',        desc:'Partner channels — coming soon.' }
+  ];
+  var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+  html += '<div style="background:linear-gradient(135deg,#10b981,#3b82f6);border-radius:16px;padding:20px 18px;">';
+  html += '<div style="font-size:22px;font-weight:900;color:#000;letter-spacing:.3px;">GALLERIA</div>';
+  html += '<div style="font-size:12px;color:rgba(0,0,0,.75);margin-top:4px;line-height:1.5;">Every trade under one roof — services, shops, spaces, time, opportunity, attention, membership.</div>';
+  html += '</div>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+  cats.forEach(function(c){
+    html += '<button onclick="Z.openGalleriaCat(\'' + c.key + '\')" style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;text-align:left;cursor:pointer;position:relative;overflow:hidden;">' +
+      '<div style="position:absolute;top:8px;right:8px;background:rgba(148,163,184,.18);color:#94a3b8;font-size:8px;font-weight:800;padding:2px 6px;border-radius:20px;letter-spacing:.05em;">SOON</div>' +
+      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(16,185,129,.12);color:#10b981;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:10px;"><i class="' + c.icon + '"></i></div>' +
+      '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:2px;">' + Z.escape(c.title) + '</div>' +
+      '<div style="font-size:10px;color:#94a3b8;line-height:1.5;">' + Z.escape(c.desc) + '</div>' +
+    '</button>';
+  });
+  html += '</div>';
+  html += '<div style="text-align:center;font-size:10px;color:#475569;padding:8px 4px;">More categories coming as the platform grows.</div>';
+  html += '</div>';
+  return html;
+};
+Z.openGalleriaCat = function(key){ Z.toast('Coming soon.'); };
+
+/* =========================================================
+   SPACE — public user page (with real Posts/Sparks/Videos bands)
+   ========================================================= */
+Z.renderPublicProfile = function(userId){
+  if(!userId){
+    return '<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>User not specified.</p></div>';
+  }
+  var shell =
+    '<div id="space-root" style="display:flex;flex-direction:column;gap:14px;">' +
+      '<div class="view-header">' +
+        '<button class="colored-back-btn" onclick="Z.spaceBack()">' +
+          '<i class="fa-solid fa-arrow-left"></i> Back' +
+        '</button>' +
+      '</div>' +
+      '<div id="space-identity">' + Z._renderSpaceSkeleton() + '</div>' +
+      '<div id="space-posts-band"></div>' +
+      '<div id="space-sparks-band"></div>' +
+      '<div id="space-videos-band"></div>' +
+    '</div>';
+  setTimeout(function(){ Z._loadSpace(userId); }, 30);
+  return shell;
+};
+
+Z._renderSpaceSkeleton = function(){
+  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:28px 20px;text-align:center;color:#64748b;">' +
+    '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#3b82f6;"></i>' +
+    '<p style="font-size:12px;margin-top:10px;">Loading SPACE...</p>' +
+  '</div>';
+};
+
+Z._loadSpace = async function(userId){
+  var container = document.getElementById('space-identity');
+  if(!container) return;
+  Z.State.spaceUserId = userId;
+  var me = _cu();
+  var c = (Z.sb && Z.sb()) || null;
+  var data = null;
+  try {
+    if(c){
+      var r = await c.rpc('get_public_space', { p_user_id: userId });
+      if(r.error) throw r.error;
+      if(Array.isArray(r.data) && r.data.length) data = r.data[0];
+    }
+  } catch(e){
+    console.warn('[SPACE] rpc failed, falling back to local state', e);
+  }
+  if(!data){
+    var local = Z.getProfileById(userId);
+    if(local){
+      data = { id: local.id, name: local.name, username: local.username, avatar: local.avatar, cover: local.cover, profession: local.profession, bio: local.bio, package: local.package, connection_count: 0, posts_count: 0, sparks_count: 0, videos_count: 0 };
+    }
+  }
+  if(!data){
+    container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>User not found.</p></div>';
+    return;
+  }
+  var arr = Z.State.allProfiles || [];
+  if(!arr.some(function(x){ return x && x.id === data.id; })){
+    Z.State.allProfiles = arr.concat([{ id: data.id, name: data.name, username: data.username, avatar: data.avatar, cover: data.cover, profession: data.profession, bio: data.bio, package: data.package }]);
+  }
+  container.innerHTML = Z._renderSpaceIdentity(data, me);
+  await Z._loadSpaceContent(userId);
+};
+
+Z._loadSpaceContent = async function(userId){
+  var c = (Z.sb && Z.sb()) || null;
+  if(!c) return;
+
+  var postsBand = document.getElementById('space-posts-band');
+  try {
+    var rp = await c.from('posts').select('*').eq('author_id', userId).order('created_at', {ascending:false}).limit(20);
+    Z.State.spacePosts = rp.data || [];
+    Z.State.spacePosts.forEach(function(p){ p.reactions = p.reactions || {}; p._myReactions = p._myReactions || {}; p._comments = p._comments || []; });
+    if(Z.State.spacePosts.length){
+      var ids = Z.State.spacePosts.map(function(p){ return p.id; });
+      var me = _cu();
+      var rPr = await c.from('post_reactions').select('post_id, reaction, user_id').in('post_id', ids);
+      (rPr.data||[]).forEach(function(x){
+        var p = Z.State.spacePosts.find(function(pp){ return pp.id === x.post_id; });
+        if(!p) return;
+        if(!p.reactions) p.reactions = {};
+        p.reactions[x.reaction] = (p.reactions[x.reaction]||0)+1;
+        if(me && x.user_id === me.id){ if(!p._myReactions) p._myReactions = {}; p._myReactions[x.reaction] = true; }
+      });
+      var rC = await c.from('comments').select('*').in('post_id', ids).order('created_at', {ascending:true});
+      var cmts = rC.data || [];
+      var byPost = {};
+      cmts.forEach(function(cm){ if(!byPost[cm.post_id]) byPost[cm.post_id] = []; byPost[cm.post_id].push(cm); });
+      Z.State.spacePosts.forEach(function(p){
+        var list = byPost[p.id] || [];
+        var byId = {}; list.forEach(function(x){ byId[x.id] = x; x._replies = []; x._reactionCounts = {}; x._myReactions = {}; });
+        list.forEach(function(x){ if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x); });
+        p._comments = list.filter(function(x){ return !x.parent_id; });
+      });
+    }
+  } catch(e){ console.warn('[SPACE] posts load', e); Z.State.spacePosts = []; }
+
+  if(postsBand) postsBand.innerHTML = Z._renderSpacePostsBand();
+
+  try {
+    var rs = await c.from('sparks').select('*').eq('author_id', userId).eq('type', 'spark').order('created_at', {ascending:false}).limit(20);
+    Z.State.spaceSparks = rs.data || [];
+  } catch(e){ Z.State.spaceSparks = []; }
+  var sparksBand = document.getElementById('space-sparks-band');
+  if(sparksBand) sparksBand.innerHTML = Z._renderSpaceSparksBand();
+
+  try {
+    var rv = await c.from('sparks').select('*').eq('author_id', userId).eq('type', 'long_video').order('created_at', {ascending:false}).limit(20);
+    Z.State.spaceVideos = rv.data || [];
+  } catch(e){ Z.State.spaceVideos = []; }
+  var videosBand = document.getElementById('space-videos-band');
+  if(videosBand) videosBand.innerHTML = Z._renderSpaceVideosBand();
+};
+
+Z._renderSpacePostsBand = function(){
+  var posts = (Z.State.spacePosts || []).slice(0, 5);
+  var total = (Z.State.spacePosts || []).length;
+  var html = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+  html += '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;"><i class="fa-regular fa-newspaper" style="color:#10b981;margin-right:6px;"></i>Posts</div>';
+  html += '<div style="font-size:10px;color:#64748b;">' + total + ' total</div>';
+  html += '</div>';
+  if(!posts.length){
+    html += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px;">No posts yet.</div>';
+  } else {
+    var me = _cu();
+    posts.forEach(function(p){ html += Z.renderPostCard(p, Z.State.allProfiles, me); });
+    if(total > 5){
+      html += '<button onclick="Z.showView(\'space-posts-all\',\'' + Z.escape(Z.State.spaceUserId) + '\')" style="width:100%;background:transparent;border:1px solid #1e293b;color:#10b981;font-weight:700;padding:10px;border-radius:10px;font-size:12px;cursor:pointer;margin-top:4px;">View All Posts</button>';
+    }
+  }
   html += '</div>';
   return html;
 };
 
+Z._renderSpaceSparksBand = function(){
+  var sparks = (Z.State.spaceSparks || []);
+  var html = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+  html += '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;"><i class="fa-solid fa-bolt" style="color:#10b981;margin-right:6px;"></i>Sparks</div>';
+  html += '<div style="font-size:10px;color:#64748b;">' + sparks.length + ' total</div>';
+  html += '</div>';
+  if(!sparks.length){
+    html += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px;">No sparks yet.</div>';
+  } else {
+    html += '<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;-ms-overflow-style:none;">';
+    sparks.slice(0, 10).forEach(function(s){
+      html += '<div style="flex:0 0 44%;min-width:140px;height:250px;background:#000;border-radius:12px;overflow:hidden;border:1px solid #1e293b;position:relative;">' +
+        '<video src="' + Z.escape(s.video_url) + '" preload="metadata" playsinline controls data-space-spark="1" style="width:100%;height:100%;object-fit:cover;background:#000;"></video>' +
+      '</div>';
+    });
+    html += '</div>';
+    html += '<button onclick="Z.showView(\'space-sparks-all\',\'' + Z.escape(Z.State.spaceUserId) + '\')" style="width:100%;background:transparent;border:1px solid #1e293b;color:#10b981;font-weight:700;padding:10px;border-radius:10px;font-size:12px;cursor:pointer;margin-top:10px;">View All Sparks</button>';
+  }
+  html += '</div>';
+  return html;
+};
+
+Z._renderSpaceVideosBand = function(){
+  var videos = (Z.State.spaceVideos || []);
+  var html = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+  html += '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;"><i class="fa-solid fa-film" style="color:#10b981;margin-right:6px;"></i>Full Videos</div>';
+  html += '<div style="font-size:10px;color:#64748b;">' + videos.length + ' total</div>';
+  html += '</div>';
+  if(!videos.length){
+    html += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px;">No videos yet.</div>';
+  } else {
+    html += '<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;-ms-overflow-style:none;">';
+    videos.slice(0, 10).forEach(function(v){
+      html += '<div style="flex:0 0 68%;min-width:220px;background:#000;border-radius:12px;overflow:hidden;border:1px solid #1e293b;position:relative;">' +
+        '<div style="height:180px;background:#000;">' +
+          '<video src="' + Z.escape(v.video_url) + '" preload="metadata" playsinline controls data-space-spark="1" style="width:100%;height:100%;object-fit:cover;background:#000;"></video>' +
+        '</div>' +
+        (v.title ? '<div style="padding:8px 10px;font-size:11px;font-weight:700;color:#fff;background:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + Z.escape(v.title) + '</div>' : '') +
+      '</div>';
+    });
+    html += '</div>';
+    html += '<button onclick="Z.showView(\'space-videos-all\',\'' + Z.escape(Z.State.spaceUserId) + '\')" style="width:100%;background:transparent;border:1px solid #1e293b;color:#10b981;font-weight:700;padding:10px;border-radius:10px;font-size:12px;cursor:pointer;margin-top:10px;">View All Videos</button>';
+  }
+  html += '</div>';
+  return html;
+};
+
+Z._renderSpaceIdentity = function(data, me){
+  var isMe = me && me.id === data.id;
+  var coverUrl = data.cover || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80';
+  var avatarUrl = data.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(data.name || 'U') + '&background=111827&color=34d399');
+  var handle = data.username ? ('@' + data.username) : '@user';
+  var pkg = data.package || 'Free';
+  var statCell = function(value, label){
+    return '<div style="flex:1;text-align:center;"><div style="font-size:16px;font-weight:900;color:#fff;">' + value + '</div><div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-top:2px;">' + label + '</div></div>';
+  };
+  var action = '';
+  if(isMe){
+    action = '<button onclick="Z.showView(\'profile\')" style="width:100%;background:#1e293b;border:none;color:#fff;font-weight:700;padding:10px;border-radius:10px;font-size:12px;cursor:pointer;margin-top:12px;"><i class="fa-solid fa-gear"></i> Manage Profile</button>';
+  } else {
+    action = '<div style="margin-top:12px;">' + Z.renderConnectButton(data.id) + '</div>';
+  }
+  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;overflow:hidden;">' +
+    '<div style="height:130px;background:#0f172a;position:relative;overflow:hidden;">' +
+      '<img src="' + Z.escape(coverUrl) + '" style="width:100%;height:100%;object-fit:cover;" alt="Cover">' +
+      '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(9,13,22,0) 40%,rgba(17,24,39,.95));"></div>' +
+    '</div>' +
+    '<div style="padding:0 16px 18px;margin-top:-40px;position:relative;">' +
+      '<img src="' + Z.escape(avatarUrl) + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:4px solid #111827;background:#0f172a;display:block;">' +
+      '<div style="margin-top:10px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+          '<div style="font-weight:900;font-size:18px;color:#fff;">' + Z.escape(data.name || 'User') + '</div>' +
+          '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;" title="Verified profile"></i>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#64748b;margin-top:2px;">' + Z.escape(handle) + (data.profession ? ' • ' + Z.escape(data.profession) : '') + '</div>' +
+        (data.bio ? '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.55;white-space:pre-wrap;word-break:break-word;">' + Z.escape(data.bio) + '</div>' : '') +
+        '<div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;"><span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;border:1px solid rgba(16,185,129,.28);">' + Z.escape(pkg) + '</span></div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;padding:14px 0 4px;margin-top:14px;border-top:1px solid #1e293b;">' +
+        statCell(data.connection_count || 0, 'Connections') +
+        statCell(data.posts_count || 0, 'Posts') +
+        statCell(data.sparks_count || 0, 'Sparks') +
+        statCell(data.videos_count || 0, 'Videos') +
+      '</div>' +
+      action +
+    '</div>' +
+  '</div>';
+};
+
+/* ---------- SPACE sub-pages (View All) ---------- */
+Z.renderSpacePostsAll = function(userId){
+  if(!userId) return '<div class="empty-state"><p>No user.</p></div>';
+  setTimeout(async function(){
+    var container = document.getElementById('space-all-posts-list');
+    if(!container) return;
+    var c = (Z.sb && Z.sb()) || null;
+    if(!c) return;
+    try {
+      var rp = await c.from('posts').select('*').eq('author_id', userId).order('created_at', {ascending:false}).limit(100);
+      var posts = rp.data || [];
+      posts.forEach(function(p){ p.reactions = p.reactions || {}; p._myReactions = p._myReactions || {}; p._comments = p._comments || []; });
+      var me = _cu();
+      var html = '';
+      posts.forEach(function(p){ html += Z.renderPostCard(p, Z.State.allProfiles, me); });
+      if(!html) html = '<div class="empty-state"><i class="fa-regular fa-newspaper"></i><p>No posts.</p></div>';
+      container.innerHTML = html;
+      if(typeof Z.observeFreezeDots === 'function') Z.observeFreezeDots();
+      Z.resolveIdbRefs(container);
+    } catch(e){
+      container.innerHTML = '<div class="empty-state"><p>Could not load posts.</p></div>';
+    }
+  }, 30);
+  return '<div style="display:flex;flex-direction:column;gap:12px;">' +
+    '<div class="view-header">' +
+      '<button class="colored-back-btn" onclick="Z.spaceBackToSpace()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
+      '<h2 class="view-title" style="margin-left:4px;">All Posts</h2>' +
+    '</div>' +
+    '<div id="space-all-posts-list"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div>' +
+  '</div>';
+};
+
+Z.renderSpaceSparksAll = function(userId){
+  if(!userId) return '<div class="empty-state"><p>No user.</p></div>';
+  setTimeout(async function(){
+    var container = document.getElementById('space-all-sparks-list');
+    if(!container) return;
+    var c = (Z.sb && Z.sb()) || null;
+    if(!c) return;
+    try {
+      var rs = await c.from('sparks').select('*').eq('author_id', userId).eq('type', 'spark').order('created_at', {ascending:false}).limit(100);
+      var sparks = rs.data || [];
+      var html = '';
+      sparks.forEach(function(s){
+        html += '<div style="background:#000;border-radius:12px;overflow:hidden;border:1px solid #1e293b;">' +
+          '<div style="height:260px;background:#000;">' +
+            '<video src="' + Z.escape(s.video_url) + '" playsinline controls preload="metadata" data-space-spark="1" style="width:100%;height:100%;object-fit:cover;background:#000;"></video>' +
+          '</div>' +
+          (s.caption ? '<div style="padding:10px 12px;font-size:12px;color:#e2e8f0;background:#0f172a;">' + Z.escape(s.caption) + '</div>' : '') +
+        '</div>';
+      });
+      if(!html) html = '<div class="empty-state"><i class="fa-solid fa-bolt"></i><p>No sparks.</p></div>';
+      container.innerHTML = html;
+    } catch(e){
+      container.innerHTML = '<div class="empty-state"><p>Could not load sparks.</p></div>';
+    }
+  }, 30);
+  return '<div style="display:flex;flex-direction:column;gap:12px;">' +
+    '<div class="view-header">' +
+      '<button class="colored-back-btn" onclick="Z.spaceBackToSpace()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
+      '<h2 class="view-title" style="margin-left:4px;">All Sparks</h2>' +
+    '</div>' +
+    '<div id="space-all-sparks-list" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="empty-state" style="grid-column:1/-1;"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div>' +
+  '</div>';
+};
+
+Z.renderSpaceVideosAll = function(userId){
+  if(!userId) return '<div class="empty-state"><p>No user.</p></div>';
+  setTimeout(async function(){
+    var container = document.getElementById('space-all-videos-list');
+    if(!container) return;
+    var c = (Z.sb && Z.sb()) || null;
+    if(!c) return;
+    try {
+      var rv = await c.from('sparks').select('*').eq('author_id', userId).eq('type', 'long_video').order('created_at', {ascending:false}).limit(100);
+      var videos = rv.data || [];
+      var html = '';
+      videos.forEach(function(v){
+        html += '<div style="background:#000;border-radius:12px;overflow:hidden;border:1px solid #1e293b;">' +
+          '<div style="height:220px;background:#000;">' +
+            '<video src="' + Z.escape(v.video_url) + '" playsinline controls preload="metadata" data-space-spark="1" style="width:100%;height:100%;object-fit:contain;background:#000;"></video>' +
+          '</div>' +
+          (v.title ? '<div style="padding:10px 12px;font-size:12px;font-weight:700;color:#fff;background:#0f172a;">' + Z.escape(v.title) + '</div>' : '') +
+        '</div>';
+      });
+      if(!html) html = '<div class="empty-state"><i class="fa-solid fa-film"></i><p>No videos.</p></div>';
+      container.innerHTML = html;
+    } catch(e){
+      container.innerHTML = '<div class="empty-state"><p>Could not load videos.</p></div>';
+    }
+  }, 30);
+  return '<div style="display:flex;flex-direction:column;gap:12px;">' +
+    '<div class="view-header">' +
+      '<button class="colored-back-btn" onclick="Z.spaceBackToSpace()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
+      '<h2 class="view-title" style="margin-left:4px;">All Videos</h2>' +
+    '</div>' +
+    '<div id="space-all-videos-list" style="display:flex;flex-direction:column;gap:10px;"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div>' +
+  '</div>';
+};
+
+Z.spaceBackToSpace = function(){
+  var uid = Z.State.spaceUserId || Z.State.currentParam;
+  if(!uid){ Z.showView('home'); return; }
+  Z.showView('public-profile', uid);
+};
+
+/* =========================================================
+   PEOPLE — back to Settings
+   ========================================================= */
 Z.renderPeople = function(){
-  var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-users" style="color:#10b981;margin-right:8px;"></i>People</h2></div><input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="people-list-container"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div></div>';
+  var html = '<div style="display:flex;flex-direction:column;gap:12px;">' +
+    '<div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;"><i class="fa-solid fa-users" style="color:#10b981;margin-right:6px;"></i>Discover People</h2></div>' +
+    '<input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;">' +
+    '<div id="people-list-container"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div>' +
+  '</div>';
   setTimeout(Z.refreshPeopleList, 30);
   return html;
 };
@@ -2989,11 +3473,27 @@ Z.refreshPeopleList = async function(){
 };
 Z.onPeopleSearch = function(v){ Z.State.peopleSearch = v; Z.refreshPeopleList(); };
 
+/* =========================================================
+   SETTINGS (profile page — reached via gear icon)
+   ========================================================= */
 Z.renderProfile = function(){
   var u = _cu();
   if(!u){ return '<div class="empty-state"><i class="fa-regular fa-user"></i><p>Please log in.</p><button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;margin-top:12px;cursor:pointer;">Login</button></div>'; }
   var connCount = (Z.State.allConnections||[]).filter(function(c){ return c.status === 'accepted' && (c.requester_id === u.id || c.recipient_id === u.id); }).length;
-  return '<div style="display:flex;flex-direction:column;gap:14px;"><div class="profile-card"><div class="profile-cover"><img src="' + Z.escape(u.cover||'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80') + '"></div><div class="profile-body"><img class="profile-avatar" src="' + Z.escape(Z.displayAvatar(u)) + '"><div style="margin-top:6px;"><div class="profile-name">' + Z.escape(Z.displayName(u)) + ' <i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;"></i></div><div class="profile-handle">@' + Z.escape(u.username || u.email || 'user') + (u.profession?' • ' + Z.escape(u.profession):'') + '</div><div class="profile-bio">' + Z.escape(u.bio || '') + '</div><div class="profile-stats"><span><strong>' + connCount + '</strong> Connections</span><span><strong>' + Z.escape(u.package||'Free') + '</strong> Package</span></div></div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><button onclick="Z.openEditProfileModal()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:14px;border-radius:12px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-pen"></i> Edit Profile</button><button onclick="Z.showView(\'bounty\')" style="background:linear-gradient(135deg,#f59e0b,#ef4444);border:none;color:#fff;font-weight:700;padding:14px;border-radius:12px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-gear"></i> Bounty</button></div><div class="media-grid-2" style="gap:10px;"><button onclick="Z.showView(\'wallet\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-wallet" style="color:#10b981;"></i> Wallet</div></button><button onclick="Z.showView(\'packages\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-box" style="color:#3b82f6;"></i> Packages</div></button><button onclick="Z.showView(\'referrals\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-users-rays" style="color:#8b5cf6;"></i> Referrals</div></button><button onclick="Z.showView(\'people\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-users" style="color:#6366f1;"></i> People</div></button></div></div>';
+  return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+    '<div class="view-header"><button class="colored-back-btn" onclick="Z.goMySpace()"><i class="fa-solid fa-arrow-left"></i> My SPACE</button><h2 class="view-title" style="margin-left:6px;">Settings</h2></div>' +
+    '<div class="profile-card"><div class="profile-cover"><img src="' + Z.escape(u.cover||'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80') + '"></div><div class="profile-body"><img class="profile-avatar" src="' + Z.escape(Z.displayAvatar(u)) + '"><div style="margin-top:6px;"><div class="profile-name">' + Z.escape(Z.displayName(u)) + ' <i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;"></i></div><div class="profile-handle">@' + Z.escape(u.username || u.email || 'user') + (u.profession?' • ' + Z.escape(u.profession):'') + '</div><div class="profile-bio">' + Z.escape(u.bio || '') + '</div><div class="profile-stats"><span><strong>' + connCount + '</strong> Connections</span><span><strong>' + Z.escape(u.package||'Free') + '</strong> Package</span></div></div></div></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+      '<button onclick="Z.openEditProfileModal()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:14px;border-radius:12px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-pen"></i> Edit Profile</button>' +
+      '<button onclick="Z.showView(\'bounty\')" style="background:linear-gradient(135deg,#f59e0b,#ef4444);border:none;color:#fff;font-weight:700;padding:14px;border-radius:12px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-gear"></i> Bounty</button>' +
+    '</div>' +
+    '<div class="media-grid-2" style="gap:10px;">' +
+      '<button onclick="Z.showView(\'wallet\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-wallet" style="color:#10b981;"></i> Wallet</div></button>' +
+      '<button onclick="Z.showView(\'packages\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-box" style="color:#3b82f6;"></i> Packages</div></button>' +
+      '<button onclick="Z.showView(\'referrals\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-users-rays" style="color:#8b5cf6;"></i> Referrals</div></button>' +
+      '<button onclick="Z.showView(\'people\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-users" style="color:#6366f1;"></i> Discover People</div></button>' +
+    '</div>' +
+  '</div>';
 };
 Z._editImages = {avatar: null, cover: null};
 Z.openEditProfileModal = function(){
@@ -3020,166 +3520,13 @@ Z.saveProfile = async function(){
   var result = await Z.DB.updateProfile(me.id, patch);
   if(!result){ Z.toast('Save failed.', 'error'); return; }
   Z._editImages = {avatar: null, cover: null};
-  Z.closeModal(); Z.toast('Profile updated!'); await Z.refreshSession(); await Z.reloadData(); Z.showView('profile');
+  Z.closeModal(); Z.toast('Profile updated!'); await Z.refreshSession(); await Z.reloadData();
+  Z.goMySpace();
 };
 
-/* ============================================================
-   SPACE — Step 1.1
-   Public page shell. Replaces the old renderPublicProfile.
-   Consumes RPC public.get_public_space(uuid) from Step 1.0.
-   No writes. No new tables. No new realtime channels.
-   ============================================================ */
-Z.renderPublicProfile = function(userId){
-  if(!userId){
-    return '<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>User not specified.</p></div>';
-  }
-
-  var shell =
-    '<div id="space-root" style="display:flex;flex-direction:column;gap:14px;">' +
-      '<div class="view-header">' +
-        '<button class="colored-back-btn" onclick="Z.showView(\'people\')">' +
-          '<i class="fa-solid fa-arrow-left"></i> Back' +
-        '</button>' +
-      '</div>' +
-      '<div id="space-identity">' + Z._renderSpaceSkeleton() + '</div>' +
-      '<div id="space-posts-band"></div>' +
-      '<div id="space-sparks-band"></div>' +
-      '<div id="space-videos-band"></div>' +
-    '</div>';
-
-  setTimeout(function(){ Z._loadSpace(userId); }, 30);
-  return shell;
-};
-
-Z._renderSpaceSkeleton = function(){
-  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:28px 20px;text-align:center;color:#64748b;">' +
-    '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#3b82f6;"></i>' +
-    '<p style="font-size:12px;margin-top:10px;">Loading SPACE...</p>' +
-  '</div>';
-};
-
-Z._loadSpace = async function(userId){
-  var container = document.getElementById('space-identity');
-  if(!container) return;
-
-  var me = _cu();
-  var c = (Z.sb && Z.sb()) || null;
-  var data = null;
-
-  try {
-    if(c){
-      var r = await c.rpc('get_public_space', { p_user_id: userId });
-      if(r.error) throw r.error;
-      if(Array.isArray(r.data) && r.data.length) data = r.data[0];
-    }
-  } catch(e){
-    console.warn('[SPACE] rpc failed, falling back to local state', e);
-  }
-
-  if(!data){
-    var local = Z.getProfileById(userId);
-    if(local){
-      data = {
-        id: local.id, name: local.name, username: local.username,
-        avatar: local.avatar, cover: local.cover,
-        profession: local.profession, bio: local.bio, package: local.package,
-        connection_count: 0, posts_count: 0, sparks_count: 0, videos_count: 0
-      };
-    }
-  }
-
-  if(!data){
-    container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>User not found.</p></div>';
-    return;
-  }
-
-  var arr = Z.State.allProfiles || [];
-  var exists = arr.some(function(x){ return x && x.id === data.id; });
-  if(!exists){
-    Z.State.allProfiles = arr.concat([{
-      id: data.id, name: data.name, username: data.username,
-      avatar: data.avatar, cover: data.cover,
-      profession: data.profession, bio: data.bio, package: data.package
-    }]);
-  }
-
-  container.innerHTML = Z._renderSpaceIdentity(data, me);
-  Z._renderSpaceEmptyBands();
-};
-
-Z._renderSpaceEmptyBands = function(){
-  var placeholder = function(label, icon){
-    return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
-        '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;">' +
-          '<i class="' + icon + '" style="color:#10b981;margin-right:6px;"></i>' + label +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px;">' +
-        'Coming in next step' +
-      '</div>' +
-    '</div>';
-  };
-  var postsBand  = document.getElementById('space-posts-band');
-  var sparksBand = document.getElementById('space-sparks-band');
-  var videosBand = document.getElementById('space-videos-band');
-  if(postsBand)  postsBand.innerHTML  = placeholder('Posts', 'fa-regular fa-newspaper');
-  if(sparksBand) sparksBand.innerHTML = placeholder('Sparks', 'fa-solid fa-bolt');
-  if(videosBand) videosBand.innerHTML = placeholder('Full Videos', 'fa-solid fa-film');
-};
-
-Z._renderSpaceIdentity = function(data, me){
-  var isMe = me && me.id === data.id;
-  var coverUrl = data.cover || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80';
-  var avatarUrl = data.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(data.name || 'U') + '&background=111827&color=34d399');
-  var handle = data.username ? ('@' + data.username) : '@user';
-  var pkg = data.package || 'Free';
-
-  var statCell = function(value, label){
-    return '<div style="flex:1;text-align:center;">' +
-      '<div style="font-size:16px;font-weight:900;color:#fff;">' + value + '</div>' +
-      '<div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-top:2px;">' + label + '</div>' +
-    '</div>';
-  };
-
-  var connectBtn = '';
-  if(!isMe){
-    connectBtn = '<div style="margin-top:14px;">' + Z.renderConnectButton(data.id) + '</div>';
-  }
-
-  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;overflow:hidden;">' +
-    '<div style="height:130px;background:#0f172a;position:relative;overflow:hidden;">' +
-      '<img src="' + Z.escape(coverUrl) + '" style="width:100%;height:100%;object-fit:cover;" alt="Cover">' +
-      '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(9,13,22,0) 40%,rgba(17,24,39,.95));"></div>' +
-    '</div>' +
-    '<div style="padding:0 16px 18px;margin-top:-40px;position:relative;">' +
-      '<img src="' + Z.escape(avatarUrl) + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:4px solid #111827;background:#0f172a;display:block;">' +
-      '<div style="margin-top:10px;">' +
-        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-          '<div style="font-weight:900;font-size:18px;color:#fff;">' + Z.escape(data.name || 'User') + '</div>' +
-          '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;" title="Verified profile"></i>' +
-        '</div>' +
-        '<div style="font-size:11px;color:#64748b;margin-top:2px;">' +
-          Z.escape(handle) + (data.profession ? ' • ' + Z.escape(data.profession) : '') +
-        '</div>' +
-        (data.bio
-          ? '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.55;white-space:pre-wrap;word-break:break-word;">' + Z.escape(data.bio) + '</div>'
-          : '') +
-        '<div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;">' +
-          '<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;border:1px solid rgba(16,185,129,.28);">' + Z.escape(pkg) + '</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="display:flex;align-items:center;gap:8px;padding:14px 0 4px;margin-top:14px;border-top:1px solid #1e293b;">' +
-        statCell(data.connection_count || 0, 'Connections') +
-        statCell(data.posts_count || 0, 'Posts') +
-        statCell(data.sparks_count || 0, 'Sparks') +
-        statCell(data.videos_count || 0, 'Videos') +
-      '</div>' +
-      connectBtn +
-    '</div>' +
-  '</div>';
-};
-
+/* =========================================================
+   WALLET / BOUNTY / PACKAGES / REFERRALS
+   ========================================================= */
 Z.renderWalletNotification = function(t){
   var meta = t.metadata || {};
   var isIncome = (t.amount > 0);
@@ -3204,7 +3551,10 @@ Z.renderWalletNotification = function(t){
   } else { actionText = typeLabel || 'Transaction'; }
   var amtCls = isIncome ? 'plus' : 'minus';
   var amtSign = isIncome ? '+' : '-';
-  return '<div class="wallet-notif-card"><img src="' + Z.escape(avatar) + '"><div class="info"><div class="who">' + Z.escape(who) + '</div><div class="what">' + Z.escape(actionText) + ' • ' + _fmtDate(t.created_at) + '</div></div><div class="amt ' + amtCls + '">' + amtSign + '$' + Math.abs(t.amount).toFixed(4) + '</div>' + (link ? '<i class="fa-solid fa-arrow-up-right-from-square link-icon" onclick="Z.jumpToContent(\'' + Z.escape(link) + '\')"></i>' : '') + '</div>';
+  var imgHtml = cp
+    ? '<img src="' + Z.escape(avatar) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(cp.id) + '\')" style="cursor:pointer;">'
+    : '<img src="' + Z.escape(avatar) + '">';
+  return '<div class="wallet-notif-card">' + imgHtml + '<div class="info"><div class="who">' + Z.escape(who) + '</div><div class="what">' + Z.escape(actionText) + ' • ' + _fmtDate(t.created_at) + '</div></div><div class="amt ' + amtCls + '">' + amtSign + '$' + Math.abs(t.amount).toFixed(4) + '</div>' + (link ? '<i class="fa-solid fa-arrow-up-right-from-square link-icon" onclick="Z.jumpToContent(\'' + Z.escape(link) + '\')"></i>' : '') + '</div>';
 };
 Z.jumpToContent = function(hash){
   if(!hash) return;
@@ -3216,6 +3566,7 @@ Z.jumpToContent = function(hash){
     setTimeout(function(){ var el = document.querySelector(hash); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 400);
   }
 };
+
 Z.renderWallet = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   Z.clearWalletBadge();
@@ -3223,6 +3574,7 @@ Z.renderWallet = function(){
   var txHtml = tx.length ? tx.map(function(t){ return Z.renderWalletNotification(t); }).join('') : '<div style="text-align:center;padding:20px;color:#64748b;font-size:11px;">No transactions yet.</div>';
   return '<div style="display:flex;flex-direction:column;gap:12px;">' +
     '<div class="view-header" style="justify-content:space-between;">' +
+      '<button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
       '<h2 class="view-title"><i class="fa-solid fa-wallet" style="color:#10b981;margin-right:8px;"></i>Wallet</h2>' +
       '<button class="circle-x-btn" onclick="Z.closeWallet()" title="Close wallet"><i class="fa-solid fa-xmark"></i></button>' +
     '</div>' +
@@ -3231,20 +3583,20 @@ Z.renderWallet = function(){
     '<div class="stat-card"><div class="stat-label">Cash</div><div class="stat-value" style="color:#10b981;">$' + Number(u.wallet_cash||0).toFixed(2) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Bounty</div><div class="stat-value" style="color:#3b82f6;">$' + Number(u.wallet_bounty||0).toFixed(2) + '</div></div>' +
     '</div>' +
-    '<div style="margin-top:16px;padding-top:14px;border-top:1px solid #1e293b;"><div class="section-title">Bounty Activity</div>' + txHtml + '</div></div></div>';
+    '<div style="margin-top:16px;padding-top:14px;border-top:1px solid #1e293b;"><div class="section-title">Activity</div>' + txHtml + '</div></div></div>';
 };
 Z.renderBounty = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   var bs = u.bounty_settings || {connect:0.03, subscribe:0.05, comment:0.03, share:0.04, circleJoin:0.02};
   var keys = [{id:'connect',label:'🤝 Connect'}, {id:'subscribe',label:'🔔 Subscribe'}, {id:'comment',label:'📝 Comment'}, {id:'share',label:'🔄 Share'}, {id:'circleJoin',label:'🌀 Join Circle'}];
   var inputs = keys.map(function(k){ return '<div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:12px;margin-bottom:8px;"><label class="form-label">' + k.label + '</label><select id="bounty-' + k.id + '" class="form-select" style="margin-bottom:0;">' + [0, 0.01, 0.02, 0.03, 0.04, 0.05].map(function(v){ return '<option value="' + v + '" ' + (Math.abs((bs[k.id]||0) - v) < 0.0001 ? 'selected' : '') + '>$' + v.toFixed(2) + '</option>'; }).join('') + '</select></div>'; }).join('');
-  return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div><div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;"><p style="font-size:11px;color:#64748b;margin-bottom:14px;">Reactions: ❤️ $0.05 • 🌹 $0.04 • 🔥 $0.03 • 👏 $0.02 • ⭐ $0.01 • 👎 —</p>' + inputs + '<button onclick="Z.saveBounty()" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:10px;font-size:12px;cursor:pointer;">Save</button></div></div>';
+  return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:4px;">Bounty Settings</h2></div><div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;"><p style="font-size:11px;color:#64748b;margin-bottom:14px;">Reactions: ❤️ $0.05 • 🌹 $0.04 • 🔥 $0.03 • 👏 $0.02 • ⭐ $0.01 • 👎 —</p>' + inputs + '<button onclick="Z.saveBounty()" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:10px;font-size:12px;cursor:pointer;">Save</button></div></div>';
 };
 Z.saveBounty = async function(){ var me = _cu(); if(!me) return; var s = {}; ['connect','subscribe','comment','share','circleJoin'].forEach(function(k){ var el = document.getElementById('bounty-' + k); s[k] = el ? parseFloat(el.value) : 0; }); await Z.DB.updateProfile(me.id, {bounty_settings: s}); Z.toast('Saved!'); Z.showView('profile'); };
 Z.renderPackages = function(){
   var u = _cu(); var cur = u ? u.package : 'Free';
   var list = [{name:'Free',price:0,desc:'Browse only.'}, {name:'Starter $1',price:1,desc:'$0.01/like, 10 daily.'}, {name:'Growth $10',price:10,desc:'$0.015/like, 25 daily.'}, {name:'Creator $20',price:20,desc:'$0.02/like, 50 daily.'}, {name:'Pro $40',price:40,desc:'$0.02/like, 100 daily.'}, {name:'Enterprise $100',price:100,desc:'$0.025/like, 500 daily.'}];
-  var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div>';
+  var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:4px;">Packages</h2></div>';
   list.forEach(function(p){ var ic = cur === p.name; html += '<div style="background:#111827;border:1px solid ' + (ic?'#10b981':'#1e293b') + ';border-radius:16px;padding:16px;"><div style="display:flex;justify-content:space-between;"><span style="font-weight:700;color:' + (ic?'#10b981':'#fff') + ';">' + Z.escape(p.name) + '</span><span style="font-weight:900;color:#10b981;">$' + p.price + '</span></div><p style="font-size:11px;color:#94a3b8;margin:4px 0 10px;">' + Z.escape(p.desc) + '</p>' + (ic ? '<button disabled style="width:100%;background:#1e293b;border:none;color:#10b981;font-weight:700;padding:10px;border-radius:8px;font-size:11px;">✓ Current</button>' : '<button onclick="Z.activatePackage(\'' + Z.escape(p.name) + '\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:10px;border-radius:8px;font-size:11px;cursor:pointer;">Activate</button>') + '</div>'; });
   html += '</div>'; return html;
 };
@@ -3253,9 +3605,12 @@ Z.renderReferrals = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   var code = u.referral_code || '—';
   var link = location.origin + location.pathname + '?ref=' + code;
-  return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div><div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;"><div class="section-title" style="margin:0 0 6px 0;">Your Referral Link</div><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:#0f172a;border:1px solid #1e293b;padding:12px;border-radius:10px;"><span style="font-size:11px;color:#10b981;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(link) + '</span><button onclick="navigator.clipboard.writeText(\'' + Z.escape(link) + '\');Z.toast(\'Copied!\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:4px 12px;border-radius:6px;font-size:10px;cursor:pointer;flex-shrink:0;">Copy</button></div></div></div>';
+  return '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'profile\')"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:4px;">Referrals</h2></div><div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;"><div class="section-title" style="margin:0 0 6px 0;">Your Referral Link</div><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:#0f172a;border:1px solid #1e293b;padding:12px;border-radius:10px;"><span style="font-size:11px;color:#10b981;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(link) + '</span><button onclick="navigator.clipboard.writeText(\'' + Z.escape(link) + '\');Z.toast(\'Copied!\')" style="background:#10b981;border:none;color:#000;font-weight:700;padding:4px 12px;border-radius:6px;font-size:10px;cursor:pointer;flex-shrink:0;">Copy</button></div></div></div>';
 };
 
+/* =========================================================
+   CIRCLES
+   ========================================================= */
 Z.renderCircles = function(){
   var html = '<div style="display:flex;flex-direction:column;gap:12px;"><div class="view-header"><h2 class="view-title"><i class="fa-solid fa-circle-nodes" style="color:#10b981;margin-right:8px;"></i>Circles</h2></div><input type="text" id="circle-search-input" placeholder="Search circles..." value="' + Z.escape(Z.State.circleSearch||'') + '" oninput="Z.onCircleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;"><div id="circles-list-container"><div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><p>Loading...</p></div></div><button onclick="Z.openCreateCircleModal()" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:12px;border-radius:12px;font-size:12px;cursor:pointer;">+ Create Circle</button></div>';
   setTimeout(Z.refreshCirclesList, 30);
@@ -3295,25 +3650,54 @@ Z.joinCircle = async function(circleId){
 };
 Z.onCircleSearch = function(v){ Z.State.circleSearch = v; Z.refreshCirclesList(); };
 
+Z.openCreateCircleModal = function(){ Z.openModal('<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box"><div class="modal-header"><h3>Create Circle</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div><label class="form-label">Name</label><input type="text" id="cc-name" class="form-input"><label class="form-label">Description</label><textarea id="cc-desc" class="form-textarea"></textarea><label class="form-label">Type</label><select id="cc-type" class="form-select"><option value="social">Social</option><option value="services">Services</option><option value="goods">Physical Goods</option><option value="office">Office</option><option value="education">Education</option><option value="events">Events</option></select><label class="form-label">Avatar URL</label><input type="text" id="cc-avatar" class="form-input" placeholder="https://..."><button class="btn-primary" onclick="Z.submitCircle()">Create Circle</button></div></div>'); };
+Z.submitCircle = async function(){
+  var me = _cu(); if(!me) return;
+  var name = ((document.getElementById('cc-name')||{}).value||'').trim();
+  var desc = ((document.getElementById('cc-desc')||{}).value||'').trim();
+  var type = (document.getElementById('cc-type')||{}).value || 'social';
+  var avatar = ((document.getElementById('cc-avatar')||{}).value||'').trim() || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
+  if(!name){ Z.toast('Enter name.'); return; }
+  var row = await Z.DB.createCircleDB({ name:name, description:desc||'New circle.', type:type, avatar:avatar, creator_id:me.id, member_count:1 });
+  if(!row){ Z.toast('Could not create circle.', 'error'); return; }
+  Z.closeModal(); Z.toast('Circle created!'); Z.showView('circles');
+};
+
+/* =========================================================
+   NOTIFICATIONS (clickable sender → SPACE)
+   ========================================================= */
 Z.renderNotifications = function(){
   var u = _cu(); if(!u) return '<div class="empty-state"><p>Login first.</p></div>';
   var all = Z.State.allNotifications || [];
   var incoming = (Z.State.allConnections||[]).filter(function(c){ return c.recipient_id === u.id && c.status === 'pending'; });
   var html = '<div style="display:flex;flex-direction:column;gap:12px;">';
   html += '<div class="view-header" style="justify-content:space-between;">';
+  html += '<button class="colored-back-btn" onclick="Z.toggleNotifications()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
   html += '<h2 class="view-title"><i class="fa-solid fa-bell" style="color:#10b981;margin-right:8px;"></i>Notifications</h2>';
   html += '<button class="circle-x-btn" onclick="Z.toggleNotifications()" title="Close"><i class="fa-solid fa-xmark"></i></button>';
   html += '</div>';
   if(incoming.length){
     html += '<div class="section-title">Connection Requests (' + incoming.length + ')</div>';
-    incoming.forEach(function(c){ var req = Z.getProfileById(c.requester_id) || {name:'User', id:c.requester_id}; html += '<div class="conn-request-card"><div class="row"><img src="' + Z.escape(Z.displayAvatar(req)) + '"><div style="flex:1;"><div style="font-weight:700;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(req)) + '</div><div style="font-size:10px;color:#10b981;font-weight:700;">$' + Number(c.connection_bounty_amount||0).toFixed(2) + ' bounty</div></div></div><div class="connect-actions"><button class="approve" onclick="Z.acceptConnection(\'' + Z.escape(c.id) + '\')">Accept</button><button class="reject" onclick="Z.rejectConnection(\'' + Z.escape(c.id) + '\')">Reject</button></div></div>'; });
+    incoming.forEach(function(c){
+      var req = Z.getProfileById(c.requester_id) || {name:'User', id:c.requester_id};
+      html += '<div class="conn-request-card"><div class="row">' +
+        '<img src="' + Z.escape(Z.displayAvatar(req)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(req.id) + '\')" style="cursor:pointer;">' +
+        '<div style="flex:1;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(req.id) + '\')">' +
+          '<div style="font-weight:700;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(req)) + '</div>' +
+          '<div style="font-size:10px;color:#10b981;font-weight:700;">$' + Number(c.connection_bounty_amount||0).toFixed(2) + ' bounty</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="connect-actions"><button class="approve" onclick="Z.acceptConnection(\'' + Z.escape(c.id) + '\')">Accept</button><button class="reject" onclick="Z.rejectConnection(\'' + Z.escape(c.id) + '\')">Reject</button></div></div>';
+    });
   }
   html += '<div class="section-title">Recent</div>';
   if(all.length){
     all.forEach(function(n){
-      var fromUser = n.metadata && n.metadata.from_user ? Z.getProfileById(n.metadata.from_user) : null;
+      var fromId = (n.metadata && n.metadata.from_user) ? n.metadata.from_user : null;
+      var fromUser = fromId ? Z.getProfileById(fromId) : null;
       var avatar = fromUser ? Z.displayAvatar(fromUser) : 'https://ui-avatars.com/api/?name=Z&background=111827&color=34d399';
-      html += '<div class="notif-item ' + (n.read?'':'unread') + '"><img src="' + Z.escape(avatar) + '"><div class="n-info"><div class="n-msg">' + Z.escape(n.message) + '</div><div class="n-time">' + _fmtDate(n.created_at) + '</div></div></div>';
+      var click = fromId ? ' onclick="Z.showView(\'public-profile\',\'' + Z.escape(fromId) + '\')" style="cursor:pointer;"' : '';
+      html += '<div class="notif-item ' + (n.read?'':'unread') + '"' + click + '><img src="' + Z.escape(avatar) + '"><div class="n-info"><div class="n-msg">' + Z.escape(n.message) + '</div><div class="n-time">' + _fmtDate(n.created_at) + '</div></div></div>';
     });
     var c = Z.sb(); if(c){ c.from('notifications').update({read:true}).eq('user_id', u.id).eq('read', false).then(function(){}); }
     all.forEach(function(n){ n.read = true; });
@@ -3323,6 +3707,9 @@ Z.renderNotifications = function(){
   return html;
 };
 
+/* =========================================================
+   RELOAD DATA
+   ========================================================= */
 Z.reloadData = async function(){
   var c = Z.sb();
   var me = _cu();
@@ -3428,6 +3815,9 @@ Z.reloadData = async function(){
   Z.saveSnapshot();
 };
 
+/* =========================================================
+   REALTIME (same 8 channels)
+   ========================================================= */
 Z.setupRealtime = function(){
   var c = Z.sb(); if(!c) return;
   var me = _cu(); if(!me) return;
@@ -3437,7 +3827,6 @@ Z.setupRealtime = function(){
     var ch1 = c.channel('zynix-comments').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' }, function(payload){
       var cm = payload.new; if(!cm) return;
       if(cm.author_id === me.id) return;
-
       if(cm.spark_id){
         var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === cm.spark_id; });
         if(sp){ sp._commentsCount = (sp._commentsCount||0)+1; Z.refreshSparkCommentCount(cm.spark_id); }
@@ -3449,16 +3838,13 @@ Z.setupRealtime = function(){
             var parent = walk(sp._comments);
             if(parent){ if(!parent._replies) parent._replies = []; parent._replies.push(cm); }
             else sp._comments.push(cm);
-          } else {
-            sp._comments.push(cm);
-          }
+          } else { sp._comments.push(cm); }
           Z.rerenderSparkCommentsBody(cm.spark_id);
         }
         return;
       }
-
       if(!cm.post_id) return;
-      var post = (Z.State.allPosts||[]).find(function(x){ return x.id === cm.post_id; }); if(!post) return;
+      var post = Z.findPostInState(cm.post_id); if(!post) return;
       var exists = false;
       function scan(arr){ for(var i=0;i<arr.length;i++){ if(arr[i].id === cm.id){ exists=true; return; } if(arr[i]._replies) scan(arr[i]._replies); } }
       if(post._comments) scan(post._comments);
@@ -3499,7 +3885,7 @@ Z.setupRealtime = function(){
     var ch2 = c.channel('zynix-reactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_reactions' }, function(payload){
         var r = payload.new; if(!r) return; if(r.user_id === me.id) return;
-        var post = (Z.State.allPosts||[]).find(function(x){ return x.id === r.post_id; }); if(!post) return;
+        var post = Z.findPostInState(r.post_id); if(!post) return;
         if(!post.reactions) post.reactions = {};
         post.reactions[r.reaction] = (post.reactions[r.reaction]||0) + 1;
         Z.updatePostReactionUI(r.post_id);
@@ -3594,6 +3980,9 @@ Z.setupRealtime = function(){
   } catch(e){ console.warn('ch8', e); }
 };
 
+/* =========================================================
+   ROUTER
+   ========================================================= */
 Z.renderView = function(view, param){
   switch(view){
     case 'home': return Z.renderHome();
@@ -3606,7 +3995,11 @@ Z.renderView = function(view, param){
     case 'referrals': return Z.renderReferrals();
     case 'circles': return Z.renderCircles();
     case 'notifications': return Z.renderNotifications();
+    case 'galleria': return Z.renderGalleria();
     case 'public-profile': return Z.renderPublicProfile(param);
+    case 'space-posts-all': return Z.renderSpacePostsAll(param);
+    case 'space-sparks-all': return Z.renderSpaceSparksAll(param);
+    case 'space-videos-all': return Z.renderSpaceVideosAll(param);
     case 'status-home': return Z.renderStatusHome();
     case 'public-home': return Z.renderPublicHome();
     default: return Z.renderHome();
@@ -3614,6 +4007,13 @@ Z.renderView = function(view, param){
 };
 Z.showView = async function(view, param){
   var prevView = Z.State.currentView;
+  var prevParam = Z.State.currentParam;
+
+  var SPACE_FLOW = { 'public-profile':1, 'space-posts-all':1, 'space-sparks-all':1, 'space-videos-all':1 };
+  if(view === 'public-profile' && !SPACE_FLOW[prevView]){
+    Z.State.prevViewBeforeSpace = { view: prevView || 'home', param: prevParam || null };
+  }
+
   if(prevView === 'home' && view !== 'home'){ Z.saveScroll(window.scrollY); Z.saveHomeAnchor(); }
   if(prevView === 'spark' && view !== 'spark'){ Z.saveSparkSlideIndex(); }
   if(prevView && prevView !== view){
@@ -3630,8 +4030,10 @@ Z.showView = async function(view, param){
   Z.State._lastSparkScrollY = 0;
   var _stb = document.getElementById('scroll-top-btn'); if(_stb) _stb.style.display = 'none';
   document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); try { b.blur(); } catch(e){} });
-  var map = {home:'nav-home', spark:'nav-spark', circles:'nav-circles', people:'nav-people', profile:'nav-profile'};
+  var map = {home:'nav-home', spark:'nav-spark', galleria:'nav-galleria', circles:'nav-circles'};
   if(map[view]){ var b = document.getElementById(map[view]); if(b) b.classList.add('active'); }
+  var me = _cu();
+  if(view === 'public-profile' && me && param === me.id){ var sb = document.getElementById('nav-space'); if(sb) sb.classList.add('active'); }
   var container = document.getElementById('app-container');
   if(!container) return;
   try { container.innerHTML = Z.renderView(view, param); }
@@ -3651,6 +4053,7 @@ Z.showView = async function(view, param){
   }
   if(view === 'people'){ setTimeout(function(){ Z.refreshPeopleList(); }, 60); }
   if(view === 'circles'){ setTimeout(function(){ Z.refreshCirclesList(); }, 60); }
+  if(view === 'public-profile'){ setTimeout(function(){ Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); }, 150); }
   if(view !== 'spark' && view !== 'home'){ setTimeout(function(){ Z.detectCaptionOverflow(); }, 100); }
   updateBellColor();
   updateWalletPillState();
@@ -3660,7 +4063,9 @@ Z.showView = async function(view, param){
 function updateBellColor(){ var b = document.getElementById('bell-btn'); if(!b) return; if(Z.State.currentView === 'notifications') b.classList.add('active'); else b.classList.remove('active'); }
 function updateWalletPillState(){ var w = document.getElementById('wallet-pill'); if(!w) return; if(Z.State.currentView === 'wallet') w.classList.add('active'); else w.classList.remove('active'); }
 
-/* BOOT — Welcome screen with per-view greeting */
+/* =========================================================
+   BOOT
+   ========================================================= */
 function readCachedUserIdSync(){
   try {
     if(!window.localStorage) return null;
@@ -3692,10 +4097,8 @@ async function boot(){
   Z.State.currentView = restored.view;
   Z.State.currentParam = restored.param;
 
-  /* Show Welcome screen first with a per-view greeting. */
   Z.showWelcome(Z.getWelcomeGreeting(restored.view));
 
-  /* Sync read of cached user id — no network */
   var cached = readCachedUserIdSync();
   var container = document.getElementById('app-container');
 
@@ -3704,12 +4107,9 @@ async function boot(){
     Z.State.currentUser = Z.State.currentUser || { id: cached.id, email: cached.email, name: (cached.user_metadata && cached.user_metadata.name) || 'You', wallet_cash: 0, wallet_bounty: 0 };
     Z.renderHeaderAuth();
     hadSnapshot = Z.loadSnapshot();
-    if(hadSnapshot){
-      try { Z.showView(restored.view, restored.param); } catch(e){}
-    }
+    if(hadSnapshot){ try { Z.showView(restored.view, restored.param); } catch(e){} }
   }
 
-  /* Background session check */
   try {
     var cc = sb();
     if(cc){
@@ -3746,10 +4146,8 @@ async function boot(){
     if(!hadSnapshot) Z.showView(restored.view, restored.param);
   }
 
-  /* Load timeline (for Public Home) */
   try { await Z.loadBuildTimeline(); } catch(e){}
 
-  /* Fade out Welcome */
   Z.hideWelcome();
 
   Z.State.bootCompleted = true;
@@ -3784,7 +4182,7 @@ if(document.readyState === 'loading'){ document.addEventListener('DOMContentLoad
 
 })();
 </script>
-<script>
+  <script>
 /* ============================================================
    ZYNIX media-persistence patch
    Fix: media disappearing after refresh / logout+login
@@ -4067,7 +4465,6 @@ function apply(){
     var row = Object.assign({}, r.data, { reactions: {}, _myReactions: {}, _comments: [] });
     Z.State.allPosts = [row].concat(Z.State.allPosts || []);
 
-    /* Show local dollar animation immediately — the backend trigger has already paid */
     try {
       var amt = 0;
       var owner = src.author_id;
