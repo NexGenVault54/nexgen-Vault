@@ -4540,5 +4540,195 @@ function apply(){
 }
 })();
 </script>
+  <script>
+/* ============================================================
+   ZYNIX Bug-Fix Patch
+   - Universal back button with proper history stack
+   - Dislike exclusivity (blocks bounty reactions while active)
+   - Instant share counter increment
+   - Logout always lands on ZYNIX public page
+   Additive. Idempotent. Safe.
+   ============================================================ */
+(function(){
+'use strict';
+if (window.__ZYNIX_BUGFIX_PATCH__) return;
+window.__ZYNIX_BUGFIX_PATCH__ = true;
+
+var tries = 0;
+var wait = setInterval(function(){
+  tries++;
+  if (window.Z && typeof Z.showView === 'function'){
+    clearInterval(wait);
+    setTimeout(function(){
+      try { apply(); } catch(e){ console.error('[ZYNIX bugfix] failed', e); }
+    }, 300);
+  } else if (tries > 200){
+    clearInterval(wait);
+    console.warn('[ZYNIX bugfix] Z never became ready');
+  }
+}, 50);
+
+function apply(){
+  var Z = window.Z;
+
+  /* ========== 1. Navigation stack — universal back button ========== */
+  Z.State.navStack = Z.State.navStack || [];
+  var _isGoingBack = false;
+  var origShowView = Z.showView;
+
+  Z.showView = async function(view, param){
+    var prevView = Z.State.currentView;
+    var prevParam = Z.State.currentParam;
+    if(!_isGoingBack && prevView && prevView !== view){
+      Z.State.navStack.push({ view: prevView, param: prevParam });
+      if(Z.State.navStack.length > 40) Z.State.navStack.shift();
+    }
+    return origShowView.apply(Z, arguments);
+  };
+
+  Z.goBack = function(){
+    var stack = Z.State.navStack;
+    var current = Z.State.currentView;
+    var target = null;
+    while(stack.length){
+      var top = stack.pop();
+      if(top.view !== current){ target = top; break; }
+    }
+    if(!target) target = { view: 'home', param: null };
+    _isGoingBack = true;
+    try { Z.showView(target.view, target.param); }
+    finally { setTimeout(function(){ _isGoingBack = false; }, 80); }
+  };
+
+  Z.toggleNotifications = function(){
+    if(Z.State.currentView === 'notifications'){ Z.goBack(); }
+    else { Z.showView('notifications'); }
+  };
+  Z.toggleWallet = function(){
+    if(Z.State.currentView === 'wallet'){ Z.goBack(); }
+    else { Z.showView('wallet'); }
+  };
+  Z.closeWallet = function(){ Z.goBack(); };
+  Z.spaceBack = function(){ Z.goBack(); };
+
+  var origLogout = Z.logout;
+  Z.logout = async function(){
+    Z.State.navStack = [];
+    try { await origLogout.apply(Z, arguments); } catch(e){}
+    setTimeout(function(){
+      try { Z.showView('public-home'); } catch(e){}
+    }, 60);
+  };
+
+  /* ========== 2. Dislike exclusivity ========== */
+  function _hasDislike(m){ return !!(m && m['dislike']); }
+
+  var origReactToPost = Z.reactToPost;
+  Z.reactToPost = async function(postId, reactionType){
+    if(reactionType !== 'dislike'){
+      var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+      if(post && _hasDislike(post._myReactions)){ Z.toast('Remove dislike first.'); return; }
+    }
+    return origReactToPost.apply(Z, arguments);
+  };
+
+  var origReactToComment = Z.reactToComment;
+  Z.reactToComment = async function(commentId, reactionType){
+    if(reactionType !== 'dislike'){
+      var cm = Z.findCommentInState ? Z.findCommentInState(commentId) : null;
+      if(cm && _hasDislike(cm._myReactions)){ Z.toast('Remove dislike first.'); return; }
+    }
+    return origReactToComment.apply(Z, arguments);
+  };
+
+  var origSparkReact = Z.sparkReact;
+  Z.sparkReact = async function(sparkId, reactionType){
+    if(reactionType !== 'dislike'){
+      var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
+      if(sp && _hasDislike(sp._myReactions)){ Z.toast('Remove dislike first.'); return; }
+    }
+    return origSparkReact.apply(Z, arguments);
+  };
+
+  var origReactToSparkComment = Z.reactToSparkComment;
+  Z.reactToSparkComment = async function(commentId, reactionType){
+    if(reactionType !== 'dislike'){
+      var found = Z.findSparkCommentInState ? Z.findSparkCommentInState(commentId) : null;
+      if(found && _hasDislike(found.cm._myReactions)){ Z.toast('Remove dislike first.'); return; }
+    }
+    return origReactToSparkComment.apply(Z, arguments);
+  };
+
+  /* Full replacement of renderReactionRowForPost with dislike-aware disabling */
+  Z.renderReactionRowForPost = function(post){
+    var me = Z.State.currentUser;
+    var counts = post.reactions || {};
+    var myR = post._myReactions || {};
+    var isMine = me && me.id === post.author_id;
+    var unfrozen = Z.isUnfrozen(post.id);
+    var hasBounty = Z.hasBountyReactionGiven(myR);
+    var hasDislike = !!myR['dislike'];
+    var html = '';
+    ['love','flower','spark','clap','star','dislike'].forEach(function(k){
+      var r = Z.Reactions[k];
+      var cnt = counts[k] || 0;
+      var act = !!myR[k];
+      var cssClass = r.cssClass ? ' class="' + r.cssClass + '"' : '';
+      var dis = (k === 'dislike');
+      var disabled = false;
+      var cls = 'react-btn';
+      if(act) cls += ' active';
+      if(dis){
+        if(hasBounty && !act) disabled = true;
+      } else {
+        if(hasDislike && !act) disabled = true;
+        else if(isMine) disabled = true;
+        else if(!unfrozen) cls += ' frozen-reaction';
+      }
+      var onclick = disabled ? '' : ' onclick="Z.reactToPost(\'' + Z.escape(post.id) + '\',\'' + k + '\')"';
+      var bountyHtml = dis ? '<span class="bounty" style="color:#64748b;">—</span>' : '<span class="bounty">$' + r.reward.toFixed(2) + '</span>';
+      html += '<button class="' + cls + '"' + onclick + ' title="' + r.label + '">' + '<span' + cssClass + '>' + r.symbol + '</span><span class="count">' + cnt + '</span>' + bountyHtml + '</button>';
+    });
+    var tip = unfrozen ? 'Unfrozen' : 'Frozen';
+    html += '<button type="button" class="freeze-dot' + (unfrozen ? ' unfrozen' : '') + '" data-freeze-id="' + Z.escape(post.id) + '" data-tip="' + tip + '" onclick="Z.toggleFreeze(\'' + Z.escape(post.id) + '\', event)"></button>';
+    return html;
+  };
+
+  /* ========== 3. Share counter — instant increment ========== */
+  function _bumpPostShares(postId){
+    try {
+      var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+      if(post){ post.shares = (post.shares||0) + 1; }
+      var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+      if(card){
+        var btns = card.querySelectorAll('.post-actions button');
+        if(btns && btns[1]) btns[1].innerHTML = '<i class="fa-solid fa-share-nodes"></i> Share ' + (post ? (post.shares||0) : 0);
+      }
+    } catch(e){}
+  }
+  function _bumpSparkShares(sparkId){
+    try {
+      var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
+      if(sp){ sp.shares = (sp.shares||0) + 1; }
+    } catch(e){}
+  }
+
+  var origPostPostToWall = Z.postPostToWall;
+  Z.postPostToWall = async function(postId){
+    var res = await origPostPostToWall.apply(Z, arguments);
+    _bumpPostShares(postId);
+    return res;
+  };
+  var origPostSparkToWall = Z.postSparkToWall;
+  Z.postSparkToWall = async function(sparkId){
+    var res = await origPostSparkToWall.apply(Z, arguments);
+    _bumpSparkShares(sparkId);
+    return res;
+  };
+
+  console.log('%c[ZYNIX] bug-fix patch active', 'color:#10b981;font-weight:bold');
+}
+})();
+</script>
 </body>
 </html>
