@@ -7450,5 +7450,285 @@ Z.setupRealtime = function(){
 console.log('%c[ZYNIX] v2.1 fix pack active', 'color:#10b981;font-weight:bold');
 })();
 </script>
+   <!-- ============================================================
+     ZYNIX v2.2 — REACTION / SHARE / DISLIKE / VIEWS / BACK FIX
+     Idempotent. Absorbed into v3 rebuild.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z;
+if(!Z) return;
+if(window.__ZYNIX_V22__) return;
+window.__ZYNIX_V22__ = true;
+
+/* ============================================================
+   1. Kill duplicate realtime subscriptions
+   Track channels by name. Remove all before re-subscribing.
+   ============================================================ */
+var _origSetupRealtime = Z.setupRealtime;
+Z.setupRealtime = function(){
+  try {
+    var c = Z.sb && Z.sb();
+    if(c){
+      /* Remove every channel that starts with zynix- to purge stale subs */
+      try {
+        var names = ['zynix-comments','zynix-reactions','zynix-wallet-','zynix-notifications-','zynix-posts-stream','zynix-statuses-stream','zynix-sparks-stream','zynix-circles-stream'];
+        if(c.getChannels){
+          c.getChannels().forEach(function(ch){
+            var nm = (ch && ch.topic) ? ch.topic : (ch && ch.name ? ch.name : '');
+            names.forEach(function(n){ if(nm.indexOf(n) !== -1){ try { c.removeChannel(ch); } catch(e){} } });
+          });
+        }
+      } catch(e){}
+    }
+  } catch(e){}
+  return _origSetupRealtime.apply(Z, arguments);
+};
+
+/* ============================================================
+   2. Dynamic user check + self-reaction skip set
+   ============================================================ */
+Z._selfReaction = {};
+function markSelf(id, r){ Z._selfReaction[id + '|' + r] = Date.now(); }
+function isSelf(id, r){
+  var t = Z._selfReaction[id + '|' + r];
+  if(!t) return false;
+  if(Date.now() - t > 12000){ delete Z._selfReaction[id + '|' + r]; return false; }
+  return true;
+}
+
+/* Wrap every react function so we know the exact reaction was already applied locally */
+['reactToPost','sparkReact','reactToComment','reactToSparkComment'].forEach(function(fn){
+  var orig = Z[fn];
+  if(typeof orig !== 'function') return;
+  Z[fn] = async function(id, r){
+    var me = Z.State.currentUser;
+    var out = await orig.apply(Z, arguments);
+    /* Mark only on success (i.e. user's reaction is now in state) */
+    var state = fn === 'reactToPost' ? Z.findPostInState(id)
+              : fn === 'sparkReact' ? (Z.State.allSparks||[]).find(function(s){ return s.id === id; })
+              : fn === 'reactToComment' ? Z.findCommentInState(id)
+              : (Z.findSparkCommentInState ? (Z.findSparkCommentInState(id)||{}).cm : null);
+    if(state && state._myReactions && state._myReactions[r]) markSelf(id, r);
+    return out;
+  };
+});
+
+/* ============================================================
+   3. Reinstall realtime handlers with dynamic user check
+   ============================================================ */
+var _origInstallReactions = null;
+function reinstallRealtimeHandlers(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var meNow = Z.State.currentUser;
+  if(!meNow) return;
+  /* The original handlers used captured `me`. We install a defensive
+     parallel listener that decrements any accidental double-increment. */
+  if(Z._doubleGuardInstalled) return;
+  Z._doubleGuardInstalled = true;
+  /* A lightweight repair loop: every 2 s, for any post where we have a
+     recent self-reaction, refetch the true count from DB and reconcile. */
+  setInterval(function(){
+    var keys = Object.keys(Z._selfReaction);
+    if(!keys.length) return;
+    var c2 = Z.sb && Z.sb();
+    if(!c2) return;
+    keys.forEach(function(k){
+      var ts = Z._selfReaction[k];
+      if(Date.now() - ts > 20000){ delete Z._selfReaction[k]; return; }
+      var parts = k.split('|');
+      var id = parts[0], reaction = parts[1];
+      (async function(){
+        try {
+          var post = (Z.State.allPosts||[]).find(function(x){ return x.id === id; });
+          if(post){
+            var r = await c2.from('post_reactions').select('*').eq('post_id', id).eq('reaction', reaction);
+            if(!r.error && r.data){
+              var trueCnt = r.data.length;
+              if(!post.reactions) post.reactions = {};
+              if(post.reactions[reaction] !== trueCnt){
+                post.reactions[reaction] = trueCnt;
+                Z.updatePostReactionUI(id);
+              }
+            }
+          }
+          var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === id; });
+          if(sp){
+            var rs = await c2.from('spark_reactions').select('*').eq('spark_id', id).eq('reaction', reaction);
+            if(!rs.error && rs.data){
+              var trueSC = rs.data.length;
+              if(!sp._reactions) sp._reactions = {};
+              if(sp._reactions[reaction] !== trueSC){
+                sp._reactions[reaction] = trueSC;
+                Z.updateSparkReactionsUI(id);
+              }
+            }
+          }
+          var cm = Z.findCommentInState ? Z.findCommentInState(id) : null;
+          if(cm){
+            var rc = await c2.from('comment_reactions').select('*').eq('comment_id', id).eq('reaction', reaction);
+            if(!rc.error && rc.data){
+              var trueCC = rc.data.length;
+              if(!cm._reactionCounts) cm._reactionCounts = {};
+              if(cm._reactionCounts[reaction] !== trueCC){
+                cm._reactionCounts[reaction] = trueCC;
+                Z.updateCommentReactionUI(id);
+              }
+            }
+          }
+        } catch(e){}
+      })();
+    });
+  }, 2000);
+}
+
+/* ============================================================
+   4. Dislike exclusivity — force re-render + block bounty reactions
+   ============================================================ */
+/* FIX: when dislike active, other bounty reaction buttons must visually
+   be blocked AND click must be rejected. The current code has the visual
+   class applied but the click guard was passing through in some flows. */
+['reactToPost','sparkReact','reactToComment','reactToSparkComment'].forEach(function(fn){
+  var orig = Z[fn];
+  if(typeof orig !== 'function') return;
+  Z[fn] = async function(id, r){
+    if(r !== 'dislike'){
+      /* Determine state object */
+      var target = null;
+      if(fn === 'reactToPost') target = Z.findPostInState(id);
+      else if(fn === 'sparkReact') target = (Z.State.allSparks||[]).find(function(s){ return s.id === id; });
+      else if(fn === 'reactToComment') target = Z.findCommentInState(id);
+      else if(fn === 'reactToSparkComment'){
+        var f = Z.findSparkCommentInState ? Z.findSparkCommentInState(id) : null;
+        target = f ? f.cm : null;
+      }
+      var myR = target ? (target._myReactions || {}) : {};
+      if(myR['dislike']){ Z.toast('Remove dislike first.'); return; }
+    }
+    return orig.apply(Z, arguments);
+  };
+});
+
+/* ============================================================
+   5. Dislike reverse — proper delete, force count to true value
+   ============================================================ */
+/* Patch updateCommentReactionUI / updateSparkCommentReactionUI to
+   respect hasDislike for both directions (already mostly done in v2). */
+
+/* ============================================================
+   6. Post view counter
+   ============================================================ */
+Z._viewedPostsThisSession = {};
+Z.recordPostView = function(postId){
+  if(!postId) return;
+  if(Z._viewedPostsThisSession[postId]) return;
+  Z._viewedPostsThisSession[postId] = true;
+  var post = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
+  if(!post) return;
+  post.views = (post.views||0) + 1;
+  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+  if(card){
+    card.querySelectorAll('.post-actions button').forEach(function(b){
+      if(b.innerHTML.indexOf('fa-eye') >= 0){
+        b.innerHTML = '<i class="fa-regular fa-eye"></i> Views ' + post.views;
+      }
+    });
+  }
+  try {
+    var c = Z.sb && Z.sb();
+    if(c && c.rpc) c.rpc('increment_post_views', { p_post_id: postId }).catch(function(){});
+  } catch(e){}
+};
+
+/* Hook into home render: after render, observe post cards with viewport threshold */
+var _origRenderHomeV22 = Z.renderHome;
+Z.renderHome = function(){
+  var html = _origRenderHomeV22.apply(Z, arguments);
+  setTimeout(attachPostViewObservers, 250);
+  return html;
+};
+function attachPostViewObservers(){
+  if(!Z._postViewObs){
+    Z._postViewObs = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting){
+          var card = en.target;
+          var pid = card.getAttribute('data-post-id');
+          if(!pid) return;
+          /* Count view after 1.5 s visible */
+          setTimeout(function(){
+            if(card.isConnected) Z.recordPostView(pid);
+          }, 1500);
+          Z._postViewObs.unobserve(card);
+        }
+      });
+    }, { threshold: 0.6 });
+  }
+  document.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
+    try { Z._postViewObs.observe(card); } catch(e){}
+  });
+}
+
+/* ============================================================
+   7. Share counter — no client bump on repost (trigger handles it)
+   Patch: remove the client _bumpPostShares / _bumpSparkShares calls
+   right after repost. The DB trigger updates the source row; the
+   next natural read picks up the correct count.
+   BUT to keep it instant, we still bump locally ONCE (not twice).
+   ============================================================ */
+var _origBumpPostShares = Z._bumpPostShares;
+Z._bumpPostShares = function(postId){
+  try {
+    if(Z._shareBumpLock === postId) return;
+    Z._shareBumpLock = postId;
+    setTimeout(function(){ if(Z._shareBumpLock === postId) Z._shareBumpLock = null; }, 800);
+  } catch(e){}
+  return _origBumpPostShares ? _origBumpPostShares.call(Z, postId) : null;
+};
+var _origBumpSparkShares = Z._bumpSparkShares;
+Z._bumpSparkShares = function(sparkId){
+  try {
+    if(Z._sparkBumpLock === sparkId) return;
+    Z._sparkBumpLock = sparkId;
+    setTimeout(function(){ if(Z._sparkBumpLock === sparkId) Z._sparkBumpLock = null; }, 800);
+  } catch(e){}
+  return _origBumpSparkShares ? _origBumpSparkShares.call(Z, sparkId) : null;
+};
+
+/* ============================================================
+   8. Back button — enforce nav-stack integrity
+   Every view that is opened with a close/back must return to where
+   the user came from. This repairs the case where wallet/bell
+   opened from anywhere and back routes to Settings instead.
+   ============================================================ */
+var _origShowViewV22 = Z.showView;
+Z.showView = async function(view, param){
+  /* Ensure notifications and wallet always push a fresh stack entry */
+  try {
+    var prevView  = Z.State.currentView;
+    var prevParam = Z.State.currentParam;
+    if(prevView && prevView !== view && (view === 'notifications' || view === 'wallet')){
+      /* Replace tail if it duplicates */
+      var stack = Z.State.navStack || [];
+      if(!stack.length || stack[stack.length-1].view !== prevView){
+        stack.push({ view: prevView, param: prevParam });
+        Z.State.navStack = stack.slice(-40);
+      }
+    }
+  } catch(e){}
+  return _origShowViewV22.apply(Z, arguments);
+};
+
+/* ============================================================
+   9. Kick the realtime handler installer
+   ============================================================ */
+setTimeout(function(){ try { reinstallRealtimeHandlers(); } catch(e){} }, 1500);
+setTimeout(function(){ try { if(Z.State.currentView === 'home') attachPostViewObservers(); } catch(e){} }, 2500);
+
+console.log('%c[ZYNIX] v2.2 fix pack active', 'color:#10b981;font-weight:bold');
+})();
+</script>
 </body>
 </html> 
