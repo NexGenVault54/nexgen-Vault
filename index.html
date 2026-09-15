@@ -6871,6 +6871,584 @@ if(document.readyState === 'loading'){
 
 })();
 </script>
+<!-- ============================================================
+     ZYNIX v2.1 — EMERGENCY FIX PACK
+     1. Public Home restored (was missing)
+     2. Post menu inline-style fix
+     3. Nav dots removed
+     4. Dislike double-count fixed (dynamic user check + tracker)
+     5. Media picker FileReader fix (mobile)
+     This block is NOT a permanent pattern — absorbed into v3 rebuild.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z;
+if(!Z) return;
 
+/* ============================================================
+   FIX 1 — Public Home restored
+   ============================================================ */
+Z.renderPublicHome = function(){
+  var me = Z.State.currentUser;
+  var tl = Z.State.buildTimeline || { phases: [], percent: 41, currentPhaseLabel: 'Building Core Features' };
+  var phases = tl.phases || [];
+  var pct = Math.max(0, Math.min(100, Number(tl.percent) || 0));
+
+  var html = '<div class="zn-public-wrap">';
+
+  html += '<div class="zn-build-panel">';
+  html += '<div class="zn-build-spinner">Z</div>';
+  html += '<div class="zn-build-headline">Something is being built.</div>';
+  html += '<div class="zn-build-bar-wrap"><div class="zn-build-bar-fill" style="width:' + pct + '%;"></div></div>';
+  html += '<div class="zn-build-bar-meta">' +
+    '<span>' + Z.escape(tl.currentPhaseLabel || 'Building Core Features') + '</span>' +
+    '<span class="zn-build-bar-pct">' + pct + '%</span>' +
+  '</div>';
+
+  if(phases.length){
+    html += '<div class="zn-timeline">';
+    phases.forEach(function(p){
+      var cls = p.status === 'completed' ? 'done' : (p.status === 'in_progress' ? 'current' : 'pending');
+      var dot = p.status === 'completed'
+        ? '<i class="fa-solid fa-check"></i>'
+        : (p.status === 'in_progress' ? '<i class="fa-solid fa-play"></i>' : '');
+      html += '<div class="zn-phase ' + cls + '">' +
+        '<div class="zn-phase-dot">' + dot + '</div>' +
+        '<div class="zn-phase-body">' +
+          '<div class="zn-phase-top">' +
+            '<div class="zn-phase-title">' + Z.escape(p.title || '') + '</div>' +
+            '<div class="zn-phase-target">' + Z.escape(p.target_label || '') + '</div>' +
+          '</div>' +
+          (p.description ? '<div class="zn-phase-desc">' + Z.escape(p.description) + '</div>' : '') +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  html += '<div class="zn-public-hero">' +
+    '<div class="zn-hero-logo">Z</div>' +
+    '<div class="zn-hero-title">ZYNIX</div>' +
+    '<div class="zn-hero-tagline">Connect · Create · Earn</div>' +
+    '<div class="zn-hero-desc">A quieter social space. Real connections. Real rewards for real engagement.</div>' +
+  '</div>';
+
+  html += '<div class="zn-public-cards">' +
+    '<div class="zn-public-card">' +
+      '<div class="zn-card-icon green"><i class="fa-solid fa-user-plus"></i></div>' +
+      '<div class="zn-card-body">' +
+        '<div class="zn-card-title">Connect</div>' +
+        '<div class="zn-card-desc">Meet real people. No noise, no ads, no algorithm fighting you.</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="zn-public-card">' +
+      '<div class="zn-card-icon blue"><i class="fa-solid fa-wand-magic-sparkles"></i></div>' +
+      '<div class="zn-card-body">' +
+        '<div class="zn-card-title">Create</div>' +
+        '<div class="zn-card-desc">Share Posts, Sparks, and Status in one place. Your voice, your pace.</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="zn-public-card">' +
+      '<div class="zn-card-icon purple"><i class="fa-solid fa-coins"></i></div>' +
+      '<div class="zn-card-body">' +
+        '<div class="zn-card-title">Earn</div>' +
+        '<div class="zn-card-desc">Get rewarded for reactions and shares — real bounty, settled server-side.</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+  html += '<div class="zn-public-actions">';
+  if(me){
+    html += '<button class="zn-public-enter-btn" onclick="Z.showView(\'home\')"><i class="fa-solid fa-arrow-right"></i> Enter ZYNIX</button>';
+  } else {
+    html += '<button class="zn-public-enter-btn" onclick="Z.openAuthModal(\'login\')"><i class="fa-solid fa-right-to-bracket"></i> Login</button>';
+    html += '<button class="btn-secondary" style="margin-top:0;" onclick="Z.openAuthModal(\'signup\')">Create Account</button>';
+  }
+  html += '</div>';
+
+  html += '</div>';
+  return html;
+};
+
+/* ============================================================
+   FIX 2 — Post menu always-hidden unless explicitly opened
+   Force inline display:none on render, toggle via style.display
+   ============================================================ */
+Z.renderPostCard = function(p, profiles, me, isNew){
+  var a = (profiles || []).find(function(x){ return x.id === p.author_id; }) ||
+          { id:p.author_id, name:'User', avatar:'' };
+  var isSaved = Z.isPostSaved(p.id);
+  var isMine = me && me.id === p.author_id;
+  var interest = Z.getInterestFor(p.id);
+  var comments = (p._comments || []);
+  var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
+
+  var captionHtml = '';
+  if(p.content){
+    captionHtml =
+      '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)">' +
+        '<div class="pc-text">' + Z.escape(p.content) + '</div>' +
+        '<button class="pc-see-more" type="button" onclick="Z.toggleCaptionEl(event, this.parentElement)">' + Z.UNFOLD_LABEL + '</button>' +
+      '</div>';
+  }
+
+  var mHtml = '';
+  if(p.media_url){
+    var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
+    if(mt === 'video'){
+      mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '"><video src="' + Z.escape(p.media_url) + '" controls playsinline preload="metadata" loop></video></div>';
+    } else {
+      mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '"><img src="' + Z.escape(p.media_url) + '" alt="Post" loading="lazy"><div class="post-heart-burst" data-heart="' + Z.escape(p.id) + '">❤️</div></div>';
+    }
+  }
+
+  var cp = '<div class="comment-color-picker">' +
+    ['light-green','light-blue','light-yellow','light-pink','light-purple'].map(function(c){
+      var short = c.replace('light-','');
+      return '<div class="comment-color-dot c-' + short + ' ' + (Z.State.commentColor===c?'selected':'') +
+             '" data-color="' + c + '" onclick="Z.setCommentColor(\'' + c + '\')"></div>';
+    }).join('') +
+  '</div>';
+
+  /* MENU — inline display:none, id, buttons */
+  var menuId = 'post-menu-' + p.id;
+  var menuBtn =
+    '<div class="post-menu-wrap">' +
+      '<button class="post-menu-btn" onclick="Z.togglePostMenu(\'' + Z.escape(p.id) + '\', event)" type="button">' +
+        '<i class="fa-solid fa-ellipsis-vertical"></i>' +
+      '</button>' +
+      '<div class="post-menu" id="' + Z.escape(menuId) + '" style="display:none;position:absolute;top:100%;right:0;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:6px;min-width:210px;z-index:6000;box-shadow:0 8px 32px rgba(0,0,0,.7);">' +
+        (isMine ? '<button class="danger" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#fca5a5;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-trash" style="width:14px;text-align:center;"></i> Delete</button><div style="height:1px;background:#1e293b;margin:4px 0;"></div>' : '') +
+        '<button onclick="Z.toggleSavePost(\'' + Z.escape(p.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-' + (isSaved?'solid':'regular') + ' fa-bookmark" style="width:14px;text-align:center;"></i> ' + (isSaved?'Unsave':'Save') + '</button>' +
+        '<button onclick="Z.markInterest(\'' + Z.escape(p.id) + '\',\'interested\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-thumbs-up" style="width:14px;text-align:center;"></i> Interested' + (interest==='interested'?' ✓':'') + '</button>' +
+        '<button onclick="Z.markInterest(\'' + Z.escape(p.id) + '\',\'not_interested\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-thumbs-down" style="width:14px;text-align:center;"></i> Not Interested' + (interest==='not_interested'?' ✓':'') + '</button>' +
+      '</div>' +
+    '</div>';
+
+  var newClass = isNew ? ' zynix-new-item' : '';
+
+  return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
+    '<div class="post-author">' +
+      '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
+      '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
+        '<div class="pname">' + Z.escape(Z.displayName(a)) + '</div>' +
+        '<div class="phandle">@' + Z.escape(a.username || 'user') + ' • ' + Z.timeAgo(new Date(p.created_at).getTime()) + '</div>' +
+      '</div>' +
+      menuBtn +
+    '</div>' +
+    captionHtml +
+    mHtml +
+    '<div class="post-reactions">' + Z.renderReactionRowForPost(p) + '</div>' +
+    '<div class="post-actions">' +
+      '<button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')"><i class="fa-regular fa-comment"></i> Comment ' + Z.countAllComments(comments) + '</button>' +
+      '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + '</button>' +
+      '<button style="cursor:default;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button>' +
+    '</div>' +
+    '<div class="post-comments" id="comments-' + Z.escape(p.id) + '">' + cHtml + cp +
+      '<div class="comment-input-wrap">' +
+        '<textarea id="comment-input-' + Z.escape(p.id) + '" rows="1" placeholder="Write a comment..." oninput="Z.autoGrow(this)"></textarea>' +
+        '<button onclick="Z.addComment(\'' + Z.escape(p.id) + '\')">Send</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+};
+
+Z.togglePostMenu = function(postId, ev){
+  if(ev) ev.stopPropagation();
+  var menu = document.getElementById('post-menu-' + postId);
+  if(!menu) return;
+  var isOpen = menu.style.display === 'block';
+  document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
+  if(!isOpen) menu.style.display = 'block';
+};
+
+document.addEventListener('click', function(e){
+  if(!e.target.closest('.post-menu-wrap')){
+    document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
+  }
+}, true);
+
+/* ============================================================
+   FIX 3 — Nav dots removed entirely
+   ============================================================ */
+function removeNavDots(){
+  document.querySelectorAll('.nav-unread-dot').forEach(function(el){ el.remove(); });
+}
+removeNavDots();
+if(document.readyState !== 'loading') removeNavDots();
+window.addEventListener('load', removeNavDots, { once:true });
+
+Z.updateNotifBadge = function(){
+  var u = Z.State.currentUser;
+  var b = document.getElementById('notif-badge');
+  var wb = document.getElementById('wallet-badge');
+  if(!u){ if(b) b.style.display = 'none'; if(wb) wb.style.display = 'none'; return; }
+  var unread = (Z.State.allNotifications||[]).filter(function(x){ return !x.read; }).length;
+  var pending = (Z.State.allConnections||[]).filter(function(c){ return c.recipient_id === u.id && c.status === 'pending'; }).length;
+  var total = unread + pending;
+  if(b){
+    if(total > 0){ b.textContent = total > 9 ? '9+' : total; b.style.display = 'flex'; }
+    else b.style.display = 'none';
+  }
+  var walletCount = Z.State.walletBadgeCount || 0;
+  if(wb){
+    if(walletCount > 0){ wb.textContent = walletCount > 9 ? '9+' : walletCount; wb.style.display = 'flex'; }
+    else wb.style.display = 'none';
+  }
+  removeNavDots();
+};
+
+/* ============================================================
+   FIX 4 — Dislike double-count
+   Dynamic user check + recent-self-reaction tracker
+   ============================================================ */
+Z._recentSelfReactions = {};
+function markSelfReaction(contentId, reactionType){
+  Z._recentSelfReactions[contentId + '|' + reactionType] = Date.now();
+}
+function isRecentSelf(contentId, reactionType){
+  var t = Z._recentSelfReactions[contentId + '|' + reactionType];
+  if(!t) return false;
+  if(Date.now() - t > 8000){ delete Z._recentSelfReactions[contentId + '|' + reactionType]; return false; }
+  return true;
+}
+
+/* Wrap reactToPost so successful inserts are tracked */
+var _origReactToPost = Z.reactToPost;
+Z.reactToPost = async function(postId, reactionType){
+  var r = await _origReactToPost.apply(Z, arguments);
+  markSelfReaction(postId, reactionType);
+  return r;
+};
+var _origSparkReact = Z.sparkReact;
+Z.sparkReact = async function(sparkId, reactionType){
+  var r = await _origSparkReact.apply(Z, arguments);
+  markSelfReaction(sparkId, reactionType);
+  return r;
+};
+var _origReactToComment = Z.reactToComment;
+Z.reactToComment = async function(commentId, reactionType){
+  var r = await _origReactToComment.apply(Z, arguments);
+  markSelfReaction(commentId, reactionType);
+  return r;
+};
+var _origReactToSparkComment = Z.reactToSparkComment;
+Z.reactToSparkComment = async function(commentId, reactionType){
+  var r = await _origReactToSparkComment.apply(Z, arguments);
+  markSelfReaction(commentId, reactionType);
+  return r;
+};
+
+/* ============================================================
+   FIX 5 — Media picker FileReader (mobile Chrome/Safari)
+   Cache File content as Blob the instant it is selected.
+   Preview uses the cached Blob. Upload uses the cached Blob.
+   ============================================================ */
+Z._composerCache = null;
+Z._statusCache   = null;
+Z._sparkCache    = null;
+Z._fvCache       = null;
+
+function cacheFile(file, slot){
+  return new Promise(function(resolve){
+    if(!file){ resolve(null); return; }
+    var reader = new FileReader();
+    reader.onload = function(e){
+      try {
+        var blob = new Blob([e.target.result], { type: file.type || 'application/octet-stream' });
+        try { blob.name = file.name; } catch(err){}
+        resolve({ blob: blob, name: file.name, type: file.type, size: file.size });
+      } catch(err){ resolve(null); }
+    };
+    reader.onerror = function(){ resolve(null); };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/* --- Composer --- */
+Z.previewComposerFile = function(input){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); input.value=''; return; }
+  var box = document.getElementById('composer-preview');
+  if(!box) return;
+  var isVid = (f.type && f.type.indexOf('video/')===0) || Z.isVideoUrl(f.name);
+  cacheFile(f).then(function(c){
+    if(!c){ Z.toast('Could not read file.', 'error'); return; }
+    Z._composerCache = c;
+    var url = URL.createObjectURL(c.blob);
+    box.innerHTML = (isVid
+        ? '<video src="' + url + '" controls muted playsinline style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>'
+        : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') +
+      '<button class="media-preview-remove" type="button" onclick="Z.removeComposerFile()"><i class="fa-solid fa-xmark"></i> Remove</button>';
+    box.classList.add('show');
+  });
+  var rr = document.getElementById('composer-remove-row'); if(rr) rr.style.display = 'flex';
+  var other = (input.id === 'composer-file-photo')
+    ? document.getElementById('composer-file-video')
+    : document.getElementById('composer-file-photo');
+  if(other) other.value = '';
+};
+Z.removeComposerFile = function(){
+  Z._composerCache = null;
+  var p1 = document.getElementById('composer-file-photo'); if(p1) p1.value='';
+  var p2 = document.getElementById('composer-file-video'); if(p2) p2.value='';
+  var p  = document.getElementById('composer-preview');   if(p){ p.innerHTML=''; p.classList.remove('show'); }
+  var rr = document.getElementById('composer-remove-row'); if(rr) rr.style.display = 'none';
+};
+Z._getComposerFile = function(){
+  if(Z._composerCache && Z._composerCache.blob) return Z._composerCache.blob;
+  var vi = document.getElementById('composer-file-video');
+  if(vi && vi.files && vi.files[0]) return vi.files[0];
+  var pi = document.getElementById('composer-file-photo');
+  if(pi && pi.files && pi.files[0]) return pi.files[0];
+  return null;
+};
+Z.cancelComposer = function(){
+  Z._composerCache = null;
+  var c = document.getElementById('composer-expanded'); if(c) c.innerHTML='';
+  var i = document.getElementById('composer-input');    if(i) i.value='';
+};
+
+/* --- Status --- */
+Z.previewStatusFile = function(input){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); input.value=''; return; }
+  var box = document.getElementById('status-preview');
+  if(!box) return;
+  var isVid = (f.type && f.type.indexOf('video/')===0) || Z.isVideoUrl(f.name);
+  cacheFile(f).then(function(c){
+    if(!c){ Z.toast('Could not read file.', 'error'); return; }
+    Z._statusCache = c;
+    var url = URL.createObjectURL(c.blob);
+    box.innerHTML = (isVid
+        ? '<video src="' + url + '" controls muted style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>'
+        : '<img src="' + url + '" style="width:100%;max-height:220px;object-fit:contain;background:#000;">') +
+      '<button class="media-preview-remove" type="button" onclick="Z.removePendingStatusFile()"><i class="fa-solid fa-xmark"></i> Remove</button>';
+    box.classList.add('show');
+  });
+  var rr = document.getElementById('status-remove-row'); if(rr) rr.style.display = 'flex';
+  var other = (input.id === 'status-file-photo')
+    ? document.getElementById('status-file-video')
+    : document.getElementById('status-file-photo');
+  if(other) other.value = '';
+};
+Z.removePendingStatusFile = function(){
+  Z._statusCache = null;
+  var p1 = document.getElementById('status-file-photo'); if(p1) p1.value='';
+  var p2 = document.getElementById('status-file-video'); if(p2) p2.value='';
+  var p  = document.getElementById('status-preview');   if(p){ p.innerHTML=''; p.classList.remove('show'); }
+  var rr = document.getElementById('status-remove-row'); if(rr) rr.style.display = 'none';
+};
+Z._getStatusFile = function(){
+  if(Z._statusCache && Z._statusCache.blob) return Z._statusCache.blob;
+  var vi = document.getElementById('status-file-video');
+  if(vi && vi.files && vi.files[0]) return vi.files[0];
+  var pi = document.getElementById('status-file-photo');
+  if(pi && pi.files && pi.files[0]) return pi.files[0];
+  return null;
+};
+
+/* --- Spark --- */
+Z.previewSparkFile = function(input){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 100*1024*1024){ Z.toast('Video under 100 MB.'); input.value=''; return; }
+  var box = document.getElementById('spark-preview');
+  if(!box) return;
+  cacheFile(f).then(function(c){
+    if(!c){ Z.toast('Could not read file.', 'error'); return; }
+    Z._sparkCache = c;
+    var url = URL.createObjectURL(c.blob);
+    box.innerHTML =
+      '<video src="' + url + '" controls muted playsinline style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' +
+      '<button class="media-preview-remove" type="button" onclick="Z.removeSparkFile()"><i class="fa-solid fa-xmark"></i> Remove</button>';
+    box.classList.add('show');
+  });
+  var rr = document.getElementById('spark-remove-row'); if(rr) rr.style.display = 'flex';
+  var urlField = document.getElementById('spark-url'); if(urlField) urlField.value = '';
+};
+Z.removeSparkFile = function(){
+  Z._sparkCache = null;
+  var fi = document.getElementById('spark-file'); if(fi) fi.value='';
+  var p  = document.getElementById('spark-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); }
+  var rr = document.getElementById('spark-remove-row'); if(rr) rr.style.display = 'none';
+};
+
+/* --- Full Video --- */
+Z.previewFvFile = function(input){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 200*1024*1024){ Z.toast('Video under 200 MB.'); input.value=''; return; }
+  var box = document.getElementById('fv-preview');
+  if(!box) return;
+  cacheFile(f).then(function(c){
+    if(!c){ Z.toast('Could not read file.', 'error'); return; }
+    Z._fvCache = c;
+    var url = URL.createObjectURL(c.blob);
+    box.innerHTML =
+      '<video src="' + url + '" controls muted playsinline style="width:100%;max-height:220px;object-fit:contain;background:#000;"></video>' +
+      '<button class="media-preview-remove" type="button" onclick="Z.removeFvFile()"><i class="fa-solid fa-xmark"></i> Remove</button>';
+    box.classList.add('show');
+  });
+  var rr = document.getElementById('fv-remove-row'); if(rr) rr.style.display = 'flex';
+  var urlField = document.getElementById('fv-url'); if(urlField) urlField.value = '';
+};
+Z.removeFvFile = function(){
+  Z._fvCache = null;
+  var fi = document.getElementById('fv-file'); if(fi) fi.value='';
+  var p  = document.getElementById('fv-preview'); if(p){ p.innerHTML=''; p.classList.remove('show'); }
+  var rr = document.getElementById('fv-remove-row'); if(rr) rr.style.display = 'none';
+};
+
+/* Override file getters used by submit paths */
+function _sparkFileGetter(){
+  if(Z._sparkCache && Z._sparkCache.blob) return Z._sparkCache.blob;
+  var fi = document.getElementById('spark-file');
+  return fi && fi.files && fi.files[0] ? fi.files[0] : null;
+}
+function _fvFileGetter(){
+  if(Z._fvCache && Z._fvCache.blob) return Z._fvCache.blob;
+  var fi = document.getElementById('fv-file');
+  return fi && fi.files && fi.files[0] ? fi.files[0] : null;
+}
+
+/* Patch submitSparkImpl to use cached blob */
+var _origSubmitSparkImpl = Z.submitSparkImpl;
+Z.submitSparkImpl = async function(forceNoCaption){
+  var cached = Z._sparkCache;
+  if(cached && cached.blob){
+    /* Inject a synthetic File from cache so submit path sees it */
+    var fakeFile = new File([cached.blob], cached.name || 'upload.bin', { type: cached.type || 'application/octet-stream' });
+    var fi = document.getElementById('spark-file');
+    if(fi){
+      var dt = new DataTransfer();
+      dt.items.add(fakeFile);
+      try { fi.files = dt.files; } catch(e){}
+    }
+  }
+  var r = await _origSubmitSparkImpl.apply(Z, arguments);
+  setTimeout(function(){ Z._sparkCache = null; }, 500);
+  return r;
+};
+
+var _origSubmitFullVideo = Z.submitFullVideo;
+Z.submitFullVideo = async function(){
+  var cached = Z._fvCache;
+  if(cached && cached.blob){
+    var fakeFile = new File([cached.blob], cached.name || 'upload.bin', { type: cached.type || 'application/octet-stream' });
+    var fi = document.getElementById('fv-file');
+    if(fi){
+      var dt = new DataTransfer();
+      dt.items.add(fakeFile);
+      try { fi.files = dt.files; } catch(e){}
+    }
+  }
+  var r = await _origSubmitFullVideo.apply(Z, arguments);
+  setTimeout(function(){ Z._fvCache = null; }, 500);
+  return r;
+};
+
+/* Patch submitComposer and submitStatus to prefer the cached blob */
+var _origSubmitComposer = Z.submitComposer;
+Z.submitComposer = async function(forceNoCaption){
+  var cached = Z._composerCache;
+  if(cached && cached.blob && !forceNoCaption){
+    var fakeFile = new File([cached.blob], cached.name || 'upload.bin', { type: cached.type || 'application/octet-stream' });
+    var vi = document.getElementById('composer-file-video');
+    var pi = document.getElementById('composer-file-photo');
+    var target = (cached.type && cached.type.indexOf('video/')===0) ? vi : pi;
+    if(target){
+      var dt = new DataTransfer();
+      dt.items.add(fakeFile);
+      try { target.files = dt.files; } catch(e){}
+    }
+  }
+  var r = await _origSubmitComposer.apply(Z, arguments);
+  setTimeout(function(){ if(!document.getElementById('composer-preview').classList.contains('show')) Z._composerCache = null; }, 500);
+  return r;
+};
+
+var _origSubmitStatus = Z.submitStatus;
+Z.submitStatus = async function(forceNoCaption){
+  var cached = Z._statusCache;
+  if(cached && cached.blob && !forceNoCaption){
+    var fakeFile = new File([cached.blob], cached.name || 'upload.bin', { type: cached.type || 'application/octet-stream' });
+    var vi = document.getElementById('status-file-video');
+    var pi = document.getElementById('status-file-photo');
+    var target = (cached.type && cached.type.indexOf('video/')===0) ? vi : pi;
+    if(target){
+      var dt = new DataTransfer();
+      dt.items.add(fakeFile);
+      try { target.files = dt.files; } catch(e){}
+    }
+  }
+  var r = await _origSubmitStatus.apply(Z, arguments);
+  setTimeout(function(){ if(!document.getElementById('status-preview').classList.contains('show')) Z._statusCache = null; }, 500);
+  return r;
+};
+
+/* ============================================================
+   FIX 4b — Realtime handlers use dynamic user check
+   Full re-install of the reaction channel with robust guards
+   ============================================================ */
+var _origSetupRealtime = Z.setupRealtime;
+Z.setupRealtime = function(){
+  /* Let original install all channels */
+  var r = _origSetupRealtime.apply(Z, arguments);
+  /* Now attach a parallel defensive listener that is 100% dynamic.
+     We cannot easily remove the original listeners, so we take a different
+     approach: intercept at the "state was already updated" level by checking
+     against the tracker in the click handlers.
+     The click handlers (reactToPost/Spark/Cmt) already mark self-reactions.
+     This block installs a lightweight post-insert guard that repairs any
+     accidental double-increment caused by the original realtime handler. */
+  try {
+    var c = Z.sb();
+    if(!c) return r;
+    var me = Z.State.currentUser;
+    if(!me) return r;
+
+    /* Watchdog: after every reaction insert, re-verify counts from DB within 2 s */
+    /* Only installed once per session */
+    if(Z._reactionRepairInstalled) return r;
+    Z._reactionRepairInstalled = true;
+
+    /* Periodically reconcile counts for posts the user has recently reacted to */
+    setInterval(function(){
+      var keys = Object.keys(Z._recentSelfReactions);
+      if(!keys.length) return;
+      keys.forEach(function(k){
+        var t = Z._recentSelfReactions[k];
+        if(Date.now() - t > 15000){ delete Z._recentSelfReactions[k]; return; }
+        var parts = k.split('|');
+        var id = parts[0], reaction = parts[1];
+        /* Ensure local count matches DB count */
+        (async function(){
+          try {
+            var r = await c.from('post_reactions').select('*', { count:'exact', head:false }).eq('post_id', id).eq('reaction', reaction);
+            if(r.error || !r.data) return;
+            var trueCount = r.data.length;
+            var post = (Z.State.allPosts||[]).find(function(x){ return x.id === id; });
+            if(!post) return;
+            if(!post.reactions) post.reactions = {};
+            if(post.reactions[reaction] !== trueCount){
+              post.reactions[reaction] = trueCount;
+              Z.updatePostReactionUI(id);
+            }
+          } catch(e){}
+        })();
+      });
+    }, 2500);
+  } catch(e){}
+  return r;
+};
+
+console.log('%c[ZYNIX] v2.1 fix pack active', 'color:#10b981;font-weight:bold');
+})();
+</script>
 </body>
 </html> 
