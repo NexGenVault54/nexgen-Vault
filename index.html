@@ -7730,5 +7730,269 @@ setTimeout(function(){ try { if(Z.State.currentView === 'home') attachPostViewOb
 console.log('%c[ZYNIX] v2.2 fix pack active', 'color:#10b981;font-weight:bold');
 })();
 </script>
+   <!-- ============================================================
+     ZYNIX v2.3 — MENU POSITION · SCROLL TOP · REALTIME DELETE +
+     UPDATE · NAVSTACK DEDUPE
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z;
+if(!Z) return;
+if(window.__ZYNIX_V23__) return;
+window.__ZYNIX_V23__ = true;
+
+/* ============================================================
+   FIX 1 — Post menu positioned with fixed coords
+   ============================================================ */
+Z.togglePostMenu = function(postId, ev){
+  if(ev) ev.stopPropagation();
+  var menu = document.getElementById('post-menu-' + postId);
+  if(!menu) return;
+  var btn = ev && ev.target ? ev.target.closest('.post-menu-btn') : null;
+  if(!btn){
+    var wrap = menu.closest('.post-menu-wrap');
+    if(wrap) btn = wrap.querySelector('.post-menu-btn');
+  }
+  if(!btn) return;
+
+  var isOpen = menu.style.display === 'block';
+  document.querySelectorAll('.post-menu').forEach(function(m){
+    m.style.display = 'none';
+    m.style.position = '';
+    m.style.top = '';
+    m.style.right = '';
+    m.style.left = '';
+  });
+  if(isOpen) return;
+
+  var rect = btn.getBoundingClientRect();
+  var menuW = 210;
+  var left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+
+  menu.style.position = 'fixed';
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.style.left = left + 'px';
+  menu.style.right = 'auto';
+  menu.style.zIndex = '9999';
+  menu.style.display = 'block';
+};
+
+document.addEventListener('click', function(e){
+  if(!e.target.closest('.post-menu-wrap') && !e.target.closest('.post-menu')){
+    document.querySelectorAll('.post-menu').forEach(function(m){
+      m.style.display = 'none';
+      m.style.position = '';
+      m.style.top = '';
+      m.style.right = '';
+      m.style.left = '';
+    });
+  }
+}, true);
+
+/* Also close on scroll so a fixed-position menu doesn't float */
+window.addEventListener('scroll', function(){
+  document.querySelectorAll('.post-menu').forEach(function(m){
+    if(m.style.display === 'block'){
+      m.style.display = 'none';
+      m.style.position = '';
+    }
+  });
+}, {passive:true});
+
+/* ============================================================
+   FIX 2 — Scroll to top on fresh page load
+   Skip the anchor restore once, then behave normally.
+   ============================================================ */
+window.__ZYNIX_SKIP_SCROLL_RESTORE__ = true;
+try {
+  Z.State.homeAnchorPost = null;
+  Z.State.homeAnchorOffset = 0;
+  localStorage.removeItem('zynix_last_scroll');
+} catch(e){}
+
+var _origRestoreAnchor = Z.restoreHomeAnchorOrScroll;
+Z.restoreHomeAnchorOrScroll = function(){
+  if(window.__ZYNIX_SKIP_SCROLL_RESTORE__){
+    window.__ZYNIX_SKIP_SCROLL_RESTORE__ = false;
+    try { window.scrollTo(0, 0); } catch(e){}
+    return;
+  }
+  return _origRestoreAnchor ? _origRestoreAnchor.apply(Z, arguments) : null;
+};
+
+/* ============================================================
+   FIX 3 — Realtime DELETE (reactions) + UPDATE (share/view counts)
+   ============================================================ */
+function installRealtimeExtra(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var me = Z.State.currentUser;
+  if(!me) return;
+  if(Z._realtimeExtraInstalled) return;
+  Z._realtimeExtraInstalled = true;
+
+  /* --- DELETE on reactions --- */
+  try {
+    var chD = c.channel('zynix-reaction-deletes')
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'post_reactions' }, function(p){
+        var old = p.old;
+        if(!old) return;
+        if(old.user_id === me.id) return;
+        var post = Z.findPostInState(old.post_id);
+        if(!post) return;
+        if(!post.reactions) post.reactions = {};
+        if(post.reactions[old.reaction]){
+          post.reactions[old.reaction] = Math.max(0, post.reactions[old.reaction] - 1);
+          Z.updatePostReactionUI(old.post_id);
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'spark_reactions' }, function(p){
+        var old = p.old;
+        if(!old) return;
+        if(old.user_id === me.id) return;
+        var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === old.spark_id; });
+        if(!sp) return;
+        if(!sp._reactions) sp._reactions = {};
+        if(sp._reactions[old.reaction]){
+          sp._reactions[old.reaction] = Math.max(0, sp._reactions[old.reaction] - 1);
+          Z.updateSparkReactionsUI(old.spark_id);
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comment_reactions' }, function(p){
+        var old = p.old;
+        if(!old) return;
+        if(old.user_id === me.id) return;
+        var cm = Z.findCommentInState ? Z.findCommentInState(old.comment_id) : null;
+        if(cm){
+          if(!cm._reactionCounts) cm._reactionCounts = {};
+          if(cm._reactionCounts[old.reaction]){
+            cm._reactionCounts[old.reaction] = Math.max(0, cm._reactionCounts[old.reaction] - 1);
+            Z.updateCommentReactionUI(old.comment_id);
+          }
+        }
+        var sc = Z.findSparkCommentInState ? Z.findSparkCommentInState(old.comment_id) : null;
+        if(sc && sc.cm){
+          if(!sc.cm._reactionCounts) sc.cm._reactionCounts = {};
+          if(sc.cm._reactionCounts[old.reaction]){
+            sc.cm._reactionCounts[old.reaction] = Math.max(0, sc.cm._reactionCounts[old.reaction] - 1);
+            Z.updateSparkCommentReactionUI(old.comment_id, sc.cm);
+          }
+        }
+      })
+      .subscribe();
+    Z.State.realtimeChannels.push(chD);
+  } catch(e){}
+
+  /* --- UPDATE on posts / sparks (shares + views) --- */
+  try {
+    var chU = c.channel('zynix-share-counter')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'posts' }, function(p){
+        var nw = p.new;
+        if(!nw) return;
+        var post = Z.findPostInState(nw.id);
+        if(!post) return;
+        var changed = false;
+        if(post.shares !== nw.shares){ post.shares = nw.shares; changed = true; }
+        if(post.views  !== nw.views) { post.views  = nw.views;  changed = true; }
+        if(!changed) return;
+        var card = document.querySelector('.post-card[data-post-id="' + nw.id + '"]');
+        if(!card) return;
+        card.querySelectorAll('.post-actions button').forEach(function(b){
+          if(b.innerHTML.indexOf('fa-share-nodes') >= 0){
+            b.innerHTML = '<i class="fa-solid fa-share-nodes"></i> Share ' + (nw.shares||0);
+          }
+          if(b.innerHTML.indexOf('fa-eye') >= 0){
+            b.innerHTML = '<i class="fa-regular fa-eye"></i> Views ' + (nw.views||0);
+          }
+        });
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sparks' }, function(p){
+        var nw = p.new;
+        if(!nw) return;
+        var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === nw.id; });
+        if(!sp) return;
+        if(sp.shares === nw.shares && sp.views === nw.views) return;
+        sp.shares = nw.shares;
+        sp.views  = nw.views;
+        var vid = document.querySelector('video[data-spark-id="' + nw.id + '"]');
+        if(!vid) return;
+        var slide = vid.closest('.spark-slide');
+        if(!slide) return;
+        slide.querySelectorAll('.spark-action-btn').forEach(function(b){
+          if(b.innerHTML.indexOf('fa-share-nodes') >= 0){
+            var cEl = b.querySelector('.spark-action-count');
+            if(cEl) cEl.textContent = nw.shares || 0;
+          }
+        });
+        var badgeSpan = slide.querySelector('.spark-view-badge span');
+        if(badgeSpan) badgeSpan.textContent = nw.views || 0;
+      })
+      .subscribe();
+    Z.State.realtimeChannels.push(chU);
+  } catch(e){}
+}
+
+/* Install once Supabase + user are ready */
+var _installAttempts = 0;
+var _installTimer = setInterval(function(){
+  _installAttempts++;
+  if(Z.State.currentUser && Z.sb && Z.sb()){
+    installRealtimeExtra();
+    clearInterval(_installTimer);
+  }
+  if(_installAttempts > 60) clearInterval(_installTimer);
+}, 500);
+
+/* Also try to install after every showView (covers login) */
+var _origShowViewV23 = Z.showView;
+Z.showView = async function(view, param){
+  var r = await _origShowViewV23.apply(Z, arguments);
+  if(Z.State.currentUser && !Z._realtimeExtraInstalled){
+    setTimeout(function(){ installRealtimeExtra(); }, 400);
+  }
+  return r;
+};
+
+/* ============================================================
+   FIX 4 — Dedupe navStack (undo v2.2 double push)
+   ============================================================ */
+var _v23ShowView = Z.showView;
+Z.showView = async function(view, param){
+  var r = await _v23ShowView.apply(Z, arguments);
+  try {
+    var stack = Z.State.navStack || [];
+    if(stack.length >= 2){
+      var out = [];
+      for(var i = 0; i < stack.length; i++){
+        var top = out[out.length - 1];
+        if(!top || top.view !== stack[i].view || top.param !== stack[i].param){
+          out.push(stack[i]);
+        }
+      }
+      Z.State.navStack = out;
+    }
+  } catch(e){}
+  return r;
+};
+
+/* ============================================================
+   FIX 5 — Clear stale self-reaction tracker to reduce repair-loop work
+   ============================================================ */
+setInterval(function(){
+  try {
+    var keys = Object.keys(Z._selfReaction || {});
+    if(!keys.length) return;
+    var now = Date.now();
+    keys.forEach(function(k){
+      var t = Z._selfReaction[k];
+      if(now - t > 6000) delete Z._selfReaction[k];
+    });
+  } catch(e){}
+}, 3000);
+
+console.log('%c[ZYNIX] v2.3 fix pack active', 'color:#10b981;font-weight:bold');
+})();
+</script>
 </body>
 </html> 
