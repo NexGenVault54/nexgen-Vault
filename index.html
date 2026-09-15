@@ -6727,5 +6727,150 @@ Z.renderProfile = function(){
 console.log('%c[ZYNIX] settings back button fixed', 'color:#10b981;font-weight:bold');
 })();
 </script>
+   <!-- ============================================================
+     BRIDGE — Media persistence safety (absorbed into v2)
+     Records storage URL on write · backfills null URLs on read
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+if(window.__ZYNIX_MEDIA_BRIDGE__) return;
+window.__ZYNIX_MEDIA_BRIDGE__ = true;
+
+function getMapKey(){
+  var me = window.Z && Z.State && Z.State.currentUser;
+  return me ? ('zynix_media_map_' + me.id) : 'zynix_media_map_guest';
+}
+function loadMap(){
+  try { var raw = localStorage.getItem(getMapKey()); return raw ? (JSON.parse(raw) || {}) : {}; }
+  catch(e){ return {}; }
+}
+function saveMap(m){
+  try { localStorage.setItem(getMapKey(), JSON.stringify(m || {})); } catch(e){}
+}
+function record(id, url){
+  if(!id || !url) return;
+  if(String(url).indexOf('blob:') === 0 || String(url).indexOf('data:') === 0) return;
+  var m = loadMap();
+  m[id] = { url: url, ts: Date.now() };
+  var keys = Object.keys(m);
+  if(keys.length > 500){
+    keys.sort(function(a,b){ return (m[a].ts||0) - (m[b].ts||0); });
+    while(keys.length > 500) delete m[keys.shift()];
+  }
+  saveMap(m);
+}
+function backfillItem(item, isVideo){
+  if(!item || !item.id) return;
+  var url = isVideo ? item.video_url : item.media_url;
+  if(url) return;
+  var rec = loadMap()[item.id];
+  if(!rec || !rec.url) return;
+  if(isVideo) item.video_url = rec.url;
+  else {
+    item.media_url = rec.url;
+    if(!item.media_type){
+      item.media_type = /\.(mp4|webm|mov|m4v|3gp|ogv|ogg)(\?|$)/i.test(rec.url) ? 'video' : 'image';
+    }
+  }
+}
+
+function installWhenReady(){
+  if(!window.Z || !window.Z.DB || !window.Z.reloadData){
+    setTimeout(installWhenReady, 100);
+    return;
+  }
+  var oPost   = Z.DB.createPost;
+  var oSpark  = Z.DB.createSpark;
+  var oStatus = Z.DB.createStatus;
+
+  Z.DB.createPost = async function(payload){
+    var r = await oPost.call(Z.DB, payload);
+    try { if(payload && payload.media_url && r && r.id) record(r.id, payload.media_url); } catch(e){}
+    return r;
+  };
+  Z.DB.createSpark = async function(payload){
+    var r = await oSpark.call(Z.DB, payload);
+    try { if(payload && payload.video_url && r && r.id) record(r.id, payload.video_url); } catch(e){}
+    return r;
+  };
+  Z.DB.createStatus = async function(payload){
+    var r = await oStatus.call(Z.DB, payload);
+    try { if(payload && payload.media_url && r && r.id) record(r.id, payload.media_url); } catch(e){}
+    return r;
+  };
+
+  var oLoadHome   = Z.DB.loadHomeFeed;
+  var oLoadSparks = Z.DB.loadSparks;
+  var oLoadStatus = Z.DB.loadStatuses;
+
+  Z.DB.loadHomeFeed = async function(){
+    var r = await oLoadHome.call(Z.DB);
+    try { (Z.State.allPosts||[]).forEach(function(p){ backfillItem(p, false); }); } catch(e){}
+    return r;
+  };
+  Z.DB.loadSparks = async function(){
+    var r = await oLoadSparks.call(Z.DB);
+    try { (Z.State.allSparks||[]).forEach(function(s){ backfillItem(s, true); }); } catch(e){}
+    return r;
+  };
+  Z.DB.loadStatuses = async function(){
+    var r = await oLoadStatus.call(Z.DB);
+    try { (Z.State.allStatuses||[]).forEach(function(s){ backfillItem(s, false); }); } catch(e){}
+    return r;
+  };
+
+  var oReload = Z.reloadData;
+  Z.reloadData = async function(){
+    var r = await oReload.call(Z);
+    try { (Z.State.allPosts||[]).forEach(function(p){ backfillItem(p, false); }); } catch(e){}
+    try { (Z.State.allSparks||[]).forEach(function(s){ backfillItem(s, true); }); } catch(e){}
+    try { (Z.State.allStatuses||[]).forEach(function(s){ backfillItem(s, false); }); } catch(e){}
+    try {
+      var c = Z.sb && Z.sb();
+      if(!c) return r;
+      var mp = (Z.State.allPosts||[]).filter(function(p){ return p.id && !p.media_url && String(p.id).indexOf('temp_') !== 0; });
+      if(mp.length){
+        var rp = await c.from('posts').select('id, media_url, media_type').in('id', mp.map(function(p){ return p.id; }));
+        if(!rp.error && rp.data){
+          var m1 = {}; rp.data.forEach(function(x){ m1[x.id] = x; });
+          mp.forEach(function(p){
+            if(m1[p.id] && m1[p.id].media_url){
+              p.media_url = m1[p.id].media_url;
+              if(!p.media_type && m1[p.id].media_type) p.media_type = m1[p.id].media_type;
+            }
+          });
+        }
+      }
+      var ms = (Z.State.allSparks||[]).filter(function(s){ return s.id && !s.video_url && String(s.id).indexOf('temp_') !== 0; });
+      if(ms.length){
+        var rs = await c.from('sparks').select('id, video_url').in('id', ms.map(function(s){ return s.id; }));
+        if(!rs.error && rs.data){
+          var m2 = {}; rs.data.forEach(function(x){ m2[x.id] = x; });
+          ms.forEach(function(s){ if(m2[s.id] && m2[s.id].video_url) s.video_url = m2[s.id].video_url; });
+        }
+      }
+      var mt = (Z.State.allStatuses||[]).filter(function(s){ return s.id && !s.media_url && String(s.id).indexOf('temp_') !== 0; });
+      if(mt.length){
+        var rt = await c.from('statuses').select('id, media_url, media_type').in('id', mt.map(function(s){ return s.id; }));
+        if(!rt.error && rt.data){
+          var m3 = {}; rt.data.forEach(function(x){ m3[x.id] = x; });
+          mt.forEach(function(s){
+            if(m3[s.id] && m3[s.id].media_url){
+              s.media_url = m3[s.id].media_url;
+              if(!s.media_type && m3[s.id].media_type) s.media_type = m3[s.id].media_type;
+            }
+          });
+        }
+      }
+    } catch(e){ console.warn('[media bridge]', e); }
+    return r;
+  };
+
+  console.log('%c[ZYNIX] media persistence bridge active', 'color:#10b981;font-weight:bold');
+}
+installWhenReady();
+})();
+</script>
 </body>
 </html>
