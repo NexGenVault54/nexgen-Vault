@@ -4109,6 +4109,7 @@ Z.updateCommentReactionUI = function(commentId){
      create full video · share sheet · post-to-wall · share refetch
      Chrome book: video preload="none" until observed
      ============================================================ -->
+
 <script>
 (function(){
 'use strict';
@@ -4148,9 +4149,7 @@ Z.renderSparkSlide = function(spark, index){
   var freezeTip = unfrozen ? 'Unfrozen' : 'Frozen';
   var isSaved = (Z.State.savedSparks || []).indexOf(spark.id) !== -1;
 
-  /* Chrome book: preload="none" until observed. When the slide is active,
-     the observer upgrades to preload="metadata". */
-  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="none" loop muted data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
+  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
 
   var tags = '';
   if(spark.tags && spark.tags.length){
@@ -4338,10 +4337,6 @@ Z.setupSparkFeed = function(sparks){
     });
     vids.forEach(function(v){
       if(v === best && bestRatio >= 0.75){
-        /* Chrome book: upgrade preload when slide becomes active */
-        if(v.getAttribute('preload') === 'none'){
-          try { v.setAttribute('preload', 'metadata'); } catch(e){}
-        }
         if(Z._sparkAudioUnlocked){ v.muted = false; v.volume = 1; }
         Z.playExclusive(v);
       } else {
@@ -4356,9 +4351,9 @@ Z.setupSparkFeed = function(sparks){
     if(vid && !vid._viewHooked){
       vid._viewHooked = true;
       var sid = vid.getAttribute('data-spark-id');
+      /* Only fires the view counter. No reset listeners — the flag stays
+         true for the whole session so the same spark never counts twice. */
       vid.addEventListener('timeupdate', function(){ Z.recordSparkViewOnProgress(vid, sid); });
-      vid.addEventListener('ended', function(){ Z._viewedThisSession[sid] = false; });
-      vid.addEventListener('seeking', function(){ if(vid.currentTime < 0.5) Z._viewedThisSession[sid] = false; });
     }
   });
 
@@ -4383,23 +4378,31 @@ Z.recordSparkViewOnProgress = function(videoEl, sparkId){
   }
 };
 
-Z.recordSparkView = function(sparkId){
-  var arr = Z.State.allSparks || [];
-  for(var i=0;i<arr.length;i++){
-    if(arr[i].id === sparkId){
-      arr[i].views = (arr[i].views||0) + 1;
-      Z.DB.updateSpark(sparkId, {views: arr[i].views}).catch(function(){});
-      var vid = document.querySelector('.spark-slide video[data-spark-id="' + sparkId + '"]');
-      if(vid){
-        var parent = vid.closest('.spark-slide');
-        if(parent){
-          var badgeSpan = parent.querySelector('.spark-view-badge span');
-          if(badgeSpan) badgeSpan.textContent = arr[i].views;
+Z.recordSparkView = async function(sparkId){
+  var c = Z.sb();
+  var me = Z.State.currentUser;
+  if(!c || !me) return; /* guests do not count views */
+  try {
+    var r = await c.rpc('increment_spark_views', { p_spark_id: sparkId });
+    if(r.error) return;
+    var inserted = Number(r.data) || 0;
+    if(inserted === 0) return; /* already counted on server */
+    var arr = Z.State.allSparks || [];
+    for(var i=0;i<arr.length;i++){
+      if(arr[i].id === sparkId){
+        arr[i].views = (arr[i].views||0) + 1;
+        var vid = document.querySelector('.spark-slide video[data-spark-id="' + sparkId + '"]');
+        if(vid){
+          var parent = vid.closest('.spark-slide');
+          if(parent){
+            var badgeSpan = parent.querySelector('.spark-view-badge span');
+            if(badgeSpan) badgeSpan.textContent = arr[i].views;
+          }
         }
+        break;
       }
-      break;
     }
-  }
+  } catch(e){}
 };
 
 Z.sparkReact = async function(sparkId, reactionType){
@@ -5176,7 +5179,6 @@ Z.submitFullVideo = async function(){
 
 })();
 </script>
-
 <!-- ============================================================
      SECTION 7 — STATUSES
      Row · viewer · gestures · timer · create modal · home grid
