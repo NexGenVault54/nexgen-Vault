@@ -8359,5 +8359,87 @@ Z.renderPublicHome = function(){
 };
 })();
 </script>
+   <!-- Media cache fix — admin banner URLs ko session bhar cached rakhta hai -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z;
+if(!Z) return;
+
+Z._adminBannerUrlCache = Z._adminBannerUrlCache || {};
+
+/* Ek mediaId ka blob → object URL (cached, revoked kabhi nahi) */
+function _resolveAndCache(id, cb){
+  if(!id){ cb(null); return; }
+  if(Z._adminBannerUrlCache[id]){ cb(Z._adminBannerUrlCache[id]); return; }
+  try {
+    var req = indexedDB.open('zynix_media_v1', 1);
+    req.onsuccess = function(){
+      var db = req.result;
+      try {
+        var tx = db.transaction('media', 'readonly');
+        var r = tx.objectStore('media').get(id);
+        r.onsuccess = function(){
+          var item = r.result;
+          if(!item || !item.blob){ cb(null); return; }
+          var url = URL.createObjectURL(item.blob);
+          Z._adminBannerUrlCache[id] = url;
+          cb(url);
+        };
+        r.onerror = function(){ cb(null); };
+      } catch(e){ cb(null); }
+    };
+    req.onerror = function(){ cb(null); };
+  } catch(e){ cb(null); }
+}
+
+/* Override — check cache pehle, phir resolve */
+Z.resolveAdminBannerMedia = function(){
+  var els = document.querySelectorAll('[data-admin-banner]');
+  if(!els.length) return;
+  els.forEach(function(el){
+    var id = el.getAttribute('data-admin-banner');
+    if(!id) return;
+    if(el.getAttribute('src') && el.getAttribute('src').indexOf('blob:') === 0) return;
+    _resolveAndCache(id, function(url){
+      if(!url) return;
+      el.setAttribute('src', url);
+      if(el.tagName === 'VIDEO'){ try { el.load(); } catch(e){} }
+    });
+  });
+};
+
+/* App boot / login ke waqt saare ads pre-resolve kar do */
+function _preResolve(){
+  var me = Z.State.currentUser;
+  if(!me || !me.id) return;
+  try {
+    var raw = localStorage.getItem('zynix_admin_ads_' + me.id);
+    if(!raw) return;
+    var ads = JSON.parse(raw) || [];
+    ads.forEach(function(ad){
+      if(ad && ad.mediaId && !Z._adminBannerUrlCache[ad.mediaId]){
+        _resolveAndCache(ad.mediaId, function(){});
+      }
+    });
+  } catch(e){}
+}
+
+/* Hook into boot — refreshSession ke baad chalayega */
+var _origRefresh = Z.refreshSession;
+if(typeof _origRefresh === 'function'){
+  Z.refreshSession = async function(){
+    var r = await _origRefresh.apply(Z, arguments);
+    _preResolve();
+    return r;
+  };
+}
+/* Aur agar user pehle se logged in hai to abhi bhi chala do */
+setTimeout(_preResolve, 800);
+setTimeout(_preResolve, 2500);
+
+console.log('[ZYNIX] Banner media cache installed');
+})();
+</script>
 </body>
 </html>
