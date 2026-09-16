@@ -4330,12 +4330,33 @@ Z.updateCommentReactionUI = function(commentId){
      SECTION 6 — SPARK FEED
      Feed · slide · reactions · view counter · menu · create spark ·
      create full video · share sheet · post-to-wall · share refetch
+     · snapshot after publish
+     · menu closes on pointerdown (works near native video controls)
+     · spark-actions stack no longer blocks laptop video controls
      ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z;
 if(!Z) return;
+
+/* Small CSS injection — pointer-events on stack wrapper only.
+   Video controls sit under the stack's empty area on some laptops;
+   making the wrapper transparent to pointers (but keeping child
+   buttons interactive) fixes the "speaker icon disappears" issue. */
+(function(){
+  try {
+    if(document.getElementById('zynix-spark-pointer-fix')) return;
+    var st = document.createElement('style');
+    st.id = 'zynix-spark-pointer-fix';
+    st.textContent =
+      '.spark-actions-stack{pointer-events:none;}' +
+      '.spark-actions-stack > *{pointer-events:auto;}' +
+      '.spark-actions-stack .spark-action-reactions{pointer-events:none;}' +
+      '.spark-actions-stack .spark-action-reactions > *{pointer-events:auto;}';
+    document.head.appendChild(st);
+  } catch(e){}
+})();
 
 var ALL_REACTIONS = Z.ALL_REACTIONS;
 Z._sparkAudioUnlocked = false;
@@ -4495,6 +4516,16 @@ Z.toggleSparkMenu = function(sparkId, ev){
   document.querySelectorAll('.spark-menu.open').forEach(function(m){ m.classList.remove('open'); });
   if(!wasOpen) menu.classList.add('open');
 };
+
+/* Close menu on pointerdown outside — fires before native video
+   controls intercept the event, so tapping near the seek bar or
+   speaker icon also closes an open menu. */
+document.addEventListener('pointerdown', function(e){
+  if(!e.target.closest('.spark-menu-wrap')){
+    document.querySelectorAll('.spark-menu.open').forEach(function(m){ m.classList.remove('open'); });
+  }
+}, true);
+/* Fallback for browsers without pointer events. */
 document.addEventListener('click', function(e){
   if(!e.target.closest('.spark-menu-wrap')){
     document.querySelectorAll('.spark-menu.open').forEach(function(m){ m.classList.remove('open'); });
@@ -4707,8 +4738,14 @@ Z.deleteSpark = async function(sparkId){
   Z.toast('Deleted.');
   Z.State.allSparks = (Z.State.allSparks||[]).filter(function(s){ return s.id !== sparkId; });
   Z.State.spaceSparks = (Z.State.spaceSparks||[]).filter(function(s){ return s.id !== sparkId; });
+  /* Purge local media map entry so it never resurrects the URL */
+  try {
+    var mm = Z._loadMediaMap();
+    if(mm && mm[sparkId]){ delete mm[sparkId]; Z._saveMediaMap(mm); }
+  } catch(e){}
   if(url) Z.deleteStorageIfOrphan(url, null, sparkId);
   Z.showView('spark');
+  Z.saveSnapshot();
 };
 
 Z.findSparkCommentInState = function(commentId){
@@ -5328,6 +5365,9 @@ Z.submitSparkImpl = async function(forceNoCaption){
       }
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._mediaCache.spark = null;
+      /* Persist snapshot so this spark survives the very first
+         refresh even before reloadData finishes. */
+      try { Z.saveSnapshot(); } catch(e){}
       if(Z.State.currentView === 'spark') Z.showView('spark');
     } else {
       Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
@@ -5393,6 +5433,7 @@ Z.submitFullVideo = async function(){
       }
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._mediaCache.fv = null;
+      try { Z.saveSnapshot(); } catch(e){}
       Z.toast('Video uploaded!');
       if(Z.State.currentView === 'spark') Z.showView('spark');
     } else {
@@ -5406,7 +5447,6 @@ Z.submitFullVideo = async function(){
 
 })();
 </script>
-
 <!-- ============================================================
      SECTION 7 — STATUSES
      Row · viewer · gestures · timer · create modal · home grid
