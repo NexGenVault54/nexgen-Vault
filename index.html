@@ -8441,5 +8441,155 @@ setTimeout(_preResolve, 2500);
 console.log('[ZYNIX] Banner media cache installed');
 })();
 </script>
+   <!-- ============================================================
+     ZYNIX FIX PACK — 3 fixes
+     1. Header center on laptop
+     2. Post media dark background (no flash)
+     3. Ad TV: stop URL revocation, video/audio plays reliably
+     ============================================================ -->
+<style>
+/* Fix 1: Header center on laptop */
+@media(min-width:900px){
+  .zynix-header{ margin:0 auto !important; }
+}
+
+/* Fix 2: Post media — dark bg reserved, no broken flash */
+.post-media{ background:#0f172a; min-height:180px; }
+.post-media img,
+.post-media video{ background:#0f172a; min-height:180px; }
+</style>
+
+<script>
+(function(){
+'use strict';
+var Z = window.Z;
+if(!Z) return;
+
+/* ---------- Fix 3a: stop revoking object URLs ----------
+   This was the Ad TV killer. Every page change revoked the
+   banner's blob URL; the cached URL then pointed to a revoked
+   object → black screen, no sound. We stop revoking. Memory
+   trade-off is negligible for a session. */
+Z._revokeAllObjUrls = function(){ /* no-op — keep URLs alive */ };
+
+/* ---------- Fix 3b: Ad TV resolver — cached-first, plays video ---------- */
+Z._adminBannerUrlCache = Z._adminBannerUrlCache || {};
+
+function _applyAndPlay(el, url){
+  if(!url) return;
+  el.setAttribute('src', url);
+  if(el.tagName === 'VIDEO'){
+    try {
+      el.muted = false;          /* prefer with sound */
+      el.load();
+      var p = el.play();
+      if(p && p.catch){
+        p.catch(function(){
+          /* Browser blocked unmuted autoplay — retry muted */
+          el.muted = true;
+          var p2 = el.play();
+          if(p2 && p2.catch) p2.catch(function(){});
+        });
+      }
+    } catch(e){}
+  }
+}
+
+Z.resolveAdminBannerMedia = function(){
+  var els = document.querySelectorAll('[data-admin-banner]');
+  if(!els.length) return;
+  Array.prototype.forEach.call(els, function(el){
+    var id = el.getAttribute('data-admin-banner');
+    if(!id) return;
+    if(Z._adminBannerUrlCache[id]){
+      if(el.getAttribute('src') !== Z._adminBannerUrlCache[id]){
+        _applyAndPlay(el, Z._adminBannerUrlCache[id]);
+      }
+      return;
+    }
+    try {
+      var req = indexedDB.open('zynix_media_v1', 1);
+      req.onsuccess = function(){
+        try {
+          var tx = req.result.transaction('media', 'readonly');
+          var r = tx.objectStore('media').get(id);
+          r.onsuccess = function(){
+            var item = r.result;
+            if(!item || !item.blob) return;
+            var url = URL.createObjectURL(item.blob);
+            Z._adminBannerUrlCache[id] = url;
+            _applyAndPlay(el, url);
+          };
+        } catch(e){}
+      };
+    } catch(e){}
+  });
+};
+
+/* ---------- Fix 3c: watch ad stage after every view change ---------- */
+function _watchAdStage(){
+  var stage = document.getElementById('zn-ad-stage');
+  if(!stage) return;
+  if(!stage._fixWatched){
+    stage._fixWatched = true;
+    try {
+      var obs = new MutationObserver(function(){
+        setTimeout(Z.resolveAdminBannerMedia, 20);
+      });
+      obs.observe(stage, {childList:true, subtree:true});
+    } catch(e){}
+  }
+  Z.resolveAdminBannerMedia();
+}
+
+var _origShow = Z.showView;
+Z.showView = async function(){
+  var r = await _origShow.apply(Z, arguments);
+  setTimeout(_watchAdStage, 80);
+  setTimeout(_watchAdStage, 400);
+  return r;
+};
+var _origSoft = Z.softRefresh;
+Z.softRefresh = function(){
+  var r = _origSoft.apply(Z, arguments);
+  setTimeout(_watchAdStage, 80);
+  return r;
+};
+
+/* Pre-resolve any existing ads once on load */
+function _preResolve(){
+  var me = Z.State.currentUser;
+  if(!me || !me.id) return;
+  try {
+    var ads = JSON.parse(localStorage.getItem('zynix_admin_ads_' + me.id) || '[]');
+    ads.forEach(function(ad){
+      if(ad && ad.mediaId && !Z._adminBannerUrlCache[ad.mediaId]){
+        /* trigger resolve via a dummy lookup — actual apply happens on render */
+        (function(id){
+          var req = indexedDB.open('zynix_media_v1', 1);
+          req.onsuccess = function(){
+            try {
+              var tx = req.result.transaction('media', 'readonly');
+              var r = tx.objectStore('media').get(id);
+              r.onsuccess = function(){
+                var item = r.result;
+                if(item && item.blob && !Z._adminBannerUrlCache[id]){
+                  Z._adminBannerUrlCache[id] = URL.createObjectURL(item.blob);
+                }
+              };
+            } catch(e){}
+          };
+        })(ad.mediaId);
+      }
+    });
+  } catch(e){}
+}
+setTimeout(_preResolve, 500);
+setTimeout(_preResolve, 2000);
+setTimeout(_watchAdStage, 1500);
+
+console.log('[ZYNIX] 3-fix pack active');
+})();
+</script>
 </body>
 </html>
