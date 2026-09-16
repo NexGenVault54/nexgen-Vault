@@ -696,6 +696,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
      Supabase · State · DB layer · freeze · snapshot · helpers
      · IndexedDB media · admin mode (per-user) · video exclusivity
      · build timeline · view/scroll persistence · storage helpers
+     · lightbox (menu-aware)
      ============================================================ -->
 <script>
 (function(){
@@ -968,7 +969,6 @@ Z._trackObjUrl = function(url){
   }
   return url;
 };
-/* Real revoke — restores memory safety. Only called on logout. */
 Z._revokeAllObjUrls = function(){
   Z._objUrls.forEach(function(u){ try { URL.revokeObjectURL(u); } catch(e){} });
   Z._objUrls = [];
@@ -1043,15 +1043,12 @@ Z.resolveIdbRefs = function(root){
   } catch(e){}
 };
 
-/* Storage path helper — used for permanent file deletion */
 Z._pathFromUrl = function(url){
   if(!url) return null;
   var m = String(url).match(/\/storage\/v1\/object\/public\/media\/(.+?)(?:\?|$)/);
   return m ? decodeURIComponent(m[1]) : null;
 };
 
-/* Delete a storage file, but only if no other DB row references it.
-   Guard prevents breaking reposts that share the same media file. */
 Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
   if(!url) return;
   var path = Z._pathFromUrl(url);
@@ -1384,7 +1381,7 @@ Z.saveSnapshot = function(){
         return { id:p.id, author_id:p.author_id, content:p.content, media_url:p.media_url, media_type:p.media_type,
                  created_at:p.created_at, views:p.views, shares:p.shares, reactions:p.reactions||{} };
       }),
-      sparks: (Z.State.allSparks||[]).slice(0,10).map(function(s){
+      sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
         return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title, video_url:s.video_url,
                  tags:s.tags||[], type:s.type, created_at:s.created_at, views:s.views, shares:s.shares };
       }),
@@ -1471,17 +1468,16 @@ Z.recordMediaUrl = function(id, url){
   }
   Z._saveMediaMap(m);
 };
+/* Aggressive backfill: if item URL is missing or malformed, pull from local map */
 Z._backfillItem = function(item, isVideo){
   if(!item || !item.id) return;
-  var cur = isVideo ? item.video_url : item.media_url;
-  if(cur) return;
+  var key = isVideo ? 'video_url' : 'media_url';
+  var cur = item[key];
+  if(cur && typeof cur === 'string' && cur.indexOf('http') === 0) return;
   var rec = Z._loadMediaMap()[item.id];
   if(!rec || !rec.url) return;
-  if(isVideo) item.video_url = rec.url;
-  else {
-    item.media_url = rec.url;
-    if(!item.media_type) item.media_type = Z.isVideoUrl(rec.url) ? 'video' : 'image';
-  }
+  item[key] = rec.url;
+  if(!isVideo && !item.media_type) item.media_type = Z.isVideoUrl(rec.url) ? 'video' : 'image';
 };
 Z._backfillAllMedia = function(){
   try { (Z.State.allPosts||[]).forEach(function(p){ Z._backfillItem(p, false); }); } catch(e){}
@@ -1489,7 +1485,7 @@ Z._backfillAllMedia = function(){
   try { (Z.State.allStatuses||[]).forEach(function(s){ Z._backfillItem(s, false); }); } catch(e){}
 };
 
-/* Admin mode — per-user, stored in localStorage under user id */
+/* Admin mode */
 var ADMIN_KEY_PREFIX = 'zynix_admin_mode_';
 Z.isAdminMode = function(){
   var me = Z.State.currentUser;
@@ -1622,7 +1618,9 @@ Z.DB = {
       data.forEach(function(s){
         var o = prevById[s.id];
         if(!o) return;
-        if(!s.video_url && o.video_url) s.video_url = o.video_url;
+        if((!s.video_url || typeof s.video_url !== 'string' || s.video_url.indexOf('http') !== 0) && o.video_url){
+          s.video_url = o.video_url;
+        }
       });
       Z.State.allSparks = data;
       (Z.State.allSparks||[]).forEach(function(s){ Z._backfillItem(s, true); });
@@ -2035,16 +2033,27 @@ Z.migrateLocalCirclesOnce = function(){
   })();
 };
 
-/* Lightbox — single tap opens; single tap anywhere closes.
-   Double-tap on an image still triggers the heart (320ms delay). */
+/* Lightbox — menu-aware.
+   If any 3-dot menu is open, tapping a post image closes the menu
+   (handled by Section 4) and does NOT open the lightbox.
+   Double-tap on image still triggers the heart burst. */
 (function(){
   var _lbTimer = null;
+  function anyMenuOpen(){
+    var pm = document.querySelector('.post-menu[style*="display: block"]') ||
+             document.querySelector('.post-menu[style*="display:block"]');
+    if(pm) return true;
+    if(document.querySelector('.spark-menu.open')) return true;
+    return false;
+  }
   document.addEventListener('click', function(e){
     var img = e.target.closest('.post-media img');
     if(!img) return;
+    if(anyMenuOpen()){ return; }
     if(_lbTimer){ clearTimeout(_lbTimer); _lbTimer = null; return; }
     _lbTimer = setTimeout(function(){
       _lbTimer = null;
+      if(anyMenuOpen()) return;
       var src = img.getAttribute('src');
       if(!src || src.indexOf('idb:') === 0) return;
       var lb = document.createElement('div');
@@ -2056,7 +2065,6 @@ Z.migrateLocalCirclesOnce = function(){
   }, true);
 })();
 
-/* Tag media containers so CSS can pick image vs video layout */
 Z._tagMediaContainers = function(){
   try {
     document.querySelectorAll('.post-media').forEach(function(el){
