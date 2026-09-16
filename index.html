@@ -3172,12 +3172,35 @@ Z.attachHomeInteractions = function(){
   .spark-feed-container{max-width:900px !important;}
 }
 </style>
-
 <!-- ============================================================
-     SECTION 4B — PUBLIC HOME
-     Intro box · Ad TV (banner media persisted to IndexedDB)
-     Discover strip · Build timeline · Feature cards
+     SECTION 4B — PUBLIC HOME (v2)
+     Intro box · Ad TV · Multi-ad list · Live preview editor
+     · IDB-backed media · Laptop responsive · Auto-rotate ads
      ============================================================ -->
+<style>
+.zn-ad-stage-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#000;z-index:1}
+.zn-ad-media-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:11px;z-index:1;background:#0f172a}
+.zn-ad-dots{position:absolute;left:0;right:0;bottom:22px;display:flex;justify-content:center;gap:6px;z-index:6;pointer-events:none}
+.zn-ad-dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.35)}
+.zn-ad-dot.on{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,.7)}
+.zn-ad-thumb{width:60px;height:60px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#475569;font-size:20px}
+.zn-ad-thumb img,.zn-ad-thumb video{width:100%;height:100%;object-fit:cover;display:block}
+.zn-ad-list-row{display:flex;align-items:center;gap:10px;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px;margin-bottom:8px}
+.zn-ad-list-row.active{border-color:rgba(16,185,129,.5)}
+.zn-ad-list-body{flex:1;min-width:0}
+.zn-ad-list-title{font-size:12px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.zn-ad-list-sub{font-size:10px;color:#64748b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.zn-ad-list-actions{display:flex;gap:6px;flex-shrink:0}
+.zn-ad-list-actions button{background:transparent;border:1px solid #1e293b;color:#94a3b8;font-size:10px;font-weight:700;padding:5px 9px;border-radius:6px;cursor:pointer}
+.zn-ad-list-actions button.danger{color:#fca5a5;border-color:rgba(239,68,68,.35)}
+.zn-ad-preview-box{margin-top:8px;border-radius:10px;overflow:hidden;border:1px solid #1e293b;background:#000;max-height:180px;display:none}
+.zn-ad-preview-box.show{display:block}
+.zn-ad-preview-box img,.zn-ad-preview-box video{width:100%;max-height:180px;object-fit:contain;display:block;background:#000}
+@media(min-width:900px){
+  .zn-ad-stage{aspect-ratio:16/10 !important;max-height:none !important;min-height:440px}
+}
+</style>
+
 <script>
 (function(){
 'use strict';
@@ -3186,167 +3209,110 @@ if(!Z) return;
 
 var IDB_NAME = 'zynix_media_v1';
 var IDB_STORE = 'media';
+var ADMIN_ADS_KEY = 'zynix_admin_ads_v2';
 
-/* Save blob to IndexedDB — survives page refresh, unlike blob: URLs */
-function _saveAdminBannerMedia(blob){
-  return new Promise(function(resolve){
-    if(!window.indexedDB || !blob){ resolve(null); return; }
+/* ---------- IDB helpers ---------- */
+function _idbOpen(){
+  return new Promise(function(resolve, reject){
+    if(!window.indexedDB){ reject(new Error('No IDB')); return; }
     var req = indexedDB.open(IDB_NAME, 1);
     req.onupgradeneeded = function(e){
       var db = e.target.result;
       if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, {keyPath:'id'});
     };
-    req.onsuccess = function(){
-      var db = req.result;
-      var id = 'admin_banner_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    req.onsuccess = function(){ resolve(req.result); };
+    req.onerror = function(){ reject(req.error); };
+  });
+}
+function _idbSaveBlob(blob){
+  return new Promise(function(resolve){
+    if(!blob){ resolve(null); return; }
+    _idbOpen().then(function(db){
+      var id = 'ad_media_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
       try {
         var tx = db.transaction(IDB_STORE, 'readwrite');
         tx.objectStore(IDB_STORE).put({ id: id, blob: blob });
         tx.oncomplete = function(){ resolve(id); };
         tx.onerror = function(){ resolve(null); };
       } catch(e){ resolve(null); }
-    };
-    req.onerror = function(){ resolve(null); };
+    }).catch(function(){ resolve(null); });
   });
 }
-
-/* Load blob from IndexedDB → fresh object URL */
-function _loadAdminBannerMedia(id){
+function _idbLoadBlob(id){
   return new Promise(function(resolve){
-    if(!window.indexedDB || !id){ resolve(null); return; }
-    var req = indexedDB.open(IDB_NAME, 1);
-    req.onsuccess = function(){
-      var db = req.result;
+    if(!id){ resolve(null); return; }
+    _idbOpen().then(function(db){
       try {
         var tx = db.transaction(IDB_STORE, 'readonly');
         var r = tx.objectStore(IDB_STORE).get(id);
         r.onsuccess = function(){
           var item = r.result;
           if(!item || !item.blob){ resolve(null); return; }
-          var url = URL.createObjectURL(item.blob);
-          try { Z._trackObjUrl(url); } catch(e){}
-          resolve(url);
+          resolve(item.blob);
         };
         r.onerror = function(){ resolve(null); };
-      } catch(e){ resolve(null); };
-    };
-    req.onerror = function(){ resolve(null); };
+      } catch(e){ resolve(null); }
+    }).catch(function(){ resolve(null); });
+  });
+}
+function _idbDelete(id){
+  return new Promise(function(resolve){
+    if(!id){ resolve(); return; }
+    _idbOpen().then(function(db){
+      try {
+        var tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).delete(id);
+        tx.oncomplete = function(){ resolve(); };
+        tx.onerror = function(){ resolve(); };
+      } catch(e){ resolve(); }
+    }).catch(function(){ resolve(); });
   });
 }
 
-/* Sanitise the stored admin ad: drop dying blob: URLs so they don't
-   cause black screen on refresh */
-function _sanitiseAdminAd(ad){
-  if(!ad) return null;
-  if(ad.mediaUrl && typeof ad.mediaUrl === 'string' && ad.mediaUrl.indexOf('blob:') === 0){
-    ad.mediaUrl = null;
-  }
-  return ad;
-}
-
-/* Resolve any [data-admin-banner] elements in the DOM (called after render) */
-Z.resolveAdminBannerMedia = function(){
-  var els = document.querySelectorAll('[data-admin-banner]');
-  if(!els.length) return;
-  els.forEach(function(el){
-    if(el._adminBannerLoading) return;
-    el._adminBannerLoading = true;
-    var id = el.getAttribute('data-admin-banner');
-    _loadAdminBannerMedia(id).then(function(url){
-      if(url){
-        el.setAttribute('src', url);
-        if(el.tagName === 'VIDEO'){
-          try { el.load(); el.play().catch(function(){}); } catch(e){}
-        }
+/* ---------- Ads storage ---------- */
+Z.loadAdminAds = function(){
+  try {
+    var raw = localStorage.getItem(ADMIN_ADS_KEY);
+    Z.State.adminAds = raw ? (JSON.parse(raw) || []) : [];
+  } catch(e){ Z.State.adminAds = []; }
+  /* Migrate legacy single ad if present */
+  try {
+    var legacy = localStorage.getItem('zynix_admin_ad');
+    if(legacy && (!Z.State.adminAds || !Z.State.adminAds.length)){
+      var old = JSON.parse(legacy);
+      if(old && (old.heading || old.subtitle || old.mediaId || old.mediaUrl)){
+        Z.State.adminAds = [Object.assign({ id: 'ad_' + Date.now() }, old)];
+        Z.saveAdminAds();
       }
-    });
-  });
+      localStorage.removeItem('zynix_admin_ad');
+    }
+  } catch(e){}
+  return Z.State.adminAds;
+};
+Z.saveAdminAds = function(){
+  try { localStorage.setItem(ADMIN_ADS_KEY, JSON.stringify(Z.State.adminAds || [])); } catch(e){}
 };
 
-function _renderAdStage(){
-  var ad = _sanitiseAdminAd(Z.State.adminAd);
-
-  if(!ad){
-    return '<div class="zn-ad-stage-glow"></div>' +
-      '<div class="zn-ad-stage-inner">' +
-        '<div class="zn-ad-play"><i class="fa-solid fa-play"></i></div>' +
-        '<div class="zn-ad-headline">Advertise Here</div>' +
-        '<div class="zn-ad-desc">Brands publish ads.<br>Viewers watch and earn real bounty.<br><span class="zn-ad-soon">Coming soon — Adaptation Phase 2</span></div>' +
-      '</div>' +
-      '<div class="zn-ad-timer"><div class="zn-ad-timer-fill"></div></div>';
-  }
-
-  var font = Z.BANNER_FONTS.find(function(f){ return f.id === (ad.fontId || 'display'); }) || Z.BANNER_FONTS[0];
-  var bgCss = '';
-  var bg = Z.BANNER_BGS.find(function(b){ return b.id === ad.bgId; });
-  var wp = Z.BANNER_WALLPAPERS.find(function(w){ return w.id === ad.wpId; });
-
-  var overlayStyle = 'position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:22px;text-align:left;z-index:3;';
-  var bgStyle = 'position:absolute;inset:0;z-index:1;';
-  var dimStyle = 'position:absolute;inset:0;z-index:2;background:linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,.15) 55%,rgba(0,0,0,.1));';
-
-  var mediaHtml = '';
-  if(ad.mediaType === 'image'){
-    if(ad.mediaId){
-      /* Fresh placeholder — will be filled by resolveAdminBannerMedia */
-      mediaHtml = '<img class="zn-ad-stage-media" data-admin-banner="' + Z.escape(ad.mediaId) + '" alt="">';
-    } else if(ad.mediaUrl){
-      mediaHtml = '<img class="zn-ad-stage-media" src="' + Z.escape(ad.mediaUrl) + '" alt="">';
-    }
-  } else if(ad.mediaType === 'video'){
-    if(ad.mediaId){
-      mediaHtml = '<video class="zn-ad-stage-media" data-admin-banner="' + Z.escape(ad.mediaId) + '" autoplay muted loop playsinline></video>';
-    } else if(ad.mediaUrl){
-      mediaHtml = '<video class="zn-ad-stage-media" src="' + Z.escape(ad.mediaUrl) + '" autoplay muted loop playsinline></video>';
-    }
-  }
-
-  /* If no media at all, fall back to wallpaper or background */
-  if(!mediaHtml){
-    if(wp) bgCss = 'background-image:url(' + Z.escape(wp.url) + ');background-size:cover;background-position:center;';
-    else if(bg) bgCss = 'background:' + bg.css + ';';
-    else bgCss = 'background:linear-gradient(135deg,#1e3a8a,#312e81);';
-  } else {
-    /* Ensure a background behind the media so no black flash while loading */
-    if(bg) bgCss = 'background:' + bg.css + ';';
-    else bgCss = 'background:#0f172a;';
-  }
-
-  var heading = ad.heading || '';
-  var sub = ad.subtitle || '';
-  var cta = ad.cta || '';
-
-  return '<div style="' + bgStyle + bgCss + '"></div>' +
-    mediaHtml +
-    '<div style="' + dimStyle + '"></div>' +
-    '<div style="' + overlayStyle + '">' +
-      '<div style="font-family:' + font.css + ';font-weight:' + font.weight + ';font-size:24px;line-height:1.15;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.65);">' + Z.escape(heading) + '</div>' +
-      (sub ? '<div style="font-family:' + font.css + ';font-size:13px;color:rgba(255,255,255,.88);margin-top:8px;line-height:1.5;text-shadow:0 1px 8px rgba(0,0,0,.6);max-width:90%;">' + Z.escape(sub) + '</div>' : '') +
-      (cta ? '<button style="margin-top:14px;align-self:flex-start;background:#10b981;border:none;color:#000;font-weight:900;font-size:12px;padding:10px 18px;border-radius:10px;cursor:pointer;letter-spacing:.3px;">' + Z.escape(cta) + '</button>' : '') +
-    '</div>' +
-    '<div class="zn-ad-timer"><div class="zn-ad-timer-fill"></div></div>';
-}
-
+/* ---------- Public Home ---------- */
 Z.renderPublicHome = function(){
   var me = Z.State.currentUser;
   var tl = Z.State.buildTimeline || { phases: [], percent: 41, currentPhaseLabel: 'Building Core Features' };
   var phases = tl.phases || [];
   var pct = Math.max(0, Math.min(100, Number(tl.percent) || 0));
   var admin = Z.isAdminMode ? Z.isAdminMode() : false;
-  if(Z.loadAdminAd) Z.loadAdminAd();
-  _sanitiseAdminAd(Z.State.adminAd);
-  var adminAd = Z.State.adminAd;
+  if(Z.loadAdminAds) Z.loadAdminAds();
+  var ads = Z.State.adminAds || [];
 
   var html = '<div class="zn-public-wrap">';
 
-  /* ① Intro box — 3 rows, communicates what ZYNIX is */
+  /* ① Intro box */
   html += '<div class="zn-intro-box">' +
     '<div class="zn-intro-row1">The Social Platform of the Future</div>' +
-    '<div class="zn-intro-row2">Social that pays you back.</div>' +
-    '<div class="zn-intro-row3">Connect with real people. Share what matters. Earn from every real interaction — never from forced ads.</div>' +
+    '<div class="zn-intro-row2">Social that pays you back — from moment one.</div>' +
+    '<div class="zn-intro-row3">No waiting for a big following. No ads shoved at you. Just real people and real rewards from your first post.</div>' +
   '</div>';
 
-  /* ② Ad TV — enlarged header with tagline strip */
+  /* ② Ad TV */
   html += '<div class="zn-ad-tv">';
 
   html += '<div class="zn-ad-tv-head">';
@@ -3360,7 +3326,6 @@ Z.renderPublicHome = function(){
   html += '<div class="zn-ad-tv-phase">PHASE 2</div>';
   html += '</div>';
 
-  /* Tagline strip — three quick facts */
   html += '<div style="display:flex;align-items:center;justify-content:center;gap:18px;padding:0 16px 12px;flex-wrap:wrap;">' +
     '<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#94a3b8;font-weight:700;letter-spacing:.2px;">' +
       '<i class="fa-solid fa-play" style="color:#10b981;font-size:11px;"></i> 15s watch' +
@@ -3373,7 +3338,7 @@ Z.renderPublicHome = function(){
     '</span>' +
   '</div>';
 
-  html += '<div class="zn-ad-stage" id="zn-ad-stage">' + _renderAdStage() + '</div>';
+  html += '<div class="zn-ad-stage" id="zn-ad-stage">' + _renderAdStage(ads, 0) + '</div>';
 
   html += '<div class="zn-ad-meta">';
   html += '<div class="zn-ad-meta-l">15s VIDEO · 5s IMAGE · PER-VIEW REWARD</div>';
@@ -3382,10 +3347,10 @@ Z.renderPublicHome = function(){
 
   if(admin){
     html += '<div class="zn-ad-admin-strip">';
-    html += '<div class="lbl"><i class="fa-solid fa-shield-halved" style="margin-right:6px;"></i>ADMIN MODE' + (adminAd ? ' · ' + Z.escape(adminAd.heading || 'ad loaded') : '') + '</div>';
+    html += '<div class="lbl"><i class="fa-solid fa-shield-halved" style="margin-right:6px;"></i>ADMIN · ' + ads.length + ' ad' + (ads.length === 1 ? '' : 's') + '</div>';
     html += '<div style="display:flex;gap:6px;">';
-    html += '<button class="btn" onclick="Z.openBannerEditor()">' + (adminAd ? 'Edit' : 'Create') + '</button>';
-    if(adminAd) html += '<button class="btn" style="background:rgba(239,68,68,.25);color:#fca5a5;" onclick="Z.adminClearAd()">Clear</button>';
+    html += '<button class="btn" onclick="Z.openBannerEditor()">Manage</button>';
+    if(ads.length) html += '<button class="btn" style="background:rgba(239,68,68,.25);color:#fca5a5;" onclick="Z.adminClearAllAds()">Clear All</button>';
     html += '</div>';
     html += '</div>';
   }
@@ -3454,7 +3419,7 @@ Z.renderPublicHome = function(){
     '</div>' +
   '</div>';
 
-  /* ⑤ Discover strip — Galleria preview */
+  /* ⑤ Discover strip */
   var tiles = [
     { key:'freelance', icon:'fa-solid fa-briefcase',        label:'Freelance' },
     { key:'shops',     icon:'fa-solid fa-store',            label:'Shops' },
@@ -3475,7 +3440,7 @@ Z.renderPublicHome = function(){
     '</div>' +
   '</div>';
 
-  /* ⑥ Bottom actions */
+  /* ⑥ Actions */
   html += '<div class="zn-public-actions">';
   if(me){
     html += '<button class="zn-public-enter-btn" onclick="Z.showView(\'home\')"><i class="fa-solid fa-arrow-right"></i> Enter ZYNIX</button>';
@@ -3487,67 +3452,199 @@ Z.renderPublicHome = function(){
 
   html += '</div>';
 
-  /* Resolve any IDB-backed banner media after the DOM is painted */
-  setTimeout(function(){ Z.resolveAdminBannerMedia(); }, 60);
+  /* Paint stage media from IDB after DOM is ready */
+  setTimeout(function(){ _resolveStageAds(); }, 40);
 
   return html;
 };
 
-/* ---------- Ad TV info modal ---------- */
-Z.showAdTVInfo = function(){
-  Z.openModal(
-    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
-      '<div class="modal-box">' +
-        '<div class="modal-header"><h3>Watch and Earn</h3>' +
-          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
-        '</div>' +
-        '<div style="font-size:12px;line-height:1.7;color:#cbd5e1;">' +
-          '<p style="margin-bottom:12px;color:#10b981;font-weight:800;">Coming soon — Adaptation Phase 2.</p>' +
-          '<p style="margin-bottom:10px;">Brands publish ads to reach the ZYNIX audience. Viewers watch for a fixed duration and earn a real bounty.</p>' +
-          '<p style="margin-bottom:10px;"><b style="color:#fff;">For advertisers:</b> fixed fee per view. Fee is deducted from your Cash wallet at upload. Every new advertiser gets a $5 one-time credit.</p>' +
-          '<p style="margin-bottom:10px;"><b style="color:#fff;">For viewers:</b> watch 15 seconds of video or 5 seconds of an image, and the reward lands in your Watch-and-Earn wallet. Withdraw any time — 20% platform fee applies.</p>' +
-          '<p style="margin-bottom:10px;"><b style="color:#fff;">Platform:</b> keeps 5% of each advertiser payout. Viewer receives 95%.</p>' +
-          '<p style="margin-bottom:10px;"><b style="color:#fff;">Anti-fraud:</b> two-finger verification while an ad plays. One paid view per user per ad per 24 hours. Daily cap applies.</p>' +
-          '<p style="margin-bottom:10px;"><b style="color:#fff;">Banner ads:</b> displayed for 5 seconds or longer. Longer display = higher fee. Video ads earn more than image ads.</p>' +
-          '<p style="color:#94a3b8;font-size:11px;">Ad publishing opens once Phase 2 ships. Until then, this is a preview.</p>' +
-        '</div>' +
+/* ---------- Stage rendering ---------- */
+function _renderAdStage(ads, index){
+  if(!ads || !ads.length){
+    return '<div class="zn-ad-stage-glow"></div>' +
+      '<div class="zn-ad-stage-inner">' +
+        '<div class="zn-ad-play"><i class="fa-solid fa-play"></i></div>' +
+        '<div class="zn-ad-headline">Advertise Here</div>' +
+        '<div class="zn-ad-desc">Brands publish ads.<br>Viewers watch and earn real bounty.<br><span class="zn-ad-soon">Coming soon — Adaptation Phase 2</span></div>' +
       '</div>' +
-    '</div>'
-  );
-};
+      '<div class="zn-ad-timer"><div class="zn-ad-timer-fill"></div></div>';
+  }
 
-/* ---------- Ad upload placeholder ---------- */
-Z.openAdUpload = function(){
-  if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
-  Z.openModal(
-    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
-      '<div class="modal-box">' +
-        '<div class="modal-header"><h3>Publish an Ad</h3>' +
-          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
-        '</div>' +
-        '<div style="font-size:12px;line-height:1.7;color:#cbd5e1;">' +
-          '<p style="margin-bottom:10px;color:#10b981;font-weight:800;">Coming soon — Adaptation Phase 2.</p>' +
-          '<p style="margin-bottom:10px;">Ad publishing opens once Phase 2 ships. You will be able to:</p>' +
-          '<ul style="margin-left:18px;margin-bottom:12px;">' +
-            '<li>Upload a 15-second video or a 5-second image banner</li>' +
-            '<li>Choose background colour, wallpaper, heading, subtitle, font</li>' +
-            '<li>Set the per-view reward from $0.001 to $0.02</li>' +
-            '<li>Pay the total ad fee from your Cash wallet</li>' +
-            '<li>Track views and payouts in the Wallet activity feed</li>' +
-          '</ul>' +
-          '<p style="color:#94a3b8;">Your current Cash balance: <b style="color:#10b981;">$' + Number(Z.State.currentUser.wallet_cash||0).toFixed(2) + '</b></p>' +
-          '<p style="color:#94a3b8;font-size:11px;margin-top:8px;">New advertiser promotion: your first ad runs free.</p>' +
-        '</div>' +
-      '</div>' +
-    '</div>'
-  );
-};
+  var ad = ads[index] || ads[0];
+  var font = Z.BANNER_FONTS.find(function(f){ return f.id === (ad.fontId || 'display'); }) || Z.BANNER_FONTS[0];
+  var bg = Z.BANNER_BGS.find(function(b){ return b.id === ad.bgId; });
+  var wp = Z.BANNER_WALLPAPERS.find(function(w){ return w.id === ad.wpId; });
 
-/* ---------- Admin banner editor ---------- */
+  var bgCss = '';
+  if(bg) bgCss = 'background:' + bg.css + ';';
+  else if(wp) bgCss = 'background-image:url(' + Z.escape(wp.url) + ');background-size:cover;background-position:center;';
+  else bgCss = 'background:linear-gradient(135deg,#1e3a8a,#312e81);';
+
+  var mediaHtml = '';
+  if(ad.mediaId){
+    if(ad.mediaType === 'video'){
+      mediaHtml = '<video class="zn-ad-stage-media" data-ad-media="' + Z.escape(ad.mediaId) + '" autoplay muted loop playsinline preload="metadata"></video>';
+    } else {
+      mediaHtml = '<img class="zn-ad-stage-media" data-ad-media="' + Z.escape(ad.mediaId) + '" alt="">';
+    }
+  } else if(ad.mediaUrl && ad.mediaUrl.indexOf('blob:') !== 0){
+    /* legacy https:// URL support */
+    if(ad.mediaType === 'video'){
+      mediaHtml = '<video class="zn-ad-stage-media" src="' + Z.escape(ad.mediaUrl) + '" autoplay muted loop playsinline></video>';
+    } else {
+      mediaHtml = '<img class="zn-ad-stage-media" src="' + Z.escape(ad.mediaUrl) + '" alt="">';
+    }
+  }
+
+  var dotsHtml = '';
+  if(ads.length > 1){
+    dotsHtml = '<div class="zn-ad-dots">';
+    ads.forEach(function(_, i){
+      dotsHtml += '<div class="zn-ad-dot' + (i === index ? ' on' : '') + '"></div>';
+    });
+    dotsHtml += '</div>';
+  }
+
+  var heading = ad.heading || '';
+  var sub = ad.subtitle || '';
+  var cta = ad.cta || '';
+  var dimStyle = 'position:absolute;inset:0;z-index:2;background:linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,.15) 55%,rgba(0,0,0,.1));pointer-events:none';
+  var overlayStyle = 'position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:22px;text-align:left;z-index:3;pointer-events:none';
+
+  return '<div style="position:absolute;inset:0;z-index:0;' + bgCss + '"></div>' +
+    mediaHtml +
+    '<div style="' + dimStyle + '"></div>' +
+    '<div style="' + overlayStyle + '">' +
+      (heading ? '<div style="font-family:' + font.css + ';font-weight:' + font.weight + ';font-size:24px;line-height:1.15;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.65);">' + Z.escape(heading) + '</div>' : '') +
+      (sub ? '<div style="font-family:' + font.css + ';font-size:13px;color:rgba(255,255,255,.88);margin-top:8px;line-height:1.5;text-shadow:0 1px 8px rgba(0,0,0,.6);max-width:90%;">' + Z.escape(sub) + '</div>' : '') +
+      (cta ? '<button style="margin-top:14px;align-self:flex-start;background:#10b981;border:none;color:#000;font-weight:900;font-size:12px;padding:10px 18px;border-radius:10px;cursor:pointer;letter-spacing:.3px;pointer-events:auto;">' + Z.escape(cta) + '</button>' : '') +
+    '</div>' +
+    dotsHtml +
+    '<div class="zn-ad-timer"><div class="zn-ad-timer-fill"></div></div>';
+}
+
+/* Resolve [data-ad-media] from IDB → object URL → assign to element */
+function _resolveStageAds(){
+  var els = document.querySelectorAll('[data-ad-media]');
+  if(!els.length) return;
+  els.forEach(function(el){
+    if(el._resolving) return;
+    el._resolving = true;
+    var id = el.getAttribute('data-ad-media');
+    _idbLoadBlob(id).then(function(blob){
+      if(!blob){ el._resolving = false; return; }
+      var url = URL.createObjectURL(blob);
+      try { Z._trackObjUrl(url); } catch(e){}
+      el.setAttribute('src', url);
+      if(el.tagName === 'VIDEO'){
+        try { el.load(); } catch(e){}
+        var attempt = el.play();
+        if(attempt && attempt.catch){
+          attempt.catch(function(){
+            try { el.muted = true; el.play().catch(function(){}); } catch(e){}
+          });
+        }
+      }
+      el._resolving = false;
+    });
+  });
+}
+Z._resolveStageAds = _resolveStageAds;
+
+/* Ad rotation — every 8s if more than one ad */
+var _adRotateTimer = null;
+function _startAdRotation(){
+  if(_adRotateTimer){ clearInterval(_adRotateTimer); _adRotateTimer = null; }
+  var ads = Z.State.adminAds || [];
+  if(ads.length < 2) return;
+  var i = 0;
+  _adRotateTimer = setInterval(function(){
+    if(Z.State.currentView !== 'public-home'){ clearInterval(_adRotateTimer); _adRotateTimer = null; return; }
+    var stage = document.getElementById('zn-ad-stage');
+    if(!stage){ clearInterval(_adRotateTimer); _adRotateTimer = null; return; }
+    i = (i + 1) % ads.length;
+    stage.innerHTML = _renderAdStage(ads, i);
+    _resolveStageAds();
+  }, 8000);
+}
+Z._startAdRotation = _startAdRotation;
+
+/* ---------- Editor ---------- */
 Z.openBannerEditor = function(){
   if(!Z.isAdminMode || !Z.isAdminMode()) return;
-  var existing = _sanitiseAdminAd(Z.State.adminAd);
-  var draft = existing ? Object.assign({}, existing) : {
+  if(Z.loadAdminAds) Z.loadAdminAds();
+  Z.State.bannerDraft = null;
+  _renderBannerList();
+};
+
+function _renderBannerList(){
+  var ads = Z.State.adminAds || [];
+
+  var rowsHtml = '';
+  if(!ads.length){
+    rowsHtml = '<div style="text-align:center;padding:24px 12px;color:#64748b;font-size:12px;">No ads yet. Tap "Add New Ad" below.</div>';
+  } else {
+    ads.forEach(function(a, i){
+      var thumbInner = '<i class="fa-solid fa-image"></i>';
+      if(a.mediaId || a.mediaUrl){
+        thumbInner = '<div data-editor-thumb="' + Z.escape(a.mediaId || '') + '" data-thumb-url="' + Z.escape(a.mediaUrl || '') + '" style="width:100%;height:100%"></div>';
+      }
+      rowsHtml += '<div class="zn-ad-list-row">' +
+        '<div class="zn-ad-thumb">' + thumbInner + '</div>' +
+        '<div class="zn-ad-list-body">' +
+          '<div class="zn-ad-list-title">' + Z.escape(a.heading || '(no heading)') + '</div>' +
+          '<div class="zn-ad-list-sub">' + (a.mediaType === 'video' ? 'Video' : a.mediaType === 'image' ? 'Image' : 'Text only') + ' · ' + (a.mediaId ? 'saved' : 'no media') + '</div>' +
+        '</div>' +
+        '<div class="zn-ad-list-actions">' +
+          '<button onclick="Z._bannerEditItem(' + i + ')">Edit</button>' +
+          '<button class="danger" onclick="Z._bannerRemoveItem(' + i + ')">Remove</button>' +
+        '</div>' +
+      '</div>';
+    });
+  }
+
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeBannerEditor()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Ad TV Manager</h3>' +
+          '<button class="modal-close" onclick="Z.closeBannerEditor()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div class="zn-banner-editor" style="padding:0;background:transparent;border:none;">' +
+          '<div>' + rowsHtml + '</div>' +
+          '<button class="btn-primary" style="margin-top:6px;" onclick="Z._bannerAddNew()">+ Add New Ad</button>' +
+          '<button class="btn-ghost" onclick="Z.closeBannerEditor()">Close</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+
+  /* Resolve thumbnails */
+  setTimeout(function(){
+    document.querySelectorAll('[data-editor-thumb]').forEach(function(el){
+      var id = el.getAttribute('data-editor-thumb');
+      if(id){
+        _idbLoadBlob(id).then(function(blob){
+          if(!blob) return;
+          var url = URL.createObjectURL(blob);
+          try { Z._trackObjUrl(url); } catch(e){}
+          var isVid = blob.type && blob.type.indexOf('video/') === 0;
+          el.innerHTML = isVid
+            ? '<video src="' + url + '" muted playsinline></video>'
+            : '<img src="' + url + '" alt="">';
+        });
+      } else {
+        var u = el.getAttribute('data-thumb-url');
+        if(u && u.indexOf('blob:') !== 0){
+          el.innerHTML = '<img src="' + Z.escape(u) + '" alt="">';
+        }
+      }
+    });
+  }, 60);
+}
+
+Z._bannerAddNew = function(){
+  Z.State.bannerDraft = {
+    id: 'ad_' + Date.now(),
     heading: '',
     subtitle: '',
     cta: '',
@@ -3555,14 +3652,40 @@ Z.openBannerEditor = function(){
     wpId: null,
     fontId: 'display',
     mediaType: null,
+    mediaId: null,
     mediaUrl: null,
-    mediaId: null
+    _previewUrl: null
   };
-  Z.State.bannerDraft = draft;
-  _renderBannerEditor();
+  _renderBannerForm();
 };
 
-function _renderBannerEditor(){
+Z._bannerEditItem = function(index){
+  var ads = Z.State.adminAds || [];
+  var a = ads[index];
+  if(!a) return;
+  Z.State.bannerDraft = Object.assign({}, a, { _editIndex: index, _previewUrl: null });
+  _renderBannerForm();
+};
+
+Z._bannerRemoveItem = function(index){
+  if(!confirm('Remove this ad?')) return;
+  var ads = Z.State.adminAds || [];
+  var a = ads[index];
+  if(!a) return;
+  if(a.mediaId) _idbDelete(a.mediaId);
+  ads.splice(index, 1);
+  Z.State.adminAds = ads;
+  Z.saveAdminAds();
+  Z.toast('Ad removed.');
+  _renderBannerList();
+  var stage = document.getElementById('zn-ad-stage');
+  if(stage){
+    stage.innerHTML = _renderAdStage(ads, 0);
+    setTimeout(_resolveStageAds, 40);
+  }
+};
+
+function _renderBannerForm(){
   var d = Z.State.bannerDraft || {};
   var bgSwatches = Z.BANNER_BGS.map(function(b){
     return '<div class="bg-swatch ' + (d.bgId === b.id ? 'active' : '') + '" style="background:' + b.css + ';" onclick="Z._bannerSetBg(\'' + b.id + '\')" title="' + b.id + '"></div>';
@@ -3575,11 +3698,23 @@ function _renderBannerEditor(){
   }).join('');
 
   var hasMedia = !!(d.mediaId || d.mediaUrl);
+  var isNew = (typeof d._editIndex !== 'number');
+
+  /* Preview: show immediately if _previewUrl exists (fresh pick) or the
+     blob is already in IDB (loaded from existing ad). */
+  var previewHtml =
+    '<div id="banner-preview" class="zn-ad-preview-box' + (d._previewUrl ? ' show' : '') + '">' +
+      (d._previewUrl
+        ? (d.mediaType === 'video'
+            ? '<video src="' + Z.escape(d._previewUrl) + '" controls muted playsinline></video>'
+            : '<img src="' + Z.escape(d._previewUrl) + '" alt="">')
+        : '') +
+    '</div>';
 
   Z.openModal(
     '<div class="modal-overlay" onclick="if(event.target===this)Z.closeBannerEditor()">' +
       '<div class="modal-box">' +
-        '<div class="modal-header"><h3>Banner Editor</h3>' +
+        '<div class="modal-header"><h3>' + (isNew ? 'New Ad' : 'Edit Ad') + '</h3>' +
           '<button class="modal-close" onclick="Z.closeBannerEditor()"><i class="fa-solid fa-xmark"></i></button>' +
         '</div>' +
         '<div class="zn-banner-editor">' +
@@ -3596,7 +3731,16 @@ function _renderBannerEditor(){
             '<input type="text" id="banner-cta" class="inp" maxlength="20" value="' + Z.escape(d.cta || '') + '" oninput="Z._bannerSetField(\'cta\', this.value)">' +
           '</div>' +
           '<div class="field">' +
-            '<label class="lbl">Background colour</label>' +
+            '<label class="lbl">Media (image or video)</label>' +
+            '<input type="file" id="banner-media" accept="image/*,video/*" style="display:none;" onchange="Z._bannerPickMedia(this)">' +
+            '<button class="btn-ghost" onclick="document.getElementById(\'banner-media\').click()">' +
+              '<i class="fa-solid fa-cloud-arrow-up"></i> ' + (hasMedia ? 'Replace media' : 'Choose media') +
+            '</button>' +
+            (hasMedia ? '<button class="btn-ghost" onclick="Z._bannerClearMedia()" style="color:#fca5a5;border-color:rgba(239,68,68,.35);">Remove media</button>' : '') +
+            previewHtml +
+          '</div>' +
+          '<div class="field">' +
+            '<label class="lbl">Background colour (used when no media or below media)</label>' +
             '<div class="bg-row">' + bgSwatches + '</div>' +
           '</div>' +
           '<div class="field">' +
@@ -3607,21 +3751,36 @@ function _renderBannerEditor(){
             '<label class="lbl">Font</label>' +
             '<div class="font-row">' + fontBtns + '</div>' +
           '</div>' +
-          '<div class="field">' +
-            '<label class="lbl">Media (optional — overrides colour/wallpaper)</label>' +
-            '<input type="file" id="banner-media" accept="image/*,video/*" style="display:none;" onchange="Z._bannerPickMedia(this)">' +
-            '<button class="btn-ghost" onclick="document.getElementById(\'banner-media\').click()">' +
-              '<i class="fa-solid fa-cloud-arrow-up"></i> ' + (hasMedia ? 'Replace media' : 'Choose media') +
-            '</button>' +
-            (hasMedia ? '<button class="btn-ghost" onclick="Z._bannerClearMedia()" style="color:#fca5a5;border-color:rgba(239,68,68,.35);">Remove media</button>' : '') +
-          '</div>' +
-          '<button class="btn-primary" onclick="Z.saveBannerDraft()">Save to Ad TV</button>' +
-          '<button class="btn-ghost" onclick="Z.closeBannerEditor()">Cancel</button>' +
+          '<button class="btn-primary" onclick="Z.saveBannerDraft()">Save</button>' +
+          '<button class="btn-ghost" onclick="Z._backToList()">Back</button>' +
         '</div>' +
       '</div>' +
     '</div>'
   );
+
+  /* If editing existing and media exists in IDB but no previewUrl yet,
+     load the blob for preview */
+  if(!d._previewUrl && d.mediaId){
+    _idbLoadBlob(d.mediaId).then(function(blob){
+      if(!blob) return;
+      var url = URL.createObjectURL(blob);
+      try { Z._trackObjUrl(url); } catch(e){}
+      Z.State.bannerDraft._previewUrl = url;
+      var box = document.getElementById('banner-preview');
+      if(box){
+        box.innerHTML = (Z.State.bannerDraft.mediaType === 'video'
+          ? '<video src="' + url + '" controls muted playsinline></video>'
+          : '<img src="' + url + '" alt="">');
+        box.classList.add('show');
+      }
+    });
+  }
 }
+
+Z._backToList = function(){
+  Z.State.bannerDraft = null;
+  _renderBannerList();
+};
 
 Z._bannerSetField = function(k, v){
   if(!Z.State.bannerDraft) Z.State.bannerDraft = {};
@@ -3631,54 +3790,74 @@ Z._bannerSetBg = function(id){
   if(!Z.State.bannerDraft) return;
   Z.State.bannerDraft.bgId = id;
   Z.State.bannerDraft.wpId = null;
-  _renderBannerEditor();
+  _renderBannerForm();
 };
 Z._bannerSetWallpaper = function(id){
   if(!Z.State.bannerDraft) return;
   Z.State.bannerDraft.wpId = id;
   Z.State.bannerDraft.bgId = null;
-  _renderBannerEditor();
+  _renderBannerForm();
 };
 Z._bannerSetFont = function(id){
   if(!Z.State.bannerDraft) return;
   Z.State.bannerDraft.fontId = id;
-  _renderBannerEditor();
+  _renderBannerForm();
 };
 
-/* Pick media — saves blob to IndexedDB, stores the ID in the draft */
+/* Pick media — show preview instantly, save to IDB in background */
 Z._bannerPickMedia = function(input){
   var f = input && input.files && input.files[0];
   if(!f) return;
   if(f.size > 100*1024*1024){ Z.toast('Media under 100 MB.', 'error'); return; }
+  if(!Z.State.bannerDraft) Z.State.bannerDraft = {};
+
   var isVid = (f.type && f.type.indexOf('video/') === 0);
+  Z.State.bannerDraft.mediaType = isVid ? 'video' : 'image';
+
+  /* 1) Preview immediately */
+  var url;
+  try { url = URL.createObjectURL(f); }
+  catch(e){ Z.toast('Could not open file.', 'error'); return; }
+  Z.State.bannerDraft._previewUrl = url;
+
+  var box = document.getElementById('banner-preview');
+  if(box){
+    box.innerHTML = (isVid
+      ? '<video src="' + url + '" controls muted playsinline></video>'
+      : '<img src="' + url + '" alt="">');
+    box.classList.add('show');
+  }
+
+  /* 2) Persist to IDB in background */
   Z.toast('Saving media...');
-  _saveAdminBannerMedia(f).then(function(id){
+  _idbSaveBlob(f).then(function(id){
     if(!id){ Z.toast('Could not save media.', 'error'); return; }
-    if(!Z.State.bannerDraft) Z.State.bannerDraft = {};
-    Z.State.bannerDraft.mediaType = isVid ? 'video' : 'image';
     Z.State.bannerDraft.mediaId = id;
-    Z.State.bannerDraft.mediaUrl = null; /* never store blob: URLs */
-    _renderBannerEditor();
     Z.toast('Media ready.');
   });
 };
 
 Z._bannerClearMedia = function(){
   if(!Z.State.bannerDraft) return;
+  var oldId = Z.State.bannerDraft.mediaId;
+  if(oldId) _idbDelete(oldId);
   Z.State.bannerDraft.mediaType = null;
   Z.State.bannerDraft.mediaUrl = null;
   Z.State.bannerDraft.mediaId = null;
-  _renderBannerEditor();
+  Z.State.bannerDraft._previewUrl = null;
+  _renderBannerForm();
 };
 
 Z.saveBannerDraft = function(){
   var d = Z.State.bannerDraft;
   if(!d){ Z.toast('Nothing to save.', 'error'); return; }
-  if(!d.heading && !d.subtitle && !d.mediaId && !d.mediaUrl){
+  if(!d.heading && !d.subtitle && !d.mediaId){
     Z.toast('Add a heading, subtitle, or media.', 'error');
     return;
   }
+
   var toSave = {
+    id: d.id || ('ad_' + Date.now()),
     heading: d.heading || '',
     subtitle: d.subtitle || '',
     cta: d.cta || '',
@@ -3687,19 +3866,30 @@ Z.saveBannerDraft = function(){
     fontId: d.fontId || 'display',
     mediaType: d.mediaType || null,
     mediaId: d.mediaId || null,
-    /* mediaUrl intentionally dropped — blob: URLs die on refresh */
     ts: Date.now()
   };
-  Z.saveAdminAd(toSave);
-  Z.toast('Banner saved to Ad TV.');
-  Z.closeBannerEditor();
+
+  var ads = Z.State.adminAds || [];
+  if(typeof d._editIndex === 'number'){
+    ads[d._editIndex] = toSave;
+  } else {
+    ads.push(toSave);
+  }
+  Z.State.adminAds = ads;
+  Z.saveAdminAds();
+
+  Z.toast('Saved.');
+  Z.State.bannerDraft = null;
+
+  /* Refresh stage if we're on public home */
   var stage = document.getElementById('zn-ad-stage');
   if(stage){
-    stage.innerHTML = _renderAdStage();
-    setTimeout(function(){ Z.resolveAdminBannerMedia(); }, 40);
-  } else {
-    Z.softRefresh();
+    stage.innerHTML = _renderAdStage(ads, 0);
+    setTimeout(_resolveStageAds, 40);
+    Z._startAdRotation();
   }
+
+  _renderBannerList();
 };
 
 Z.closeBannerEditor = function(){
@@ -3707,22 +3897,76 @@ Z.closeBannerEditor = function(){
   Z.closeModal();
 };
 
-Z.adminClearAd = function(){
+Z.adminClearAllAds = function(){
   if(!Z.isAdminMode || !Z.isAdminMode()) return;
-  if(!confirm('Remove the admin ad?')) return;
-  Z.clearAdminAd();
-  Z.toast('Admin ad cleared.');
+  if(!confirm('Remove all ads?')) return;
+  (Z.State.adminAds || []).forEach(function(a){ if(a.mediaId) _idbDelete(a.mediaId); });
+  Z.State.adminAds = [];
+  Z.saveAdminAds();
+  Z.toast('All ads cleared.');
   var stage = document.getElementById('zn-ad-stage');
   if(stage){
-    stage.innerHTML = _renderAdStage();
-  } else if(Z.State.currentView === 'public-home'){
-    Z.softRefresh();
+    stage.innerHTML = _renderAdStage([], 0);
   }
 };
 
+/* Hook: start rotation whenever public-home is shown */
+var _origShowView = Z.showView;
+Z.showView = async function(view, param){
+  var r = await _origShowView.apply(Z, arguments);
+  if(view === 'public-home'){
+    setTimeout(function(){
+      Z._resolveStageAds();
+      Z._startAdRotation();
+    }, 120);
+  }
+  return r;
+};
+
+/* ---------- Info / Upload placeholders ---------- */
+Z.showAdTVInfo = function(){
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Watch and Earn</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div style="font-size:12px;line-height:1.7;color:#cbd5e1;">' +
+          '<p style="margin-bottom:12px;color:#10b981;font-weight:800;">Coming soon — Adaptation Phase 2.</p>' +
+          '<p style="margin-bottom:10px;">Brands publish ads to reach the ZYNIX audience. Viewers watch for a fixed duration and earn a real bounty.</p>' +
+          '<p style="margin-bottom:10px;"><b style="color:#fff;">For advertisers:</b> fixed fee per view. Fee is deducted from your Cash wallet at upload.</p>' +
+          '<p style="margin-bottom:10px;"><b style="color:#fff;">For viewers:</b> watch 15s video or 5s image, reward lands in your Watch-and-Earn wallet. Withdraw any time — 20% platform fee applies.</p>' +
+          '<p style="margin-bottom:10px;"><b style="color:#fff;">Platform:</b> keeps 5% of each advertiser payout. Viewer receives 95%.</p>' +
+          '<p style="color:#94a3b8;font-size:11px;">Ad publishing opens once Phase 2 ships.</p>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+};
+
+Z.openAdUpload = function(){
+  if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Publish an Ad</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div style="font-size:12px;line-height:1.7;color:#cbd5e1;">' +
+          '<p style="margin-bottom:10px;color:#10b981;font-weight:800;">Coming soon — Adaptation Phase 2.</p>' +
+          '<p style="margin-bottom:10px;">Ad publishing opens once Phase 2 ships. You will be able to upload, choose colours, and set the per-view reward.</p>' +
+          '<p style="color:#94a3b8;">Your current Cash balance: <b style="color:#10b981;">$' + Number(Z.State.currentUser.wallet_cash||0).toFixed(2) + '</b></p>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+};
+
+/* On load, ensure migration runs once */
+try { Z.loadAdminAds(); } catch(e){}
+
 })();
 </script>
-
 <!-- ============================================================
      SECTION 5 — POST REACTIONS + POST COMMENTS
      ============================================================ -->
