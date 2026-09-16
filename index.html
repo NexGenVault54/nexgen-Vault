@@ -2456,12 +2456,12 @@ Z.openCreateModal = function(){
 
 })();
 </script>
-   <!-- ============================================================
+<!-- ============================================================
      SECTION 4 — HOME + POSTS + COMPOSER
      Feed · Post card · Composer · Menu · Pull-to-refresh ·
      Double-tap ❤️ · Post views · Single rAF video controller
      · Share refetch · Rotating greeting · Skeleton loaders
-     · Haptic feedback
+     · Haptic feedback · Tap-to-unmute button on post videos
      ============================================================ -->
 <script>
 (function(){
@@ -2474,6 +2474,33 @@ Z.findPostInState = function(postId){
   if(p) return p;
   if(Z.State.spacePosts) return Z.State.spacePosts.find(function(x){ return x.id === postId; }) || null;
   return null;
+};
+
+/* Per-post video unmute state — persists across renders for the session */
+Z._postVideoUnmuted = {};
+Z.togglePostVideoSound = function(postId){
+  var media = document.querySelector('[data-post-media="' + postId + '"]');
+  if(!media) return;
+  var v = media.querySelector('video');
+  if(!v) return;
+  var isOn = !!Z._postVideoUnmuted[postId];
+  if(isOn){
+    delete Z._postVideoUnmuted[postId];
+    try { v.muted = true; } catch(e){}
+  } else {
+    Z._postVideoUnmuted[postId] = true;
+    try { v.muted = false; v.volume = 1; } catch(e){}
+    /* If it wasn't the currently playing one, start it now that user opted in */
+    try { Z.playExclusive(v); } catch(e){}
+  }
+  var btn = media.querySelector('.vid-sound-btn');
+  if(btn){
+    btn.classList.toggle('on', !v.muted);
+    btn.innerHTML = v.muted
+      ? '<i class="fa-solid fa-volume-xmark"></i>'
+      : '<i class="fa-solid fa-volume-high"></i>';
+  }
+  Z.haptic(6);
 };
 
 Z.renderHome = function(){
@@ -2517,7 +2544,6 @@ Z.renderHome = function(){
   return html;
 };
 
-/* Loading state for home — skeleton, not spinner */
 Z.renderHomeLoading = function(){
   return '<div style="display:flex;flex-direction:column;gap:14px;">' +
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;height:60px;"></div>' +
@@ -2547,7 +2573,11 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   if(p.media_url){
     var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
     if(mt === 'video'){
-      mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '"><video src="' + Z.escape(p.media_url) + '" playsinline preload="metadata" loop muted></video></div>';
+      var isUnmuted = !!Z._postVideoUnmuted[p.id];
+      mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '">' +
+        '<video src="' + Z.escape(p.media_url) + '" playsinline preload="metadata" loop muted></video>' +
+        '<button type="button" class="vid-sound-btn' + (isUnmuted ? ' on' : '') + '" onclick="event.stopPropagation();Z.togglePostVideoSound(\'' + Z.escape(p.id) + '\')" title="Toggle sound"><i class="fa-solid ' + (isUnmuted ? 'fa-volume-high' : 'fa-volume-xmark') + '"></i></button>' +
+      '</div>';
     } else {
       mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '"><img src="' + Z.escape(p.media_url) + '" alt="Post" loading="lazy"><div class="post-heart-burst" data-heart="' + Z.escape(p.id) + '">❤️</div></div>';
     }
@@ -2656,7 +2686,6 @@ window.addEventListener('scroll', function(){
   });
 }, {passive:true});
 
-/* Composer */
 Z.expandComposer = function(){
   var c = document.getElementById('composer-expanded');
   if(!c) return;
@@ -3020,7 +3049,6 @@ function attachPostViewObservers(){
   });
 }
 
-/* Single-controller feed video autoplay — rAF throttled */
 Z._feedPlayingVideo = null;
 Z._feedScrollRaf = null;
 
@@ -3040,7 +3068,7 @@ Z.recomputeFeedVideoPlayback = function(){
   var current = Z._feedPlayingVideo;
   if(current && current.isConnected && best === current && bestRatio >= 0.75){
     if(current.paused){
-      try { current.muted = false; current.volume = 1; current.play().catch(function(){}); } catch(e){}
+      try { current.play().catch(function(){}); } catch(e){}
     }
     return;
   }
@@ -3051,8 +3079,15 @@ Z.recomputeFeedVideoPlayback = function(){
   });
   if(best && bestRatio >= 0.75){
     try {
-      best.muted = false;
-      best.volume = 1;
+      /* Respect per-post unmute choice; default muted for autoplay */
+      var wrap = best.closest('[data-post-media]');
+      var pid = wrap ? wrap.getAttribute('data-post-media') : null;
+      if(pid && Z._postVideoUnmuted[pid]){
+        best.muted = false;
+        best.volume = 1;
+      } else {
+        best.muted = true;
+      }
       best.play().catch(function(){
         try { best.muted = true; best.play().catch(function(){}); } catch(e){}
       });
@@ -3161,7 +3196,6 @@ Z.attachHomeInteractions = function(){
 
 })();
 </script>
-
 <!-- ============================================================
      SECTION 4B — PUBLIC HOME
      Intro box (3 rows) · Enlarged Ad TV · Discover strip ·
