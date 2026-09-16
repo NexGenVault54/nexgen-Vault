@@ -8619,5 +8619,89 @@ console.log('[ZYNIX] 3-fix pack active');
 .post-media img{ object-fit:cover; }
 .post-media video{ object-fit:contain; }
 </style>
+   <!-- ============================================================
+     FIX PACK — media flash + video persistence + image lightbox
+     1. Hides the broken-image icon/alt-text that flashes before
+        media loads (the aspect box itself is already correct).
+     2. Preserves media_url across refresh when the server response
+        omits it — fixes "video disappears on first refresh".
+     3. Boosts video preload so the first frame renders sooner.
+     4. Single-click any post image -> full-screen uncropped view.
+        Double-tap still triggers the heart (waits 320ms first).
+     ============================================================ -->
+<style>
+.post-media img,
+.post-media video{ color:transparent; font-size:0; line-height:0; }
+</style>
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+
+/* 1. Preserve media_url across refresh if server response omits it */
+function _preserve(newList, oldList, urlKey, typeKey){
+  var oldById = {};
+  (oldList||[]).forEach(function(x){ if(x && x.id) oldById[x.id] = x; });
+  (newList||[]).forEach(function(x){
+    var o = oldById[x.id]; if(!o) return;
+    if(!x[urlKey]  && o[urlKey])  x[urlKey]  = o[urlKey];
+    if(typeKey && !x[typeKey] && o[typeKey]) x[typeKey] = o[typeKey];
+  });
+  return newList;
+}
+var _origHome = Z.DB.loadHomeFeed;
+Z.DB.loadHomeFeed = async function(){
+  var prev = (Z.State.allPosts || []).slice();
+  var out  = await _origHome.apply(Z.DB, arguments);
+  return _preserve(out, prev, 'media_url', 'media_type');
+};
+var _origSparks = Z.DB.loadSparks;
+Z.DB.loadSparks = async function(){
+  var prev = (Z.State.allSparks || []).slice();
+  var out  = await _origSparks.apply(Z.DB, arguments);
+  return _preserve(out, prev, 'video_url', null);
+};
+
+/* 2. Video preload boost — first frame renders sooner */
+function _boostPreload(){
+  try {
+    document.querySelectorAll('video[preload="metadata"]').forEach(function(v){
+      try { v.setAttribute('preload','auto'); v.preload = 'auto'; } catch(e){}
+    });
+  } catch(e){}
+}
+
+/* 3. Single-click post image -> uncropped full-screen lightbox.
+      Double-tap still triggers the heart (waits 320ms first). */
+var _lbTimer = null;
+document.addEventListener('click', function(e){
+  var img = e.target.closest('.post-media img');
+  if(!img) return;
+  if(_lbTimer){ clearTimeout(_lbTimer); _lbTimer = null; return; }
+  _lbTimer = setTimeout(function(){
+    _lbTimer = null;
+    var src = img.getAttribute('src');
+    if(!src || src.indexOf('idb:') === 0) return;
+    var lb = document.createElement('div');
+    lb.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;';
+    lb.innerHTML = '<img src="' + src + '" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">';
+    lb.addEventListener('click', function(){ lb.remove(); });
+    document.body.appendChild(lb);
+  }, 320);
+});
+
+/* Run after every render */
+function _after(){ _boostPreload(); }
+var _os = Z.softRefresh;
+Z.softRefresh = function(){ var r = _os.apply(Z, arguments); setTimeout(_after, 30); return r; };
+var _sh = Z.showView;
+Z.showView = async function(){ var r = await _sh.apply(Z, arguments); setTimeout(_after, 100); return r; };
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', function(){ setTimeout(_after, 100); });
+} else { setTimeout(_after, 100); }
+
+console.log('[ZYNIX] media flash + persistence + lightbox active');
+})();
+</script>
 </body>
 </html>
