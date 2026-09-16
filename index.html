@@ -2080,6 +2080,8 @@ window.Z = Z;
 <!-- ============================================================
      SECTION 2 — AUTH
      Welcome · session · logout · header widget · auth modal
+     · calls setupRealtime() after manual login
+     · tears down realtime channels on logout
      ============================================================ -->
 <script>
 (function(){
@@ -2200,6 +2202,12 @@ Z.handleAuth = async function(mode){
     await Z.reloadData();
     Z.State.navStack = [];
     Z.showView('home');
+    /* Realtime must be (re)connected after a fresh manual login.
+       Without this, new posts / reactions / notifications from
+       other users do not arrive until a manual page refresh. */
+    setTimeout(function(){
+      try { Z.setupRealtime(); } catch(e){}
+    }, 100);
   } catch(e){
     Z.toast((e && e.message) ? e.message : 'Authentication failed.', 'error');
   } finally {
@@ -2238,6 +2246,21 @@ Z.refreshSession = async function(){
 
 Z.logout = async function(){
   var c = Z.sb();
+  /* Tear down realtime channels BEFORE signOut so no ghost events
+     fire against a logged-out user. */
+  try {
+    if(c && c.getChannels){
+      c.getChannels().forEach(function(ch){
+        var nm = ch && (ch.topic || ch.name || '');
+        if(typeof nm === 'string' && nm.indexOf('zynix-') === 0){
+          try { c.removeChannel(ch); } catch(e){}
+        }
+      });
+    }
+    (Z.State.realtimeChannels||[]).forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
+    Z.State.realtimeChannels = [];
+  } catch(e){}
+
   if(c){ try { await c.auth.signOut(); } catch(e){} }
   Z.clearSnapshot();
   Z._revokeAllObjUrls();
