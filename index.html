@@ -8703,5 +8703,149 @@ if(document.readyState === 'loading'){
 console.log('[ZYNIX] media flash + persistence + lightbox active');
 })();
 </script>
+   <!-- ============================================================
+     FIX PACK 2 — images natural + video fills desktop +
+     persistent media across refresh + lightbox reaffirm
+     Supersedes the aspect-ratio rule for images only.
+     Videos keep their contained behaviour.
+     ============================================================ -->
+<style>
+/* Images — natural aspect, no crop, capped at 600px tall */
+.post-media.has-image{
+  aspect-ratio:auto;
+  min-height:0;
+  max-height:none;
+  background:transparent;
+}
+.post-media.has-image img{
+  width:100%;
+  height:auto;
+  max-height:600px;
+  object-fit:contain;
+  background:#0f172a;
+  display:block;
+}
+
+/* Videos — desktop wider than mobile */
+@media(min-width:900px){
+  .post-media.has-video{
+    aspect-ratio:16/10;
+  }
+}
+</style>
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+
+/* ---------- 1. Tag media containers so CSS knows image vs video ---------- */
+function _tagMediaContainers(){
+  try {
+    document.querySelectorAll('.post-media').forEach(function(el){
+      if(el.querySelector('video')) el.classList.add('has-video');
+      if(el.querySelector('img'))   el.classList.add('has-image');
+    });
+  } catch(e){}
+}
+
+/* ---------- 2. Restore media from local media map if RPC dropped it ---------- */
+function _restoreMissingMedia(){
+  try {
+    var map = Z._loadMediaMap();
+    (Z.State.allPosts||[]).forEach(function(p){
+      if(!p || !p.id) return;
+      if(!p.media_url && map[p.id] && map[p.id].url){
+        p.media_url = map[p.id].url;
+        if(!p.media_type) p.media_type = Z.isVideoUrl(map[p.id].url) ? 'video' : 'image';
+      }
+    });
+    (Z.State.allSparks||[]).forEach(function(s){
+      if(!s || !s.id) return;
+      if(!s.video_url && map[s.id] && map[s.id].url){
+        s.video_url = map[s.id].url;
+      }
+    });
+    (Z.State.allStatuses||[]).forEach(function(s){
+      if(!s || !s.id) return;
+      if(!s.media_url && map[s.id] && map[s.id].url){
+        s.media_url = map[s.id].url;
+        if(!s.media_type) s.media_type = Z.isVideoUrl(map[s.id].url) ? 'video' : 'image';
+      }
+    });
+  } catch(e){}
+}
+
+/* ---------- 3. Run after every refresh / view change / reload ---------- */
+function _sweep(){
+  _restoreMissingMedia();
+  _tagMediaContainers();
+}
+
+/* Wrap reloadData — critical for the "1st refresh" bug */
+if(Z.reloadData){
+  var _origReload = Z.reloadData;
+  Z.reloadData = async function(){
+    var r = await _origReload.apply(Z, arguments);
+    _sweep();
+    return r;
+  };
+}
+
+/* Wrap softRefresh */
+if(Z.softRefresh){
+  var _origSoft = Z.softRefresh;
+  Z.softRefresh = function(){
+    _sweep();
+    var r = _origSoft.apply(Z, arguments);
+    setTimeout(_sweep, 30);
+    setTimeout(_sweep, 400);
+    return r;
+  };
+}
+
+/* Wrap showView */
+if(Z.showView){
+  var _origShow = Z.showView;
+  Z.showView = async function(){
+    _sweep();
+    var r = await _origShow.apply(Z, arguments);
+    setTimeout(_sweep, 50);
+    setTimeout(_sweep, 400);
+    return r;
+  };
+}
+
+/* Boot sweep */
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', function(){ setTimeout(_sweep, 80); setTimeout(_sweep, 600); });
+} else {
+  setTimeout(_sweep, 80);
+  setTimeout(_sweep, 600);
+}
+
+/* ---------- 4. Reaffirm lightbox (single-tap opens full image) ---------- */
+if(!Z._lightboxHooked){
+  Z._lightboxHooked = true;
+  var _lbTimer = null;
+  document.addEventListener('click', function(e){
+    var img = e.target.closest('.post-media img');
+    if(!img) return;
+    if(_lbTimer){ clearTimeout(_lbTimer); _lbTimer = null; return; }  /* double-tap: cancel */
+    _lbTimer = setTimeout(function(){
+      _lbTimer = null;
+      var src = img.getAttribute('src');
+      if(!src || src.indexOf('idb:') === 0) return;
+      var lb = document.createElement('div');
+      lb.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;';
+      lb.innerHTML = '<img src="' + src + '" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">';
+      lb.addEventListener('click', function(){ lb.remove(); });
+      document.body.appendChild(lb);
+    }, 320);
+  }, true);
+}
+
+console.log('[ZYNIX] fix pack 2 active');
+})();
+</script>
 </body>
 </html>
