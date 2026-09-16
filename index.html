@@ -7477,6 +7477,9 @@ Z.renderNotifications = function(){
 
 <!-- ============================================================
      SECTION 13 — REALTIME + RELOAD DATA
+     8 channels · DELETE propagation for posts/sparks/statuses ·
+     notification delayed-retry · status row re-render after sync
+     · snapshot sync
      ============================================================ -->
 <script>
 (function(){
@@ -7546,12 +7549,61 @@ function scheduleReactionRefetch(){
   }, 400);
 }
 
+/* Debounced snapshot save — realtime bursts shouldn't thrash localStorage */
+var _snapDebounce = null;
+function scheduleSnapshotSave(){
+  if(_snapDebounce) clearTimeout(_snapDebounce);
+  _snapDebounce = setTimeout(function(){
+    _snapDebounce = null;
+    try { Z.saveSnapshot(); } catch(e){}
+  }, 800);
+}
+
+/* Remove a post card from the DOM without a full soft refresh */
+function _removePostCard(postId){
+  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+  if(card && card.parentNode) card.parentNode.removeChild(card);
+}
+
+/* Remove a spark slide from the DOM without a full re-render */
+function _removeSparkSlide(sparkId){
+  var vid = document.querySelector('.spark-slide video[data-spark-id="' + sparkId + '"]');
+  if(!vid) return;
+  var slide = vid.closest('.spark-slide');
+  if(!slide || !slide.parentNode) return;
+  var feed = slide.parentNode;
+  slide.parentNode.removeChild(slide);
+  /* If nothing left, show empty state */
+  var remaining = feed.querySelectorAll('.spark-slide');
+  if(!remaining.length){
+    Z.State.allSparks = [];
+    Z.showView('spark');
+  } else if(feed.scrollTop >= feed.scrollHeight - feed.clientHeight - 4){
+    /* We were on the last slide — scroll up a bit */
+    feed.scrollTop = Math.max(0, feed.scrollTop - feed.clientHeight);
+  }
+}
+
+/* Apply a notification to state, honoring deliver_at. If it's a
+   future-delivery notification, schedule a retry instead of dropping. */
+function _applyNotification(n){
+  if(!n) return;
+  var me = Z.State.currentUser;
+  if(!me || n.user_id !== me.id) return;
+  var existing = (Z.State.allNotifications||[]).some(function(x){ return x.id === n.id; });
+  if(existing) return;
+  Z.State.allNotifications.unshift(n);
+  Z.updateNotifBadge();
+  if(Z.State.currentView === 'notifications'){ Z.softRefresh(); }
+}
+
 Z.setupRealtime = function(){
   var c = Z.sb();
   if(!c) return;
   var me = Z.State.currentUser;
   if(!me) return;
 
+  /* Remove any old channels before opening new ones */
   try {
     if(c.getChannels){
       c.getChannels().forEach(function(ch){
@@ -7562,9 +7614,10 @@ Z.setupRealtime = function(){
       });
     }
   } catch(e){}
-  Z.State.realtimeChannels.forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
+  (Z.State.realtimeChannels||[]).forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
   Z.State.realtimeChannels = [];
 
+  /* ---------- 1. COMMENTS ---------- */
   try {
     var ch1 = c.channel('zynix-comments').on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'comments' },
@@ -7648,6 +7701,7 @@ Z.setupRealtime = function(){
     Z.State.realtimeChannels.push(ch1);
   } catch(e){}
 
+  /* ---------- 2. REACTIONS (INSERT + DELETE) ---------- */
   try {
     var ch2 = c.channel('zynix-reactions')
       .on('postgres_changes', { event:'INSERT', schema:'public', table:'post_reactions' }, function(payload){
@@ -7747,6 +7801,7 @@ Z.setupRealtime = function(){
     Z.State.realtimeChannels.push(ch2);
   } catch(e){}
 
+  /* ---------- 3. WALLET ---------- */
   try {
     var walletFilter = 'user_id=eq.' + me.id;
     var ch3 = c.channel('zynix-wallet-' + me.id).on('postgres_changes',
@@ -7772,6 +7827,7 @@ Z.setupRealtime = function(){
     Z.State.realtimeChannels.push(ch3);
   } catch(e){}
 
+  /* ---------- 4. NOTIFICATIONS (with delayed retry) ---------- */
   try {
     var notifFilter = 'user_id=eq.' + me.id;
     var ch4 = c.channel('zynix-notifications-' + me.id).on('postgres_changes',
@@ -7783,15 +7839,20 @@ Z.setupRealtime = function(){
         if(!meNow || n.user_id !== meNow.id) return;
         if(n.deliver_at){
           var due = new Date(n.deliver_at).getTime();
-          if(due > Date.now()) return;
+          var delay = due - Date.now();
+          if(delay > 0){
+            /* Future delivery — schedule a real retry so we don't
+               drop the notification on the floor. */
+            setTimeout(function(){ _applyNotification(n); }, Math.min(delay + 50, 6*60*1000));
+            return;
+          }
         }
-        Z.State.allNotifications.unshift(n);
-        Z.updateNotifBadge();
-        if(Z.State.currentView === 'notifications'){ Z.softRefresh(); }
+        _applyNotification(n);
       }).subscribe();
     Z.State.realtimeChannels.push(ch4);
   } catch(e){}
 
+  /* ---------- 5. POSTS (INSERT + UPDATE + DELETE) ---------- */
   try {
     var ch5 = c.channel('zynix-posts-stream')
       .on('postgres_changes', { event:'INSERT', schema:'public', table:'posts' }, function(payload){
@@ -7802,8 +7863,10 @@ Z.setupRealtime = function(){
         var exists = (Z.State.allPosts||[]).some(function(x){ return x.id === p.id; });
         if(exists) return;
         p.reactions = {}; p._myReactions = {}; p._comments = [];
+        try { Z._backfillItem(p, false); } catch(e){}
         Z.State.allPosts = [p].concat(Z.State.allPosts || []);
         if(Z.State.currentView === 'home'){ Z.softRefresh(); }
+        scheduleSnapshotSave();
       })
       .on('postgres_changes', { event:'UPDATE', schema:'public', table:'posts' }, function(payload){
         var nw = payload.new;
@@ -7825,13 +7888,28 @@ Z.setupRealtime = function(){
           }
         });
       })
+      .on('postgres_changes', { event:'DELETE', schema:'public', table:'posts' }, function(payload){
+        var old = payload.old;
+        if(!old || !old.id) return;
+        var wasMine = Z.State.currentUser && old.author_id === Z.State.currentUser.id;
+        Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== old.id; });
+        /* also purge from spacePosts in case we're viewing that profile */
+        Z.State.spacePosts = (Z.State.spacePosts || []).filter(function(x){ return x.id !== old.id; });
+        _removePostCard(old.id);
+        /* if this was a home soft refresh scenario, keep count accurate */
+        if(!wasMine && Z.State.currentView === 'home'){
+          /* nothing to redraw — the card is removed directly */
+        }
+        scheduleSnapshotSave();
+      })
       .subscribe();
     Z.State.realtimeChannels.push(ch5);
   } catch(e){}
 
+  /* ---------- 6. STATUSES (INSERT + DELETE) ---------- */
   try {
-    var ch6 = c.channel('zynix-statuses-stream').on('postgres_changes',
-      { event:'INSERT', schema:'public', table:'statuses' },
+    var ch6 = c.channel('zynix-statuses-stream')
+      .on('postgres_changes', { event:'INSERT', schema:'public', table: 'statuses' },
       function(payload){
         var s = payload.new;
         if(!s) return;
@@ -7839,13 +7917,26 @@ Z.setupRealtime = function(){
         if(meNow && s.author_id === meNow.id) return;
         var exists = (Z.State.allStatuses||[]).some(function(x){ return x.id === s.id; });
         if(exists) return;
+        try { Z._backfillItem(s, false); } catch(e){}
         Z.State.allStatuses = [s].concat(Z.State.allStatuses || []);
         if(Z.State.currentView === 'home') Z.renderStatusRow();
         if(Z.State.currentView === 'status-home') Z.softRefresh();
-      }).subscribe();
+        scheduleSnapshotSave();
+      })
+      .on('postgres_changes', { event:'DELETE', schema:'public', table:'statuses' },
+      function(payload){
+        var old = payload.old;
+        if(!old || !old.id) return;
+        Z.State.allStatuses = (Z.State.allStatuses || []).filter(function(x){ return x.id !== old.id; });
+        if(Z.State.currentView === 'home') Z.renderStatusRow();
+        if(Z.State.currentView === 'status-home') Z.softRefresh();
+        scheduleSnapshotSave();
+      })
+      .subscribe();
     Z.State.realtimeChannels.push(ch6);
   } catch(e){}
 
+  /* ---------- 7. SPARKS (INSERT + UPDATE + DELETE) ---------- */
   try {
     var ch7 = c.channel('zynix-sparks-stream')
       .on('postgres_changes', { event:'INSERT', schema:'public', table:'sparks' }, function(payload){
@@ -7856,8 +7947,10 @@ Z.setupRealtime = function(){
         var exists = (Z.State.allSparks||[]).some(function(x){ return x.id === s.id; });
         if(exists) return;
         s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0;
+        try { Z._backfillItem(s, true); } catch(e){}
         Z.State.allSparks = [s].concat(Z.State.allSparks || []);
         if(Z.State.currentView === 'spark'){ Z.showView('spark'); }
+        scheduleSnapshotSave();
       })
       .on('postgres_changes', { event:'UPDATE', schema:'public', table:'sparks' }, function(payload){
         var nw = payload.new;
@@ -7880,10 +7973,19 @@ Z.setupRealtime = function(){
         var badgeSpan = slide.querySelector('.spark-view-badge span');
         if(badgeSpan) badgeSpan.textContent = nw.views || 0;
       })
+      .on('postgres_changes', { event:'DELETE', schema:'public', table:'sparks' }, function(payload){
+        var old = payload.old;
+        if(!old || !old.id) return;
+        Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== old.id; });
+        Z.State.spaceSparks = (Z.State.spaceSparks || []).filter(function(x){ return x.id !== old.id; });
+        _removeSparkSlide(old.id);
+        scheduleSnapshotSave();
+      })
       .subscribe();
     Z.State.realtimeChannels.push(ch7);
   } catch(e){}
 
+  /* ---------- 8. CIRCLES ---------- */
   try {
     var ch8 = c.channel('zynix-circles-stream').on('postgres_changes',
       { event:'INSERT', schema:'public', table:'circles' },
@@ -7946,6 +8048,14 @@ Z.reloadData = async function(){
   Z.loadSavedSparks();
   if(me) Z.State.savedPosts = Z.getSavedPosts();
   Z._backfillAllMedia();
+
+  /* If we're on Home and the status strip was painted empty before
+     statuses arrived, repaint it now that data is here. This is why
+     the row appeared blank after refresh / login until you navigated
+     away and back. */
+  if(Z.State.currentView === 'home'){
+    try { if(typeof Z.renderStatusRow === 'function') Z.renderStatusRow(); } catch(e){}
+  }
 
   if(me && c){
     var posts = Z.State.allPosts || [];
