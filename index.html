@@ -2476,33 +2476,6 @@ Z.findPostInState = function(postId){
   return null;
 };
 
-/* Per-post video unmute state — persists across renders for the session */
-Z._postVideoUnmuted = {};
-Z.togglePostVideoSound = function(postId){
-  var media = document.querySelector('[data-post-media="' + postId + '"]');
-  if(!media) return;
-  var v = media.querySelector('video');
-  if(!v) return;
-  var isOn = !!Z._postVideoUnmuted[postId];
-  if(isOn){
-    delete Z._postVideoUnmuted[postId];
-    try { v.muted = true; } catch(e){}
-  } else {
-    Z._postVideoUnmuted[postId] = true;
-    try { v.muted = false; v.volume = 1; } catch(e){}
-    /* If it wasn't the currently playing one, start it now that user opted in */
-    try { Z.playExclusive(v); } catch(e){}
-  }
-  var btn = media.querySelector('.vid-sound-btn');
-  if(btn){
-    btn.classList.toggle('on', !v.muted);
-    btn.innerHTML = v.muted
-      ? '<i class="fa-solid fa-volume-xmark"></i>'
-      : '<i class="fa-solid fa-volume-high"></i>';
-  }
-  Z.haptic(6);
-};
-
 Z.renderHome = function(){
   var me = Z.State.currentUser;
   var posts = Z.State.allPosts || [];
@@ -2573,10 +2546,10 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   if(p.media_url){
     var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
     if(mt === 'video'){
-      var isUnmuted = !!Z._postVideoUnmuted[p.id];
+      /* Native controls — same as Spark. Sound, fullscreen, 3-dot menu,
+         download, playback speed, PiP — all built-in. */
       mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '">' +
-        '<video src="' + Z.escape(p.media_url) + '" playsinline preload="metadata" loop muted></video>' +
-        '<button type="button" class="vid-sound-btn' + (isUnmuted ? ' on' : '') + '" onclick="event.stopPropagation();Z.togglePostVideoSound(\'' + Z.escape(p.id) + '\')" title="Toggle sound"><i class="fa-solid ' + (isUnmuted ? 'fa-volume-high' : 'fa-volume-xmark') + '"></i></button>' +
+        '<video src="' + Z.escape(p.media_url) + '" controls playsinline preload="metadata" loop muted></video>' +
       '</div>';
     } else {
       mHtml = '<div class="post-media" data-post-media="' + Z.escape(p.id) + '"><img src="' + Z.escape(p.media_url) + '" alt="Post" loading="lazy"><div class="post-heart-burst" data-heart="' + Z.escape(p.id) + '">❤️</div></div>';
@@ -3079,15 +3052,9 @@ Z.recomputeFeedVideoPlayback = function(){
   });
   if(best && bestRatio >= 0.75){
     try {
-      /* Respect per-post unmute choice; default muted for autoplay */
-      var wrap = best.closest('[data-post-media]');
-      var pid = wrap ? wrap.getAttribute('data-post-media') : null;
-      if(pid && Z._postVideoUnmuted[pid]){
-        best.muted = false;
-        best.volume = 1;
-      } else {
-        best.muted = true;
-      }
+      /* Respect the native control's current mute state. If user unmuted
+         via native controls, keep it unmuted when re-entering. Default
+         is muted (browser requires muted for autoplay). */
       best.play().catch(function(){
         try { best.muted = true; best.play().catch(function(){}); } catch(e){}
       });
