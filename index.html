@@ -10,14 +10,38 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/aws4fetch@1.0.20/dist/aws4fetch.umd.js"></script>
 <script>
+/* Normalize aws4fetch across UMD packaging variants.
+   Depending on how the UMD was built, the AwsClient class can land at:
+     - window.AwsClient                (direct class attach)
+     - window.Aws4Fetch.AwsClient      (namespace under Aws4Fetch)
+     - window.AwsClient.AwsClient      (namespace under AwsClient)
+   We normalize all three to window.AwsClient so the rest of the app
+   (which checks `typeof AwsClient`) works unchanged. */
 (function(){
-  function ensureAws4fetch(){
-    if(typeof window.AwsClient !== 'undefined') return;
+  function normalizeAws4fetch(){
+    if(typeof window.AwsClient === 'function') return;
+
+    if(window.Aws4Fetch && typeof window.Aws4Fetch.AwsClient === 'function'){
+      window.AwsClient = window.Aws4Fetch.AwsClient;
+      return;
+    }
+    if(window.AwsClient && typeof window.AwsClient.AwsClient === 'function'){
+      window.AwsClient = window.AwsClient.AwsClient;
+      return;
+    }
+
+    // Primary script did not load or did not define anything usable.
+    // Try the fallback CDN, same correct UMD file.
     var fallback = document.createElement('script');
     fallback.src = 'https://unpkg.com/aws4fetch@1.0.20/dist/aws4fetch.umd.js';
     fallback.onload = function(){
-      if(typeof window.AwsClient === 'undefined'){
-        console.error('aws4fetch UMD loaded but AwsClient is still undefined.');
+      if(window.Aws4Fetch && typeof window.Aws4Fetch.AwsClient === 'function'){
+        window.AwsClient = window.Aws4Fetch.AwsClient;
+      } else if(window.AwsClient && typeof window.AwsClient.AwsClient === 'function'){
+        window.AwsClient = window.AwsClient.AwsClient;
+      } else if(typeof window.AwsClient !== 'function'){
+        console.error('aws4fetch: could not find AwsClient class. Globals containing "aws":',
+          Object.keys(window).filter(function(k){ return /aws/i.test(k); }));
       }
     };
     fallback.onerror = function(){
@@ -25,10 +49,11 @@
     };
     document.head.appendChild(fallback);
   }
+
   if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', ensureAws4fetch);
+    document.addEventListener('DOMContentLoaded', normalizeAws4fetch);
   } else {
-    setTimeout(ensureAws4fetch, 0);
+    setTimeout(normalizeAws4fetch, 0);
   }
 })();
 </script>
