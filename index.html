@@ -692,13 +692,6 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
   </div>
 </div>
 
-<!-- ============================================================
-     SECTION 1 — CORE
-     Supabase · State · DB layer · freeze · snapshot · helpers
-     · R2 media upload (Cloudflare) · admin mode (per-user) ·
-     video exclusivity · build timeline · view/scroll persistence
-     · storage helpers · lightbox (menu-aware)
-     ============================================================ -->
 <script>
 (function(){
 'use strict';
@@ -972,7 +965,9 @@ Z.skeletonRows = function(count){
 };
 
 /* ============================================================
-   MEDIA UPLOAD — R2 primary, Supabase fallback
+   MEDIA UPLOAD — R2 ONLY (Supabase Storage fallback removed)
+   If R2 fails for ANY reason, the upload is aborted and an
+   error toast is shown. Nothing is silently saved to Supabase.
    ============================================================ */
 Z.storeMedia = async function(file){
   if(!file) throw new Error('No file provided.');
@@ -989,37 +984,54 @@ Z.storeMedia = async function(file){
   }
   var path = me.id + '/upload/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
 
-  /* Try R2 first */
-  var client = _r2Client();
-  if(client){
-    try {
-      var url = Z.R2_ENDPOINT + '/' + Z.R2_BUCKET + '/' + path;
-      var res = await client.fetch(url, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-          'Cache-Control': 'public, max-age=31536000'
-        }
-      });
-      if(res.ok){
-        return Z.R2_PUBLIC_BASE + '/' + path;
-      }
-    } catch(e){ /* fall through to Supabase */ }
+  /* ---------- R2 ONLY. No Supabase Storage fallback. ---------- */
+  var k = window.ZYNIX_R2_KEYS || {};
+  if(!k.access || !k.secret ||
+     String(k.access).indexOf('ZYNIX_MARKER') === 0 ||
+     String(k.secret).indexOf('ZYNIX_MARKER') === 0){
+    var e1 = 'R2 keys missing or still placeholders.';
+    try { Z.toast(e1, 'error'); } catch(_){}
+    throw new Error(e1);
+  }
+  if(typeof AwsClient === 'undefined'){
+    var e2 = 'aws4fetch library not loaded.';
+    try { Z.toast(e2, 'error'); } catch(_){}
+    throw new Error(e2);
   }
 
-  /* Fallback to Supabase Storage */
-  var c = sb();
-  if(!c) throw new Error('No storage available.');
-  var up = await c.storage.from('media').upload(path, file, {
-    cacheControl:'31536000', upsert:false,
-    contentType:file.type||'application/octet-stream'
+  var client = new AwsClient({
+    accessKeyId: k.access,
+    secretAccessKey: k.secret,
+    service: 's3',
+    region: 'auto'
   });
-  if(up.error) throw new Error(up.error.message || 'Upload failed.');
-  var pub = c.storage.from('media').getPublicUrl(path);
-  var u2 = pub && pub.data && pub.data.publicUrl;
-  if(!u2) throw new Error('Upload succeeded but URL missing.');
-  return u2;
+
+  var putUrl = Z.R2_ENDPOINT + '/' + Z.R2_BUCKET + '/' + path;
+  var res;
+  try {
+    res = await client.fetch(putUrl, {
+      method: 'PUT',
+      body: file,
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'Cache-Control': 'public, max-age=31536000'
+      }
+    });
+  } catch(netErr){
+    var e3 = 'R2 network/CORS error: ' + (netErr && netErr.message ? netErr.message : 'unknown');
+    try { Z.toast(e3, 'error'); } catch(_){}
+    throw new Error(e3);
+  }
+
+  if(!res.ok){
+    var bodyText = '';
+    try { bodyText = await res.text(); } catch(_){}
+    var e4 = 'R2 rejected HTTP ' + res.status + (bodyText ? ' — ' + bodyText.slice(0,180) : '');
+    try { Z.toast(e4, 'error'); } catch(_){}
+    throw new Error(e4);
+  }
+
+  return Z.R2_PUBLIC_BASE + '/' + path;
 };
 
 Z.loadMedia = async function(ref){ return ref || ''; };
