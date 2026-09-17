@@ -695,9 +695,9 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 <!-- ============================================================
      SECTION 1 — CORE
      Supabase · State · DB layer · freeze · snapshot · helpers
-     · IndexedDB media · admin mode (per-user) · video exclusivity
-     · build timeline · view/scroll persistence · storage helpers
-     · lightbox (menu-aware)
+     · R2 media upload (Cloudflare) · admin mode (per-user) ·
+     video exclusivity · build timeline · view/scroll persistence
+     · storage helpers · lightbox (menu-aware)
      ============================================================ -->
 <script>
 (function(){
@@ -707,6 +707,34 @@ var Z = window.Z;
 
 Z.SUPABASE_URL = 'https://ipypwqajsfxrdzlxfnlr.supabase.co';
 Z.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4';
+
+/* ============================================================
+   CLOUDFLARE R2 — MEDIA STORAGE
+   Uploads go directly to R2. Public URL returned as `r2.dev`.
+   Fill the two marker lines below with your real keys.
+   ============================================================ */
+window.ZYNIX_R2_KEYS = {
+  access: '2c3a6ea741f86a5f46bcd1962a4b0298',
+  secret: '96f6a714a8ae7ff70029b5f43c1bbfb52f65783bca2b0d67a1647f8e284a9ace'
+};
+
+Z.R2_ENDPOINT    = 'https://44a0ba4496637bb07ed92ff6b2897a4e.r2.cloudflarestorage.com';
+Z.R2_BUCKET      = 'zynixmedia';
+Z.R2_PUBLIC_BASE = 'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev';
+
+function _r2Client(){
+  var k = window.ZYNIX_R2_KEYS || {};
+  if(!k.access || !k.secret) return null;
+  if(k.access.indexOf('ZYNIX_MARKER') === 0) return null;
+  if(typeof AwsClient === 'undefined') return null;
+  return new AwsClient({
+    accessKeyId: k.access,
+    secretAccessKey: k.secret,
+    service: 's3',
+    region: 'auto'
+  });
+}
+
 var _sb = null;
 function sb(){
   if(_sb) return _sb;
@@ -943,45 +971,15 @@ Z.skeletonRows = function(count){
   return out;
 };
 
-/* IndexedDB media store */
-var MEDIA_DB = 'zynix_media_v1', MEDIA_STORE = 'media', _dbPromise = null;
-function openMediaDB(){
-  if(_dbPromise) return _dbPromise;
-  _dbPromise = new Promise(function(resolve, reject){
-    if(!window.indexedDB){ reject(new Error('No IDB')); return; }
-    var req = indexedDB.open(MEDIA_DB, 1);
-    req.onupgradeneeded = function(e){
-      var db = e.target.result;
-      if(!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE, {keyPath:'id'});
-    };
-    req.onsuccess = function(){ resolve(req.result); };
-    req.onerror   = function(){ reject(req.error); };
-  });
-  return _dbPromise;
-}
-
-Z._objUrls = [];
-Z._trackObjUrl = function(url){
-  if(!url || typeof url !== 'string' || url.indexOf('blob:') !== 0) return url;
-  Z._objUrls.push(url);
-  if(Z._objUrls.length > 300){
-    var oldest = Z._objUrls.shift();
-    try { URL.revokeObjectURL(oldest); } catch(e){}
-  }
-  return url;
-};
-Z._revokeAllObjUrls = function(){
-  Z._objUrls.forEach(function(u){ try { URL.revokeObjectURL(u); } catch(e){} });
-  Z._objUrls = [];
-};
-
+/* ============================================================
+   MEDIA UPLOAD — R2 primary, Supabase fallback
+   ============================================================ */
 Z.storeMedia = async function(file){
   if(!file) throw new Error('No file provided.');
-  var c = sb();
   var me = Z.State.currentUser;
-  if(!c) throw new Error('Supabase not ready.');
   if(!me) throw new Error('Not logged in.');
-  if(file.size > 500*1024*1024) throw new Error('File too large (max 500 MB).');
+  if(file.size > 100*1024*1024) throw new Error('File too large (max 100 MB).');
+
   var ext = 'bin';
   if(file.name && file.name.indexOf('.') > -1) ext = file.name.split('.').pop().toLowerCase();
   else if(file.type){
@@ -990,64 +988,50 @@ Z.storeMedia = async function(file){
     ext = mm[file.type] || 'bin';
   }
   var path = me.id + '/upload/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
+
+  /* Try R2 first */
+  var client = _r2Client();
+  if(client){
+    try {
+      var url = Z.R2_ENDPOINT + '/' + Z.R2_BUCKET + '/' + path;
+      var res = await client.fetch(url, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'Cache-Control': 'public, max-age=31536000'
+        }
+      });
+      if(res.ok){
+        return Z.R2_PUBLIC_BASE + '/' + path;
+      }
+    } catch(e){ /* fall through to Supabase */ }
+  }
+
+  /* Fallback to Supabase Storage */
+  var c = sb();
+  if(!c) throw new Error('No storage available.');
   var up = await c.storage.from('media').upload(path, file, {
     cacheControl:'31536000', upsert:false,
     contentType:file.type||'application/octet-stream'
   });
   if(up.error) throw new Error(up.error.message || 'Upload failed.');
   var pub = c.storage.from('media').getPublicUrl(path);
-  var url = pub && pub.data && pub.data.publicUrl;
-  if(!url) throw new Error('Upload succeeded but URL missing.');
-  return url;
+  var u2 = pub && pub.data && pub.data.publicUrl;
+  if(!u2) throw new Error('Upload succeeded but URL missing.');
+  return u2;
 };
 
-Z.loadMedia = async function(ref){
-  if(!ref) return '';
-  ref = String(ref);
-  if(ref.indexOf('idb:') !== 0) return ref;
-  var id = ref.slice(4);
-  try {
-    var db = await openMediaDB();
-    return new Promise(function(resolve){
-      var tx = db.transaction(MEDIA_STORE, 'readonly');
-      var req = tx.objectStore(MEDIA_STORE).get(id);
-      req.onsuccess = function(){
-        var item = req.result;
-        if(!item || !item.blob){ resolve(''); return; }
-        var url = URL.createObjectURL(item.blob);
-        Z._trackObjUrl(url);
-        resolve(url);
-      };
-      req.onerror = function(){ resolve(''); };
-    });
-  } catch(e){ return ''; }
-};
-
-Z.resolveIdbRefs = function(root){
-  try {
-    root = root || document;
-    var els = root.querySelectorAll('img[src^="idb:"], video[src^="idb:"], source[src^="idb:"]');
-    if(!els.length) return;
-    els.forEach(function(el){
-      var ref = el.getAttribute('src');
-      if(!ref || ref.indexOf('idb:') !== 0) return;
-      if(el._idbResolving) return;
-      el._idbResolving = true;
-      Z.loadMedia(ref).then(function(url){
-        if(url){
-          el.setAttribute('src', url);
-          try { if(el.tagName === 'VIDEO') el.load(); } catch(e){}
-        }
-        el._idbResolving = false;
-      });
-    });
-  } catch(e){}
-};
+Z.loadMedia = async function(ref){ return ref || ''; };
+Z.resolveIdbRefs = function(){ /* no-op — direct URLs */ };
 
 Z._pathFromUrl = function(url){
   if(!url) return null;
   var m = String(url).match(/\/storage\/v1\/object\/public\/media\/(.+?)(?:\?|$)/);
-  return m ? decodeURIComponent(m[1]) : null;
+  if(m) return decodeURIComponent(m[1]);
+  var m2 = String(url).match(/r2\.dev\/(.+?)(?:\?|$)/);
+  if(m2) return decodeURIComponent(m2[1]);
+  return null;
 };
 
 Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
@@ -1069,11 +1053,21 @@ Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
     var rAd = await c.from('ads').select('id').eq('media_url', url);
     (rAd.data||[]).forEach(function(x){ still++; });
     if(still) return;
-    await c.storage.from('media').remove([path]);
+
+    if(url.indexOf('r2.dev') !== -1){
+      var client = _r2Client();
+      if(client){
+        try {
+          var delUrl = Z.R2_ENDPOINT + '/' + Z.R2_BUCKET + '/' + path;
+          await client.fetch(delUrl, { method: 'DELETE' });
+        } catch(e){}
+      }
+    } else {
+      await c.storage.from('media').remove([path]);
+    }
   } catch(e){}
 };
 
-/* User gesture unlock — one-time flag */
 (function(){
   function unlock(){
     if(Z.State._userGestureUnlocked) return;
@@ -1087,7 +1081,6 @@ Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
   document.addEventListener('keydown', unlock, true);
 })();
 
-/* Freeze system */
 Z.getUnfrozenKey = function(){
   var me = Z.State.currentUser;
   return me ? ('zynix_unfrozen_' + me.id) : '';
@@ -1190,7 +1183,6 @@ Z.hasBountyReactionGiven = function(myR){
   return false;
 };
 
-/* Scroll-to-top button */
 Z.updateScrollTopBtn = function(isScrollEvent){
   var btn = document.getElementById('scroll-top-btn');
   if(!btn) return;
@@ -1252,7 +1244,6 @@ Z.scrollToLatest = function(){
   Z.updateScrollTopBtn();
 };
 
-/* Spark caption full-screen overlay */
 Z.closeSparkCaptionOverlay = function(){
   var ov = document.getElementById('zynix-spark-caption-overlay');
   if(ov) ov.remove();
@@ -1304,7 +1295,6 @@ Z.confirmNoCaption = function(continueCall){
   document.body.appendChild(host);
 };
 
-/* Home anchor / scroll restoration */
 Z.saveHomeAnchor = function(){
   try {
     var posts = document.querySelectorAll('.post-card[data-post-id]');
@@ -1364,7 +1354,6 @@ Z.restoreSparkSlideIndex = function(){
   } catch(e){}
 };
 
-/* Snapshot cache — 24h */
 var SNAPSHOT_VERSION = 'v2';
 Z._snapshotKey = function(){
   var me = Z.State.currentUser;
@@ -1430,7 +1419,6 @@ Z.clearSnapshot = function(){
   } catch(e){}
 };
 
-/* Refresh spinner */
 Z._spinnerTimeout = null;
 Z.showRefreshSpinner = function(){
   var el = document.getElementById('zynix-refresh-spinner');
@@ -1445,7 +1433,6 @@ Z.hideRefreshSpinner = function(){
   el.classList.remove('show');
 };
 
-/* Local media map — fallback when server response drops media_url */
 function mediaMapKey(){
   var me = Z.State.currentUser;
   return me ? ('zynix_media_map_' + me.id) : 'zynix_media_map_guest';
@@ -1469,7 +1456,6 @@ Z.recordMediaUrl = function(id, url){
   }
   Z._saveMediaMap(m);
 };
-/* Aggressive backfill: if item URL is missing or malformed, pull from local map */
 Z._backfillItem = function(item, isVideo){
   if(!item || !item.id) return;
   var key = isVideo ? 'video_url' : 'media_url';
@@ -1486,7 +1472,6 @@ Z._backfillAllMedia = function(){
   try { (Z.State.allStatuses||[]).forEach(function(s){ Z._backfillItem(s, false); }); } catch(e){}
 };
 
-/* Admin mode */
 var ADMIN_KEY_PREFIX = 'zynix_admin_mode_';
 Z.isAdminMode = function(){
   var me = Z.State.currentUser;
@@ -1517,7 +1502,6 @@ Z.applyAdminActivation = function(){
   Z.toast('Admin mode active for this account.');
 };
 
-/* DB layer */
 Z.DB = {
   async loadAllProfiles(){
     var c = sb(); if(!c) return [];
@@ -2034,10 +2018,6 @@ Z.migrateLocalCirclesOnce = function(){
   })();
 };
 
-/* Lightbox — menu-aware.
-   If any 3-dot menu is open, tapping a post image closes the menu
-   (handled by Section 4) and does NOT open the lightbox.
-   Double-tap on image still triggers the heart burst. */
 (function(){
   var _lbTimer = null;
   function anyMenuOpen(){
