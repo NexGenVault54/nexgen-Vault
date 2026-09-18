@@ -2221,20 +2221,29 @@ Z.handleAuth = async function(mode){
     }
     authSucceeded = true;
 
-    /* ---- Post-login handoff (no flash of previous page) ----
+      /* ---- Post-login handoff (no flash of previous page) ----
        1. Close the auth modal.
        2. Show the welcome screen on top of whatever was behind.
        3. Load session + data while welcome masks the screen.
        4. Land on public-home (Ad TV page).
-       5. Hide the welcome screen a beat later. */
+       5. Hide the welcome screen a beat later.
+       Failsafe: if anything below hangs (Supabase stall), the
+       welcome screen is force-hidden so the user is never trapped. */
     Z.closeModal();
     Z.State.navStack = [];
     Z.showWelcome(Z.getWelcomeGreeting('login-load'));
 
+    var _welcomeFailsafe = setTimeout(function(){
+      try { Z.hideWelcome(); } catch(e){}
+    }, 8000);
+
     await Z.refreshSession();
 
     try {
-      await Z.reloadData();
+      await Promise.race([
+        Z.reloadData(),
+        new Promise(function(resolve){ setTimeout(resolve, 6000); })
+      ]);
     } catch(e){
       console.error('Post-login load', e);
     }
@@ -2242,7 +2251,10 @@ Z.handleAuth = async function(mode){
     Z.showView('public-home');
 
     /* Small delay so the Ad TV / timeline paint before the fade. */
-    setTimeout(function(){ Z.hideWelcome(); }, 250);
+    setTimeout(function(){
+      clearTimeout(_welcomeFailsafe);
+      Z.hideWelcome();
+    }, 250);
 
     /* Realtime must be (re)connected after a fresh manual login. */
     setTimeout(function(){
