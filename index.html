@@ -946,7 +946,11 @@ Z.skeletonRows = function(count){
    The browser requests a presigned PUT URL from the Vercel
    serverless function, then PUTs the file directly to R2.
    The R2 secret never leaves the server.
+   Client-side allowlist rejects unsupported extensions before
+   any network call. The server enforces its own list too.
    ============================================================ */
+Z._ALLOWED_MEDIA_EXT = ['jpg','jpeg','png','webp','gif','mp4','webm','mov','m4v','3gp'];
+
 Z.storeMedia = async function(file){
   if(!file) throw new Error('No file provided.');
   var me = Z.State.currentUser;
@@ -960,6 +964,15 @@ Z.storeMedia = async function(file){
               'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','video/3gpp':'3gp'};
     ext = mm[file.type] || 'bin';
   }
+
+  /* Client-side allowlist — reject unsupported extensions before we
+     ever contact the server. The server also enforces this list. */
+  if(Z._ALLOWED_MEDIA_EXT.indexOf(ext) === -1){
+    var eType = 'Unsupported file type. Allowed: jpg, png, webp, gif, mp4, webm, mov, 3gp.';
+    try { Z.toast(eType, 'error'); } catch(_){}
+    throw new Error(eType);
+  }
+
   var path = me.id + '/upload/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
 
   var c = Z.sb();
@@ -2221,7 +2234,7 @@ Z.handleAuth = async function(mode){
     }
     authSucceeded = true;
 
-      /* ---- Post-login handoff (no flash of previous page) ----
+    /* ---- Post-login handoff (no flash of previous page) ----
        1. Close the auth modal.
        2. Show the welcome screen on top of whatever was behind.
        3. Load session + data while welcome masks the screen.
@@ -2336,6 +2349,19 @@ Z.logout = async function(){
   Z.State.navStack = [];
   Z.State.savedPosts = [];
   Z.State.savedSparks = [];
+
+  /* Session-scoped state reset — prevents data surviving a sign-out
+     on a shared device (e.g. a stray spaceUserId or viewed-post
+     cache leaking into the next user's session). */
+  Z.State.spaceUserId = null;
+  Z.State.spacePosts = [];
+  Z.State.spaceSparks = [];
+  Z.State.spaceVideos = [];
+  Z.State._viewedPostsThisSession = {};
+  Z.State.homeAnchorPost = null;
+  Z.State.homeAnchorOffset = 0;
+  Z.State.sparkSlideIndex = 0;
+
   try { localStorage.setItem('zynix_last_view','public-home'); localStorage.removeItem('zynix_last_param'); } catch(e){}
   Z.renderHeaderAuth();
   Z.updateHeader();
@@ -2438,6 +2464,12 @@ Z.showView = async function(view, param){
   if(prevView && prevView !== view){
     try { Z.pauseAllBackgroundVideos(); } catch(e){}
     try { Z.closeSparkCaptionOverlay(); } catch(e){}
+  }
+
+  /* Stop the Ad TV auto-advance interval the moment we leave
+     public-home. The interval lives in Z._adTVTimer (Section 4B). */
+  if(prevView === 'public-home' && view !== 'public-home'){
+    if(Z._adTVTimer){ clearInterval(Z._adTVTimer); Z._adTVTimer = null; }
   }
 
   Z.State.currentView = view;
@@ -4410,7 +4442,6 @@ Z.updateCommentReactionUI = function(commentId){
 
 })();
 </script>
-
 <!-- ============================================================
      SECTION 6 — SPARK FEED
      Feed · slide · reactions · view counter · menu · create spark ·
@@ -6096,7 +6127,7 @@ Z.closeStatusViewer = function(){
 
 })();
 </script>
-<!-- ============================================================
+   <!-- ============================================================
      SECTION 8 — SPACE
      Public profile · About/Offer · Trust ring · Value chip ·
      Why-you-see-me · Profile completion ring · Bond/Ping/Share ·
@@ -7533,8 +7564,7 @@ Z.renderNotifications = function(){
 
 })();
 </script>
-
-<!-- ============================================================
+   <!-- ============================================================
      SECTION 13 — REALTIME + RELOAD DATA
      8 channels · DELETE propagation for posts/sparks/statuses ·
      notification delayed-retry · status row re-render after sync
@@ -7674,87 +7704,142 @@ Z.setupRealtime = function(){
   (Z.State.realtimeChannels||[]).forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
   Z.State.realtimeChannels = [];
 
-  /* ---------- 1. COMMENTS ---------- */
+  /* ---------- 1. COMMENTS (INSERT + DELETE) ---------- */
   try {
-    var ch1 = c.channel('zynix-comments').on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'comments' },
-      function(payload){
-        var cm = payload.new;
-        if(!cm) return;
-        var meNow = Z.State.currentUser;
-        if(meNow && cm.author_id === meNow.id) return;
+    var ch1 = c.channel('zynix-comments')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'comments' },
+        function(payload){
+          var cm = payload.new;
+          if(!cm) return;
+          var meNow = Z.State.currentUser;
+          if(meNow && cm.author_id === meNow.id) return;
 
-        if(cm.spark_id){
-          var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === cm.spark_id; });
-          if(sp){
-            sp._commentsCount = (sp._commentsCount||0)+1;
-            Z.refreshSparkCommentCount(cm.spark_id);
-          }
-          if(Z._openSparkCommentsId === cm.spark_id && sp){
-            cm._reactionCounts = {}; cm._myReactions = {}; cm._replies = [];
-            if(!sp._comments) sp._comments = [];
-            if(cm.parent_id){
-              (function walk(arr){
-                for(var i=0;i<arr.length;i++){
-                  if(arr[i].id === cm.parent_id){ if(!arr[i]._replies) arr[i]._replies = []; arr[i]._replies.push(cm); return true; }
-                  if(arr[i]._replies && walk(arr[i]._replies)) return true;
-                }
-                return false;
-              })(sp._comments) || sp._comments.push(cm);
-            } else {
-              sp._comments.push(cm);
+          if(cm.spark_id){
+            var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === cm.spark_id; });
+            if(sp){
+              sp._commentsCount = (sp._commentsCount||0)+1;
+              Z.refreshSparkCommentCount(cm.spark_id);
             }
-            Z.rerenderSparkCommentsBody(cm.spark_id);
+            if(Z._openSparkCommentsId === cm.spark_id && sp){
+              cm._reactionCounts = {}; cm._myReactions = {}; cm._replies = [];
+              if(!sp._comments) sp._comments = [];
+              if(cm.parent_id){
+                (function walk(arr){
+                  for(var i=0;i<arr.length;i++){
+                    if(arr[i].id === cm.parent_id){ if(!arr[i]._replies) arr[i]._replies = []; arr[i]._replies.push(cm); return true; }
+                    if(arr[i]._replies && walk(arr[i]._replies)) return true;
+                  }
+                  return false;
+                })(sp._comments) || sp._comments.push(cm);
+              } else {
+                sp._comments.push(cm);
+              }
+              Z.rerenderSparkCommentsBody(cm.spark_id);
+            }
+            return;
           }
-          return;
-        }
 
-        if(!cm.post_id) return;
-        var post = Z.findPostInState(cm.post_id);
-        if(!post) return;
-        var exists = false;
-        (function scan(arr){
-          for(var i=0;i<arr.length;i++){
-            if(arr[i].id === cm.id){ exists = true; return; }
-            if(arr[i]._replies) scan(arr[i]._replies);
-          }
-        })(post._comments || []);
-        if(exists) return;
-        cm._reactionCounts = {}; cm._myReactions = {}; cm._replies = [];
-        if(!post._comments) post._comments = [];
-        if(cm.parent_id){
-          var parent = Z.findCommentInState(cm.parent_id);
-          if(parent){ if(!parent._replies) parent._replies = []; parent._replies.push(cm); }
-          else post._comments.push(cm);
-        } else {
-          post._comments.push(cm);
-        }
-        var container = document.getElementById('comments-' + cm.post_id);
-        if(container){
-          try {
-            var temp = document.createElement('div');
-            temp.innerHTML = Z.renderComment(cm, post, Z.State.allProfiles);
-            var newEl = temp.firstChild;
-            if(cm.parent_id){
-              var parentEl = container.querySelector('[data-comment-id="' + cm.parent_id + '"]');
-              if(parentEl){
-                var rc = parentEl.querySelector('.comment-replies');
-                if(!rc){ rc = document.createElement('div'); rc.className = 'comment-replies'; parentEl.appendChild(rc); }
-                rc.appendChild(newEl);
-              } else container.appendChild(newEl);
-            } else {
-              var cp = container.querySelector('.comment-color-picker');
-              if(cp && cp.parentNode === container) container.insertBefore(newEl, cp);
-              else container.appendChild(newEl);
+          if(!cm.post_id) return;
+          var post = Z.findPostInState(cm.post_id);
+          if(!post) return;
+          var exists = false;
+          (function scan(arr){
+            for(var i=0;i<arr.length;i++){
+              if(arr[i].id === cm.id){ exists = true; return; }
+              if(arr[i]._replies) scan(arr[i]._replies);
             }
-          } catch(err){}
-        }
-        var card = document.querySelector('.post-card[data-post-id="' + cm.post_id + '"]');
-        if(card && post){
-          var btn = card.querySelector('.post-actions button');
-          if(btn) btn.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + Z.countAllComments(post._comments || []);
-        }
-      }).subscribe();
+          })(post._comments || []);
+          if(exists) return;
+          cm._reactionCounts = {}; cm._myReactions = {}; cm._replies = [];
+          if(!post._comments) post._comments = [];
+          if(cm.parent_id){
+            var parent = Z.findCommentInState(cm.parent_id);
+            if(parent){ if(!parent._replies) parent._replies = []; parent._replies.push(cm); }
+            else post._comments.push(cm);
+          } else {
+            post._comments.push(cm);
+          }
+          var container = document.getElementById('comments-' + cm.post_id);
+          if(container){
+            try {
+              var temp = document.createElement('div');
+              temp.innerHTML = Z.renderComment(cm, post, Z.State.allProfiles);
+              var newEl = temp.firstChild;
+              if(cm.parent_id){
+                var parentEl = container.querySelector('[data-comment-id="' + cm.parent_id + '"]');
+                if(parentEl){
+                  var rc = parentEl.querySelector('.comment-replies');
+                  if(!rc){ rc = document.createElement('div'); rc.className = 'comment-replies'; parentEl.appendChild(rc); }
+                  rc.appendChild(newEl);
+                } else container.appendChild(newEl);
+              } else {
+                var cp = container.querySelector('.comment-color-picker');
+                if(cp && cp.parentNode === container) container.insertBefore(newEl, cp);
+                else container.appendChild(newEl);
+              }
+            } catch(err){}
+          }
+          var card = document.querySelector('.post-card[data-post-id="' + cm.post_id + '"]');
+          if(card && post){
+            var btn = card.querySelector('.post-actions button');
+            if(btn) btn.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + Z.countAllComments(post._comments || []);
+          }
+        })
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'comments' },
+        function(payload){
+          var old = payload.old;
+          if(!old || !old.id) return;
+          var id = old.id;
+
+          /* Recursively remove a comment (and any of its replies) from
+             a nested comment tree. Returns true when it found + removed. */
+          function removeRecFromList(arr){
+            if(!arr) return false;
+            for(var i=0;i<arr.length;i++){
+              if(arr[i].id === id){ arr.splice(i,1); return true; }
+              if(arr[i]._replies && removeRecFromList(arr[i]._replies)) return true;
+            }
+            return false;
+          }
+
+          /* Post comments */
+          (Z.State.allPosts||[]).forEach(function(p){
+            if(!p._comments) return;
+            if(removeRecFromList(p._comments)){
+              var card = document.querySelector('.post-card[data-post-id="' + p.id + '"]');
+              if(card){
+                var b = card.querySelector('.post-actions button');
+                if(b) b.innerHTML = '<i class="fa-regular fa-comment"></i> Comment ' + Z.countAllComments(p._comments || []);
+              }
+            }
+          });
+
+          /* Space posts (same shape, no live card update needed) */
+          (Z.State.spacePosts||[]).forEach(function(p){
+            if(p._comments) removeRecFromList(p._comments);
+          });
+
+          /* Spark comments */
+          (Z.State.allSparks||[]).forEach(function(sp){
+            if(!sp._comments) return;
+            if(removeRecFromList(sp._comments)){
+              sp._commentsCount = Math.max(0, (sp._commentsCount||1) - 1);
+              Z.refreshSparkCommentCount(sp.id);
+              if(Z._openSparkCommentsId === sp.id){
+                Z.rerenderSparkCommentsBody(sp.id);
+              }
+            }
+          });
+
+          /* Detach from DOM if still present */
+          var domEl = document.querySelector('[data-comment-id="' + id + '"]');
+          if(domEl && domEl.parentNode) domEl.parentNode.remove();
+          var domSparkEl = document.querySelector('[data-spark-comment-id="' + id + '"]');
+          if(domSparkEl && domSparkEl.parentNode) domSparkEl.parentNode.remove();
+        })
+      .subscribe();
     Z.State.realtimeChannels.push(ch1);
   } catch(e){}
 
@@ -7858,22 +7943,40 @@ Z.setupRealtime = function(){
     Z.State.realtimeChannels.push(ch2);
   } catch(e){}
 
-  /* ---------- 3. WALLET ---------- */
+  /* ---------- 3. WALLET (refetch, not blind math) ---------- */
   try {
     var walletFilter = 'user_id=eq.' + me.id;
     var ch3 = c.channel('zynix-wallet-' + me.id).on('postgres_changes',
       { event:'INSERT', schema:'public', table:'wallet_transactions', filter: walletFilter },
-      function(payload){
+      async function(payload){
         var tx = payload.new;
         if(!tx) return;
         var meNow = Z.State.currentUser;
         if(!meNow) return;
         var amt = Number(tx.amount) || 0;
         if(amt > 0) Z.animateDollar(amt);
-        meNow.wallet_cash  = Number(meNow.wallet_cash||0)  + amt;
-        meNow.wallet_total = Number(meNow.wallet_total||0) + amt;
-        meNow._walletTx = meNow._walletTx || [];
-        meNow._walletTx.unshift(tx);
+
+        /* Refetch authoritative wallet values from profiles rather than
+           blindly adding tx.amount. A tx may credit cash OR bounty
+           depending on reason; blind addition drifts wallet_bounty. */
+        try {
+          var prof = await c.from('profiles').select('wallet_cash, wallet_bounty, wallet_total').eq('id', meNow.id).maybeSingle();
+          if(prof && prof.data && Z.State.currentUser && Z.State.currentUser.id === meNow.id){
+            Z.State.currentUser.wallet_cash   = prof.data.wallet_cash;
+            Z.State.currentUser.wallet_bounty = prof.data.wallet_bounty;
+            Z.State.currentUser.wallet_total  = prof.data.wallet_total;
+          }
+        } catch(e){}
+
+        /* Refresh the tx list too, so the new row is definitely present
+           even if the realtime payload was partial. */
+        try {
+          var list = await c.from('wallet_transactions').select('*').eq('user_id', meNow.id).order('created_at',{ascending:false}).limit(100);
+          if(list && !list.error && Z.State.currentUser){
+            Z.State.currentUser._walletTx = list.data || [];
+          }
+        } catch(e){}
+
         Z.updateHeader();
         Z.incWalletBadge(1);
         if(Z.State.currentView === 'wallet'){
@@ -7884,7 +7987,7 @@ Z.setupRealtime = function(){
     Z.State.realtimeChannels.push(ch3);
   } catch(e){}
 
-  /* ---------- 4. NOTIFICATIONS (respects deliver_at, re-checks on long delays) ---------- */
+  /* ---------- 4. NOTIFICATIONS (INSERT + UPDATE, respects deliver_at) ---------- */
   try {
     var notifFilter = 'user_id=eq.' + me.id;
 
@@ -7947,13 +8050,25 @@ Z.setupRealtime = function(){
       }, hop);
     }
 
-    var ch4 = c.channel('zynix-notifications-' + me.id).on('postgres_changes',
-      { event:'INSERT', schema:'public', table:'notifications', filter: notifFilter },
-      function(payload){
-        var n = payload.new;
-        if(!n) return;
-        _scheduleNotificationDelivery(n, 0);
-      }).subscribe();
+    var ch4 = c.channel('zynix-notifications-' + me.id)
+      .on('postgres_changes',
+        { event:'INSERT', schema:'public', table:'notifications', filter: notifFilter },
+        function(payload){
+          var n = payload.new;
+          if(!n) return;
+          _scheduleNotificationDelivery(n, 0);
+        })
+      .on('postgres_changes',
+        { event:'UPDATE', schema:'public', table:'notifications', filter: notifFilter },
+        function(payload){
+          var n = payload.new;
+          if(!n) return;
+          /* Update may move deliver_at forward (reversal) or rewrite
+             the message. The scheduling loop re-fetches each hop, so
+             re-running it here picks up the new state. */
+          _scheduleNotificationDelivery(n, 0);
+        })
+      .subscribe();
     Z.State.realtimeChannels.push(ch4);
   } catch(e){}
 
@@ -8256,8 +8371,7 @@ Z.reloadData = async function(){
 
 })();
 </script>
-
-<!-- ============================================================
+   <!-- ============================================================
      SECTION 14 — BOOT
      Cache-first paint · welcome hides instantly · background sync
      ============================================================ -->
@@ -8359,6 +8473,9 @@ async function boot(){
         Z.showView(restored0.view || 'home', restored0.param);
         Z.hideWelcome();
         try { await Z.reloadData(); } catch(e){}
+        /* Refresh the DOM from the freshly loaded data. Without this
+           the snapshot would stay on screen until the user navigates. */
+        if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
         Z.setupRealtime();
       } catch(e){}
     })();
@@ -8427,6 +8544,10 @@ async function boot(){
 
     try {
       await Z.reloadData();
+      /* Refresh the DOM from the freshly loaded data. Without this,
+         the snapshot (up to 24h old) would stay on screen until the
+         user navigates or pulls-to-refresh. */
+      if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
       Z.setupRealtime();
     } catch(e){
       Z.setupRealtime();
