@@ -726,30 +726,12 @@ Z.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 /* ============================================================
    CLOUDFLARE R2 — MEDIA STORAGE
-   Uploads go directly to R2. Public URL returned as `r2.dev`.
-   Fill the two marker lines below with your real keys.
+   Uploads now go through /api/r2-presign (Vercel serverless
+   function). That function holds the R2 secret in environment
+   variables and returns a short-lived presigned URL. The browser
+   never sees the secret. Do NOT add access keys here.
    ============================================================ */
-window.ZYNIX_R2_KEYS = {
-  access: '2c3a6ea741f86a5f46bcd1962a4b0298',
-  secret: '96f6a714a8ae7ff70029b5f43c1bbfb52f65783bca2b0d67a1647f8e284a9ace'
-};
-
-Z.R2_ENDPOINT    = 'https://44a0ba4496637bb07ed92ff6b2897a4e.r2.cloudflarestorage.com';
-Z.R2_BUCKET      = 'zynixmedia';
 Z.R2_PUBLIC_BASE = 'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev';
-
-function _r2Client(){
-  var k = window.ZYNIX_R2_KEYS || {};
-  if(!k.access || !k.secret) return null;
-  if(k.access.indexOf('ZYNIX_MARKER') === 0) return null;
-  if(typeof AwsClient === 'undefined') return null;
-  return new AwsClient({
-    accessKeyId: k.access,
-    secretAccessKey: k.secret,
-    service: 's3',
-    region: 'auto'
-  });
-}
 
 var _sb = null;
 function sb(){
@@ -988,9 +970,10 @@ Z.skeletonRows = function(count){
 };
 
 /* ============================================================
-   MEDIA UPLOAD — R2 ONLY (Supabase Storage fallback removed)
-   If R2 fails for ANY reason, the upload is aborted and an
-   error toast is shown. Nothing is silently saved to Supabase.
+   MEDIA UPLOAD — R2 via /api/r2-presign (server-signed).
+   The browser requests a presigned PUT URL from the Vercel
+   serverless function, then PUTs the file directly to R2.
+   The R2 secret never leaves the server.
    ============================================================ */
 Z.storeMedia = async function(file){
   if(!file) throw new Error('No file provided.');
@@ -1007,32 +990,46 @@ Z.storeMedia = async function(file){
   }
   var path = me.id + '/upload/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
 
-  /* ---------- R2 ONLY. No Supabase Storage fallback. ---------- */
-  var k = window.ZYNIX_R2_KEYS || {};
-  if(!k.access || !k.secret ||
-     String(k.access).indexOf('ZYNIX_MARKER') === 0 ||
-     String(k.secret).indexOf('ZYNIX_MARKER') === 0){
-    var e1 = 'R2 keys missing or still placeholders.';
+  var c = Z.sb();
+  if(!c) throw new Error('Not connected.');
+  var sessionRes = await c.auth.getSession();
+  var session = sessionRes && sessionRes.data ? sessionRes.data.session : null;
+  if(!session || !session.access_token) throw new Error('Not logged in.');
+
+  var presignRes;
+  try {
+    presignRes = await fetch('/api/r2-presign', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({ action: 'put', path: path })
+    });
+  } catch(netErr){
+    var e1 = 'Presign request failed: ' + (netErr && netErr.message ? netErr.message : 'unknown');
     try { Z.toast(e1, 'error'); } catch(_){}
     throw new Error(e1);
   }
-  if(typeof AwsClient === 'undefined'){
-    var e2 = 'aws4fetch library not loaded.';
+
+  if(!presignRes.ok){
+    var errText = '';
+    try { errText = await presignRes.text(); } catch(_){}
+    var e2 = 'Presign rejected HTTP ' + presignRes.status + (errText ? ' — ' + errText.slice(0,180) : '');
     try { Z.toast(e2, 'error'); } catch(_){}
     throw new Error(e2);
   }
 
-  var client = new AwsClient({
-    accessKeyId: k.access,
-    secretAccessKey: k.secret,
-    service: 's3',
-    region: 'auto'
-  });
+  var presignData = await presignRes.json();
+  if(!presignData || !presignData.url){
+    var e3 = 'Presign returned no URL.';
+    try { Z.toast(e3, 'error'); } catch(_){}
+    throw new Error(e3);
+  }
 
-  var putUrl = Z.R2_ENDPOINT + '/' + Z.R2_BUCKET + '/' + path;
   var res;
   try {
-    res = await client.fetch(putUrl, {
+    res = await fetch(presignData.url, {
       method: 'PUT',
       body: file,
       headers: {
@@ -1041,17 +1038,17 @@ Z.storeMedia = async function(file){
       }
     });
   } catch(netErr){
-    var e3 = 'R2 network/CORS error: ' + (netErr && netErr.message ? netErr.message : 'unknown');
-    try { Z.toast(e3, 'error'); } catch(_){}
-    throw new Error(e3);
+    var e4 = 'R2 network/CORS error: ' + (netErr && netErr.message ? netErr.message : 'unknown');
+    try { Z.toast(e4, 'error'); } catch(_){}
+    throw new Error(e4);
   }
 
   if(!res.ok){
     var bodyText = '';
     try { bodyText = await res.text(); } catch(_){}
-    var e4 = 'R2 rejected HTTP ' + res.status + (bodyText ? ' — ' + bodyText.slice(0,180) : '');
-    try { Z.toast(e4, 'error'); } catch(_){}
-    throw new Error(e4);
+    var e5 = 'R2 rejected HTTP ' + res.status + (bodyText ? ' — ' + bodyText.slice(0,180) : '');
+    try { Z.toast(e5, 'error'); } catch(_){}
+    throw new Error(e5);
   }
 
   return Z.R2_PUBLIC_BASE + '/' + path;
@@ -1090,13 +1087,24 @@ Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
     if(still) return;
 
     if(url.indexOf('r2.dev') !== -1){
-      var client = _r2Client();
-      if(client){
-        try {
-          var delUrl = Z.R2_ENDPOINT + '/' + Z.R2_BUCKET + '/' + path;
-          await client.fetch(delUrl, { method: 'DELETE' });
-        } catch(e){}
-      }
+      var me = Z.State.currentUser;
+      if(!me) return;
+      var sessionRes = await c.auth.getSession();
+      var session = sessionRes && sessionRes.data ? sessionRes.data.session : null;
+      if(!session || !session.access_token) return;
+
+      var presignRes = await fetch('/api/r2-presign', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token
+        },
+        body: JSON.stringify({ action: 'delete', path: path })
+      });
+      if(!presignRes.ok) return;
+      var presignData = await presignRes.json();
+      if(!presignData || !presignData.url) return;
+      await fetch(presignData.url, { method: 'DELETE' });
     } else {
       await c.storage.from('media').remove([path]);
     }
