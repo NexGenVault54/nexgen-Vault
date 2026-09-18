@@ -1045,7 +1045,9 @@ Z.storeMedia = async function(file){
     throw new Error(e5);
   }
 
-  return Z.R2_PUBLIC_BASE + '/' + path;
+  var fullUrl = Z.R2_PUBLIC_BASE + '/' + path;
+  Z._registerPendingUpload(fullUrl);
+  return fullUrl;
 };
 /* Legacy no-ops kept as call-site placeholders. IndexedDB storage
    was removed in v3.3 in favour of direct R2 URLs. These exist so
@@ -2399,8 +2401,15 @@ Z.refreshSession = async function(){
     Z.renderHeaderAuth();
     Z.updateHeader();
   } catch(e){}
-};
 
+  /* Reconcile any uploads that were registered but never confirmed
+     by a DB row. Runs in background; failures are swallowed so they
+     never block login. Handles the case where a page was refreshed
+     between R2 upload and DB insert. */
+  if(Z.State.currentUser && typeof Z._reconcilePendingUploads === 'function'){
+    try { Z._reconcilePendingUploads(); } catch(e){}
+  }
+};
 Z.logout = async function(){
   var c = Z.sb();
   /* Tear down realtime channels BEFORE signOut so no ghost events
