@@ -666,7 +666,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
   <button onclick="Z.showView('home')" id="nav-home"><i class="fa-solid fa-house"></i><span>Home</span></button>
   <button onclick="Z.showView('spark')" id="nav-spark"><i class="fa-solid fa-bolt"></i><span>Spark</span></button>
   <button onclick="Z.showView('galleria')" id="nav-galleria"><i class="fa-solid fa-store"></i><span>Galleria</span></button>
-  <button onclick="Z.showView('circles')" id="nav-circles"><i class="fa-solid fa-circle-nodes"></i><span>Circles</span></button>
+  <button onclick="Z.showView('lounge')" id="nav-lounge"><i class="fa-solid fa-couch"></i><span>Lounge</span></button>
   <button onclick="Z.goMySpace()" id="nav-space"><i class="fa-solid fa-user"></i><span>SPACE</span></button>
   <button onclick="Z.openCreateModal()" class="create-btn"><i class="fa-solid fa-plus"></i></button>
 </nav>
@@ -2487,6 +2487,7 @@ Z.renderView = function(view, param){
     'spark':           Z.renderSpark,
     'galleria':        Z.renderGalleria,
     'circles':         Z.renderCircles,
+    'lounge':          Z.renderLounge,
     'profile':         Z.renderProfile,
     'wallet':          Z.renderWallet,
     'bounty':          Z.renderBounty,
@@ -5842,10 +5843,10 @@ Z.submitStatus = async function(forceNoCaption){
   })();
 };
 
-Z.renderStatusRow = function(){
+Z.renderStatusRow = function(hostIdOverride){
   var existing = document.getElementById('status-row');
   if(existing) existing.remove();
-  var host = document.getElementById('home-status-host');
+  var host = document.getElementById(hostIdOverride || 'home-status-host');
   if(!host) return;
   var me = Z.State.currentUser;
   if(!me) return;
@@ -8662,6 +8663,412 @@ if(document.readyState === 'loading'){
 } else {
   boot();
 }
+
+})();
+</script>
+   <!-- ============================================================
+     SECTION 15 — LOUNGE
+     Command centre. One horizontal-scroll row per section.
+     Default rows: Status, Circles. User adds more via Customize.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z;
+if(!Z) return;
+
+var LOUNGE_KEY_PREFIX = 'zynix_lounge_rows_';
+
+Z._loungeKey = function(){
+  var me = Z.State.currentUser;
+  return me ? (LOUNGE_KEY_PREFIX + me.id) : '';
+};
+
+Z._getLoungeRows = function(){
+  var key = Z._loungeKey();
+  if(!key) return ['status', 'circles'];
+  try {
+    var raw = localStorage.getItem(key);
+    if(!raw) return ['status', 'circles'];
+    var arr = JSON.parse(raw);
+    if(!Array.isArray(arr)) return ['status', 'circles'];
+    return arr;
+  } catch(e){ return ['status', 'circles']; }
+};
+
+Z._setLoungeRows = function(rows){
+  var key = Z._loungeKey();
+  if(!key) return;
+  try { localStorage.setItem(key, JSON.stringify(rows)); } catch(e){}
+};
+
+Z.LOUNGE_AVAILABLE_ROWS = [
+  { id: 'status',    label: 'Status',           icon: 'fa-solid fa-circle-notch' },
+  { id: 'circles',   label: 'Circles',          icon: 'fa-solid fa-circle-nodes' },
+  { id: 'tiles',     label: 'Quick Tiles',      icon: 'fa-solid fa-grip' },
+  { id: 'featured',  label: 'Featured Studio',  icon: 'fa-solid fa-star' },
+  { id: 'shops',     label: 'Shops',            icon: 'fa-solid fa-store' },
+  { id: 'people',    label: 'Discover People',  icon: 'fa-solid fa-users' },
+  { id: 'sparks',    label: 'Sparks',           icon: 'fa-solid fa-bolt' },
+  { id: 'wallet',    label: 'Wallet',           icon: 'fa-solid fa-wallet' },
+  { id: 'marketplace', label: 'Studio Market',  icon: 'fa-solid fa-palette' }
+];
+
+Z.renderLounge = function(){
+  var me = Z.State.currentUser;
+  if(!me){
+    return Z.emptyState({
+      icon: 'fa-solid fa-couch',
+      title: 'Log in to see your Lounge.',
+      cta: { label: 'Login', onclick: "Z.openAuthModal('login')" }
+    });
+  }
+
+  var rows = Z._getLoungeRows();
+
+  var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 2px;">';
+  html += '<h2 class="view-title" style="font-size:20px;">';
+  html += '<i class="fa-solid fa-couch" style="color:#10b981;margin-right:8px;"></i>Lounge';
+  html += '</h2>';
+  html += '<button onclick="Z.openLoungeCustomize()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;font-weight:700;padding:6px 12px;border-radius:8px;font-size:11px;cursor:pointer;">';
+  html += '<i class="fa-solid fa-pen"></i> Customize';
+  html += '</button>';
+  html += '</div>';
+
+  if(rows.indexOf('status') !== -1){
+    html += '<div id="lounge-status-host"></div>';
+  }
+
+  rows.forEach(function(rowId){
+    if(rowId === 'status') return;
+    html += Z._renderLoungeRow(rowId);
+  });
+
+  html += '</div>';
+
+  setTimeout(function(){
+    if(rows.indexOf('status') !== -1 && typeof Z.renderStatusRow === 'function'){
+      try { Z.renderStatusRow('lounge-status-host'); } catch(e){}
+    }
+    Z._wireLoungeRows();
+  }, 60);
+
+  return html;
+};
+
+Z._renderLoungeRow = function(rowId){
+  var meta = Z.LOUNGE_AVAILABLE_ROWS.filter(function(r){ return r.id === rowId; })[0];
+  if(!meta) return '';
+
+  var html = '<div class="lounge-row" data-lounge-row="' + rowId + '">';
+
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;">';
+  html += '<div style="font-size:12px;font-weight:800;color:#e2e8f0;letter-spacing:.3px;text-transform:uppercase;">';
+  html += '<i class="' + meta.icon + '" style="color:#10b981;margin-right:6px;font-size:11px;"></i>' + Z.escape(meta.label);
+  html += '</div>';
+  html += '<button onclick="Z._loungeViewAll(\'' + rowId + '\')" style="background:transparent;border:none;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;padding:2px 6px;">View All ›</button>';
+  html += '</div>';
+
+  html += '<div id="lounge-row-body-' + rowId + '" class="lounge-row-body">';
+  html += '<div style="padding:8px;color:#475569;font-size:11px;">Loading…</div>';
+  html += '</div>';
+
+  html += '</div>';
+  return html;
+};
+
+Z._wireLoungeRows = function(){
+  var rows = Z._getLoungeRows();
+  rows.forEach(function(rowId){
+    if(rowId === 'status') return;
+    Z._loadLoungeRow(rowId);
+  });
+};
+
+Z._loadLoungeRow = async function(rowId){
+  var body = document.getElementById('lounge-row-body-' + rowId);
+  if(!body) return;
+
+  if(rowId === 'tiles'){
+    body.innerHTML = Z._renderQuickTiles();
+    return;
+  }
+  if(rowId === 'circles'){
+    body.innerHTML = await Z._renderLoungeCircles();
+    return;
+  }
+  if(rowId === 'people'){
+    body.innerHTML = await Z._renderLoungePeople();
+    return;
+  }
+  if(rowId === 'featured'){
+    body.innerHTML = Z._renderLoungeFeatured();
+    return;
+  }
+  if(rowId === 'shops'){
+    body.innerHTML = await Z._renderLoungeShops();
+    return;
+  }
+  if(rowId === 'sparks'){
+    body.innerHTML = Z._renderLoungeSparks();
+    return;
+  }
+  if(rowId === 'wallet'){
+    body.innerHTML = Z._renderLoungeWalletTile();
+    return;
+  }
+  if(rowId === 'marketplace'){
+    body.innerHTML = Z._renderLoungeMarketplace();
+    return;
+  }
+  body.innerHTML = '<div style="padding:8px;color:#475569;font-size:11px;">Coming soon.</div>';
+};
+
+Z._renderQuickTiles = function(){
+  var tiles = Z._getLoungeTiles();
+  var html = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">';
+  tiles.forEach(function(t){
+    html += '<button onclick="' + t.action + '" style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:12px 4px;text-align:center;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;">';
+    html += '<i class="' + t.icon + '" style="font-size:20px;color:#10b981;"></i>';
+    html += '<span style="font-size:10px;color:#cbd5e1;font-weight:600;">' + Z.escape(t.label) + '</span>';
+    html += '</button>';
+  });
+  html += '</div>';
+  return html;
+};
+
+Z._getLoungeTiles = function(){
+  return [
+    { label: 'Wallet',        icon: 'fa-solid fa-wallet',        action: "Z.showView('wallet')" },
+    { label: 'Notifications', icon: 'fa-solid fa-bell',          action: "Z.showView('notifications')" },
+    { label: 'Bounties',      icon: 'fa-solid fa-coins',         action: "Z.showView('bounty')" },
+    { label: 'Packages',      icon: 'fa-solid fa-box',           action: "Z.showView('packages')" },
+    { label: 'Referrals',     icon: 'fa-solid fa-users-rays',    action: "Z.showView('referrals')" },
+    { label: 'Saved',         icon: 'fa-solid fa-bookmark',      action: "Z.showView('home')" },
+    { label: 'Settings',      icon: 'fa-solid fa-gear',          action: "Z.showView('profile')" },
+    { label: 'Studio',        icon: 'fa-solid fa-palette',       action: "Z.toast('Studio coming soon')" }
+  ];
+};
+
+Z._renderLoungeCircles = async function(){
+  var c = Z.sb();
+  if(!c) return '<div style="padding:8px;color:#475569;font-size:11px;">Not connected.</div>';
+  var data = [];
+  try {
+    var r = await c.from('circles').select('*').order('member_count', {ascending:false}).limit(12);
+    data = r.data || [];
+  } catch(e){ data = []; }
+
+  if(!data.length){
+    data = (Z.DB.getCircles()||[]).slice(0, 12);
+  }
+
+  if(!data.length){
+    return '<div style="padding:12px;color:#475569;font-size:11px;">No circles yet. <button onclick="Z.openCreateCircleModal()" style="background:transparent;border:none;color:#10b981;font-weight:700;cursor:pointer;padding:0;font-size:11px;">Create one ›</button></div>';
+  }
+
+  var html = '<div class="lounge-scroll">';
+  data.forEach(function(cir){
+    var avatar = cir.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
+    html += '<button onclick="Z.showView(\'circles\')" style="flex:0 0 auto;width:88px;background:transparent;border:none;cursor:pointer;padding:0;text-align:center;">';
+    html += '<div style="width:76px;height:76px;border-radius:20px;overflow:hidden;border:2px solid #1e293b;margin:0 auto;background:#0f172a;">';
+    html += '<img src="' + Z.escape(avatar) + '" style="width:100%;height:100%;object-fit:cover;">';
+    html += '</div>';
+    html += '<div style="font-size:10px;color:#cbd5e1;font-weight:700;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(cir.name || 'Circle') + '</div>';
+    html += '<div style="font-size:9px;color:#64748b;">' + (cir.member_count || 0) + ' members</div>';
+    html += '</button>';
+  });
+  html += '<button onclick="Z.openCreateCircleModal()" style="flex:0 0 auto;width:88px;background:transparent;border:none;cursor:pointer;padding:0;text-align:center;">';
+  html += '<div style="width:76px;height:76px;border-radius:20px;border:2px dashed #10b981;margin:0 auto;display:flex;align-items:center;justify-content:center;background:rgba(16,185,129,.05);">';
+  html += '<i class="fa-solid fa-plus" style="color:#10b981;font-size:22px;"></i>';
+  html += '</div>';
+  html += '<div style="font-size:10px;color:#10b981;font-weight:700;margin-top:6px;">Create</div>';
+  html += '</button>';
+  html += '</div>';
+  return html;
+};
+
+Z._renderLoungePeople = async function(){
+  var me = Z.State.currentUser;
+  if(!me) return '';
+  var data = [];
+  try {
+    data = await Z.DB.getPeopleFeed(12, 0, Date.now());
+  } catch(e){ data = []; }
+  if(!data || !data.length){
+    data = (Z.State.allProfiles||[]).filter(function(u){ return u.id !== me.id; }).slice(0, 12);
+  }
+  if(!data.length){
+    return '<div style="padding:12px;color:#475569;font-size:11px;">No suggestions yet.</div>';
+  }
+
+  var html = '<div class="lounge-scroll">';
+  data.forEach(function(u){
+    html += '<div style="flex:0 0 auto;width:96px;text-align:center;">';
+    html += '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="background:transparent;border:none;cursor:pointer;padding:0;">';
+    html += '<div style="width:72px;height:72px;border-radius:50%;overflow:hidden;border:2px solid #1e293b;margin:0 auto;background:#0f172a;">';
+    html += '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:100%;height:100%;object-fit:cover;">';
+    html += '</div>';
+    html += '<div style="font-size:10px;color:#cbd5e1;font-weight:700;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(Z.displayName(u)) + '</div>';
+    html += '</button>';
+    html += '<div style="font-size:9px;color:#64748b;margin-top:2px;">@' + Z.escape(u.username||'user') + '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+};
+
+Z._renderLoungeFeatured = function(){
+  var html = '<div style="background:linear-gradient(135deg,#1e293b,#0f172a);border:1px solid #1e293b;border-radius:16px;padding:18px;position:relative;overflow:hidden;">';
+  html += '<div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(16,185,129,.15),transparent 70%);"></div>';
+  html += '<div style="position:relative;">';
+  html += '<div style="font-size:10px;font-weight:800;color:#10b981;letter-spacing:1.5px;text-transform:uppercase;">Featured Studio</div>';
+  html += '<div style="font-size:18px;font-weight:900;color:#fff;margin-top:6px;line-height:1.25;">Design. Rent. Earn.</div>';
+  html += '<div style="font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.5;">Creators list banner and wallpaper sets. Members rent them for $0.01/day. Every design shows the designer\'s name forever.</div>';
+  html += '<button onclick="Z.toast(\'Studio opens soon\')" style="margin-top:12px;background:#10b981;border:none;color:#000;font-weight:800;padding:8px 16px;border-radius:10px;font-size:12px;cursor:pointer;">Explore Studio</button>';
+  html += '</div>';
+  html += '</div>';
+  return html;
+};
+
+Z._renderLoungeShops = async function(){
+  var c = Z.sb();
+  if(!c) return '';
+  var data = [];
+  try {
+    var r = await c.from('circles').select('*').in('type', ['services','goods']).order('member_count', {ascending:false}).limit(12);
+    data = r.data || [];
+  } catch(e){ data = []; }
+  if(!data.length){
+    return '<div style="padding:12px;color:#475569;font-size:11px;">No shops yet. <button onclick="Z.showView(\'galleria\')" style="background:transparent;border:none;color:#10b981;font-weight:700;cursor:pointer;padding:0;font-size:11px;">Browse Galleria ›</button></div>';
+  }
+  var html = '<div class="lounge-scroll">';
+  data.forEach(function(s){
+    var avatar = s.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
+    html += '<button onclick="Z.showView(\'galleria\')" style="flex:0 0 auto;width:140px;background:#111827;border:1px solid #1e293b;border-radius:14px;padding:10px;cursor:pointer;text-align:left;">';
+    html += '<div style="width:100%;height:80px;border-radius:10px;overflow:hidden;background:#0f172a;margin-bottom:8px;">';
+    html += '<img src="' + Z.escape(avatar) + '" style="width:100%;height:100%;object-fit:cover;">';
+    html += '</div>';
+    html += '<div style="font-size:11px;color:#fff;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(s.name || 'Shop') + '</div>';
+    html += '<div style="font-size:9px;color:#64748b;margin-top:2px;">' + (s.member_count||0) + ' members</div>';
+    html += '</button>';
+  });
+  html += '</div>';
+  return html;
+};
+
+Z._renderLoungeSparks = function(){
+  var sparks = (Z.State.allSparks || []).slice(0, 12);
+  if(!sparks.length){
+    return '<div style="padding:12px;color:#475569;font-size:11px;">No sparks yet.</div>';
+  }
+  var html = '<div class="lounge-scroll">';
+  sparks.forEach(function(s){
+    html += '<button onclick="Z.showView(\'spark\')" style="flex:0 0 auto;width:100px;background:#000;border:1px solid #1e293b;border-radius:12px;overflow:hidden;cursor:pointer;padding:0;height:160px;position:relative;">';
+    html += '<video src="' + Z.escape(s.video_url) + '" preload="metadata" playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>';
+    html += '</button>';
+  });
+  html += '</div>';
+  return html;
+};
+
+Z._renderLoungeWalletTile = function(){
+  var me = Z.State.currentUser;
+  if(!me) return '';
+  var cash = Number(me.wallet_cash || 0).toFixed(2);
+  var bounty = Number(me.wallet_bounty || 0).toFixed(2);
+  var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+  html += '<button onclick="Z.showView(\'wallet\')" style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;text-align:left;cursor:pointer;">';
+  html += '<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Cash</div>';
+  html += '<div style="font-size:22px;font-weight:900;color:#10b981;margin-top:4px;">$' + cash + '</div>';
+  html += '</button>';
+  html += '<button onclick="Z.showView(\'wallet\')" style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;text-align:left;cursor:pointer;">';
+  html += '<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Bounty</div>';
+  html += '<div style="font-size:22px;font-weight:900;color:#3b82f6;margin-top:4px;">$' + bounty + '</div>';
+  html += '</button>';
+  html += '</div>';
+  return html;
+};
+
+Z._renderLoungeMarketplace = function(){
+  var html = '<div class="lounge-scroll">';
+  var items = [
+    { icon:'fa-solid fa-image',    label:'Banners',       color:'#10b981' },
+    { icon:'fa-solid fa-desktop',  label:'Wallpapers',    color:'#3b82f6' },
+    { icon:'fa-solid fa-layer-group', label:'Post Templates', color:'#8b5cf6' },
+    { icon:'fa-solid fa-video',    label:'Video Editing', color:'#ec4899' },
+    { icon:'fa-solid fa-comments', label:'Consulting',    color:'#f59e0b' },
+    { icon:'fa-solid fa-microphone', label:'Voice / Audio', color:'#06b6d4' }
+  ];
+  items.forEach(function(it){
+    html += '<button onclick="Z.toast(\'' + Z.escape(it.label) + ' — Studio opens soon\')" style="flex:0 0 auto;width:110px;background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;">';
+    html += '<i class="' + it.icon + '" style="font-size:22px;color:' + it.color + ';display:block;margin-bottom:8px;"></i>';
+    html += '<div style="font-size:10px;color:#cbd5e1;font-weight:700;">' + Z.escape(it.label) + '</div>';
+    html += '</button>';
+  });
+  html += '</div>';
+  return html;
+};
+
+Z._loungeViewAll = function(rowId){
+  if(rowId === 'circles')  return Z.showView('circles');
+  if(rowId === 'people')   return Z.showView('people');
+  if(rowId === 'shops' || rowId === 'marketplace') return Z.showView('galleria');
+  if(rowId === 'sparks')   return Z.showView('spark');
+  if(rowId === 'wallet')   return Z.showView('wallet');
+  if(rowId === 'status')   return Z.showView('status-home');
+  if(rowId === 'tiles' || rowId === 'featured') return Z.toast('Nothing more to show.');
+};
+
+Z.openLoungeCustomize = function(){
+  var rows = Z._getLoungeRows();
+  var html = '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">';
+  html += '<div class="modal-box">';
+  html += '<div class="modal-header"><h3>Customize Lounge</h3>';
+  html += '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>';
+  html += '</div>';
+  html += '<div style="font-size:11px;color:#94a3b8;margin-bottom:12px;line-height:1.5;">Choose which rows appear in your Lounge. Each row scrolls left-to-right with a View All link.</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+  Z.LOUNGE_AVAILABLE_ROWS.forEach(function(r){
+    var on = rows.indexOf(r.id) !== -1;
+    html += '<button onclick="Z._toggleLoungeRow(\'' + r.id + '\', event)" style="display:flex;align-items:center;justify-content:space-between;background:' + (on ? 'rgba(16,185,129,.08)' : '#0f172a') + ';border:1px solid ' + (on ? 'rgba(16,185,129,.4)' : '#1e293b') + ';border-radius:10px;padding:12px 14px;cursor:pointer;text-align:left;">';
+    html += '<span style="display:flex;align-items:center;gap:10px;color:' + (on ? '#10b981' : '#cbd5e1') + ';font-weight:700;font-size:12px;">';
+    html += '<i class="' + r.icon + '" style="width:16px;text-align:center;"></i>' + Z.escape(r.label);
+    html += '</span>';
+    html += '<i class="fa-solid ' + (on ? 'fa-check-circle' : 'fa-circle') + '" style="color:' + (on ? '#10b981' : '#334155') + ';font-size:14px;"></i>';
+    html += '</button>';
+  });
+  html += '</div>';
+  html += '<button class="btn-primary" style="margin-top:16px;" onclick="Z.closeModal();Z.showView(\'lounge\')">Done</button>';
+  html += '</div>';
+  html += '</div>';
+  Z.openModal(html);
+};
+
+Z._toggleLoungeRow = function(rowId, ev){
+  if(ev) ev.stopPropagation();
+  var rows = Z._getLoungeRows();
+  var idx = rows.indexOf(rowId);
+  if(idx === -1) rows.push(rowId);
+  else rows.splice(idx, 1);
+  Z._setLoungeRows(rows);
+  Z.openLoungeCustomize();
+};
+
+(function(){
+  try {
+    if(document.getElementById('zynix-lounge-css')) return;
+    var st = document.createElement('style');
+    st.id = 'zynix-lounge-css';
+    st.textContent =
+      '.lounge-scroll{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:none;-ms-overflow-style:none;}' +
+      '.lounge-scroll::-webkit-scrollbar{display:none}' +
+      '.lounge-row{background:#0f172a;border:1px solid #1e293b;border-radius:16px;padding:14px 14px 8px;}';
+    document.head.appendChild(st);
+  } catch(e){}
+})();
 
 })();
 </script>
