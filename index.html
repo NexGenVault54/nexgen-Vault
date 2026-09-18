@@ -1067,46 +1067,56 @@ Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
   var path = Z._pathFromUrl(url);
   if(!path) return;
   var c = sb(); if(!c) return;
-  try {
-    var still = 0;
-    var rp = await c.from('posts').select('id').eq('media_url', url);
-    (rp.data||[]).forEach(function(x){ if(x.id !== excludePostId) still++; });
-    if(still) return;
-    var rs = await c.from('sparks').select('id').eq('video_url', url);
-    (rs.data||[]).forEach(function(x){ if(x.id !== excludeSparkId) still++; });
-    if(still) return;
-    var rSt = await c.from('statuses').select('id').eq('media_url', url);
-    (rSt.data||[]).forEach(function(x){ still++; });
-    if(still) return;
-    var rAd = await c.from('ads').select('id').eq('media_url', url);
-    (rAd.data||[]).forEach(function(x){ still++; });
-    if(still) return;
 
-    if(url.indexOf('r2.dev') !== -1){
-      var me = Z.State.currentUser;
-      if(!me) return;
-      var sessionRes = await c.auth.getSession();
-      var session = sessionRes && sessionRes.data ? sessionRes.data.session : null;
-      if(!session || !session.access_token) return;
-
-      var presignRes = await fetch('/api/r2-presign', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + session.access_token
-        },
-        body: JSON.stringify({ action: 'delete', path: path })
-      });
-      if(!presignRes.ok) return;
-      var presignData = await presignRes.json();
-      if(!presignData || !presignData.url) return;
-      await fetch(presignData.url, { method: 'DELETE' });
-    } else {
+  if(url.indexOf('r2.dev') === -1){
+    /* Legacy Supabase Storage path — keep old behavior for safety. */
+    try {
+      var still = 0;
+      var rp = await c.from('posts').select('id').eq('media_url', url);
+      (rp.data||[]).forEach(function(x){ if(x.id !== excludePostId) still++; });
+      if(still) return;
+      var rs = await c.from('sparks').select('id').eq('video_url', url);
+      (rs.data||[]).forEach(function(x){ if(x.id !== excludeSparkId) still++; });
+      if(still) return;
+      var rSt = await c.from('statuses').select('id').eq('media_url', url);
+      (rSt.data||[]).forEach(function(x){ still++; });
+      if(still) return;
+      var rAd = await c.from('ads').select('id').eq('media_url', url);
+      (rAd.data||[]).forEach(function(x){ still++; });
+      if(still) return;
       await c.storage.from('media').remove([path]);
-    }
+    } catch(e){}
+    return;
+  }
+
+  /* R2 path — the server decides whether the file is still referenced.
+     A 409 means some other row still points at this URL; the client
+     does nothing in that case. */
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var sessionRes = await c.auth.getSession();
+  var session = sessionRes && sessionRes.data ? sessionRes.data.session : null;
+  if(!session || !session.access_token) return;
+
+  try {
+    var presignRes = await fetch('/api/r2-presign', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({
+        action: 'delete',
+        path: path,
+        excludeId: excludePostId || excludeSparkId || null
+      })
+    });
+    if(!presignRes.ok) return;
+    var presignData = await presignRes.json();
+    if(!presignData || !presignData.url) return;
+    await fetch(presignData.url, { method: 'DELETE' });
   } catch(e){}
 };
-
 (function(){
   function unlock(){
     if(Z.State._userGestureUnlocked) return;
