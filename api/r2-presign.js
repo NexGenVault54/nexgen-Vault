@@ -5,12 +5,11 @@
 // Security model:
 //   - Caller must be an authenticated Supabase user.
 //   - Path must live under the caller's own user folder.
-//   - PUT requests are only signed for allow-listed media types: the
-//     extension must be in ALLOWED_EXTENSIONS and the content-type must
-//     be compatible with it. The content-type is signed into the URL, so
-//     R2 rejects any PUT whose Content-Type header does not match what
-//     was authorised.
-//   - DELETE requests skip the extension/content-type check.
+//   - PUT: extension and content-type allow-listed; content-type signed
+//     into the URL so R2 rejects mismatches.
+//   - DELETE: only signed if the file is not referenced by any row in
+//     posts / sparks / statuses / ads. Prevents accidental orphaning of
+//     media that is still in use.
 
 const crypto = require('crypto');
 
@@ -18,6 +17,11 @@ const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
 const R2_BUCKET = process.env.R2_BUCKET;
+
+/* Public base URL of the R2 bucket. Must match Z.R2_PUBLIC_BASE in
+   index.html. Used to reconstruct full media URLs when checking whether
+   a file is still referenced by a database row. */
+const R2_PUBLIC_BASE = process.env.R2_PUBLIC_BASE || 'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev';
 
 const SUPABASE_URL = 'https://ipypwqajsfxrdzlxfnlr.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4';
@@ -30,9 +34,6 @@ const ALLOWED_CONTENT_TYPES = [
   'video/mp4','video/webm','video/quicktime','video/3gpp','video/x-m4v'
 ];
 
-/* Extension → required content-types. Enforces that a .jpg cannot be
-   uploaded with video/mp4, etc. This is the strongest guarantee we can
-   give without inspecting the actual bytes. */
 const MIME_BY_EXT = {
   jpg:   ['image/jpeg'],
   jpeg:  ['image/jpeg'],
@@ -46,9 +47,6 @@ const MIME_BY_EXT = {
   '3gp': ['video/3gpp']
 };
 
-/* Fallback content-type when the client does not declare one, based on
-   the file extension. Used to keep uploads working for older clients
-   that do not send body.contentType. */
 const DEFAULT_MIME_BY_EXT = {
   jpg:   'image/jpeg',
   jpeg:  'image/jpeg',
@@ -85,9 +83,6 @@ function encodeRfc3986(str) {
   );
 }
 
-/* presign() signs host plus any extra headers passed in. For PUT we
-   pass { 'content-type': <mime> } so R2 rejects any PUT whose
-   Content-Type header does not match the signature. */
 function presign(method, path, expires, extraHeaders) {
   extraHeaders = extraHeaders || {};
   const host = R2_ACCOUNT_ID + '.r2.cloudflarestorage.com';
@@ -170,6 +165,42 @@ function extFromPath(p) {
   return p.slice(dot + 1).toLowerCase();
 }
 
+/* Ask Supabase whether any row in {table} still points at {fullUrl} via
+   {urlColumn}. {excludeId} skips one row (the one currently being
+   deleted). On error we return true (assume referenced) — safer to
+   leave an orphan than to delete a file still in use. */
+async function findReference(table, urlColumn, fullUrl, excludeId, bearerToken) {
+  try {
+    const params = new URLSearchParams();
+    params.set('select', 'id');
+    params.set(urlColumn, 'eq.' + fullUrl);
+    if (excludeId) params.set('id', 'neq.' + excludeId);
+    params.set('limit', '1');
+
+    const r = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + params.toString(), {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + bearerToken
+      }
+    });
+    if (!r.ok) return true;
+    const data = await r.json().catch(function () { return []; });
+    return Array.isArray(data) && data.length > 0;
+  } catch (e) {
+    return true;
+  }
+}
+
+async function isReferenced(fullUrl, excludeId, bearerToken) {
+  const checks = await Promise.all([
+    findReference('posts',    'media_url', fullUrl, excludeId, bearerToken),
+    findReference('sparks',   'video_url', fullUrl, excludeId, bearerToken),
+    findReference('statuses', 'media_url', fullUrl, null,      bearerToken),
+    findReference('ads',      'media_url', fullUrl, null,      bearerToken)
+  ]);
+  return checks.some(function (v) { return v; });
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -205,7 +236,6 @@ module.exports = async (req, res) => {
   }
 
   if (action === 'put') {
-    /* ---- PUT: strict extension + content-type checks ---- */
     const ext = extFromPath(path);
     if (!ext || ALLOWED_EXTENSIONS.indexOf(ext) === -1) {
       return res.status(400).json({
@@ -214,9 +244,6 @@ module.exports = async (req, res) => {
       });
     }
 
-    /* Determine the content-type we will sign. Prefer the client's
-       declared type; fall back to the extension's default. Both must
-       be in the allow-list. */
     let contentType = (body.contentType || '').toString().trim().toLowerCase();
     if (!contentType) contentType = DEFAULT_MIME_BY_EXT[ext] || '';
     if (ALLOWED_CONTENT_TYPES.indexOf(contentType) === -1) {
@@ -226,7 +253,6 @@ module.exports = async (req, res) => {
       });
     }
 
-    /* Extension must be compatible with the declared content-type. */
     const compatible = MIME_BY_EXT[ext] || [];
     if (compatible.indexOf(contentType) === -1) {
       return res.status(400).json({
@@ -236,13 +262,20 @@ module.exports = async (req, res) => {
       });
     }
 
-    /* Sign content-type into the URL. R2 will reject any PUT whose
-       Content-Type header differs from this value. */
     const url = presign('PUT', path, 3600, { 'content-type': contentType });
     return res.status(200).json({ url: url, contentType: contentType });
   }
 
-  /* ---- DELETE: no extension/content-type check needed ---- */
+  /* ---- DELETE ---- */
+  const fullUrl = R2_PUBLIC_BASE + '/' + path;
+  const excludeId = (typeof body.excludeId === 'string' && body.excludeId) ? body.excludeId : null;
+  const bearerToken = req.headers.authorization.slice(7);
+
+  const referenced = await isReferenced(fullUrl, excludeId, bearerToken);
+  if (referenced) {
+    return res.status(409).json({ error: 'File still referenced by existing content' });
+  }
+
   const url = presign('DELETE', path, 3600);
   return res.status(200).json({ url: url });
 };
