@@ -2197,12 +2197,22 @@ Z.handleAuth = async function(mode){
       if(sr.error) throw sr.error;
       Z.toast('Account created!');
     }
-    Z.State._freshLoginPending = true;
+       Z.State._freshLoginPending = true;
     Z.closeModal();
+    /* refreshSession is fast (single profile fetch) and is required
+       before renderHome can display anything about the user. */
     await Z.refreshSession();
-    await Z.reloadData();
     Z.State.navStack = [];
+    /* Navigate immediately so the previous page does not linger
+       while the rest of the data loads. */
     Z.showView('home');
+    /* Load everything else in the background, then paint it in. */
+    try {
+      await Z.reloadData();
+      if(Z.State.currentView === 'home') Z.softRefresh();
+    } catch(e){
+      console.error('Post-login load', e);
+    }
     /* Realtime must be (re)connected after a fresh manual login.
        Without this, new posts / reactions / notifications from
        other users do not arrive until a manual page refresh. */
