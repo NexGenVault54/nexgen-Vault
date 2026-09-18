@@ -7827,27 +7827,76 @@ Z.setupRealtime = function(){
     Z.State.realtimeChannels.push(ch3);
   } catch(e){}
 
-  /* ---------- 4. NOTIFICATIONS (with delayed retry) ---------- */
+   /* ---------- 4. NOTIFICATIONS (respects deliver_at, re-checks on long delays) ---------- */
   try {
     var notifFilter = 'user_id=eq.' + me.id;
+
+    /* Long delays can exceed setTimeout's safe range and can also be
+       rescheduled by the server (e.g. a dislike that gets reversed
+       before it fires). This helper keeps re-checking until the row
+       is either due or gone. */
+    function _scheduleNotificationDelivery(n, attempt){
+      attempt = attempt || 0;
+      if(!n || !n.id) return;
+
+      var meNow = Z.State.currentUser;
+      if(!meNow || n.user_id !== meNow.id) return;
+
+      var due = n.deliver_at ? new Date(n.deliver_at).getTime() : 0;
+      var now = Date.now();
+      var delay = due - now;
+
+      /* If no deliver_at, or the time has passed, apply immediately. */
+      if(!due || delay <= 0){
+        _applyNotification(n);
+        return;
+      }
+
+      /* Cap each hop at 5 minutes to avoid setTimeout overflow on
+         very distant timestamps. We re-check on each hop. */
+      var hop = Math.min(delay + 50, 5 * 60 * 1000);
+
+      setTimeout(async function(){
+        try {
+          var c2 = Z.sb && Z.sb();
+          if(!c2){ _scheduleNotificationDelivery(n, attempt + 1); return; }
+
+          /* Re-fetch the notification row. If it no longer exists,
+             the server deleted it (e.g. dislike was reversed) — do
+             NOT show anything. */
+          var row = await c2.from('notifications').select('*').eq('id', n.id).maybeSingle();
+          if(row.error){ _scheduleNotificationDelivery(n, attempt + 1); return; }
+          if(!row.data){ return; }
+
+          /* If the deliver_at has changed (server updated it),
+             reschedule with the new time. */
+          if(row.data.deliver_at && row.data.deliver_at !== n.deliver_at){
+            _scheduleNotificationDelivery(row.data, attempt + 1);
+            return;
+          }
+
+          /* Still in the future? Loop again. */
+          var newDelay = new Date(row.data.deliver_at || 0).getTime() - Date.now();
+          if(newDelay > 0){
+            _scheduleNotificationDelivery(row.data, attempt + 1);
+            return;
+          }
+
+          /* Due now — apply. */
+          _applyNotification(row.data);
+        } catch(err){
+          /* On any unexpected error, retry the hop. */
+          _scheduleNotificationDelivery(n, attempt + 1);
+        }
+      }, hop);
+    }
+
     var ch4 = c.channel('zynix-notifications-' + me.id).on('postgres_changes',
       { event:'INSERT', schema:'public', table:'notifications', filter: notifFilter },
       function(payload){
         var n = payload.new;
         if(!n) return;
-        var meNow = Z.State.currentUser;
-        if(!meNow || n.user_id !== meNow.id) return;
-        if(n.deliver_at){
-          var due = new Date(n.deliver_at).getTime();
-          var delay = due - Date.now();
-          if(delay > 0){
-            /* Future delivery — schedule a real retry so we don't
-               drop the notification on the floor. */
-            setTimeout(function(){ _applyNotification(n); }, Math.min(delay + 50, 6*60*1000));
-            return;
-          }
-        }
-        _applyNotification(n);
+        _scheduleNotificationDelivery(n, 0);
       }).subscribe();
     Z.State.realtimeChannels.push(ch4);
   } catch(e){}
