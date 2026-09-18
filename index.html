@@ -1066,6 +1066,64 @@ Z._cleanupOrphanUpload = function(url){
   if(url.indexOf('r2.dev') === -1) return;
   Z.deleteStorageIfOrphan(url, null, null).catch(function(){});
 };
+   Z._pendingUploadsKey = function(){
+  var me = Z.State.currentUser;
+  return me ? ('zynix_pending_uploads_' + me.id) : '';
+};
+Z._getPendingUploads = function(){
+  var key = Z._pendingUploadsKey();
+  if(!key) return [];
+  try {
+    var raw = localStorage.getItem(key);
+    var list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch(e){ return []; }
+};
+Z._setPendingUploads = function(list){
+  var key = Z._pendingUploadsKey();
+  if(!key) return;
+  try { localStorage.setItem(key, JSON.stringify(list || [])); } catch(e){}
+};
+Z._registerPendingUpload = function(url){
+  if(!url || typeof url !== 'string') return;
+  if(url.indexOf('r2.dev') === -1) return;
+  var list = Z._getPendingUploads();
+  if(list.indexOf(url) === -1){ list.push(url); Z._setPendingUploads(list); }
+};
+Z._reconcilePendingUploads = async function(){
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var list = Z._getPendingUploads();
+  if(!list.length) return;
+  var c = sb();
+  if(!c) return;
+  var remaining = [];
+  for(var i = 0; i < list.length; i++){
+    var url = list[i];
+    try {
+      var inDb = false;
+      var rp  = await c.from('posts').select('id').eq('media_url', url).limit(1);
+      if(rp.data && rp.data.length) inDb = true;
+      if(!inDb){
+        var rs  = await c.from('sparks').select('id').eq('video_url', url).limit(1);
+        if(rs.data && rs.data.length) inDb = true;
+      }
+      if(!inDb){
+        var rSt = await c.from('statuses').select('id').eq('media_url', url).limit(1);
+        if(rSt.data && rSt.data.length) inDb = true;
+      }
+      if(inDb){ continue; }
+      try {
+        await Z.deleteStorageIfOrphan(url, null, null);
+      } catch(e){
+        remaining.push(url);
+      }
+    } catch(e){
+      remaining.push(url);
+    }
+  }
+  Z._setPendingUploads(remaining);
+};
 Z.deleteStorageIfOrphan = async function(url, excludePostId, excludeSparkId){
   if(!url) return;
   var path = Z._pathFromUrl(url);
