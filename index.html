@@ -989,7 +989,11 @@ Z.storeMedia = async function(file){
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + session.access_token
       },
-      body: JSON.stringify({ action: 'put', path: path })
+      body: JSON.stringify({
+        action: 'put',
+        path: path,
+        contentType: file.type || ''
+      })
     });
   } catch(netErr){
     var e1 = 'Presign request failed: ' + (netErr && netErr.message ? netErr.message : 'unknown');
@@ -1012,13 +1016,18 @@ Z.storeMedia = async function(file){
     throw new Error(e3);
   }
 
+  /* PUT must use the exact content-type the server signed, otherwise
+     R2 rejects with a signature mismatch. The server echoes the signed
+     content-type in the response. */
+  var signedContentType = presignData.contentType || (file.type || 'application/octet-stream');
+
   var res;
   try {
     res = await fetch(presignData.url, {
       method: 'PUT',
       body: file,
       headers: {
-        'Content-Type': file.type || 'application/octet-stream',
+        'Content-Type': signedContentType,
         'Cache-Control': 'public, max-age=31536000'
       }
     });
@@ -1038,7 +1047,6 @@ Z.storeMedia = async function(file){
 
   return Z.R2_PUBLIC_BASE + '/' + path;
 };
-
 /* Legacy no-ops kept as call-site placeholders. IndexedDB storage
    was removed in v3.3 in favour of direct R2 URLs. These exist so
    the many callers in Sections 3/7/8 do not need to be touched. */
