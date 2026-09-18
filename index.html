@@ -2837,7 +2837,94 @@ Z.renderHome = function(){
   setTimeout(function(){ attachPostViewObservers(); }, 250);
   return html;
 };
+Z.renderDiscoverStrip = async function(){
+  var host = document.getElementById('home-discover-host');
+  if(!host) return;
+  var me = Z.State.currentUser;
+  if(!me){
+    host.innerHTML = '';
+    return;
+  }
 
+  /* Paint a lightweight loading skeleton immediately, so the strip
+     does not push the feed down when it fills. */
+  host.innerHTML = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;">' +
+    '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">' +
+      '<i class="fa-solid fa-users" style="color:#10b981;margin-right:6px;"></i>Discover People' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;overflow:hidden;">' +
+      Z.skeletonRow() + Z.skeletonRow() + Z.skeletonRow() +
+    '</div>' +
+  '</div>';
+
+  var data = [];
+  try {
+    data = await Z.DB.getPeopleFeed(12, 0, Date.now());
+  } catch(e){ data = []; }
+  if(!data || !data.length){
+    data = (Z.State.allProfiles || [])
+      .filter(function(u){ return u.id !== me.id; })
+      .slice(0, 12);
+  }
+
+  /* Cache these profiles so the Connect button can resolve them */
+  data.forEach(function(p){
+    var arr = Z.State.allProfiles || [];
+    var idx = -1;
+    for(var i=0;i<arr.length;i++){ if(arr[i].id === p.id){ idx = i; break; } }
+    if(idx === -1) arr.push(p);
+    else arr[idx] = Object.assign({}, arr[idx], {
+      bounty_settings: p.bounty_settings || arr[idx].bounty_settings,
+      name: p.name || arr[idx].name,
+      username: p.username || arr[idx].username,
+      avatar: p.avatar || arr[idx].avatar
+    });
+  });
+
+  if(!data.length){
+    host.innerHTML = '';
+    return;
+  }
+
+  var html = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+  html += '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;">';
+  html += '<i class="fa-solid fa-users" style="color:#10b981;margin-right:6px;"></i>Discover People';
+  html += '</div>';
+  html += '<button onclick="Z.showView(\'people\')" style="background:transparent;border:none;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;padding:2px 6px;">See All ›</button>';
+  html += '</div>';
+
+  html += '<div class="home-discover-scroll">';
+  data.forEach(function(u){
+    html += '<div style="flex:0 0 auto;width:104px;text-align:center;">';
+    html += '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="background:transparent;border:none;cursor:pointer;padding:0;width:100%;">';
+    html += '<div style="width:72px;height:72px;border-radius:50%;overflow:hidden;border:2px solid #1e293b;margin:0 auto;background:#0f172a;">';
+    html += '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:100%;height:100%;object-fit:cover;">';
+    html += '</div>';
+    html += '<div style="font-size:11px;color:#cbd5e1;font-weight:700;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(Z.displayName(u)) + '</div>';
+    html += '<div style="font-size:9px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@' + Z.escape(u.username || 'user') + '</div>';
+    html += '</button>';
+    html += '<div style="margin-top:6px;">' + Z.renderConnectButton(u.id) + '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  html += '</div>';
+  host.innerHTML = html;
+};
+
+/* Local CSS for the horizontal discover scroll — injected once. */
+(function(){
+  try {
+    if(document.getElementById('zynix-home-discover-css')) return;
+    var st = document.createElement('style');
+    st.id = 'zynix-home-discover-css';
+    st.textContent =
+      '.home-discover-scroll{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:none;-ms-overflow-style:none;}' +
+      '.home-discover-scroll::-webkit-scrollbar{display:none}';
+    document.head.appendChild(st);
+  } catch(e){}
+})();
 Z.renderPostCard = function(p, profiles, me, isNew){
   var a = (profiles || []).find(function(x){ return x.id === p.author_id; }) ||
           { id:p.author_id, name:'User', avatar:'' };
