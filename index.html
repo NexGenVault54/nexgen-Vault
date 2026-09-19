@@ -693,6 +693,87 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .post-media-failed .pmf-title{font-weight:800;color:#fecaca;font-size:13px;margin-bottom:4px}
 .post-media-failed .pmf-sub{font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:14px}
 .post-media-failed .pmf-delete{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#fca5a5;font-size:11px;font-weight:700;padding:7px 16px;border-radius:8px;cursor:pointer}
+/* ============================================================
+   25. v3.8 TEXT BANNER POSTS
+   Composer text starts big + bold. Shrinks to normal once the
+   user types more than ~6 lines or 200 chars. Published short
+   text posts render as a banner and are tappable to enlarge.
+   ============================================================ */
+
+/* Composer canvas: big bold centered text by default */
+.composer-canvas textarea{
+  font-size:22px;
+  font-weight:800;
+  line-height:1.35;
+  transition:font-size .15s ease, font-weight .15s ease, text-align .15s ease;
+}
+/* Once the user exceeds the banner capacity, drop to normal text */
+.composer-canvas textarea.shrunk{
+  font-size:15px;
+  font-weight:500;
+  text-align:left;
+  line-height:1.6;
+}
+
+/* Published short-text posts render as a banner */
+.post-text-banner{
+  background:linear-gradient(135deg,#dbeafe 0%,#e0e7ff 100%);
+  border-radius:12px;
+  padding:28px 24px;
+  margin-bottom:10px;
+  min-height:220px;
+  max-height:340px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  cursor:zoom-in;
+  position:relative;
+  overflow:hidden;
+  border:1px solid rgba(15,23,42,.06);
+  transition:transform .15s ease;
+}
+.post-text-banner:active{ transform:scale(.995); }
+.post-text-banner .ptb-text{
+  color:#0f172a;
+  font-size:20px;
+  font-weight:800;
+  line-height:1.4;
+  white-space:pre-wrap;
+  word-break:break-word;
+  max-width:100%;
+  max-height:100%;
+  overflow:hidden;
+}
+@media(max-width:640px){
+  .post-text-banner{ padding:24px 18px; min-height:200px; }
+  .post-text-banner .ptb-text{ font-size:18px; }
+}
+
+/* Fullscreen banner (tap the banner to open) */
+.zynix-text-banner-overlay{
+  position:fixed; inset:0; z-index:100000;
+  background:rgba(0,0,0,.96);
+  display:flex; align-items:center; justify-content:center;
+  padding:20px; cursor:zoom-out;
+  animation:zynixFadeIn .18s ease;
+}
+.zynix-text-banner-overlay .ztbo-inner{
+  background:linear-gradient(135deg,#dbeafe 0%,#e0e7ff 100%);
+  border-radius:20px;
+  padding:40px 32px;
+  max-width:520px; width:100%;
+  max-height:80vh; overflow-y:auto;
+  color:#0f172a;
+  font-size:24px; font-weight:800; line-height:1.4;
+  text-align:center;
+  white-space:pre-wrap; word-break:break-word;
+  box-shadow:0 20px 60px rgba(0,0,0,.7);
+}
+.zynix-text-banner-overlay .ztbo-hint{
+  position:absolute; bottom:24px; left:50%; transform:translateX(-50%);
+  font-size:11px; color:#94a3b8; font-weight:600;
+}
 </style>
 </head>
 <body>
@@ -3022,12 +3103,12 @@ Z.openCreateModal = function(){
 })();
 </script>
 <!-- ============================================================
-     SECTION 4 — HOME + POSTS + COMPOSER (v3.7)
-     - Single editor: greeting hides when composer expands
-     - Light-blue composer canvas, centered bold text
-     - Upload starts on Publish click (background), modal covers delay
-     - Inline hourglass for pending media (no big block)
-     - Stale pending rows from a mid-upload refresh show retry/delete
+     SECTION 4 — HOME + POSTS + COMPOSER (v3.8)
+     - Single editor, light-blue canvas, bold centered text
+     - Composer text auto-shrinks once it exceeds banner capacity
+     - Short text-only posts render as a banner and are tappable
+     - Upload starts on Publish; modal covers the delay
+     - Stale pending rows show a "didn't finish" card
      ============================================================ -->
 <script>
 (function(){
@@ -3042,11 +3123,18 @@ Z.findPostInState = function(postId){
   return null;
 };
 
-/* ---------- Stale pending detection ----------
-   A pending row is stale if it is not from this session and its
-   created_at is older than 90 seconds. Used to swap the endless
-   shimmer for a "didn't finish" card. */
-Z._pendingSessionIds = {};
+/* ---------- Short-text detection ---------- */
+Z.isShortBannerText = function(text){
+  if(!text) return false;
+  var t = String(text).trim();
+  if(!t) return false;
+  if(t.length > 200) return false;
+  if(t.split('\n').length > 6) return false;
+  return true;
+};
+
+/* ---------- Stale pending detection ---------- */
+Z._pendingSessionIds = Z._pendingSessionIds || {};
 Z._markPendingSession = function(id){ if(id) Z._pendingSessionIds[id] = true; };
 Z._isPendingStale = function(item){
   if(!item || item.media_status !== 'pending') return false;
@@ -3244,8 +3332,21 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
 
+  /* Caption area:
+     - Short text-only post → banner block (Facebook status style)
+     - Any other post with content → normal caption
+     - No content → nothing */
   var captionHtml = '';
-  if(p.content){
+  var stalePending = Z._isPendingStale(p);
+  var isTextOnly = p.content && !p.media_url && p.media_status !== 'pending';
+  var bannerEligible = isTextOnly && Z.isShortBannerText(p.content);
+
+  if(bannerEligible){
+    captionHtml =
+      '<div class="post-text-banner" onclick="Z.openTextBannerOverlay(\'' + Z.escape(p.id) + '\')">' +
+        '<div class="ptb-text">' + Z.escape(p.content) + '</div>' +
+      '</div>';
+  } else if(p.content){
     captionHtml =
       '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)">' +
         '<div class="pc-text">' + Z.escape(p.content) + '</div>' +
@@ -3253,12 +3354,7 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '</div>';
   }
 
-  /* Media area:
-     - pending and NOT stale: render nothing here; hourglass is in the header.
-     - pending and stale: render a "didn't finish" card.
-     - complete: render normally. */
   var mHtml = '';
-  var stalePending = Z._isPendingStale(p);
   if(p.media_status === 'pending'){
     if(stalePending){
       mHtml = '<div class="post-media-failed">' +
@@ -3268,7 +3364,6 @@ Z.renderPostCard = function(p, profiles, me, isNew){
         '<button class="pmf-delete" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete post</button>' +
       '</div>';
     }
-    /* else: no block, the hourglass shows in the timestamp line. */
   } else if(p.media_url){
     var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
     if(mt === 'video'){
@@ -3347,6 +3442,22 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   '</div>';
 };
 
+/* ---------- Fullscreen banner overlay ---------- */
+Z.openTextBannerOverlay = function(postId){
+  var existing = document.getElementById('zynix-text-banner-overlay');
+  if(existing){ existing.remove(); return; }
+  var post = Z.findPostInState(postId);
+  if(!post || !post.content) return;
+  var overlay = document.createElement('div');
+  overlay.id = 'zynix-text-banner-overlay';
+  overlay.className = 'zynix-text-banner-overlay';
+  overlay.innerHTML =
+    '<div class="ztbo-inner">' + Z.escape(post.content) + '</div>' +
+    '<div class="ztbo-hint">Tap anywhere to close</div>';
+  overlay.addEventListener('click', function(){ overlay.remove(); });
+  document.body.appendChild(overlay);
+};
+
 /* ---------- Post menu toggling ---------- */
 Z.togglePostMenu = function(postId, ev){
   if(ev) ev.stopPropagation();
@@ -3403,24 +3514,32 @@ document.addEventListener('keydown', function(e){
   if(e.key === 'Escape'){
     document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; m.style.position = ''; });
     document.querySelectorAll('.spark-menu.open').forEach(function(m){ m.classList.remove('open'); });
+    var tb = document.getElementById('zynix-text-banner-overlay');
+    if(tb) tb.remove();
   }
 });
 
-/* ---------- Composer (Facebook-style canvas) ---------- */
+/* ---------- Composer (light-blue canvas, auto-shrink font) ---------- */
+Z.onComposerInput = function(el){
+  if(!el) return;
+  var text = el.value || '';
+  var tooLong = text.length > 200 || text.split('\n').length > 6;
+  el.classList.toggle('shrunk', tooLong);
+};
+
 Z.expandComposer = function(){
   var c = document.getElementById('composer-expanded');
   if(!c) return;
   if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
   if(c.innerHTML) return;
 
-  /* Hide the greeting so only ONE editor is on screen. */
   var greeting = document.getElementById('composer-greeting');
   if(greeting) greeting.style.display = 'none';
 
   c.innerHTML =
     '<div class="composer-wrap">' +
       '<div class="composer-canvas">' +
-        '<textarea id="composer-text" placeholder="What\'s on your mind?" rows="3" oninput="Z.autoGrow(this)"></textarea>' +
+        '<textarea id="composer-text" placeholder="What\'s on your mind?" rows="3" oninput="Z.autoGrow(this);Z.onComposerInput(this)"></textarea>' +
       '</div>' +
       '<div id="composer-preview" class="media-preview-box"></div>' +
       '<div id="composer-remove-row" class="media-remove-row" style="display:none;">' +
@@ -3542,11 +3661,7 @@ Z.cancelComposer = function(){
   if(greeting) greeting.style.display = '';
 };
 
-/* ---------- Composer submit — UPLOAD-FIRST DESIGN ----------
-   We start the R2 upload the moment Publish is tapped.
-   The visibility modal opens immediately after and covers the
-   upload delay. When the user taps Continue, the upload is
-   usually done or nearly done, so the post appears almost instantly. */
+/* ---------- Composer submit — upload-first design ---------- */
 Z.submitComposer = async function(){
   var me = Z.State.currentUser;
   if(!me) return;
@@ -3560,21 +3675,13 @@ Z.submitComposer = async function(){
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
     : null;
 
-  /* Start upload immediately in the background. */
   var uploadPromise = null;
-  var uploadError = null;
   if(fileObj){
-    uploadPromise = Z.storeMedia(fileObj).catch(function(err){
-      uploadError = err;
-      return null;
-    });
+    uploadPromise = Z.storeMedia(fileObj).catch(function(err){ return null; });
   }
 
-  /* Single editor: collapse the composer now. */
   Z.cancelComposer();
 
-  /* Open the visibility modal — the user spends 1-2 seconds here
-     while the upload is already in flight. */
   Z.openVisibilityModal(function(visibility){
     Z._finalizeComposerSubmit(me, text, fileObj, mt, uploadPromise, visibility, shareBounty);
   });
@@ -3607,10 +3714,7 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, uploadPromise,
     return;
   }
 
-  /* ---------- MEDIA POST ----------
-     Insert the row NOW, immediately, with the pending flag. Add to
-     local state so the author sees it right away. The upload is
-     already running in the background (uploadPromise). */
+  /* ---------- MEDIA POST ---------- */
   var pendRow = await Z.DB.createPost({
     author_id: me.id,
     content: text,
@@ -3637,11 +3741,9 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, uploadPromise,
   Z.State.allPosts = [pending].concat(Z.State.allPosts || []);
   if(Z.State.currentView === 'home') Z.softRefresh();
 
-  /* Await the upload — usually already done by now. */
   var mediaUrl = await uploadPromise;
 
   if(!mediaUrl){
-    /* Upload failed — mark the row so the card shows the failed state. */
     if(realId.indexOf('local_') !== 0){
       try {
         var c = Z.sb();
@@ -3660,7 +3762,6 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, uploadPromise,
     return;
   }
 
-  /* Upload succeeded — flip to complete. */
   if(realId.indexOf('local_') !== 0){
     await Z.DB.updatePostFields(realId, {
       media_url: mediaUrl,
