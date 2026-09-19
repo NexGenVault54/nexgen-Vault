@@ -8302,15 +8302,21 @@ Z.setupRealtime = function(){
           }
         });
       })
-      .on('postgres_changes', { event:'DELETE', schema:'public', table:'posts' }, function(payload){
-        var old = payload.old;
-        if(!old || !old.id) return;
-        Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== old.id; });
-        /* also purge from spacePosts in case we're viewing that profile */
-        Z.State.spacePosts = (Z.State.spacePosts || []).filter(function(x){ return x.id !== old.id; });
-        _removePostCard(old.id);
-        scheduleSnapshotSave();
-      })
+     .on('postgres_changes', { event:'DELETE', schema:'public', table:'posts' }, async function(payload){
+  var old = payload.old;
+  if(!old || !old.id) return;
+  var c = Z.sb();
+  if(!c) return;
+  var check = await c.from('posts').select('id').eq('id', old.id).maybeSingle();
+  if(check.data){
+    console.warn('[rt] Phantom DELETE ignored for post', old.id);
+    return;
+  }
+  Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== old.id; });
+  Z.State.spacePosts = (Z.State.spacePosts || []).filter(function(x){ return x.id !== old.id; });
+  _removePostCard(old.id);
+  scheduleSnapshotSave();
+})
       .subscribe();
     Z.State.realtimeChannels.push(ch5);
   } catch(e){}
@@ -8382,14 +8388,21 @@ Z.setupRealtime = function(){
         var badgeSpan = slide.querySelector('.spark-view-badge span');
         if(badgeSpan) badgeSpan.textContent = nw.views || 0;
       })
-      .on('postgres_changes', { event:'DELETE', schema:'public', table:'sparks' }, function(payload){
-        var old = payload.old;
-        if(!old || !old.id) return;
-        Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== old.id; });
-        Z.State.spaceSparks = (Z.State.spaceSparks || []).filter(function(x){ return x.id !== old.id; });
-        _removeSparkSlide(old.id);
-        scheduleSnapshotSave();
-      })
+     .on('postgres_changes', { event:'DELETE', schema:'public', table:'sparks' }, async function(payload){
+  var old = payload.old;
+  if(!old || !old.id) return;
+  var c = Z.sb();
+  if(!c) return;
+  var check = await c.from('sparks').select('id').eq('id', old.id).maybeSingle();
+  if(check.data){
+    console.warn('[rt] Phantom DELETE ignored for spark', old.id);
+    return;
+  }
+  Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== old.id; });
+  Z.State.spaceSparks = (Z.State.spaceSparks || []).filter(function(x){ return x.id !== old.id; });
+  _removeSparkSlide(old.id);
+  scheduleSnapshotSave();
+})
       .subscribe();
     Z.State.realtimeChannels.push(ch7);
   } catch(e){}
