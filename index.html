@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- By the name of the Lord — ZYNIX production build v3.4 -->
+<!-- By the name of the Lord — ZYNIX production build v3.5 -->
 <html lang="en" class="dark">
 <head>
 <meta charset="UTF-8">
@@ -631,6 +631,46 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
   .spark-feed-container{max-width:900px !important}
   .zn-ad-stage{aspect-ratio:16/10;min-height:auto;max-height:none;height:auto}
 }
+
+/* ============================================================
+   21. PENDING MEDIA PLACEHOLDER  (NEW — v3.5)
+   Shown to the author while their media is still uploading
+   to R2. Never shown to other users (RLS hides pending rows).
+   ============================================================ */
+.media-pending{display:flex;align-items:center;justify-content:center;min-height:220px;background:linear-gradient(90deg,#0f172a 25%,#1a2233 50%,#0f172a 75%);background-size:200% 100%;animation:zynixSkel 1.4s linear infinite;border-radius:12px;position:relative;overflow:hidden;border:1px solid #1e293b}
+.media-pending-inner{display:flex;flex-direction:column;align-items:center;gap:10px;color:#94a3b8;font-size:12px;font-weight:600;text-align:center;padding:24px}
+.media-pending-inner i{font-size:30px;color:#10b981}
+.media-pending-inner .mp-title{font-weight:800;color:#cbd5e1;font-size:13px;letter-spacing:.3px}
+.media-pending-inner .mp-sub{font-size:10px;color:#64748b;font-weight:500;line-height:1.5;max-width:220px}
+.media-pending .mp-bar{position:absolute;bottom:0;left:0;right:0;height:2px;background:rgba(16,185,129,.15);overflow:hidden}
+.media-pending .mp-bar::after{content:'';position:absolute;top:0;left:-40%;width:40%;height:100%;background:linear-gradient(90deg,transparent,#10b981,transparent);animation:zynixShimmer 1.4s linear infinite}
+
+/* ============================================================
+   22. VISIBILITY CHIP  (NEW — v3.5)
+   Small pill on post/spark card showing the audience scope.
+   ============================================================ */
+.visibility-chip{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;letter-spacing:.3px;padding:3px 8px;border-radius:20px;text-transform:uppercase;cursor:default}
+.visibility-chip.vc-private{background:rgba(239,68,68,.12);color:#fca5a5;border:1px solid rgba(239,68,68,.28)}
+.visibility-chip.vc-connections{background:rgba(59,130,246,.12);color:#93c5fd;border:1px solid rgba(59,130,246,.28)}
+.visibility-chip.vc-public{background:rgba(16,185,129,.12);color:#6ee7b7;border:1px solid rgba(16,185,129,.28)}
+.visibility-chip i{font-size:9px}
+
+/* ============================================================
+   23. VISIBILITY SELECTOR MODAL  (NEW — v3.5)
+   Private / Connections / Public. User confirms. No auto-close.
+   ============================================================ */
+.vis-row{display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;cursor:pointer;margin-bottom:8px;transition:border-color .15s,background .15s}
+.vis-row:hover{border-color:#334155;background:#111827}
+.vis-row.selected{border-color:rgba(16,185,129,.5);background:rgba(16,185,129,.05)}
+.vis-check{width:22px;height:22px;border-radius:6px;border:1.5px solid #475569;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;background:transparent;transition:all .15s}
+.vis-row.selected .vis-check{background:#10b981;border-color:#10b981}
+.vis-check i{color:#0f172a;font-size:12px;display:none}
+.vis-row.selected .vis-check i{display:block}
+.vis-body{flex:1;min-width:0}
+.vis-title{font-size:13px;font-weight:800;color:#fff;display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.vis-title i{color:#10b981;font-size:12px}
+.vis-sub{font-size:11px;color:#94a3b8;line-height:1.5}
+.vis-caption{font-size:11px;color:#64748b;margin-top:14px;margin-bottom:12px;line-height:1.5;padding:10px 12px;background:#0f172a;border:1px solid #1e293b;border-radius:8px}
 </style>
 </head>
 <body>
@@ -1516,11 +1556,15 @@ Z.saveSnapshot = function(){
         return { id:p.id, author_id:p.author_id, content:p.content,
                  media_url: safeMedia,
                  media_type: safeMedia ? p.media_type : null,
+                 media_status: p.media_status || 'complete',
+                 visibility: p.visibility || 'public',
                  created_at:p.created_at, views:p.views, shares:p.shares, reactions:p.reactions||{} };
       }),
       sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
         return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title,
                  video_url: safeUrl(s.video_url),
+                 media_status: s.media_status || 'complete',
+                 visibility: s.visibility || 'public',
                  tags:s.tags||[], type:s.type, created_at:s.created_at, views:s.views, shares:s.shares };
       }),
       profiles: (Z.State.allProfiles||[]).slice(0,50).map(function(p){
@@ -1547,13 +1591,19 @@ Z.loadSnapshot = function(){
       if(p.media_url && (p.media_url.indexOf('blob:') === 0 || p.media_url.indexOf('data:') === 0)){
         p.media_url = null; p.media_type = null;
       }
-      p.reactions = p.reactions||{}; p._myReactions = {}; p._comments = []; return p;
+      p.reactions = p.reactions||{}; p._myReactions = {}; p._comments = [];
+      if(p.media_status == null) p.media_status = 'complete';
+      if(p.visibility   == null) p.visibility   = 'public';
+      return p;
     });
     Z.State.allSparks  = (snap.sparks||[]).map(function(s){
       if(s.video_url && (s.video_url.indexOf('blob:') === 0 || s.video_url.indexOf('data:') === 0)){
         s.video_url = null;
       }
-      s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0; return s;
+      s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0;
+      if(s.media_status == null) s.media_status = 'complete';
+      if(s.visibility   == null) s.visibility   = 'public';
+      return s;
     });
     var existing = Z.State.allProfiles || [];
     var byId = {};
@@ -1697,14 +1747,58 @@ Z.DB = {
       });
       Z.State.allPosts = data;
       (Z.State.allPosts||[]).forEach(function(p){ Z._backfillItem(p, false); });
+      /* v3.5 merge fallback — the RPC may not yet return media_status
+         and visibility. Fetch any missing values directly from posts
+         so the composer's pending state and visibility chip render
+         correctly. Missing rows are left with sensible defaults. */
+      var missing = (Z.State.allPosts||[]).filter(function(p){
+        return p && p.id && (p.media_status == null || p.visibility == null);
+      });
+      if(missing.length){
+        var ids = missing.map(function(p){ return p.id; });
+        try {
+          var r2 = await c.from('posts').select('id, media_status, visibility').in('id', ids);
+          if(!r2.error && r2.data){
+            var map = {};
+            r2.data.forEach(function(x){ map[x.id] = x; });
+            Z.State.allPosts.forEach(function(p){
+              var m = map[p.id];
+              if(m){
+                if(p.media_status == null) p.media_status = m.media_status || 'complete';
+                if(p.visibility   == null) p.visibility   = m.visibility   || 'public';
+              }
+            });
+          }
+        } catch(e){}
+      }
+      Z.State.allPosts.forEach(function(p){
+        if(p.media_status == null) p.media_status = 'complete';
+        if(p.visibility   == null) p.visibility   = 'public';
+      });
       return Z.State.allPosts;
     } catch(e){ return []; }
   },
+  /* createPost already passes the whole payload through to the DB.
+     v3.5 usage: include `id`, `media_status`, `visibility` in the
+     payload to create a pending, private row before media upload. */
   async createPost(payload){
     var c = sb(); if(!c) return null;
     var r = await c.from('posts').insert(payload).select().maybeSingle();
     if(r.error){ console.warn(r.error); return null; }
     try { if(payload && payload.media_url && r.data && r.data.id) Z.recordMediaUrl(r.data.id, payload.media_url); } catch(e){}
+    return r.data;
+  },
+  /* v3.5 — generic field update used by the composer to flip
+     media_status → 'complete' and visibility after the user
+     confirms the audience and the R2 upload succeeds. */
+  async updatePostFields(postId, patch){
+    var c = sb(); if(!c) return null;
+    var r = await c.from('posts').update(patch).eq('id', postId).select().maybeSingle();
+    if(r.error){ console.warn('updatePostFields', r.error); return null; }
+    var arr = Z.State.allPosts || [];
+    for(var i=0;i<arr.length;i++){
+      if(arr[i] && arr[i].id === postId){ arr[i] = Object.assign({}, arr[i], patch); break; }
+    }
     return r.data;
   },
   async deletePost(id){
@@ -1753,7 +1847,7 @@ Z.DB = {
       var prevById = {};
       prev.forEach(function(s){ if(s && s.id) prevById[s.id] = s; });
       var r = await c.from('sparks')
-        .select('id,author_id,type,title,caption,video_url,tags,views,shares,share_bounty,created_at')
+        .select('id,author_id,type,title,caption,video_url,tags,views,shares,share_bounty,created_at,media_status,visibility')
         .order('created_at',{ascending:false}).limit(30);
       if(r.error) throw r.error;
       var data = r.data || [];
@@ -1765,15 +1859,35 @@ Z.DB = {
         }
       });
       Z.State.allSparks = data;
-      (Z.State.allSparks||[]).forEach(function(s){ Z._backfillItem(s, true); });
+      (Z.State.allSparks||[]).forEach(function(s){
+        Z._backfillItem(s, true);
+        if(s.media_status == null) s.media_status = 'complete';
+        if(s.visibility   == null) s.visibility   = 'public';
+      });
       return Z.State.allSparks;
     } catch(e){ return []; }
   },
+  /* createSpark already passes the whole payload through to the DB.
+     v3.5 usage: include `id`, `media_status`, `visibility` in the
+     payload to create a pending, private row before media upload. */
   async createSpark(payload){
     var c = sb(); if(!c) return null;
     var r = await c.from('sparks').insert(payload).select().maybeSingle();
     if(r.error){ console.warn(r.error); return null; }
     try { if(payload && payload.video_url && r.data && r.data.id) Z.recordMediaUrl(r.data.id, payload.video_url); } catch(e){}
+    return r.data;
+  },
+  /* v3.5 — generic field update used by the composer to flip
+     media_status → 'complete' and visibility after the user
+     confirms the audience and the R2 upload succeeds. */
+  async updateSparkFields(sparkId, patch){
+    var c = sb(); if(!c) return null;
+    var r = await c.from('sparks').update(patch).eq('id', sparkId).select().maybeSingle();
+    if(r.error){ console.warn('updateSparkFields', r.error); return null; }
+    var arr = Z.State.allSparks || [];
+    for(var i=0;i<arr.length;i++){
+      if(arr[i] && arr[i].id === sparkId){ arr[i] = Object.assign({}, arr[i], patch); break; }
+    }
     return r.data;
   },
   async updateSpark(id, patch){
@@ -2801,10 +2915,10 @@ Z.openCreateModal = function(){
 </script>
 <!-- ============================================================
      SECTION 4 — HOME + POSTS + COMPOSER
-     Feed · Post card · Composer · Menu · Pull-to-refresh ·
-     Double-tap ❤️ · Post views · rAF video controller ·
-     Share refetch · Rotating greeting · Skeleton loaders ·
-     Haptic feedback · Image lightbox (double-tap detects heart)
+     Feed · Post card (with pending + visibility) · Composer ·
+     Menu · Pull-to-refresh · Double-tap ❤️ · Post views ·
+     rAF video controller · Share refetch · Rotating greeting ·
+     Skeleton loaders · Haptic feedback · Image lightbox
      ============================================================ -->
 <script>
 (function(){
@@ -2817,6 +2931,97 @@ Z.findPostInState = function(postId){
   if(p) return p;
   if(Z.State.spacePosts) return Z.State.spacePosts.find(function(x){ return x.id === postId; }) || null;
   return null;
+};
+
+/* ============================================================
+   v3.5 — Pending media placeholder + visibility chip helpers.
+   Used by renderPostCard. Sparks reuse the same CSS block.
+   ============================================================ */
+Z.pendingPlaceholderHtml = function(){
+  return '<div class="media-pending">' +
+    '<div class="media-pending-inner">' +
+      '<i class="fa-solid fa-cloud-arrow-up"></i>' +
+      '<div class="mp-title">Uploading...</div>' +
+      '<div class="mp-sub">Your media is uploading. It becomes visible to others once complete.</div>' +
+    '</div>' +
+    '<div class="mp-bar"></div>' +
+  '</div>';
+};
+
+Z.visibilityChipHtml = function(vis){
+  if(vis === 'private'){
+    return '<span class="visibility-chip vc-private"><i class="fa-solid fa-lock"></i>Private</span>';
+  }
+  if(vis === 'connections'){
+    return '<span class="visibility-chip vc-connections"><i class="fa-solid fa-user-group"></i>Connections</span>';
+  }
+  /* Public is the default — do not add noise to every card. */
+  return '';
+};
+
+/* ============================================================
+   v3.5 — Visibility picker.
+   Three tick rows. Private is selected by default. The user
+   must tap Continue. No auto-timeout. Callback receives the
+   chosen visibility string: 'private' | 'connections' | 'public'.
+   ============================================================ */
+Z._currentVisibilityPick = 'private';
+Z._visibilityPickCallback = null;
+
+Z.openVisibilityModal = function(onPick){
+  Z._currentVisibilityPick = 'private';
+  Z._visibilityPickCallback = onPick;
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)return;">' +
+      '<div class="modal-box" style="max-width:420px;">' +
+        '<div class="modal-header">' +
+          '<h3>Who can see this?</h3>' +
+        '</div>' +
+        '<div class="vis-caption">Pick an audience. You can change it later.</div>' +
+        '<div class="vis-row selected" data-vis="private" onclick="Z._pickVisibility(\'private\', this)">' +
+          '<div class="vis-check"><i class="fa-solid fa-check"></i></div>' +
+          '<div class="vis-body">' +
+            '<div class="vis-title"><i class="fa-solid fa-lock"></i> Private</div>' +
+            '<div class="vis-sub">Only you can see this.</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="vis-row" data-vis="connections" onclick="Z._pickVisibility(\'connections\', this)">' +
+          '<div class="vis-check"><i class="fa-solid fa-check"></i></div>' +
+          '<div class="vis-body">' +
+            '<div class="vis-title"><i class="fa-solid fa-user-group"></i> Connections</div>' +
+            '<div class="vis-sub">Only your accepted connections can see this.</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="vis-row" data-vis="public" onclick="Z._pickVisibility(\'public\', this)">' +
+          '<div class="vis-check"><i class="fa-solid fa-check"></i></div>' +
+          '<div class="vis-body">' +
+            '<div class="vis-title"><i class="fa-solid fa-globe"></i> Public</div>' +
+            '<div class="vis-sub">Anyone on ZYNIX can see this.</div>' +
+          '</div>' +
+        '</div>' +
+        '<button class="btn-primary" style="margin-top:10px;" onclick="Z._confirmVisibility()">Continue</button>' +
+      '</div>' +
+    '</div>'
+  );
+};
+
+Z._pickVisibility = function(vis, el){
+  Z._currentVisibilityPick = vis || 'private';
+  document.querySelectorAll('#modal-container .vis-row').forEach(function(r){
+    if(r === el) r.classList.add('selected');
+    else r.classList.remove('selected');
+  });
+};
+
+Z._confirmVisibility = function(){
+  var vis = Z._currentVisibilityPick || 'private';
+  var cb = Z._visibilityPickCallback;
+  Z._visibilityPickCallback = null;
+  Z.closeModal();
+  if(typeof cb === 'function'){
+    try { cb(vis); }
+    catch(e){ console.error('vis callback', e); }
+  }
 };
 
 Z.renderHome = function(){
@@ -2859,6 +3064,7 @@ Z.renderHome = function(){
   setTimeout(function(){ attachPostViewObservers(); }, 250);
   return html;
 };
+
 Z.renderDiscoverStrip = async function(){
   var host = document.getElementById('home-discover-host');
   if(!host) return;
@@ -2947,6 +3153,14 @@ Z.renderDiscoverStrip = async function(){
     document.head.appendChild(st);
   } catch(e){}
 })();
+
+/* ============================================================
+   POST CARD
+   v3.5 — reads media_status (pending vs complete) and visibility.
+   Pending posts are only shown to the author by RLS, so showing
+   the placeholder is safe: nobody else will ever see this card
+   while media_status = 'pending'.
+   ============================================================ */
 Z.renderPostCard = function(p, profiles, me, isNew){
   var a = (profiles || []).find(function(x){ return x.id === p.author_id; }) ||
           { id:p.author_id, name:'User', avatar:'' };
@@ -2965,8 +3179,13 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '</div>';
   }
 
+  /* Media: pending takes precedence over media_url. If the row is
+     still uploading, we show the pulsing placeholder even if a
+     local blob preview exists, so the author sees a clear state. */
   var mHtml = '';
-  if(p.media_url){
+  if(p.media_status === 'pending'){
+    mHtml = '<div class="post-media has-video">' + Z.pendingPlaceholderHtml() + '</div>';
+  } else if(p.media_url){
     var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
     if(mt === 'video'){
       mHtml = '<div class="post-media has-video" data-post-media="' + Z.escape(p.id) + '">' +
@@ -3000,12 +3219,14 @@ Z.renderPostCard = function(p, profiles, me, isNew){
 
   var newClass = isNew ? ' zynix-new-item' : '';
 
+  var vChip = Z.visibilityChipHtml(p.visibility);
+
   return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
     '<div class="post-author">' +
       '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
       '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
         '<div class="pname">' + Z.escape(Z.displayName(a)) + '</div>' +
-        '<div class="phandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(p.created_at).getTime()) + '</div>' +
+        '<div class="phandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(p.created_at).getTime()) + (vChip ? ' · ' + vChip : '') + '</div>' +
       '</div>' +
       menuBtn +
     '</div>' +
@@ -3211,6 +3432,19 @@ Z.cancelComposer = function(){
   var i = document.getElementById('composer-input');    if(i) i.value='';
 };
 
+/* ============================================================
+   v3.5 — Composer submit.
+   Step 1: capture inputs, clear the composer.
+   Step 2: open the visibility modal — user MUST confirm.
+   Step 3: hand off to _finalizeComposerSubmit which:
+     - text-only: inserts a complete row with the chosen visibility.
+     - media:    inserts a PENDING row first, adds it to local state
+                 (shows "Uploading…" placeholder), opens nothing else,
+                 uploads media in parallel, then flips media_status
+                 to 'complete' and attaches the media_url.
+   If the upload fails, the pending row is deleted. RLS hides the
+   pending row from every other user for the entire duration.
+   ============================================================ */
 Z.submitComposer = async function(forceNoCaption){
   var me = Z.State.currentUser;
   if(!me) return;
@@ -3228,53 +3462,122 @@ Z.submitComposer = async function(forceNoCaption){
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
     : null;
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
-  var tempId = 'temp_' + Z.uuid();
-  var optimistic = {
-    id: tempId, author_id: me.id, content: text, media_url: localUrl,
-    media_type: mt, share_bounty: shareBounty,
-    created_at: new Date().toISOString(), views: 0, shares: 0,
-    reactions: {}, _myReactions: {}, _comments: [], _optimistic: true
-  };
-  Z.State.allPosts = [optimistic].concat(Z.State.allPosts || []);
-  Z.cancelComposer();
-  Z.toast('Post published!');
-  Z.haptic(12);
-  Z.showView('home');
-  Z.saveSnapshot();
 
-  (async function(){
-    var mu = '';
-    try {
-      if(fileObj) mu = await Z.storeMedia(fileObj);
-    } catch(err){
-      Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z.toast('Upload failed — post not published.', 'error');
-      if(Z.State.currentView === 'home') Z.softRefresh();
+  /* Clear composer immediately so the user sees it empty while the
+     visibility modal is up. */
+  Z.cancelComposer();
+
+  Z.openVisibilityModal(function(visibility){
+    Z._finalizeComposerSubmit(me, text, fileObj, mt, localUrl, visibility, shareBounty);
+  });
+};
+
+Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, localUrl, visibility, shareBounty){
+  var hasFile = !!fileObj;
+  var newId = Z.uuid();
+
+  /* ---------- TEXT-ONLY ---------- */
+  if(!hasFile){
+    var row = await Z.DB.createPost({
+      id: newId,
+      author_id: me.id,
+      content: text,
+      media_url: null,
+      media_type: null,
+      share_bounty: shareBounty,
+      media_status: 'complete',
+      visibility: visibility
+    });
+    if(!row){
+      Z.toast('Publish failed — try again.', 'error');
       return;
     }
-    var row = await Z.DB.createPost({
-      author_id: me.id, content: text, media_url: mu||null,
-      media_type: mt||null, share_bounty: shareBounty
+    var real = Object.assign({}, row, {
+      reactions: {}, _myReactions: {}, _comments: [],
+      media_status: 'complete',
+      visibility: visibility
     });
-    var arr = Z.State.allPosts || [];
-    var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-    if(row){
-      if(idx >= 0){
-        var real = Object.assign({}, row, {reactions:{}, _myReactions:{}, _comments:[]});
-        arr[idx] = real;
-      }
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z.saveSnapshot();
-    } else {
-      Z.State.allPosts = arr.filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }             
-       Z._cleanupOrphanUpload(mu);
-       Z.toast('Publish failed. Try again.', 'error');
-      if(Z.State.currentView === 'home') Z.softRefresh();
+    Z.State.allPosts = [real].concat(Z.State.allPosts || []);
+    Z.toast('Post published!');
+    Z.haptic(12);
+    if(Z.State.currentView === 'home') Z.softRefresh();
+    Z.saveSnapshot();
+    return;
+  }
+
+  /* ---------- MEDIA POST ----------
+     1. Insert a pending row (private is the safest default; the
+        user's choice is written immediately after in parallel).
+     2. Add a matching entry to local state so the author sees the
+        "Uploading…" placeholder right away.
+     3. Fire the R2 upload in the background.
+     4. On success flip media_status -> 'complete' and attach URL.
+     5. On failure delete the pending row and remove local entry. */
+  var pendingPayload = {
+    id: newId,
+    author_id: me.id,
+    content: text,
+    media_url: null,
+    media_type: mt,
+    share_bounty: shareBounty,
+    media_status: 'pending',
+    visibility: visibility || 'private'
+  };
+  var pendRow = await Z.DB.createPost(pendingPayload);
+  if(!pendRow){
+    if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+    Z.toast('Publish failed — post not created.', 'error');
+    return;
+  }
+
+  var pending = Object.assign({}, pendRow, {
+    reactions: {}, _myReactions: {}, _comments: [],
+    media_status: 'pending',
+    visibility: visibility || 'private',
+    _optimistic: true,
+    _pendingUpload: true
+  });
+  Z.State.allPosts = [pending].concat(Z.State.allPosts || []);
+  if(Z.State.currentView === 'home') Z.softRefresh();
+  Z.toast('Publishing...');
+
+  /* Upload to R2 */
+  var mediaUrl = '';
+  try {
+    mediaUrl = await Z.storeMedia(fileObj);
+  } catch(err){
+    try { await Z.DB.deletePost(newId); } catch(e){}
+    Z.State.allPosts = (Z.State.allPosts||[]).filter(function(p){ return p.id !== newId; });
+    if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+    if(Z.State.currentView === 'home') Z.softRefresh();
+    Z.toast('Upload failed — post not published.', 'error');
+    return;
+  }
+
+  /* Flip to complete + attach URL */
+  await Z.DB.updatePostFields(newId, {
+    media_url: mediaUrl,
+    media_status: 'complete'
+  });
+
+  var arr = Z.State.allPosts || [];
+  for(var i=0;i<arr.length;i++){
+    if(arr[i] && arr[i].id === newId){
+      arr[i] = Object.assign({}, arr[i], {
+        media_url: mediaUrl,
+        media_status: 'complete',
+        _pendingUpload: false,
+        _optimistic: false
+      });
+      break;
     }
-  })();
+  }
+
+  if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+  if(Z.State.currentView === 'home') Z.softRefresh();
+  Z.toast('Post published!');
+  Z.haptic(12);
+  Z.saveSnapshot();
 };
 
 Z.toggleSavePost = function(postId){
@@ -3411,14 +3714,19 @@ Z.postPostToWall = async function(postId){
     media_type: src.media_type || null,
     share_bounty: 0,
     shared_from_id: src.id,
-    shared_from_type: 'post'
+    shared_from_type: 'post',
+    media_status: 'complete',
+    visibility: 'public'
   };
   var r = await c.from('posts').insert(payload).select().maybeSingle();
   if(r.error || !r.data){
     Z.toast('Repost failed.', 'error');
     return;
   }
-  var row = Object.assign({}, r.data, {reactions:{}, _myReactions:{}, _comments:[]});
+  var row = Object.assign({}, r.data, {
+    reactions:{}, _myReactions:{}, _comments:[],
+    media_status: 'complete', visibility: 'public'
+  });
   Z.State.allPosts = [row].concat(Z.State.allPosts || []);
   try {
     var amt = 0;
@@ -4120,6 +4428,7 @@ Z.closeBannerEditor = function(){ Z.State.bannerDraft = null; Z.closeModal(); };
 
 })();
 </script>
+
 <!-- ============================================================
      SECTION 5 — POST REACTIONS + POST COMMENTS
      Dislike exclusivity both directions · self-reaction tracker
@@ -4645,13 +4954,15 @@ Z.updateCommentReactionUI = function(commentId){
 
 })();
 </script>
+
 <!-- ============================================================
      SECTION 6 — SPARK FEED
      Feed · slide · reactions · view counter · menu · create spark ·
      create full video · share sheet · post-to-wall · share refetch
      · snapshot after publish
-     · menu closes on pointerdown (works near native video controls)
-     · spark-actions stack no longer blocks laptop video controls
+     · v3.5: pending-row pattern for sparks and full videos.
+       Pending slides show a loading state to the author only;
+       RLS hides them from everyone else.
      ============================================================ -->
 <script>
 (function(){
@@ -4679,6 +4990,18 @@ if(!Z) return;
 
 Z._sparkAudioUnlocked = false;
 Z._viewedThisSession = {};
+
+/* Full-height pending state for a Spark slide — replaces the video
+   element until media_status flips to 'complete'. */
+Z._sparkPendingHtml = function(){
+  return '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#000;color:#94a3b8;">' +
+    '<div style="text-align:center;padding:24px;">' +
+      '<i class="fa-solid fa-cloud-arrow-up" style="font-size:38px;color:#10b981;display:block;margin-bottom:14px;"></i>' +
+      '<div style="font-weight:800;color:#cbd5e1;font-size:15px;letter-spacing:.3px;margin-bottom:6px;">Uploading Spark...</div>' +
+      '<div style="font-size:11px;color:#64748b;max-width:260px;line-height:1.55;">This Spark becomes visible to others once the upload finishes.</div>' +
+    '</div>' +
+  '</div>';
+};
 
 Z.renderSpark = function(){
   var sparks = (Z.State.allSparks || []).slice();
@@ -4709,7 +5032,15 @@ Z.renderSparkSlide = function(spark, index){
   var freezeTip = unfrozen ? 'Unfrozen' : 'Frozen';
   var isSaved = (Z.State.savedSparks || []).indexOf(spark.id) !== -1;
 
-  var videoEl = '<video src="' + Z.escape(spark.video_url) + '" playsinline controls preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
+  /* v3.5 — pending slides show a loading state instead of a video.
+     RLS hides pending rows from other users, so only the author
+     ever sees this state. */
+  var videoEl;
+  if(spark.media_status === 'pending'){
+    videoEl = Z._sparkPendingHtml();
+  } else {
+    videoEl = '<video src="' + Z.escape(spark.video_url || '') + '" playsinline controls preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '" style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>';
+  }
 
   var tags = '';
   if(spark.tags && spark.tags.length){
@@ -4744,6 +5075,9 @@ Z.renderSparkSlide = function(spark, index){
     '</div>';
   }
 
+  var vChip = Z.visibilityChipHtml(spark.visibility);
+  var handleLine = '@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(spark.created_at).getTime()) + (vChip ? ' · ' + vChip : '');
+
   return '<div class="spark-slide" data-spark-index="' + index + '">' +
     videoEl +
     '<div class="spark-top-gradient"></div><div class="spark-bottom-gradient"></div>' +
@@ -4753,7 +5087,7 @@ Z.renderSparkSlide = function(spark, index){
         '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
         '<div onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
           '<div class="sname">' + Z.escape(Z.displayName(a)) + '</div>' +
-          '<div class="shandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(spark.created_at).getTime()) + '</div>' +
+          '<div class="shandle">' + handleLine + '</div>' +
         '</div>' +
       '</div>' +
       (isFull && spark.title ? '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + Z.escape(spark.title) + '</div>' : '') +
@@ -5475,13 +5809,18 @@ Z.postSparkToWall = async function(sparkId){
     media_type: 'video',
     share_bounty: 0,
     shared_from_id: s.id,
-    shared_from_type: 'spark'
+    shared_from_type: 'spark',
+    media_status: 'complete',
+    visibility: 'public'
   };
 
   var r = await c.from('posts').insert(payload).select().maybeSingle();
   if(r.error || !r.data){ Z.toast('Share failed.', 'error'); return; }
 
-  var row = Object.assign({}, r.data, {reactions:{}, _myReactions:{}, _comments:[]});
+  var row = Object.assign({}, r.data, {
+    reactions:{}, _myReactions:{}, _comments:[],
+    media_status: 'complete', visibility: 'public'
+  });
   Z.State.allPosts = [row].concat(Z.State.allPosts || []);
 
   try {
@@ -5608,6 +5947,16 @@ Z.removeFvFile = function(){
   });
 };
 
+/* ============================================================
+   v3.5 — Spark submit.
+   Step 1: capture inputs.
+   Step 2: open visibility modal.
+   Step 3: insert a PENDING row. Add to local state. Show spark
+           view so the author sees the loading slide.
+   Step 4: upload to R2 in background.
+   Step 5: flip media_status -> 'complete' and attach URL.
+   On failure, the pending row is deleted.
+   ============================================================ */
 Z.submitSpark = function(forceNoCaption){ Z.submitSparkImpl(forceNoCaption); };
 
 Z.submitSparkImpl = async function(forceNoCaption){
@@ -5632,58 +5981,109 @@ Z.submitSparkImpl = async function(forceNoCaption){
   if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Video under 100 MB.'); return; }
 
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
-  var tempId = 'temp_' + Z.uuid();
-  var optimistic = {
-    id: tempId, author_id: me.id, caption: caption, video_url: localUrl,
-    tags: tags, type: 'spark', share_bounty: shareBounty,
-    created_at: new Date().toISOString(), views: 0, shares: 0,
-    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
-    _optimistic: true
-  };
-  Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
+
+  /* Close the composer immediately so the visibility modal is clean. */
   Z.closeModal();
-  Z.toast('Spark published!');
+
+  Z.openVisibilityModal(function(visibility){
+    Z._finalizeSparkSubmit({
+      me: me,
+      caption: caption,
+      tags: tags,
+      fileObj: fileObj,
+      url: url,
+      localUrl: localUrl,
+      shareBounty: shareBounty,
+      visibility: visibility
+    });
+  });
+};
+
+Z._finalizeSparkSubmit = async function(o){
+  var me = o.me;
+  var newId = Z.uuid();
+
+  /* 1. Insert pending row. */
+  var pendingPayload = {
+    id: newId,
+    author_id: me.id,
+    caption: o.caption,
+    video_url: null,
+    tags: o.tags,
+    type: 'spark',
+    share_bounty: o.shareBounty,
+    media_status: 'pending',
+    visibility: o.visibility || 'private'
+  };
+  var pendRow = await Z.DB.createSpark(pendingPayload);
+  if(!pendRow){
+    if(o.localUrl && o.localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(o.localUrl); } catch(e){} }
+    Z._mediaCache.spark = null;
+    Z.toast('Publish failed — Spark not created.', 'error');
+    return;
+  }
+
+  /* 2. Add to local state with pending flag. */
+  var pending = Object.assign({}, pendRow, {
+    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
+    media_status: 'pending',
+    visibility: o.visibility || 'private',
+    _optimistic: true,
+    _pendingUpload: true
+  });
+  Z.State.allSparks = [pending].concat(Z.State.allSparks || []);
+  Z._mediaCache.spark = null;
+  Z.toast('Publishing Spark...');
   Z.haptic(12);
   Z.showView('spark');
 
-  (async function(){
-    var vu = '';
+  /* 3. Upload media. Two modes: file blob OR external URL. */
+  var videoUrl = '';
+  if(o.fileObj){
     try {
-      if(fileObj) vu = await Z.storeMedia(fileObj);
-      else if(url) vu = url;
+      videoUrl = await Z.storeMedia(o.fileObj);
     } catch(err){
-      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z.toast('Upload failed — Spark not published.', 'error');
+      try { await Z.DB.updateSparkFields(newId, {media_status: 'complete'}); } catch(e){}
+      /* Delete the pending row outright so nothing lingers. */
+      try {
+        var cc = Z.sb();
+        if(cc) await cc.from('sparks').delete().eq('id', newId);
+      } catch(e){}
+      Z.State.allSparks = (Z.State.allSparks||[]).filter(function(x){ return x.id !== newId; });
+      if(o.localUrl && o.localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(o.localUrl); } catch(e){} }
       if(Z.State.currentView === 'spark') Z.showView('spark');
+      Z.toast('Upload failed — Spark not published.', 'error');
       return;
     }
-    var sp = await Z.DB.createSpark({
-      author_id: me.id, caption: caption, video_url: vu,
-      tags: tags, type: 'spark', share_bounty: shareBounty
-    });
-    var arr = Z.State.allSparks || [];
-    var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-    if(sp){
-      if(idx >= 0){
-        var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0});
-        arr[idx] = real;
-      }
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z._mediaCache.spark = null;
-      try { Z.saveSnapshot(); } catch(e){}
-      if(Z.State.currentView === 'spark') Z.showView('spark');
-    } else {
-      Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z._cleanupOrphanUpload(vu);
-      Z.toast('Publish failed. Try again.', 'error');
-      if(Z.State.currentView === 'spark') Z.showView('spark');
+  } else if(o.url){
+    videoUrl = o.url;
+  }
+
+  /* 4. Flip to complete. */
+  await Z.DB.updateSparkFields(newId, {
+    video_url: videoUrl,
+    media_status: 'complete'
+  });
+
+  var arr = Z.State.allSparks || [];
+  for(var i=0;i<arr.length;i++){
+    if(arr[i] && arr[i].id === newId){
+      arr[i] = Object.assign({}, arr[i], {
+        video_url: videoUrl,
+        media_status: 'complete',
+        _pendingUpload: false,
+        _optimistic: false
+      });
+      break;
     }
-  })();
+  }
+
+  if(o.localUrl && o.localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(o.localUrl); } catch(e){} }
+  if(Z.State.currentView === 'spark') Z.showView('spark');
+  try { Z.saveSnapshot(); } catch(e){}
 };
 
+/* Full video — same pending pattern, type 'long_video'. */
 Z.submitFullVideo = async function(){
   var me = Z.State.currentUser;
   if(!me) return;
@@ -5700,61 +6100,103 @@ Z.submitFullVideo = async function(){
   if(!fileObj && !url){ Z.toast('Provide video.'); return; }
 
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
-  var tempId = 'temp_' + Z.uuid();
-  var optimistic = {
-    id: tempId, author_id: me.id, title: title, caption: desc, video_url: localUrl,
-    type: 'long_video', tags: [], share_bounty: sb_,
-    created_at: new Date().toISOString(), views: 0, shares: 0,
-    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
-    _optimistic: true
-  };
-  Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
   Z.closeModal();
+
+  Z.openVisibilityModal(function(visibility){
+    Z._finalizeFullVideoSubmit({
+      me: me,
+      title: title,
+      desc: desc,
+      fileObj: fileObj,
+      url: url,
+      localUrl: localUrl,
+      shareBounty: sb_,
+      visibility: visibility
+    });
+  });
+};
+
+Z._finalizeFullVideoSubmit = async function(o){
+  var me = o.me;
+  var newId = Z.uuid();
+
+  var pendingPayload = {
+    id: newId,
+    author_id: me.id,
+    title: o.title,
+    caption: o.desc,
+    video_url: null,
+    type: 'long_video',
+    tags: [],
+    share_bounty: o.shareBounty,
+    media_status: 'pending',
+    visibility: o.visibility || 'private'
+  };
+  var pendRow = await Z.DB.createSpark(pendingPayload);
+  if(!pendRow){
+    if(o.localUrl && o.localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(o.localUrl); } catch(e){} }
+    Z._mediaCache.fv = null;
+    Z.toast('Upload failed — video not created.', 'error');
+    return;
+  }
+
+  var pending = Object.assign({}, pendRow, {
+    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
+    media_status: 'pending',
+    visibility: o.visibility || 'private',
+    _optimistic: true,
+    _pendingUpload: true
+  });
+  Z.State.allSparks = [pending].concat(Z.State.allSparks || []);
+  Z._mediaCache.fv = null;
   Z.toast('Uploading video...');
   Z.haptic(12);
   Z.showView('spark');
 
-  (async function(){
-    var vu = url;
+  var videoUrl = o.url || '';
+  if(o.fileObj){
     try {
-      if(fileObj) vu = await Z.storeMedia(fileObj);
+      videoUrl = await Z.storeMedia(o.fileObj);
     } catch(err){
-      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z.toast('Upload failed — video not uploaded.', 'error');
+      try {
+        var cc = Z.sb();
+        if(cc) await cc.from('sparks').delete().eq('id', newId);
+      } catch(e){}
+      Z.State.allSparks = (Z.State.allSparks||[]).filter(function(x){ return x.id !== newId; });
+      if(o.localUrl && o.localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(o.localUrl); } catch(e){} }
       if(Z.State.currentView === 'spark') Z.showView('spark');
+      Z.toast('Upload failed — video not uploaded.', 'error');
       return;
     }
-    var sp = await Z.DB.createSpark({
-      author_id: me.id, title: title, caption: desc, video_url: vu,
-      type: 'long_video', tags: [], share_bounty: sb_
-    });
-    var arr = Z.State.allSparks || [];
-    var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-    if(sp){
-      if(idx >= 0){
-        var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0});
-        arr[idx] = real;
-      }
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z._mediaCache.fv = null;
-      try { Z.saveSnapshot(); } catch(e){}
-      Z.toast('Video uploaded!');
-      if(Z.State.currentView === 'spark') Z.showView('spark');
-    } else {
-      Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-      Z._cleanupOrphanUpload(vu);
-      Z.toast('Save failed. Try again.', 'error');
-      if(Z.State.currentView === 'spark') Z.showView('spark');
+  }
+
+  await Z.DB.updateSparkFields(newId, {
+    video_url: videoUrl,
+    media_status: 'complete'
+  });
+
+  var arr = Z.State.allSparks || [];
+  for(var i=0;i<arr.length;i++){
+    if(arr[i] && arr[i].id === newId){
+      arr[i] = Object.assign({}, arr[i], {
+        video_url: videoUrl,
+        media_status: 'complete',
+        _pendingUpload: false,
+        _optimistic: false
+      });
+      break;
     }
-  })();
+  }
+
+  if(o.localUrl && o.localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(o.localUrl); } catch(e){} }
+  Z.toast('Video uploaded!');
+  if(Z.State.currentView === 'spark') Z.showView('spark');
+  try { Z.saveSnapshot(); } catch(e){}
 };
 
 })();
 </script>
-<!-- ============================================================
+   <!-- ============================================================
      SECTION 7 — STATUSES
      Row · viewer · gestures · timer · create modal · home grid
      ============================================================ -->
@@ -6336,6 +6778,7 @@ Z.closeStatusViewer = function(){
 
 })();
 </script>
+
    <!-- ============================================================
      SECTION 8 — SPACE
      Public profile · About/Offer · Trust ring · Value chip ·
@@ -7780,11 +8223,13 @@ Z.renderNotifications = function(){
 
 })();
 </script>
-   <!-- ============================================================
+      <!-- ============================================================
      SECTION 13 — REALTIME + RELOAD DATA
      8 channels · DELETE propagation for posts/sparks/statuses ·
      notification delayed-retry · status row re-render after sync
-     · snapshot sync
+     · snapshot sync · v3.5 pending→complete flip handled in
+       posts/sparks UPDATE handlers so the author sees the media
+       as soon as the R2 upload finishes.
      ============================================================ -->
 <script>
 (function(){
@@ -7868,6 +8313,26 @@ function _removePostCard(postId){
   if(card && card.parentNode) card.parentNode.removeChild(card);
 }
 
+/* Replace a single post card in the DOM. Used by the UPDATE handler
+   when media_status flips pending → complete. */
+function _replacePostCard(post){
+  var card = document.querySelector('.post-card[data-post-id="' + post.id + '"]');
+  if(!card || !card.parentNode) return;
+  var me = Z.State.currentUser;
+  var profiles = Z.State.allProfiles || [];
+  var temp = document.createElement('div');
+  try {
+    temp.innerHTML = Z.renderPostCard(post, profiles, me);
+  } catch(e){ return; }
+  var newCard = temp.firstChild;
+  if(!newCard) return;
+  card.parentNode.replaceChild(newCard, card);
+  try { Z.observeFreezeDots(); } catch(e){}
+  try { Z._tagMediaContainers(); } catch(e){}
+  try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+  try { Z.detectCaptionOverflow(); } catch(e){}
+}
+
 /* Remove a spark slide from the DOM without a full re-render */
 function _removeSparkSlide(sparkId){
   var vid = document.querySelector('.spark-slide video[data-spark-id="' + sparkId + '"]');
@@ -7876,13 +8341,11 @@ function _removeSparkSlide(sparkId){
   if(!slide || !slide.parentNode) return;
   var feed = slide.parentNode;
   slide.parentNode.removeChild(slide);
-  /* If nothing left, show empty state */
   var remaining = feed.querySelectorAll('.spark-slide');
   if(!remaining.length){
     Z.State.allSparks = [];
     Z.showView('spark');
   } else if(feed.scrollTop >= feed.scrollHeight - feed.clientHeight - 4){
-    /* We were on the last slide — scroll up a bit */
     feed.scrollTop = Math.max(0, feed.scrollTop - feed.clientHeight);
   }
 }
@@ -8009,8 +8472,6 @@ Z.setupRealtime = function(){
           if(!old || !old.id) return;
           var id = old.id;
 
-          /* Recursively remove a comment (and any of its replies) from
-             a nested comment tree. Returns true when it found + removed. */
           function removeRecFromList(arr){
             if(!arr) return false;
             for(var i=0;i<arr.length;i++){
@@ -8020,7 +8481,6 @@ Z.setupRealtime = function(){
             return false;
           }
 
-          /* Post comments */
           (Z.State.allPosts||[]).forEach(function(p){
             if(!p._comments) return;
             if(removeRecFromList(p._comments)){
@@ -8032,12 +8492,10 @@ Z.setupRealtime = function(){
             }
           });
 
-          /* Space posts (same shape, no live card update needed) */
           (Z.State.spacePosts||[]).forEach(function(p){
             if(p._comments) removeRecFromList(p._comments);
           });
 
-          /* Spark comments */
           (Z.State.allSparks||[]).forEach(function(sp){
             if(!sp._comments) return;
             if(removeRecFromList(sp._comments)){
@@ -8049,7 +8507,6 @@ Z.setupRealtime = function(){
             }
           });
 
-          /* Detach from DOM if still present */
           var domEl = document.querySelector('[data-comment-id="' + id + '"]');
           if(domEl && domEl.parentNode) domEl.parentNode.remove();
           var domSparkEl = document.querySelector('[data-spark-comment-id="' + id + '"]');
@@ -8172,9 +8629,6 @@ Z.setupRealtime = function(){
         var amt = Number(tx.amount) || 0;
         if(amt > 0) Z.animateDollar(amt);
 
-        /* Refetch authoritative wallet values from profiles rather than
-           blindly adding tx.amount. A tx may credit cash OR bounty
-           depending on reason; blind addition drifts wallet_bounty. */
         try {
           var prof = await c.from('profiles').select('wallet_cash, wallet_bounty, wallet_total').eq('id', meNow.id).maybeSingle();
           if(prof && prof.data && Z.State.currentUser && Z.State.currentUser.id === meNow.id){
@@ -8184,8 +8638,6 @@ Z.setupRealtime = function(){
           }
         } catch(e){}
 
-        /* Refresh the tx list too, so the new row is definitely present
-           even if the realtime payload was partial. */
         try {
           var list = await c.from('wallet_transactions').select('*').eq('user_id', meNow.id).order('created_at',{ascending:false}).limit(100);
           if(list && !list.error && Z.State.currentUser){
@@ -8207,10 +8659,6 @@ Z.setupRealtime = function(){
   try {
     var notifFilter = 'user_id=eq.' + me.id;
 
-    /* Long delays can exceed setTimeout's safe range and can also be
-       rescheduled by the server (e.g. a dislike that gets reversed
-       before it fires). This helper keeps re-checking until the row
-       is either due or gone. */
     function _scheduleNotificationDelivery(n, attempt){
       attempt = attempt || 0;
       if(!n || !n.id) return;
@@ -8222,14 +8670,11 @@ Z.setupRealtime = function(){
       var now = Date.now();
       var delay = due - now;
 
-      /* If no deliver_at, or the time has passed, apply immediately. */
       if(!due || delay <= 0){
         _applyNotification(n);
         return;
       }
 
-      /* Cap each hop at 5 minutes to avoid setTimeout overflow on
-         very distant timestamps. We re-check on each hop. */
       var hop = Math.min(delay + 50, 5 * 60 * 1000);
 
       setTimeout(async function(){
@@ -8237,28 +8682,21 @@ Z.setupRealtime = function(){
           var c2 = Z.sb && Z.sb();
           if(!c2){ _scheduleNotificationDelivery(n, attempt + 1); return; }
 
-          /* Re-fetch the notification row. If it no longer exists,
-             the server deleted it (e.g. dislike was reversed) — do
-             NOT show anything. */
           var row = await c2.from('notifications').select('*').eq('id', n.id).maybeSingle();
           if(row.error){ _scheduleNotificationDelivery(n, attempt + 1); return; }
           if(!row.data){ return; }
 
-          /* If the deliver_at has changed (server updated it),
-             reschedule with the new time. */
           if(row.data.deliver_at && row.data.deliver_at !== n.deliver_at){
             _scheduleNotificationDelivery(row.data, attempt + 1);
             return;
           }
 
-          /* Still in the future? Loop again. */
           var newDelay = new Date(row.data.deliver_at || 0).getTime() - Date.now();
           if(newDelay > 0){
             _scheduleNotificationDelivery(row.data, attempt + 1);
             return;
           }
 
-          /* Due now — apply. */
           _applyNotification(row.data);
         } catch(err){
           _scheduleNotificationDelivery(n, attempt + 1);
@@ -8279,9 +8717,6 @@ Z.setupRealtime = function(){
         function(payload){
           var n = payload.new;
           if(!n) return;
-          /* Update may move deliver_at forward (reversal) or rewrite
-             the message. The scheduling loop re-fetches each hop, so
-             re-running it here picks up the new state. */
           _scheduleNotificationDelivery(n, 0);
         })
       .subscribe();
@@ -8299,6 +8734,8 @@ Z.setupRealtime = function(){
         var exists = (Z.State.allPosts||[]).some(function(x){ return x.id === p.id; });
         if(exists) return;
         p.reactions = {}; p._myReactions = {}; p._comments = [];
+        if(p.media_status == null) p.media_status = 'complete';
+        if(p.visibility   == null) p.visibility   = 'public';
         try { Z._backfillItem(p, false); } catch(e){}
         Z.State.allPosts = [p].concat(Z.State.allPosts || []);
         if(Z.State.currentView === 'home'){ Z.softRefresh(); }
@@ -8309,10 +8746,26 @@ Z.setupRealtime = function(){
         if(!nw) return;
         var post = Z.findPostInState(nw.id);
         if(!post) return;
-        var changed = false;
-        if(post.shares !== nw.shares){ post.shares = nw.shares; changed = true; }
-        if(post.views  !== nw.views) { post.views  = nw.views;  changed = true; }
-        if(!changed) return;
+
+        /* v3.5 — detect the pending → complete flip (or a media_url
+           attachment that just landed). If we saw it, re-render the
+           whole card so the "Uploading…" placeholder is replaced
+           by the real media. Otherwise fall back to inline updates
+           for shares/views only. */
+        var flipDetected = false;
+        if(post.media_status !== nw.media_status){ post.media_status = nw.media_status; flipDetected = true; }
+        if(post.media_url    !== nw.media_url)   { post.media_url    = nw.media_url;   flipDetected = true; }
+        if(post.media_type   !== nw.media_type)  { post.media_type   = nw.media_type;  flipDetected = true; }
+        if(post.visibility   !== nw.visibility)  { post.visibility   = nw.visibility;  flipDetected = true; }
+        if(post.shares       !== nw.shares)      { post.shares       = nw.shares; }
+        if(post.views        !== nw.views)       { post.views        = nw.views; }
+
+        if(flipDetected){
+          _replacePostCard(post);
+          scheduleSnapshotSave();
+          return;
+        }
+
         var card = document.querySelector('.post-card[data-post-id="' + nw.id + '"]');
         if(!card) return;
         card.querySelectorAll('.post-actions button').forEach(function(b){
@@ -8388,6 +8841,8 @@ Z.setupRealtime = function(){
         var exists = (Z.State.allSparks||[]).some(function(x){ return x.id === s.id; });
         if(exists) return;
         s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0;
+        if(s.media_status == null) s.media_status = 'complete';
+        if(s.visibility   == null) s.visibility   = 'public';
         try { Z._backfillItem(s, true); } catch(e){}
         Z.State.allSparks = [s].concat(Z.State.allSparks || []);
         if(Z.State.currentView === 'spark'){ Z.showView('spark'); }
@@ -8398,9 +8853,24 @@ Z.setupRealtime = function(){
         if(!nw) return;
         var sp = (Z.State.allSparks||[]).find(function(x){ return x.id === nw.id; });
         if(!sp) return;
-        if(sp.shares === nw.shares && sp.views === nw.views) return;
-        sp.shares = nw.shares;
-        sp.views  = nw.views;
+
+        /* v3.5 — detect pending → complete flip. On flip, re-render
+           the spark view so the loading slide becomes the video. */
+        var flipDetected = false;
+        if(sp.media_status !== nw.media_status){ sp.media_status = nw.media_status; flipDetected = true; }
+        if(sp.video_url    !== nw.video_url)   { sp.video_url    = nw.video_url;   flipDetected = true; }
+        if(sp.visibility   !== nw.visibility)  { sp.visibility   = nw.visibility;  flipDetected = true; }
+        if(sp.shares       !== nw.shares)      { sp.shares       = nw.shares; }
+        if(sp.views        !== nw.views)       { sp.views        = nw.views; }
+
+        if(flipDetected){
+          if(Z.State.currentView === 'spark'){
+            Z.showView('spark');
+          }
+          scheduleSnapshotSave();
+          return;
+        }
+
         var vid = document.querySelector('video[data-spark-id="' + nw.id + '"]');
         if(!vid) return;
         var slide = vid.closest('.spark-slide');
@@ -8608,6 +9078,7 @@ Z.reloadData = async function(){
 
 })();
 </script>
+
    <!-- ============================================================
      SECTION 14 — BOOT
      Cache-first paint · welcome hides instantly · background sync
@@ -8710,8 +9181,6 @@ async function boot(){
         Z.showView(restored0.view || 'home', restored0.param);
         Z.hideWelcome();
         try { await Z.reloadData(); } catch(e){}
-        /* Refresh the DOM from the freshly loaded data. Without this
-           the snapshot would stay on screen until the user navigates. */
         if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
         Z.setupRealtime();
       } catch(e){}
@@ -8781,9 +9250,6 @@ async function boot(){
 
     try {
       await Z.reloadData();
-      /* Refresh the DOM from the freshly loaded data. Without this,
-         the snapshot (up to 24h old) would stay on screen until the
-         user navigates or pulls-to-refresh. */
       if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
       Z.setupRealtime();
     } catch(e){
@@ -8806,6 +9272,7 @@ if(document.readyState === 'loading'){
 
 })();
 </script>
+
    <!-- ============================================================
      SECTION 15 — LOUNGE
      Command centre. One horizontal-scroll row per section.
@@ -9106,6 +9573,7 @@ Z._renderLoungeSparks = function(){
   }
   var html = '<div class="lounge-scroll">';
   sparks.forEach(function(s){
+    if(s.media_status === 'pending') return;
     html += '<button onclick="Z.showView(\'spark\')" style="flex:0 0 auto;width:100px;background:#000;border:1px solid #1e293b;border-radius:12px;overflow:hidden;cursor:pointer;padding:0;height:160px;position:relative;">';
     html += '<video src="' + Z.escape(s.video_url) + '" preload="metadata" playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>';
     html += '</button>';
