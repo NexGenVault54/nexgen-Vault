@@ -674,6 +674,25 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .vis-title i{color:#10b981;font-size:12px}
 .vis-sub{font-size:11px;color:#94a3b8;line-height:1.5}
 .vis-caption{font-size:11px;color:#64748b;margin-top:6px;margin-bottom:12px;line-height:1.5;padding:10px 12px;background:#0f172a;border:1px solid #1e293b;border-radius:8px}
+/* ============================================================
+   24. v3.7 COMPOSER CANVAS + INLINE UPLOAD HOURGLASS
+   ============================================================ */
+.composer-wrap{background:#111827;border:1px solid #1e293b;border-radius:16px;overflow:hidden}
+.composer-canvas{background:linear-gradient(135deg,#dbeafe 0%,#e0e7ff 100%);padding:24px;min-height:220px;max-height:55vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.composer-canvas textarea{width:100%;background:transparent;border:none;color:#0f172a;font-size:18px;font-weight:700;line-height:1.5;text-align:center;resize:none;outline:none;font-family:inherit;min-height:120px;max-height:320px;padding:6px}
+.composer-canvas textarea::placeholder{color:rgba(15,23,42,.4);font-weight:500;font-size:15px}
+.composer-controls{padding:12px}
+.composer-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.composer-row button{flex:1;min-width:90px;background:#0f172a;border:1px solid #1e293b;color:#e2e8f0;font-weight:700;padding:10px 8px;border-radius:10px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.composer-row button.premium{background:linear-gradient(135deg,#f59e0b,#ef4444);border:none;color:#fff;font-weight:800}
+.upload-hourglass{display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;font-size:10px}
+.upload-hourglass i{font-size:10px;animation:zynixHourglass 1.6s ease-in-out infinite;display:inline-block}
+@keyframes zynixHourglass{0%,40%{transform:rotate(0deg)}50%,90%{transform:rotate(180deg)}100%{transform:rotate(360deg)}}
+.post-media-failed{background:#1a0e0e;border:1px solid rgba(239,68,68,.35);border-radius:12px;padding:24px 18px;margin-bottom:10px;text-align:center}
+.post-media-failed .pmf-icon{font-size:28px;color:#f87171;display:block;margin-bottom:10px}
+.post-media-failed .pmf-title{font-weight:800;color:#fecaca;font-size:13px;margin-bottom:4px}
+.post-media-failed .pmf-sub{font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:14px}
+.post-media-failed .pmf-delete{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#fca5a5;font-size:11px;font-weight:700;padding:7px 16px;border-radius:8px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -3003,7 +3022,12 @@ Z.openCreateModal = function(){
 })();
 </script>
 <!-- ============================================================
-     SECTION 4 — HOME + POSTS + COMPOSER (v3.6)
+     SECTION 4 — HOME + POSTS + COMPOSER (v3.7)
+     - Single editor: greeting hides when composer expands
+     - Light-blue composer canvas, centered bold text
+     - Upload starts on Publish click (background), modal covers delay
+     - Inline hourglass for pending media (no big block)
+     - Stale pending rows from a mid-upload refresh show retry/delete
      ============================================================ -->
 <script>
 (function(){
@@ -3018,16 +3042,19 @@ Z.findPostInState = function(postId){
   return null;
 };
 
-/* ---------- Pending placeholder ---------- */
-Z.pendingPlaceholderHtml = function(){
-  return '<div class="media-pending">' +
-    '<div class="media-pending-inner">' +
-      '<i class="fa-solid fa-cloud-arrow-up"></i>' +
-      '<div class="mp-title">Uploading...</div>' +
-      '<div class="mp-sub">Your media is uploading. It becomes visible to others once complete.</div>' +
-    '</div>' +
-    '<div class="mp-bar"></div>' +
-  '</div>';
+/* ---------- Stale pending detection ----------
+   A pending row is stale if it is not from this session and its
+   created_at is older than 90 seconds. Used to swap the endless
+   shimmer for a "didn't finish" card. */
+Z._pendingSessionIds = {};
+Z._markPendingSession = function(id){ if(id) Z._pendingSessionIds[id] = true; };
+Z._isPendingStale = function(item){
+  if(!item || item.media_status !== 'pending') return false;
+  if(Z._pendingSessionIds[item.id]) return false;
+  if(item._optimistic || item._pendingUpload) return false;
+  var created = new Date(item.created_at || 0).getTime();
+  if(!created) return false;
+  return (Date.now() - created) > 90000;
 };
 
 /* ---------- Visibility chip ---------- */
@@ -3109,10 +3136,12 @@ Z.renderHome = function(){
   html += '<div id="home-discover-host"></div>';
   if(me){
     html +=
-      '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;display:flex;align-items:center;gap:10px;">' +
-        '<img src="' + Z.escape(Z.displayAvatar(me)) + '" onclick="Z.goMySpace()" style="width:38px;height:38px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">' +
-        '<div id="composer-input" onclick="Z.expandComposer()" style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:20px;padding:10px 16px;font-size:13px;color:#94a3b8;cursor:text;">' +
-          Z.escape(Z.pickGreeting()) +
+      '<div id="composer-greeting">' +
+        '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;display:flex;align-items:center;gap:10px;">' +
+          '<img src="' + Z.escape(Z.displayAvatar(me)) + '" onclick="Z.goMySpace()" style="width:38px;height:38px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">' +
+          '<div id="composer-input" onclick="Z.expandComposer()" style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:20px;padding:10px 16px;font-size:13px;color:#94a3b8;cursor:text;">' +
+            Z.escape(Z.pickGreeting()) +
+          '</div>' +
         '</div>' +
       '</div>';
   } else {
@@ -3224,9 +3253,22 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '</div>';
   }
 
+  /* Media area:
+     - pending and NOT stale: render nothing here; hourglass is in the header.
+     - pending and stale: render a "didn't finish" card.
+     - complete: render normally. */
   var mHtml = '';
+  var stalePending = Z._isPendingStale(p);
   if(p.media_status === 'pending'){
-    mHtml = '<div class="post-media has-video">' + Z.pendingPlaceholderHtml() + '</div>';
+    if(stalePending){
+      mHtml = '<div class="post-media-failed">' +
+        '<i class="fa-solid fa-circle-exclamation pmf-icon"></i>' +
+        '<div class="pmf-title">Upload didn\'t finish</div>' +
+        '<div class="pmf-sub">The page was closed or refreshed while uploading. The file has to be added again.</div>' +
+        '<button class="pmf-delete" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete post</button>' +
+      '</div>';
+    }
+    /* else: no block, the hourglass shows in the timestamp line. */
   } else if(p.media_url){
     var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
     if(mt === 'video'){
@@ -3272,12 +3314,19 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var vChip = Z.visibilityChipHtml(p.visibility);
   var editedBadge = p.edited_at ? ' · <span style="color:#64748b;font-style:italic;">edited</span>' : '';
 
+  var pendingBadge = '';
+  if(p.media_status === 'pending' && !stalePending){
+    pendingBadge = ' · <span class="upload-hourglass"><i class="fa-solid fa-hourglass-half"></i>Publishing</span>';
+  } else if(stalePending){
+    pendingBadge = ' · <span style="color:#fca5a5;font-weight:700;font-size:10px;"><i class="fa-solid fa-circle-exclamation"></i> Upload failed</span>';
+  }
+
   return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
     '<div class="post-author">' +
       '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
       '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
         '<div class="pname">' + Z.escape(Z.displayName(a)) + '</div>' +
-        '<div class="phandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(p.created_at).getTime()) + editedBadge + (vChip ? ' · ' + vChip : '') + '</div>' +
+        '<div class="phandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(p.created_at).getTime()) + editedBadge + pendingBadge + (vChip ? ' · ' + vChip : '') + '</div>' +
       '</div>' +
       menuBtn +
     '</div>' +
@@ -3346,10 +3395,7 @@ document.addEventListener('click', function(e){
 
 window.addEventListener('scroll', function(){
   document.querySelectorAll('.post-menu').forEach(function(m){
-    if(m.style.display === 'block'){
-      m.style.display = 'none';
-      m.style.position = '';
-    }
+    if(m.style.display === 'block'){ m.style.display = 'none'; m.style.position = ''; }
   });
 }, {passive:true});
 
@@ -3360,39 +3406,40 @@ document.addEventListener('keydown', function(e){
   }
 });
 
-/* ---------- Composer — Facebook-style caption banner ---------- */
+/* ---------- Composer (Facebook-style canvas) ---------- */
 Z.expandComposer = function(){
   var c = document.getElementById('composer-expanded');
   if(!c) return;
   if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
   if(c.innerHTML) return;
-  var me = Z.State.currentUser;
+
+  /* Hide the greeting so only ONE editor is on screen. */
+  var greeting = document.getElementById('composer-greeting');
+  if(greeting) greeting.style.display = 'none';
+
   c.innerHTML =
-    '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;">' +
-      '<div style="display:flex;align-items:flex-start;gap:10px;">' +
-        '<img src="' + Z.escape(Z.displayAvatar(me)) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;margin-top:2px;">' +
-        '<div style="flex:1;min-width:0;">' +
-          '<textarea id="composer-text" placeholder="What\'s on your mind?" ' +
-            'style="width:100%;background:transparent;border:none;color:#fff;font-size:14px;line-height:1.5;padding:6px 2px;outline:none;resize:none;font-family:inherit;min-height:60px;max-height:240px;" ' +
-            'rows="2" oninput="Z.autoGrow(this)"></textarea>' +
-        '</div>' +
+    '<div class="composer-wrap">' +
+      '<div class="composer-canvas">' +
+        '<textarea id="composer-text" placeholder="What\'s on your mind?" rows="3" oninput="Z.autoGrow(this)"></textarea>' +
       '</div>' +
       '<div id="composer-preview" class="media-preview-box"></div>' +
       '<div id="composer-remove-row" class="media-remove-row" style="display:none;">' +
         '<button type="button" onclick="Z.removeComposerFile()"><i class="fa-solid fa-trash"></i> Remove media</button>' +
       '</div>' +
-      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">' +
-        '<button type="button" onclick="document.getElementById(\'composer-file-photo\').click()" style="flex:1;min-width:100px;background:#0f172a;border:1px solid #1e293b;color:#e2e8f0;font-weight:700;padding:10px 8px;border-radius:10px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><i class="fa-solid fa-camera" style="color:#10b981;"></i> Photo</button>' +
-        '<button type="button" onclick="document.getElementById(\'composer-file-video\').click()" style="flex:1;min-width:100px;background:#0f172a;border:1px solid #1e293b;color:#e2e8f0;font-weight:700;padding:10px 8px;border-radius:10px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><i class="fa-solid fa-video" style="color:#3b82f6;"></i> Video</button>' +
-        '<button type="button" onclick="Z.premiumTemplates()" style="flex:1;min-width:140px;background:linear-gradient(135deg,#f59e0b,#ef4444);border:none;color:#fff;font-weight:800;padding:10px 8px;border-radius:10px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Add premium templates</button>' +
-      '</div>' +
-      '<input type="file" id="composer-file-photo" accept="image/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
-      '<input type="file" id="composer-file-video" accept="video/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
-      '<label class="form-label" style="margin-top:14px;">Share Bounty (paid to whoever shares your post)</label>' +
-      '<select id="composer-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
-      '<div style="display:flex;gap:8px;margin-top:6px;">' +
-        '<button onclick="Z.submitComposer()" style="flex:1;background:#10b981;border:none;color:#000;font-weight:800;padding:12px;border-radius:10px;font-size:13px;cursor:pointer;">Publish</button>' +
-        '<button onclick="Z.cancelComposer()" style="background:transparent;border:1px solid #1e293b;color:#94a3b8;font-weight:700;padding:12px 18px;border-radius:10px;font-size:12px;cursor:pointer;">Cancel</button>' +
+      '<div class="composer-controls">' +
+        '<div class="composer-row">' +
+          '<button type="button" onclick="document.getElementById(\'composer-file-photo\').click()"><i class="fa-solid fa-camera" style="color:#10b981;"></i> Photo</button>' +
+          '<button type="button" onclick="document.getElementById(\'composer-file-video\').click()"><i class="fa-solid fa-video" style="color:#3b82f6;"></i> Video</button>' +
+          '<button type="button" class="premium" onclick="Z.premiumTemplates()"><i class="fa-solid fa-wand-magic-sparkles"></i> Add premium templates</button>' +
+        '</div>' +
+        '<input type="file" id="composer-file-photo" accept="image/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
+        '<input type="file" id="composer-file-video" accept="video/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
+        '<label class="form-label" style="margin-top:12px;">Share Bounty (paid to whoever shares your post)</label>' +
+        '<select id="composer-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
+        '<div style="display:flex;gap:8px;margin-top:6px;">' +
+          '<button onclick="Z.submitComposer()" style="flex:1;background:#10b981;border:none;color:#000;font-weight:800;padding:12px;border-radius:10px;font-size:13px;cursor:pointer;">Publish</button>' +
+          '<button onclick="Z.cancelComposer()" style="background:transparent;border:1px solid #1e293b;color:#94a3b8;font-weight:700;padding:12px 18px;border-radius:10px;font-size:12px;cursor:pointer;">Cancel</button>' +
+        '</div>' +
       '</div>' +
     '</div>';
   setTimeout(function(){ var e = document.getElementById('composer-text'); if(e) e.focus(); }, 50);
@@ -3416,8 +3463,7 @@ Z._cacheFile = function(file){
       } catch(err){ resolve(null); }
     };
     reader.onerror = function(){ resolve(null); };
-    try { reader.readAsArrayBuffer(file); }
-    catch(e){ resolve(null); }
+    try { reader.readAsArrayBuffer(file); } catch(e){ resolve(null); }
   });
 };
 
@@ -3492,9 +3538,15 @@ Z._getComposerFile = function(){
 Z.cancelComposer = function(){
   Z._mediaCache.composer = null;
   var c = document.getElementById('composer-expanded'); if(c) c.innerHTML='';
+  var greeting = document.getElementById('composer-greeting');
+  if(greeting) greeting.style.display = '';
 };
 
-/* ---------- Composer submit ---------- */
+/* ---------- Composer submit — UPLOAD-FIRST DESIGN ----------
+   We start the R2 upload the moment Publish is tapped.
+   The visibility modal opens immediately after and covers the
+   upload delay. When the user taps Continue, the upload is
+   usually done or nearly done, so the post appears almost instantly. */
 Z.submitComposer = async function(){
   var me = Z.State.currentUser;
   if(!me) return;
@@ -3507,16 +3559,28 @@ Z.submitComposer = async function(){
   var mt = fileObj
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
     : null;
-  var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
 
+  /* Start upload immediately in the background. */
+  var uploadPromise = null;
+  var uploadError = null;
+  if(fileObj){
+    uploadPromise = Z.storeMedia(fileObj).catch(function(err){
+      uploadError = err;
+      return null;
+    });
+  }
+
+  /* Single editor: collapse the composer now. */
   Z.cancelComposer();
 
+  /* Open the visibility modal — the user spends 1-2 seconds here
+     while the upload is already in flight. */
   Z.openVisibilityModal(function(visibility){
-    Z._finalizeComposerSubmit(me, text, fileObj, mt, localUrl, visibility, shareBounty);
+    Z._finalizeComposerSubmit(me, text, fileObj, mt, uploadPromise, visibility, shareBounty);
   });
 };
 
-Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, localUrl, visibility, shareBounty){
+Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, uploadPromise, visibility, shareBounty){
   var hasFile = !!fileObj;
 
   /* ---------- TEXT-ONLY ---------- */
@@ -3530,14 +3594,10 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, localUrl, visi
       media_status: 'complete',
       visibility: visibility
     });
-    if(!row){
-      Z.toast('Publish failed — try again.', 'error');
-      return;
-    }
+    if(!row){ Z.toast('Publish failed — try again.', 'error'); return; }
     var real = Object.assign({}, row, {
       reactions: {}, _myReactions: {}, _comments: [],
-      media_status: 'complete',
-      visibility: visibility
+      media_status: 'complete', visibility: visibility
     });
     Z.State.allPosts = [real].concat(Z.State.allPosts || []);
     Z.toast('Post published!');
@@ -3548,8 +3608,9 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, localUrl, visi
   }
 
   /* ---------- MEDIA POST ----------
-     The DB helper returns the row (real or local stub). No id is
-     ever sent. realId is whatever the row says. */
+     Insert the row NOW, immediately, with the pending flag. Add to
+     local state so the author sees it right away. The upload is
+     already running in the background (uploadPromise). */
   var pendRow = await Z.DB.createPost({
     author_id: me.id,
     content: text,
@@ -3560,38 +3621,46 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, localUrl, visi
     visibility: visibility || 'private'
   });
   if(!pendRow || !pendRow.id){
-    if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
     Z.toast('Publish failed — post not created.', 'error');
     return;
   }
 
   var realId = pendRow.id;
+  Z._markPendingSession(realId);
+
   var pending = Object.assign({}, pendRow, {
     reactions: {}, _myReactions: {}, _comments: [],
     media_status: 'pending',
     visibility: visibility || 'private',
-    _optimistic: true,
     _pendingUpload: true
   });
   Z.State.allPosts = [pending].concat(Z.State.allPosts || []);
   if(Z.State.currentView === 'home') Z.softRefresh();
-  Z.toast('Publishing...');
 
-  var mediaUrl = '';
-  try {
-    mediaUrl = await Z.storeMedia(fileObj);
-  } catch(err){
-    try {
-      var c = Z.sb();
-      if(c && realId.indexOf('local_') !== 0) await c.from('posts').delete().eq('id', realId);
-    } catch(e){}
-    Z.State.allPosts = (Z.State.allPosts||[]).filter(function(p){ return p.id !== realId; });
-    if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+  /* Await the upload — usually already done by now. */
+  var mediaUrl = await uploadPromise;
+
+  if(!mediaUrl){
+    /* Upload failed — mark the row so the card shows the failed state. */
+    if(realId.indexOf('local_') !== 0){
+      try {
+        var c = Z.sb();
+        if(c) await c.from('posts').update({ media_status: 'failed' }).eq('id', realId);
+      } catch(e){}
+    }
+    var arrF = Z.State.allPosts || [];
+    for(var i=0;i<arrF.length;i++){
+      if(arrF[i] && arrF[i].id === realId){
+        arrF[i] = Object.assign({}, arrF[i], { media_status: 'failed', _pendingUpload: false });
+        break;
+      }
+    }
     if(Z.State.currentView === 'home') Z.softRefresh();
-    Z.toast('Upload failed — post not published.', 'error');
+    Z.toast('Upload failed — post kept as draft-like card.', 'error');
     return;
   }
 
+  /* Upload succeeded — flip to complete. */
   if(realId.indexOf('local_') !== 0){
     await Z.DB.updatePostFields(realId, {
       media_url: mediaUrl,
@@ -3600,19 +3669,17 @@ Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, localUrl, visi
   }
 
   var arr = Z.State.allPosts || [];
-  for(var i=0;i<arr.length;i++){
-    if(arr[i] && arr[i].id === realId){
-      arr[i] = Object.assign({}, arr[i], {
+  for(var j=0;j<arr.length;j++){
+    if(arr[j] && arr[j].id === realId){
+      arr[j] = Object.assign({}, arr[j], {
         media_url: mediaUrl,
         media_status: 'complete',
-        _pendingUpload: false,
-        _optimistic: false
+        _pendingUpload: false
       });
       break;
     }
   }
 
-  if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
   if(Z.State.currentView === 'home') Z.softRefresh();
   Z.toast('Post published!');
   Z.haptic(12);
@@ -3768,19 +3835,6 @@ async function refetchSharesForContent(table, id, stateKey){
           }
         });
       }
-    } else {
-      var vid = document.querySelector('video[data-spark-id="' + id + '"]');
-      if(vid){
-        var slide = vid.closest('.spark-slide');
-        if(slide){
-          slide.querySelectorAll('.spark-action-btn').forEach(function(b){
-            if(b.innerHTML.indexOf('fa-share-nodes') >= 0){
-              var cEl = b.querySelector('.spark-action-count');
-              if(cEl) cEl.textContent = item.shares;
-            }
-          });
-        }
-      }
     }
   } catch(e){}
 }
@@ -3812,27 +3866,12 @@ Z.postPostToWall = async function(postId){
     visibility: 'public'
   };
   var r = await c.from('posts').insert(payload).select().maybeSingle();
-  if(r.error || !r.data){
-    /* Repost path is less critical than the main composer — surface error. */
-    Z.toast('Repost failed: ' + ((r.error && (r.error.message || r.error.code)) || 'unknown'), 'error');
-    return;
-  }
+  if(r.error || !r.data){ Z.toast('Repost failed.', 'error'); return; }
   var row = Object.assign({}, r.data, {
     reactions:{}, _myReactions:{}, _comments:[],
     media_status: 'complete', visibility: 'public'
   });
   Z.State.allPosts = [row].concat(Z.State.allPosts || []);
-  try {
-    var amt = 0;
-    var ownerProf = Z.getProfileById(src.author_id);
-    if(ownerProf && ownerProf.bounty_settings && typeof ownerProf.bounty_settings.share === 'number'){
-      amt = ownerProf.bounty_settings.share;
-    }
-    if(amt > 0){
-      Z.animateDollar(amt);
-      setTimeout(async function(){ await Z.refreshSession(); Z.updateHeader(); }, 500);
-    }
-  } catch(e){}
   if(Z.State.currentView === 'home') Z.softRefresh();
   Z.toast('Reposted to your wall.');
   Z.haptic(12);
@@ -3941,7 +3980,7 @@ Z.setupFeedVideoAutoplay = function(){
   setTimeout(_scheduleFeedRecompute, 200);
 };
 
-/* ---------- Home interactions (double-tap heart + pull-to-refresh) ---------- */
+/* ---------- Home interactions ---------- */
 Z.attachHomeInteractions = function(){
   document.querySelectorAll('.post-media[data-post-media] img').forEach(function(img){
     if(img._dtHooked) return;
