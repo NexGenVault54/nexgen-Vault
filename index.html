@@ -1501,14 +1501,26 @@ Z.saveSnapshot = function(){
   var key = Z._snapshotKey();
   if(!key) return;
   try {
+    /* Never persist blob:/data: URLs — they die on page reload and
+       produce ERR_FILE_NOT_FOUND on the next load. */
+    var safeUrl = function(u){
+      if(!u || typeof u !== 'string') return null;
+      if(u.indexOf('blob:') === 0) return null;
+      if(u.indexOf('data:') === 0) return null;
+      return u;
+    };
     var snap = {
       ts: Date.now(),
       posts: (Z.State.allPosts||[]).slice(0,30).map(function(p){
-        return { id:p.id, author_id:p.author_id, content:p.content, media_url:p.media_url, media_type:p.media_type,
+        var safeMedia = safeUrl(p.media_url);
+        return { id:p.id, author_id:p.author_id, content:p.content,
+                 media_url: safeMedia,
+                 media_type: safeMedia ? p.media_type : null,
                  created_at:p.created_at, views:p.views, shares:p.shares, reactions:p.reactions||{} };
       }),
       sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
-        return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title, video_url:s.video_url,
+        return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title,
+                 video_url: safeUrl(s.video_url),
                  tags:s.tags||[], type:s.type, created_at:s.created_at, views:s.views, shares:s.shares };
       }),
       profiles: (Z.State.allProfiles||[]).slice(0,50).map(function(p){
@@ -1531,8 +1543,18 @@ Z.loadSnapshot = function(){
     var snap = JSON.parse(raw);
     if(!snap || !snap.ts) return false;
     if(Date.now() - snap.ts > 24*60*60*1000) return false;
-    Z.State.allPosts   = (snap.posts||[]).map(function(p){ p.reactions = p.reactions||{}; p._myReactions = {}; p._comments = []; return p; });
-    Z.State.allSparks  = (snap.sparks||[]).map(function(s){ s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0; return s; });
+        Z.State.allPosts   = (snap.posts||[]).map(function(p){
+      if(p.media_url && (p.media_url.indexOf('blob:') === 0 || p.media_url.indexOf('data:') === 0)){
+        p.media_url = null; p.media_type = null;
+      }
+      p.reactions = p.reactions||{}; p._myReactions = {}; p._comments = []; return p;
+    });
+    Z.State.allSparks  = (snap.sparks||[]).map(function(s){
+      if(s.video_url && (s.video_url.indexOf('blob:') === 0 || s.video_url.indexOf('data:') === 0)){
+        s.video_url = null;
+      }
+      s._reactions = {}; s._myReactions = {}; s._comments = []; s._commentsCount = 0; return s;
+    });
     var existing = Z.State.allProfiles || [];
     var byId = {};
     (snap.profiles||[]).forEach(function(p){ byId[p.id] = p; });
