@@ -3103,18 +3103,35 @@ Z.openCreateModal = function(){
 })();
 </script>
 <!-- ============================================================
-     SECTION 4 — HOME + POSTS + COMPOSER (v3.8)
-     - Single editor, light-blue canvas, bold centered text
-     - Composer text auto-shrinks once it exceeds banner capacity
-     - Short text-only posts render as a banner and are tappable
-     - Upload starts on Publish; modal covers the delay
-     - Stale pending rows show a "didn't finish" card
+     SECTION 4 — HOME + POSTS + COMPOSER (v3.9)
+     - Composer inserts a pending row on Publish-tap (before modal)
+     - Local blob URL renders instantly for the author
+     - Replaces only the author's card after finalize (no full re-render)
+     - softRefresh preserves playing videos
+     - storeMedia has timeouts + retry
+     - Failed card is only shown to the author
      ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z;
 if(!Z) return;
+
+/* ============================================================
+   storeMedia timeout wrapper — 20s presign, 120s PUT, one retry.
+   ============================================================ */
+Z._storeMediaWithTimeout = async function(file){
+  var attempt = 0;
+  while(attempt < 2){
+    attempt++;
+    try {
+      return await Z.storeMedia(file);
+    } catch(err){
+      if(attempt >= 2) throw err;
+      await new Promise(function(r){ setTimeout(r, 800); });
+    }
+  }
+};
 
 Z.findPostInState = function(postId){
   var p = (Z.State.allPosts||[]).find(function(x){ return x.id === postId; });
@@ -3142,7 +3159,7 @@ Z._isPendingStale = function(item){
   if(item._optimistic || item._pendingUpload) return false;
   var created = new Date(item.created_at || 0).getTime();
   if(!created) return false;
-  return (Date.now() - created) > 90000;
+  return (Date.now() - created) > 5 * 60 * 1000;  /* 5 minutes — mobile-friendly */
 };
 
 /* ---------- Visibility chip ---------- */
@@ -3332,10 +3349,7 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
 
-  /* Caption area:
-     - Short text-only post → banner block (Facebook status style)
-     - Any other post with content → normal caption
-     - No content → nothing */
+  /* Caption */
   var captionHtml = '';
   var stalePending = Z._isPendingStale(p);
   var isTextOnly = p.content && !p.media_url && p.media_status !== 'pending';
@@ -3354,13 +3368,43 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '</div>';
   }
 
+  /* Media
+     Priority order:
+       1. pending + local blob URL → render the blob (instant for author)
+       2. pending + no blob + stale + isMine → red failed card (author only)
+       3. pending + no blob + not stale → nothing (small hourglass in header)
+       4. media_url → render normally
+  */
   var mHtml = '';
+  var localBlob = p._localBlobUrl || null;
+
   if(p.media_status === 'pending'){
-    if(stalePending){
+    if(localBlob){
+      var mtBlob = p.media_type || 'image';
+      if(mtBlob === 'video'){
+        mHtml = '<div class="post-media has-video" data-post-media="' + Z.escape(p.id) + '">' +
+          '<video src="' + Z.escape(localBlob) + '" controls playsinline muted loop></video>' +
+        '</div>';
+      } else {
+        mHtml = '<div class="post-media has-image" data-post-media="' + Z.escape(p.id) + '">' +
+          '<img src="' + Z.escape(localBlob) + '" alt="Post">' +
+        '</div>';
+      }
+    } else if(stalePending && isMine){
       mHtml = '<div class="post-media-failed">' +
         '<i class="fa-solid fa-circle-exclamation pmf-icon"></i>' +
         '<div class="pmf-title">Upload didn\'t finish</div>' +
-        '<div class="pmf-sub">The page was closed or refreshed while uploading. The file has to be added again.</div>' +
+        '<div class="pmf-sub">The page was closed or refreshed while uploading.</div>' +
+        '<button class="pmf-delete" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete post</button>' +
+      '</div>';
+    }
+    /* else: no block, hourglass shows in header */
+  } else if(p.media_status === 'failed'){
+    if(isMine){
+      mHtml = '<div class="post-media-failed">' +
+        '<i class="fa-solid fa-circle-exclamation pmf-icon"></i>' +
+        '<div class="pmf-title">Upload failed</div>' +
+        '<div class="pmf-sub">The file could not be uploaded. You can delete this post.</div>' +
         '<button class="pmf-delete" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete post</button>' +
       '</div>';
     }
@@ -3410,10 +3454,12 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var editedBadge = p.edited_at ? ' · <span style="color:#64748b;font-style:italic;">edited</span>' : '';
 
   var pendingBadge = '';
-  if(p.media_status === 'pending' && !stalePending){
-    pendingBadge = ' · <span class="upload-hourglass"><i class="fa-solid fa-hourglass-half"></i>Publishing</span>';
-  } else if(stalePending){
-    pendingBadge = ' · <span style="color:#fca5a5;font-weight:700;font-size:10px;"><i class="fa-solid fa-circle-exclamation"></i> Upload failed</span>';
+  if(p.media_status === 'pending'){
+    if(stalePending && isMine){
+      pendingBadge = ' · <span style="color:#fca5a5;font-weight:700;font-size:10px;"><i class="fa-solid fa-circle-exclamation"></i> Upload failed</span>';
+    } else if(!localBlob){
+      pendingBadge = ' · <span class="upload-hourglass"><i class="fa-solid fa-hourglass-half"></i>Publishing</span>';
+    }
   }
 
   return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
@@ -3519,7 +3565,7 @@ document.addEventListener('keydown', function(e){
   }
 });
 
-/* ---------- Composer (light-blue canvas, auto-shrink font) ---------- */
+/* ---------- Composer ---------- */
 Z.onComposerInput = function(el){
   if(!el) return;
   var text = el.value || '';
@@ -3661,7 +3707,7 @@ Z.cancelComposer = function(){
   if(greeting) greeting.style.display = '';
 };
 
-/* ---------- Composer submit — upload-first design ---------- */
+/* ---------- Composer submit — insert first, then modal ---------- */
 Z.submitComposer = async function(){
   var me = Z.State.currentUser;
   if(!me) return;
@@ -3671,120 +3717,165 @@ Z.submitComposer = async function(){
   var shareBounty = parseFloat((document.getElementById('composer-share-bounty')||{}).value || '0') || 0;
   if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
   if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Media under 100 MB.'); return; }
+
   var mt = fileObj
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
     : null;
+  var localBlobUrl = fileObj ? URL.createObjectURL(fileObj) : null;
 
-  var uploadPromise = null;
-  if(fileObj){
-    uploadPromise = Z.storeMedia(fileObj).catch(function(err){ return null; });
-  }
+  /* Snapshot the file into a Blob we can PUT later. */
+  var fileForUpload = fileObj;
 
   Z.cancelComposer();
 
-  Z.openVisibilityModal(function(visibility){
-    Z._finalizeComposerSubmit(me, text, fileObj, mt, uploadPromise, visibility, shareBounty);
-  });
-};
-
-Z._finalizeComposerSubmit = async function(me, text, fileObj, mt, uploadPromise, visibility, shareBounty){
-  var hasFile = !!fileObj;
-
-  /* ---------- TEXT-ONLY ---------- */
-  if(!hasFile){
-    var row = await Z.DB.createPost({
-      author_id: me.id,
-      content: text,
-      media_url: null,
-      media_type: null,
-      share_bounty: shareBounty,
-      media_status: 'complete',
-      visibility: visibility
-    });
-    if(!row){ Z.toast('Publish failed — try again.', 'error'); return; }
-    var real = Object.assign({}, row, {
-      reactions: {}, _myReactions: {}, _comments: [],
-      media_status: 'complete', visibility: visibility
-    });
-    Z.State.allPosts = [real].concat(Z.State.allPosts || []);
-    Z.toast('Post published!');
-    Z.haptic(12);
-    if(Z.State.currentView === 'home') Z.softRefresh();
-    Z.saveSnapshot();
-    return;
-  }
-
-  /* ---------- MEDIA POST ---------- */
+  /* 1. Insert the pending row FIRST. Show it in the feed immediately.
+        Default visibility is 'private' — safe fallback while the
+        modal is up. RLS hides private posts from everyone else. */
   var pendRow = await Z.DB.createPost({
     author_id: me.id,
     content: text,
     media_url: null,
     media_type: mt,
     share_bounty: shareBounty,
-    media_status: 'pending',
-    visibility: visibility || 'private'
+    media_status: hasFile ? 'pending' : 'complete',
+    visibility: 'private'
   });
+
   if(!pendRow || !pendRow.id){
-    Z.toast('Publish failed — post not created.', 'error');
+    if(localBlobUrl){ try { URL.revokeObjectURL(localBlobUrl); } catch(e){} }
+    Z.toast('Publish failed — try again.', 'error');
     return;
   }
 
   var realId = pendRow.id;
   Z._markPendingSession(realId);
 
-  var pending = Object.assign({}, pendRow, {
+  var localPost = Object.assign({}, pendRow, {
+    content: text,
+    media_url: hasFile ? null : null,
+    media_type: mt,
+    media_status: hasFile ? 'pending' : 'complete',
+    visibility: 'private',
     reactions: {}, _myReactions: {}, _comments: [],
-    media_status: 'pending',
-    visibility: visibility || 'private',
-    _pendingUpload: true
+    _pendingUpload: hasFile,
+    _localBlobUrl: localBlobUrl
   });
-  Z.State.allPosts = [pending].concat(Z.State.allPosts || []);
-  if(Z.State.currentView === 'home') Z.softRefresh();
 
-  var mediaUrl = await uploadPromise;
-
-  if(!mediaUrl){
-    if(realId.indexOf('local_') !== 0){
-      try {
-        var c = Z.sb();
-        if(c) await c.from('posts').update({ media_status: 'failed' }).eq('id', realId);
-      } catch(e){}
+  Z.State.allPosts = [localPost].concat(Z.State.allPosts || []);
+  if(Z.State.currentView === 'home'){
+    /* Surgical insert — do not tear down the whole feed. */
+    var container = document.getElementById('app-container');
+    if(container){
+      var host = container.querySelector('#composer-expanded') || container;
+      var tmp = document.createElement('div');
+      tmp.innerHTML = Z.renderPostCard(localPost, Z.State.allProfiles, me, true);
+      var newCard = tmp.firstChild;
+      if(newCard){
+        if(host.nextSibling) host.parentNode.insertBefore(newCard, host.nextSibling);
+        else host.parentNode.appendChild(newCard);
+      }
+      try { Z.observeFreezeDots(); } catch(e){}
+      try { Z._tagMediaContainers(); } catch(e){}
     }
-    var arrF = Z.State.allPosts || [];
-    for(var i=0;i<arrF.length;i++){
-      if(arrF[i] && arrF[i].id === realId){
-        arrF[i] = Object.assign({}, arrF[i], { media_status: 'failed', _pendingUpload: false });
-        break;
+  }
+  Z.haptic(8);
+
+  /* 2. Open the visibility modal — user chooses audience. */
+  Z.openVisibilityModal(function(visibility){
+    /* Update the DB row with the chosen visibility. */
+    if(realId.indexOf('local_') !== 0){
+      Z.DB.updatePostFields(realId, { visibility: visibility }).catch(function(){});
+    }
+    /* Update local state. */
+    var arr = Z.State.allPosts || [];
+    for(var i=0;i<arr.length;i++){
+      if(arr[i] && arr[i].id === realId){ arr[i].visibility = visibility; break; }
+    }
+    /* Chip in the header should reflect new value. */
+    var card = document.querySelector('.post-card[data-post-id="' + realId + '"]');
+    if(card){
+      var handleEl = card.querySelector('.phandle');
+      if(handleEl){
+        /* Rebuild the header line so chip appears. */
+        var parts = handleEl.innerHTML.split(' · ');
+        handleEl.innerHTML = parts.slice(0, 3).join(' · ') +
+          (Z.visibilityChipHtml(visibility) ? ' · ' + Z.visibilityChipHtml(visibility) : '');
       }
     }
-    if(Z.State.currentView === 'home') Z.softRefresh();
-    Z.toast('Upload failed — post kept as draft-like card.', 'error');
-    return;
-  }
 
-  if(realId.indexOf('local_') !== 0){
-    await Z.DB.updatePostFields(realId, {
-      media_url: mediaUrl,
-      media_status: 'complete'
-    });
-  }
+    /* 3. Kick off the upload if there's a file. */
+    if(hasFile && fileForUpload){
+      (async function(){
+        var mediaUrl = '';
+        try {
+          mediaUrl = await Z._storeMediaWithTimeout(fileForUpload);
+        } catch(err){
+          try {
+            var cc = Z.sb();
+            if(cc && realId.indexOf('local_') !== 0) await cc.from('posts').update({ media_status:'failed' }).eq('id', realId);
+          } catch(e){}
+          var arrF = Z.State.allPosts || [];
+          for(var k=0;k<arrF.length;k++){
+            if(arrF[k] && arrF[k].id === realId){
+              arrF[k].media_status = 'failed';
+              arrF[k]._pendingUpload = false;
+              break;
+            }
+          }
+          if(localBlobUrl){ try { URL.revokeObjectURL(localBlobUrl); } catch(e){} }
+          Z.toast('Upload failed — you can delete the post.', 'error');
+          Z._replacePostCard(realId);
+          return;
+        }
 
-  var arr = Z.State.allPosts || [];
-  for(var j=0;j<arr.length;j++){
-    if(arr[j] && arr[j].id === realId){
-      arr[j] = Object.assign({}, arr[j], {
-        media_url: mediaUrl,
-        media_status: 'complete',
-        _pendingUpload: false
-      });
-      break;
+        if(realId.indexOf('local_') !== 0){
+          await Z.DB.updatePostFields(realId, {
+            media_url: mediaUrl,
+            media_status: 'complete'
+          });
+        }
+
+        var arr2 = Z.State.allPosts || [];
+        for(var j=0;j<arr2.length;j++){
+          if(arr2[j] && arr2[j].id === realId){
+            arr2[j].media_url = mediaUrl;
+            arr2[j].media_status = 'complete';
+            arr2[j]._pendingUpload = false;
+            arr2[j]._localBlobUrl = null;
+            break;
+          }
+        }
+        if(localBlobUrl){ try { URL.revokeObjectURL(localBlobUrl); } catch(e){} }
+        Z._replacePostCard(realId);
+        Z.toast('Post published!');
+        Z.haptic(12);
+        Z.saveSnapshot();
+      })();
+    } else {
+      Z.toast('Post published!');
+      Z.haptic(12);
+      Z.saveSnapshot();
     }
-  }
+  });
+};
 
-  if(Z.State.currentView === 'home') Z.softRefresh();
-  Z.toast('Post published!');
-  Z.haptic(12);
-  Z.saveSnapshot();
+/* ---------- Surgical card replace ---------- */
+Z._replacePostCard = function(postId){
+  var post = Z.findPostInState(postId);
+  if(!post) return;
+  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+  if(!card || !card.parentNode) return;
+  var me = Z.State.currentUser;
+  var tmp = document.createElement('div');
+  try { tmp.innerHTML = Z.renderPostCard(post, Z.State.allProfiles, me); }
+  catch(e){ return; }
+  var newCard = tmp.firstChild;
+  if(!newCard) return;
+  card.parentNode.replaceChild(newCard, card);
+  try { Z.observeFreezeDots(); } catch(e){}
+  try { Z._tagMediaContainers(); } catch(e){}
+  try { Z.detectCaptionOverflow(); } catch(e){}
+  try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
 };
 
 /* ---------- Post edit / hide / delete ---------- */
@@ -3819,7 +3910,7 @@ Z.savePostEdit = async function(postId){
   if(post){ post.content = text; post.edited_at = now; }
   Z.closeModal();
   Z.toast('Post edited.');
-  Z.softRefresh();
+  Z._replacePostCard(postId);
   Z.saveSnapshot();
 };
 
@@ -3832,8 +3923,9 @@ Z.hidePost = function(postId){
     localStorage.setItem(key, JSON.stringify(arr));
   } catch(e){}
   Z.State.allPosts = (Z.State.allPosts||[]).filter(function(p){ return p.id !== postId; });
+  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+  if(card && card.parentNode) card.parentNode.removeChild(card);
   Z.toast('Post hidden from your feed.');
-  Z.softRefresh();
 };
 
 Z.toggleSavePost = function(postId){
@@ -3845,7 +3937,6 @@ Z.toggleSavePost = function(postId){
   Z.setSavedPosts(saved);
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
   Z.haptic(8);
-  Z.softRefresh();
 };
 
 Z.markInterest = function(postId, kind){
@@ -3855,14 +3946,18 @@ Z.markInterest = function(postId, kind){
   else { interests[key] = kind; Z.toast(kind === 'interested' ? 'Marked Interested.' : 'Marked Not Interested.'); }
   Z.setInterests(interests);
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
-  Z.softRefresh();
 };
 
 Z.deletePost = async function(postId){
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
   if(!confirm('Delete this post?')) return;
   var ok = await Z.DB.deletePost(postId);
-  if(ok){ Z.toast('Deleted.'); Z.softRefresh(); Z.saveSnapshot(); }
+  if(ok){
+    Z.toast('Deleted.');
+    var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+    if(card && card.parentNode) card.parentNode.removeChild(card);
+    Z.saveSnapshot();
+  }
 };
 
 Z.toggleComments = function(postId){
@@ -3973,7 +4068,7 @@ Z.postPostToWall = async function(postId){
     media_status: 'complete', visibility: 'public'
   });
   Z.State.allPosts = [row].concat(Z.State.allPosts || []);
-  if(Z.State.currentView === 'home') Z.softRefresh();
+  Z._replacePostCard(row.id);
   Z.toast('Reposted to your wall.');
   Z.haptic(12);
   setTimeout(function(){ refetchSharesForContent('posts', postId, 'post'); }, 500);
