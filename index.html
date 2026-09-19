@@ -3103,13 +3103,12 @@ Z.openCreateModal = function(){
 })();
 </script>
 <!-- ============================================================
-     SECTION 4 — HOME + POSTS + COMPOSER (v3.9)
-     - Composer inserts a pending row on Publish-tap (before modal)
+     SECTION 4 — HOME + POSTS + COMPOSER (v3.9a)
+     - Composer inserts pending row on Publish-tap (before modal)
      - Local blob URL renders instantly for the author
-     - Replaces only the author's card after finalize (no full re-render)
-     - softRefresh preserves playing videos
-     - storeMedia has timeouts + retry
-     - Failed card is only shown to the author
+     - Upload complete swaps src in-place (preserves video playhead)
+     - softRefresh on home becomes surgical mergeFeedFromState()
+     - data-media-status / data-media-url attributes for cheap diffing
      ============================================================ -->
 <script>
 (function(){
@@ -3118,7 +3117,13 @@ var Z = window.Z;
 if(!Z) return;
 
 /* ============================================================
-   storeMedia timeout wrapper — 20s presign, 120s PUT, one retry.
+   Save the original softRefresh BEFORE overriding it.
+   We still want the destructive rebuild for non-home views.
+   ============================================================ */
+Z._softRefreshFull = Z.softRefresh;
+
+/* ============================================================
+   storeMedia wrapper with one retry.
    ============================================================ */
 Z._storeMediaWithTimeout = async function(file){
   var attempt = 0;
@@ -3159,7 +3164,7 @@ Z._isPendingStale = function(item){
   if(item._optimistic || item._pendingUpload) return false;
   var created = new Date(item.created_at || 0).getTime();
   if(!created) return false;
-  return (Date.now() - created) > 5 * 60 * 1000;  /* 5 minutes — mobile-friendly */
+  return (Date.now() - created) > 5 * 60 * 1000;
 };
 
 /* ---------- Visibility chip ---------- */
@@ -3170,7 +3175,7 @@ Z.visibilityChipHtml = function(vis){
   return '';
 };
 
-/* ---------- Multi-select visibility modal ---------- */
+/* ---------- Visibility modal ---------- */
 Z._visPick = { private:true, family:true, connections:true, public:true };
 Z._visibilityPickCallback = null;
 
@@ -3180,9 +3185,7 @@ Z.openVisibilityModal = function(onPick){
   Z.openModal(
     '<div class="modal-overlay" onclick="if(event.target===this)return;">' +
       '<div class="modal-box" style="max-width:440px;">' +
-        '<div class="modal-header">' +
-          '<h3>Who can see this?</h3>' +
-        '</div>' +
+        '<div class="modal-header"><h3>Who can see this?</h3></div>' +
         '<div class="vis-caption">All audiences are ticked. Untick any you want to exclude. The widest ticked audience wins.</div>' +
         Z._visRowHtml('private',     'fa-lock',         'Private',     'Only you can see this.') +
         Z._visRowHtml('family',      'fa-people-roof',  'Family',      'Only your close family can see this.') +
@@ -3193,7 +3196,6 @@ Z.openVisibilityModal = function(onPick){
     '</div>'
   );
 };
-
 Z._visRowHtml = function(id, icon, title, sub){
   var on = !!Z._visPick[id];
   return '<div class="vis-row' + (on ? ' selected' : '') + '" data-vis="' + id + '" onclick="Z._toggleVis(\'' + id + '\')">' +
@@ -3204,7 +3206,6 @@ Z._visRowHtml = function(id, icon, title, sub){
     '</div>' +
   '</div>';
 };
-
 Z._toggleVis = function(id){
   Z._visPick[id] = !Z._visPick[id];
   document.querySelectorAll('#modal-container .vis-row').forEach(function(r){
@@ -3214,20 +3215,16 @@ Z._toggleVis = function(id){
     }
   });
 };
-
 Z._confirmVisibility = function(){
   var vis = 'private';
   if(Z._visPick.public)           vis = 'public';
   else if(Z._visPick.connections) vis = 'connections';
   else if(Z._visPick.family)      vis = 'family';
   else                            vis = 'private';
-
   var cb = Z._visibilityPickCallback;
   Z._visibilityPickCallback = null;
   Z.closeModal();
-  if(typeof cb === 'function'){
-    try { cb(vis); } catch(e){ console.error('vis callback', e); }
-  }
+  if(typeof cb === 'function'){ try { cb(vis); } catch(e){ console.error('vis callback', e); } }
 };
 
 /* ---------- Home ---------- */
@@ -3281,7 +3278,6 @@ Z.renderDiscoverStrip = async function(){
   if(!host) return;
   var me = Z.State.currentUser;
   if(!me){ host.innerHTML = ''; return; }
-
   var data = [];
   try { data = await Z.DB.getPeopleFeed(12, 0, Date.now()); }
   catch(e){ data = []; }
@@ -3289,7 +3285,6 @@ Z.renderDiscoverStrip = async function(){
     data = (Z.State.allProfiles || []).filter(function(u){ return u.id !== me.id; }).slice(0, 12);
   }
   if(!data.length){ host.innerHTML = ''; return; }
-
   data.forEach(function(p){
     var arr = Z.State.allProfiles || [];
     var idx = -1;
@@ -3306,8 +3301,7 @@ Z.renderDiscoverStrip = async function(){
   var html = '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;">';
   html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
   html += '<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;">';
-  html += '<i class="fa-solid fa-users" style="color:#10b981;margin-right:6px;"></i>Discover People';
-  html += '</div>';
+  html += '<i class="fa-solid fa-users" style="color:#10b981;margin-right:6px;"></i>Discover People</div>';
   html += '<button onclick="Z.showView(\'people\')" style="background:transparent;border:none;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;padding:2px 6px;">See All ›</button>';
   html += '</div>';
   html += '<div class="home-discover-scroll">';
@@ -3315,8 +3309,7 @@ Z.renderDiscoverStrip = async function(){
     html += '<div style="flex:0 0 auto;width:104px;text-align:center;">';
     html += '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="background:transparent;border:none;cursor:pointer;padding:0;width:100%;">';
     html += '<div style="width:72px;height:72px;border-radius:50%;overflow:hidden;border:2px solid #1e293b;margin:0 auto;background:#0f172a;">';
-    html += '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:100%;height:100%;object-fit:cover;">';
-    html += '</div>';
+    html += '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:100%;height:100%;object-fit:cover;"></div>';
     html += '<div style="font-size:11px;color:#cbd5e1;font-weight:700;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(Z.displayName(u)) + '</div>';
     html += '<div style="font-size:9px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@' + Z.escape(u.username || 'user') + '</div>';
     html += '</button>';
@@ -3339,7 +3332,9 @@ Z.renderDiscoverStrip = async function(){
   } catch(e){}
 })();
 
-/* ---------- Post card ---------- */
+/* ============================================================
+   renderPostCard — now stamps data-media-status / data-media-url
+   ============================================================ */
 Z.renderPostCard = function(p, profiles, me, isNew){
   var a = (profiles || []).find(function(x){ return x.id === p.author_id; }) ||
           { id:p.author_id, name:'User', avatar:'' };
@@ -3349,7 +3344,6 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
 
-  /* Caption */
   var captionHtml = '';
   var stalePending = Z._isPendingStale(p);
   var isTextOnly = p.content && !p.media_url && p.media_status !== 'pending';
@@ -3368,13 +3362,6 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '</div>';
   }
 
-  /* Media
-     Priority order:
-       1. pending + local blob URL → render the blob (instant for author)
-       2. pending + no blob + stale + isMine → red failed card (author only)
-       3. pending + no blob + not stale → nothing (small hourglass in header)
-       4. media_url → render normally
-  */
   var mHtml = '';
   var localBlob = p._localBlobUrl || null;
 
@@ -3398,7 +3385,6 @@ Z.renderPostCard = function(p, profiles, me, isNew){
         '<button class="pmf-delete" onclick="Z.deletePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-trash"></i> Delete post</button>' +
       '</div>';
     }
-    /* else: no block, hourglass shows in header */
   } else if(p.media_status === 'failed'){
     if(isMine){
       mHtml = '<div class="post-media-failed">' +
@@ -3462,7 +3448,9 @@ Z.renderPostCard = function(p, profiles, me, isNew){
     }
   }
 
-  return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
+  return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '"' +
+         ' data-media-status="' + Z.escape(p.media_status || 'complete') + '"' +
+         ' data-media-url="' + Z.escape(p.media_url || '') + '">' +
     '<div class="post-author">' +
       '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
       '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
@@ -3488,7 +3476,7 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   '</div>';
 };
 
-/* ---------- Fullscreen banner overlay ---------- */
+/* ---------- Banner overlay ---------- */
 Z.openTextBannerOverlay = function(postId){
   var existing = document.getElementById('zynix-text-banner-overlay');
   if(existing){ existing.remove(); return; }
@@ -3515,21 +3503,15 @@ Z.togglePostMenu = function(postId, ev){
     if(wrap) btn = wrap.querySelector('.post-menu-btn');
   }
   if(!btn) return;
-
   var isOpen = menu.style.display === 'block';
   document.querySelectorAll('.post-menu').forEach(function(m){
-    m.style.display = 'none';
-    m.style.position = '';
-    m.style.top = '';
-    m.style.left = '';
-    m.style.right = '';
+    m.style.display = 'none'; m.style.position = '';
+    m.style.top = ''; m.style.left = ''; m.style.right = '';
   });
   if(isOpen) return;
-
   var rect = btn.getBoundingClientRect();
   var menuW = 210;
   var left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
-
   menu.style.position = 'fixed';
   menu.style.top = (rect.bottom + 4) + 'px';
   menu.style.left = left + 'px';
@@ -3537,25 +3519,19 @@ Z.togglePostMenu = function(postId, ev){
   menu.style.zIndex = '9999';
   menu.style.display = 'block';
 };
-
 document.addEventListener('click', function(e){
   if(!e.target.closest('.post-menu-wrap') && !e.target.closest('.post-menu')){
     document.querySelectorAll('.post-menu').forEach(function(m){
-      m.style.display = 'none';
-      m.style.position = '';
-      m.style.top = '';
-      m.style.left = '';
-      m.style.right = '';
+      m.style.display = 'none'; m.style.position = '';
+      m.style.top = ''; m.style.left = ''; m.style.right = '';
     });
   }
 }, true);
-
 window.addEventListener('scroll', function(){
   document.querySelectorAll('.post-menu').forEach(function(m){
     if(m.style.display === 'block'){ m.style.display = 'none'; m.style.position = ''; }
   });
 }, {passive:true});
-
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape'){
     document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; m.style.position = ''; });
@@ -3572,16 +3548,13 @@ Z.onComposerInput = function(el){
   var tooLong = text.length > 200 || text.split('\n').length > 6;
   el.classList.toggle('shrunk', tooLong);
 };
-
 Z.expandComposer = function(){
   var c = document.getElementById('composer-expanded');
   if(!c) return;
   if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
   if(c.innerHTML) return;
-
   var greeting = document.getElementById('composer-greeting');
   if(greeting) greeting.style.display = 'none';
-
   c.innerHTML =
     '<div class="composer-wrap">' +
       '<div class="composer-canvas">' +
@@ -3609,10 +3582,7 @@ Z.expandComposer = function(){
     '</div>';
   setTimeout(function(){ var e = document.getElementById('composer-text'); if(e) e.focus(); }, 50);
 };
-
-Z.premiumTemplates = function(){
-  Z.toast('Add premium templates — coming soon.');
-};
+Z.premiumTemplates = function(){ Z.toast('Add premium templates — coming soon.'); };
 
 /* ---------- Media preview helpers ---------- */
 Z._mediaCache = { composer:null, status:null, spark:null, fv:null };
@@ -3658,7 +3628,6 @@ Z._previewMediaFile = function(input, opts){
   if(opts.urlFieldId){ var uf = document.getElementById(opts.urlFieldId); if(uf) uf.value = ''; }
   return f;
 };
-
 Z._removeMediaFile = function(opts){
   Z._mediaCache[opts.cacheKey] = null;
   if(opts.fileInputIds) opts.fileInputIds.forEach(function(id){
@@ -3670,27 +3639,20 @@ Z._removeMediaFile = function(opts){
   var rr = document.getElementById(opts.removeRowId);
   if(rr) rr.style.display = 'none';
 };
-
 Z.previewComposerFile = function(input){
   Z._previewMediaFile(input, {
-    cacheKey: 'composer',
-    previewId: 'composer-preview',
-    removeRowId: 'composer-remove-row',
-    removeFn: 'removeComposerFile',
-    clearInputIds: ['composer-file-photo','composer-file-video'],
-    maxSizeMB: 100
+    cacheKey: 'composer', previewId: 'composer-preview',
+    removeRowId: 'composer-remove-row', removeFn: 'removeComposerFile',
+    clearInputIds: ['composer-file-photo','composer-file-video'], maxSizeMB: 100
   });
 };
-
 Z.removeComposerFile = function(){
   Z._removeMediaFile({
-    cacheKey: 'composer',
-    previewId: 'composer-preview',
+    cacheKey: 'composer', previewId: 'composer-preview',
     removeRowId: 'composer-remove-row',
     fileInputIds: ['composer-file-photo','composer-file-video']
   });
 };
-
 Z._getComposerFile = function(){
   if(Z._mediaCache.composer && Z._mediaCache.composer.blob) return Z._mediaCache.composer.blob;
   var vi = document.getElementById('composer-file-video');
@@ -3699,12 +3661,187 @@ Z._getComposerFile = function(){
   if(pi && pi.files && pi.files[0]) return pi.files[0];
   return null;
 };
-
 Z.cancelComposer = function(){
   Z._mediaCache.composer = null;
   var c = document.getElementById('composer-expanded'); if(c) c.innerHTML='';
   var greeting = document.getElementById('composer-greeting');
   if(greeting) greeting.style.display = '';
+};
+
+/* ============================================================
+   Surgical card helpers
+   ============================================================ */
+
+/* Swap only the media src inside an existing card.
+   Preserves the video playhead so it does not restart. */
+Z._swapMediaSrcInCard = function(postId, newUrl){
+  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+  if(!card) return false;
+  var media = card.querySelector('.post-media');
+  if(!media){
+    /* No media block yet (pending placeholder). Replace whole card. */
+    return false;
+  }
+  var v = media.querySelector('video');
+  var i = media.querySelector('img');
+  if(v){
+    var wasPlaying = !v.paused;
+    var t = v.currentTime || 0;
+    try {
+      v.src = newUrl;
+      v.addEventListener('loadedmetadata', function(){ try { v.currentTime = t; } catch(e){} }, {once:true});
+      if(wasPlaying){ try { v.play().catch(function(){}); } catch(e){} }
+    } catch(e){}
+    return true;
+  }
+  if(i){
+    i.src = newUrl;
+    return true;
+  }
+  return false;
+};
+
+/* Replace a single post card. Preserves the video playhead if a
+   video inside was playing. */
+Z._replacePostCard = function(postId){
+  var post = Z.findPostInState(postId);
+  if(!post) return;
+  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
+  if(!card || !card.parentNode) return;
+
+  /* Save playhead from any playing video inside the card. */
+  var savedPlayheads = {};
+  card.querySelectorAll('video').forEach(function(v, i){
+    if(!v.paused){
+      savedPlayheads[i] = { t: v.currentTime, playing: true };
+    }
+  });
+
+  var me = Z.State.currentUser;
+  var tmp = document.createElement('div');
+  try { tmp.innerHTML = Z.renderPostCard(post, Z.State.allProfiles, me); }
+  catch(e){ return; }
+  var newCard = tmp.firstChild;
+  if(!newCard) return;
+  card.parentNode.replaceChild(newCard, card);
+
+  /* Restore playhead on any matching video elements. */
+  if(Object.keys(savedPlayheads).length){
+    newCard.querySelectorAll('video').forEach(function(v, i){
+      var s = savedPlayheads[i];
+      if(!s) return;
+      v.addEventListener('loadedmetadata', function(){
+        try { v.currentTime = s.t; } catch(e){}
+        if(s.playing){ try { v.play().catch(function(){}); } catch(e){} }
+      }, {once:true});
+    });
+  }
+
+  try { Z.observeFreezeDots(); } catch(e){}
+  try { Z._tagMediaContainers(); } catch(e){}
+  try { Z.detectCaptionOverflow(); } catch(e){}
+  try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+};
+
+/* ============================================================
+   mergeFeedFromState — surgical insert / remove / update.
+   Called after reloadData and after realtime INSERT/UPDATE.
+   Never touches the DOM of cards that are unchanged.
+   Preserves scroll position by measuring prepended height.
+   ============================================================ */
+Z.mergeFeedFromState = function(){
+  if(Z.State.currentView !== 'home') return;
+  var container = document.getElementById('app-container');
+  if(!container) return;
+  var feedRoot = container.firstElementChild;
+  if(!feedRoot) return;
+
+  var posts = Z.State.allPosts || [];
+  var me = Z.State.currentUser;
+
+  /* 1. Snapshot rendered cards by post id. */
+  var renderedById = {};
+  feedRoot.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
+    renderedById[card.getAttribute('data-post-id')] = card;
+  });
+
+  /* 2. Remove cards no longer in state. */
+  Object.keys(renderedById).forEach(function(pid){
+    var stillThere = posts.some(function(p){ return p.id === pid; });
+    if(!stillThere){
+      var c = renderedById[pid];
+      if(c && c.parentNode) c.parentNode.removeChild(c);
+      delete renderedById[pid];
+    }
+  });
+
+  /* 3. Prepend new cards with scroll compensation. */
+  var newPosts = posts.filter(function(p){ return !renderedById[p.id]; });
+  if(newPosts.length){
+    var scrollDelta = 0;
+    var reversed = newPosts.slice().reverse();
+    var firstCard = feedRoot.querySelector('.post-card[data-post-id]');
+    reversed.forEach(function(p){
+      var tmp = document.createElement('div');
+      try { tmp.innerHTML = Z.renderPostCard(p, Z.State.allProfiles, me, false); }
+      catch(e){ return; }
+      var newCard = tmp.firstChild;
+      if(!newCard) return;
+      var h = 0;
+      if(firstCard && firstCard.parentNode === feedRoot){
+        /* Insert above existing content */
+        feedRoot.insertBefore(newCard, firstCard);
+        h = newCard.getBoundingClientRect().height || 0;
+      } else {
+        feedRoot.appendChild(newCard);
+      }
+      scrollDelta += h;
+      firstCard = newCard;
+    });
+    /* If we prepended above the viewport, shift scrollY down to keep
+       viewport position stable for the user. */
+    if(scrollDelta > 0 && (window.scrollY || 0) > 0){
+      window.scrollTo(0, (window.scrollY || 0) + scrollDelta);
+    }
+    try { Z.observeFreezeDots(); } catch(e){}
+    try { Z._tagMediaContainers(); } catch(e){}
+    try { Z.detectCaptionOverflow(); } catch(e){}
+  }
+
+  /* 4. Update cards whose media state changed. */
+  posts.forEach(function(p){
+    var c = renderedById[p.id];
+    if(!c) return;
+    var st  = c.getAttribute('data-media-status');
+    var url = c.getAttribute('data-media-url');
+    var newSt  = p.media_status || 'complete';
+    var newUrl = p.media_url || '';
+    if(st !== newSt || url !== newUrl){
+      Z._replacePostCard(p.id);
+    }
+  });
+};
+
+/* ============================================================
+   Override softRefresh for home: surgical merge.
+   Other views still get the full rebuild (they are fine).
+   ============================================================ */
+Z.softRefresh = function(){
+  if(Z.State.currentView === 'home'){
+    try { Z.mergeFeedFromState(); }
+    catch(e){
+      /* Fall back to full rebuild if surgical merge fails. */
+      if(typeof Z._softRefreshFull === 'function') Z._softRefreshFull();
+    }
+    try { Z.renderDiscoverStrip(); } catch(e){}
+    try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+    try { Z.observeFreezeDots(); } catch(e){}
+    try { Z._tagMediaContainers(); } catch(e){}
+    try { Z.updateHeader(); } catch(e){}
+    try { Z.updateScrollTopBtn(); } catch(e){}
+    return;
+  }
+  if(typeof Z._softRefreshFull === 'function') Z._softRefreshFull();
 };
 
 /* ---------- Composer submit — insert first, then modal ---------- */
@@ -3722,15 +3859,10 @@ Z.submitComposer = async function(){
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
     : null;
   var localBlobUrl = fileObj ? URL.createObjectURL(fileObj) : null;
-
-  /* Snapshot the file into a Blob we can PUT later. */
   var fileForUpload = fileObj;
 
   Z.cancelComposer();
 
-  /* 1. Insert the pending row FIRST. Show it in the feed immediately.
-        Default visibility is 'private' — safe fallback while the
-        modal is up. RLS hides private posts from everyone else. */
   var pendRow = await Z.DB.createPost({
     author_id: me.id,
     content: text,
@@ -3752,7 +3884,7 @@ Z.submitComposer = async function(){
 
   var localPost = Object.assign({}, pendRow, {
     content: text,
-    media_url: hasFile ? null : null,
+    media_url: null,
     media_type: mt,
     media_status: hasFile ? 'pending' : 'complete',
     visibility: 'private',
@@ -3762,48 +3894,28 @@ Z.submitComposer = async function(){
   });
 
   Z.State.allPosts = [localPost].concat(Z.State.allPosts || []);
-  if(Z.State.currentView === 'home'){
-    /* Surgical insert — do not tear down the whole feed. */
-    var container = document.getElementById('app-container');
-    if(container){
-      var host = container.querySelector('#composer-expanded') || container;
-      var tmp = document.createElement('div');
-      tmp.innerHTML = Z.renderPostCard(localPost, Z.State.allProfiles, me, true);
-      var newCard = tmp.firstChild;
-      if(newCard){
-        if(host.nextSibling) host.parentNode.insertBefore(newCard, host.nextSibling);
-        else host.parentNode.appendChild(newCard);
-      }
-      try { Z.observeFreezeDots(); } catch(e){}
-      try { Z._tagMediaContainers(); } catch(e){}
-    }
-  }
+  Z.mergeFeedFromState();
   Z.haptic(8);
 
-  /* 2. Open the visibility modal — user chooses audience. */
   Z.openVisibilityModal(function(visibility){
-    /* Update the DB row with the chosen visibility. */
     if(realId.indexOf('local_') !== 0){
       Z.DB.updatePostFields(realId, { visibility: visibility }).catch(function(){});
     }
-    /* Update local state. */
     var arr = Z.State.allPosts || [];
     for(var i=0;i<arr.length;i++){
       if(arr[i] && arr[i].id === realId){ arr[i].visibility = visibility; break; }
     }
-    /* Chip in the header should reflect new value. */
     var card = document.querySelector('.post-card[data-post-id="' + realId + '"]');
     if(card){
       var handleEl = card.querySelector('.phandle');
       if(handleEl){
-        /* Rebuild the header line so chip appears. */
         var parts = handleEl.innerHTML.split(' · ');
-        handleEl.innerHTML = parts.slice(0, 3).join(' · ') +
-          (Z.visibilityChipHtml(visibility) ? ' · ' + Z.visibilityChipHtml(visibility) : '');
+        var base = parts.slice(0, 3).join(' · ');
+        var chip = Z.visibilityChipHtml(visibility);
+        handleEl.innerHTML = base + (chip ? ' · ' + chip : '');
       }
     }
 
-    /* 3. Kick off the upload if there's a file. */
     if(hasFile && fileForUpload){
       (async function(){
         var mediaUrl = '';
@@ -3845,8 +3957,23 @@ Z.submitComposer = async function(){
             break;
           }
         }
+
+        /* Try in-place src swap to preserve video playhead. */
+        var swapped = Z._swapMediaSrcInCard(realId, mediaUrl);
+        if(!swapped){
+          Z._replacePostCard(realId);
+        } else {
+          var card2 = document.querySelector('.post-card[data-post-id="' + realId + '"]');
+          if(card2){
+            card2.setAttribute('data-media-status', 'complete');
+            card2.setAttribute('data-media-url', mediaUrl);
+            /* Remove hourglass from header. */
+            var hg = card2.querySelector('.upload-hourglass');
+            if(hg) hg.remove();
+          }
+        }
+
         if(localBlobUrl){ try { URL.revokeObjectURL(localBlobUrl); } catch(e){} }
-        Z._replacePostCard(realId);
         Z.toast('Post published!');
         Z.haptic(12);
         Z.saveSnapshot();
@@ -3859,26 +3986,7 @@ Z.submitComposer = async function(){
   });
 };
 
-/* ---------- Surgical card replace ---------- */
-Z._replacePostCard = function(postId){
-  var post = Z.findPostInState(postId);
-  if(!post) return;
-  var card = document.querySelector('.post-card[data-post-id="' + postId + '"]');
-  if(!card || !card.parentNode) return;
-  var me = Z.State.currentUser;
-  var tmp = document.createElement('div');
-  try { tmp.innerHTML = Z.renderPostCard(post, Z.State.allProfiles, me); }
-  catch(e){ return; }
-  var newCard = tmp.firstChild;
-  if(!newCard) return;
-  card.parentNode.replaceChild(newCard, card);
-  try { Z.observeFreezeDots(); } catch(e){}
-  try { Z._tagMediaContainers(); } catch(e){}
-  try { Z.detectCaptionOverflow(); } catch(e){}
-  try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
-};
-
-/* ---------- Post edit / hide / delete ---------- */
+/* ---------- Edit / hide / delete ---------- */
 Z.openEditPostModal = function(postId){
   var post = Z.findPostInState(postId);
   if(!post) return;
@@ -3896,7 +4004,6 @@ Z.openEditPostModal = function(postId){
     '</div>'
   );
 };
-
 Z.savePostEdit = async function(postId){
   var me = Z.State.currentUser;
   if(!me) return;
@@ -3913,7 +4020,6 @@ Z.savePostEdit = async function(postId){
   Z._replacePostCard(postId);
   Z.saveSnapshot();
 };
-
 Z.hidePost = function(postId){
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
   try {
@@ -3927,7 +4033,6 @@ Z.hidePost = function(postId){
   if(card && card.parentNode) card.parentNode.removeChild(card);
   Z.toast('Post hidden from your feed.');
 };
-
 Z.toggleSavePost = function(postId){
   var saved = Z.State.savedPosts || [];
   var idx = saved.indexOf(postId);
@@ -3938,7 +4043,6 @@ Z.toggleSavePost = function(postId){
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
   Z.haptic(8);
 };
-
 Z.markInterest = function(postId, kind){
   var interests = Z.getInterests();
   var key = 'post:' + postId;
@@ -3947,7 +4051,6 @@ Z.markInterest = function(postId, kind){
   Z.setInterests(interests);
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
 };
-
 Z.deletePost = async function(postId){
   document.querySelectorAll('.post-menu').forEach(function(m){ m.style.display = 'none'; });
   if(!confirm('Delete this post?')) return;
@@ -3959,7 +4062,6 @@ Z.deletePost = async function(postId){
     Z.saveSnapshot();
   }
 };
-
 Z.toggleComments = function(postId){
   var el = document.getElementById('comments-' + postId);
   if(el) el.classList.toggle('open');
@@ -3975,8 +4077,7 @@ Z.sharePost = async function(postId){
   var repostBtn = isOwn
     ? ''
     : '<button onclick="Z.postPostToWall(\'' + Z.escape(postId) + '\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;margin-bottom:10px;">' +
-        '<i class="fa-solid fa-share-nodes"></i> Repost to My Wall' +
-      '</button>' +
+        '<i class="fa-solid fa-share-nodes"></i> Repost to My Wall</button>' +
       '<div style="font-size:10px;color:#64748b;text-align:center;margin:10px 0;">— or share externally (no bounty) —</div>';
   Z.openSheet(
     '<div class="modal-overlay" style="background:transparent;align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">' +
@@ -3998,7 +4099,6 @@ Z.sharePost = async function(postId){
     '</div>'
   );
 };
-
 Z.shareExternal = function(kind, url){
   Z.closeSheet();
   if(kind==='whatsapp') window.open('https://wa.me/?text='+encodeURIComponent(url),'_blank');
@@ -4010,7 +4110,6 @@ Z.shareExternal = function(kind, url){
   else if(kind==='tiktok'){ navigator.clipboard.writeText(url); Z.toast('Link copied'); setTimeout(function(){window.open('https://www.tiktok.com/upload','_blank');},500); }
   else if(kind==='youtube'){ navigator.clipboard.writeText(url); Z.toast('Link copied'); setTimeout(function(){window.open('https://studio.youtube.com/','_blank');},500); }
 };
-
 async function refetchSharesForContent(table, id, stateKey){
   try {
     var c = Z.sb();
@@ -4068,7 +4167,7 @@ Z.postPostToWall = async function(postId){
     media_status: 'complete', visibility: 'public'
   });
   Z.State.allPosts = [row].concat(Z.State.allPosts || []);
-  Z._replacePostCard(row.id);
+  Z.mergeFeedFromState();
   Z.toast('Reposted to your wall.');
   Z.haptic(12);
   setTimeout(function(){ refetchSharesForContent('posts', postId, 'post'); }, 500);
@@ -4096,7 +4195,6 @@ Z.recordPostView = function(postId){
     if(c && c.rpc) c.rpc('increment_post_views', { p_post_id: postId }).catch(function(){});
   } catch(e){}
 };
-
 var _postViewObs = null;
 function attachPostViewObservers(){
   if(!_postViewObs){
@@ -4120,7 +4218,6 @@ function attachPostViewObservers(){
 /* ---------- Feed video autoplay ---------- */
 Z._feedPlayingVideo = null;
 Z._feedScrollRaf = null;
-
 Z.recomputeFeedVideoPlayback = function(){
   if(Z.State.currentView !== 'home') return;
   var vids = document.querySelectorAll('#app-container video:not([data-spark-id]):not([data-space-spark])');
@@ -4147,7 +4244,6 @@ Z.recomputeFeedVideoPlayback = function(){
     Z._feedPlayingVideo = null;
   }
 };
-
 function _scheduleFeedRecompute(){
   if(Z._feedScrollRaf) return;
   Z._feedScrollRaf = requestAnimationFrame(function(){
@@ -4155,7 +4251,6 @@ function _scheduleFeedRecompute(){
     Z.recomputeFeedVideoPlayback();
   });
 }
-
 Z.setupFeedVideoAutoplay = function(){
   if(!Z._feedVideoHooked){
     Z._feedVideoHooked = true;
@@ -4200,7 +4295,6 @@ Z.attachHomeInteractions = function(){
       } else { lastTap = now; }
     });
   });
-
   if(!Z._pullHooked){
     Z._pullHooked = true;
     var startY = 0, active = false;
