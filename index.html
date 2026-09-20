@@ -10424,6 +10424,252 @@ Z._toggleLoungeRow = function(rowId, ev){
 <!--                                                              -->
 <!-- ============================================================ -->
 <!-- ============================================================ -->
+<!-- ============================================================ -->
+<!-- GALLERIA + BOOKINGS + LOUNGE SHORTCUT BRIDGE                -->
+<!-- - Adds "Hot on ZYNIX" horizontal row to Galleria top        -->
+<!-- - Makes Bookings tile open a full Bookings page             -->
+<!-- - ZYNIX Ride is the only working section inside Bookings    -->
+<!-- - Adds ZYNIX Drive to Lounge Customize shortcuts            -->
+<!-- Does NOT touch the Bookings tile position or any section.   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+  'use strict';
+  var Z = window.Z;
+  if(!Z) return;
+  if (Z._zynixBookingBridgeInstalled) return;
+  Z._zynixBookingBridgeInstalled = true;
+
+  // ============================================================
+  // 1. HOT ROW IN GALLERIA
+  // ============================================================
+  Z._renderGalleriaHotRow = function() {
+    var items = [
+      { icon: 'fa-solid fa-car-side',     color: '#10b981', title: 'ZYNIX Drive', tag: 'NEW', sub: 'Ride · Bid · Go',  action: 'Z.openDriveView()' },
+      { icon: 'fa-solid fa-bolt',         color: '#8b5cf6', title: 'Sparks',      tag: '',    sub: 'Short videos',     action: "Z.showView('spark')" },
+      { icon: 'fa-solid fa-wallet',       color: '#3b82f6', title: 'Wallet',      tag: '',    sub: 'Cash & Bounty',    action: "Z.showView('wallet')" },
+      { icon: 'fa-solid fa-circle-nodes', color: '#ec4899', title: 'Circles',     tag: '',    sub: 'Communities',      action: "Z.showView('circles')" },
+      { icon: 'fa-solid fa-users',        color: '#f59e0b', title: 'People',      tag: '',    sub: 'Discover',         action: "Z.showView('people')" }
+    ];
+    var html = '<div style="margin-bottom:6px;">';
+    html += '<div style="padding:0 2px 8px;">';
+    html += '<div style="font-size:11px;font-weight:800;color:#e2e8f0;letter-spacing:.4px;text-transform:uppercase;">';
+    html += '<i class="fa-solid fa-fire" style="color:#f59e0b;margin-right:6px;font-size:11px;"></i>Hot on ZYNIX';
+    html += '</div></div>';
+    html += '<div class="lounge-scroll">';
+    items.forEach(function(it) {
+      html += '<button onclick="' + it.action + '" '
+        + 'style="flex:0 0 auto;min-width:150px;background:linear-gradient(160deg,#111827,#0f172a);'
+        + 'border:1px solid #1e293b;border-radius:16px;padding:14px 12px;text-align:left;'
+        + 'cursor:pointer;position:relative;overflow:hidden;">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+      html += '<div style="width:38px;height:38px;border-radius:10px;'
+        + 'background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;">';
+      html += '<i class="' + it.icon + '" style="color:' + it.color + ';font-size:18px;"></i>';
+      html += '</div>';
+      if (it.tag) {
+        html += '<span style="background:' + it.color + ';color:#000;font-size:8px;font-weight:900;'
+          + 'padding:2px 7px;border-radius:20px;letter-spacing:.6px;">' + it.tag + '</span>';
+      }
+      html += '</div>';
+      html += '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:2px;">' + it.title + '</div>';
+      html += '<div style="font-size:10px;color:#94a3b8;line-height:1.4;">' + it.sub + '</div>';
+      html += '</button>';
+    });
+    html += '</div></div>';
+    return html;
+  };
+
+  var _origRenderGalleria = Z.renderGalleria;
+  if (typeof _origRenderGalleria === 'function') {
+    Z.renderGalleria = function() {
+      var baseHTML = _origRenderGalleria.apply(this, arguments) || '';
+      var featured = Z._renderGalleriaHotRow();
+      var marker = '<div style="background:linear-gradient(135deg,#10b981,#3b82f6)';
+      var idx = baseHTML.indexOf(marker);
+      if (idx !== -1) return baseHTML.slice(0, idx) + featured + baseHTML.slice(idx);
+      return featured + baseHTML;
+    };
+  }
+
+  // ============================================================
+  // 2. BOOKINGS PAGE — all sections visible, only ZYNIX Ride works
+  // ============================================================
+  Z.BOOKING_SECTIONS = [
+    { key:'ride',        icon:'fa-solid fa-car-side',       color:'#10b981', title:'ZYNIX Ride',        sub:'Bid · Go · Pay',        active:true  },
+    { key:'hotel',       icon:'fa-solid fa-hotel',          color:'#3b82f6', title:'Hotels & Stays',    sub:'Rooms, houses, hostels', active:false },
+    { key:'restaurant',  icon:'fa-solid fa-utensils',       color:'#f59e0b', title:'Restaurant Table',  sub:'Reserve a table',       active:false },
+    { key:'flight',      icon:'fa-solid fa-plane',          color:'#8b5cf6', title:'Flights',           sub:'Domestic & international', active:false },
+    { key:'event',       icon:'fa-solid fa-ticket',         color:'#ec4899', title:'Event Tickets',     sub:'Concerts, sports, shows', active:false },
+    { key:'salon',       icon:'fa-solid fa-scissors',       color:'#06b6d4', title:'Salon & Spa',       sub:'Appointment booking',   active:false },
+    { key:'car-rental',  icon:'fa-solid fa-key',            color:'#ef4444', title:'Car Rental',        sub:'Self-drive & with driver', active:false },
+    { key:'tour',        icon:'fa-solid fa-map-location-dot', color:'#22c55e', title:'Tour Guide',      sub:'Local guides, day trips', active:false },
+    { key:'home-service',icon:'fa-solid fa-screwdriver-wrench', color:'#a855f7', title:'Home Service',  sub:'Plumber, electric, repair', active:false },
+    { key:'clinic',      icon:'fa-solid fa-stethoscope',    color:'#14b8a6', title:'Clinic Appointment', sub:'Doctor, dentist, lab',  active:false },
+    { key:'venue',       icon:'fa-solid fa-building-columns', color:'#f97316', title:'Venue Booking',    sub:'Halls, studios, parks', active:false },
+    { key:'freight',     icon:'fa-solid fa-truck-fast',     color:'#6366f1', title:'Freight & Move',   sub:'Moving, courier, cargo', active:false }
+  ];
+
+  Z.openBookingsView = function() {
+    var app = document.getElementById('app-container');
+    if (!app) return;
+
+    var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+    html += '<div class="view-header">';
+    html += '<button class="colored-back-btn" onclick="Z.showView(\'galleria\')">';
+    html += '<i class="fa-solid fa-arrow-left"></i> Back';
+    html += '</button>';
+    html += '<h2 class="view-title" style="margin-left:6px;">';
+    html += '<i class="fa-solid fa-calendar-check" style="color:#10b981;margin-right:8px;"></i>Bookings';
+    html += '</h2>';
+    html += '</div>';
+
+    html += '<div style="background:linear-gradient(135deg,#10b981,#3b82f6);border-radius:16px;padding:18px;">';
+    html += '<div style="font-size:20px;font-weight:900;color:#000;">Bookings</div>';
+    html += '<div style="font-size:12px;color:rgba(0,0,0,.75);margin-top:4px;line-height:1.5;">';
+    html += 'Reserve rides, tables, rooms, tickets, and services. ZYNIX Ride is live — the rest open soon.';
+    html += '</div></div>';
+
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+    Z.BOOKING_SECTIONS.forEach(function(c){
+      var onclick = c.active ? 'Z.openDriveView()' : "Z.toast('" + c.title + " coming soon')";
+      html += '<button onclick="' + onclick + '" '
+        + 'style="background:#111827;border:1px solid ' + (c.active ? 'rgba(16,185,129,.4)' : '#1e293b') + ';'
+        + 'border-radius:16px;padding:14px;text-align:left;cursor:pointer;position:relative;overflow:hidden;">';
+
+      if (c.active) {
+        html += '<div style="position:absolute;top:8px;right:8px;background:#10b981;color:#000;font-size:8px;'
+          + 'font-weight:900;padding:2px 7px;border-radius:20px;letter-spacing:.5px;">LIVE</div>';
+      } else {
+        html += '<div style="position:absolute;top:8px;right:8px;background:rgba(148,163,184,.18);color:#94a3b8;'
+          + 'font-size:8px;font-weight:800;padding:2px 6px;border-radius:20px;letter-spacing:.05em;">SOON</div>';
+      }
+
+      html += '<div style="width:38px;height:38px;border-radius:10px;'
+        + 'background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;'
+        + 'font-size:16px;margin-bottom:10px;">';
+      html += '<i class="' + c.icon + '" style="color:' + c.color + ';"></i>';
+      html += '</div>';
+
+      html += '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:2px;">' + c.title + '</div>';
+      html += '<div style="font-size:10px;color:#94a3b8;line-height:1.5;">' + c.sub + '</div>';
+      html += '</button>';
+    });
+    html += '</div>';
+    html += '</div>';
+
+    app.innerHTML = html;
+
+    /* Keep Galleria tab highlighted */
+    document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
+    var navG = document.getElementById('nav-galleria');
+    if (navG) navG.classList.add('active');
+
+    Z.State.currentView = 'galleria';
+    try { localStorage.setItem('zynix_last_view', 'galleria'); } catch(e) {}
+    window.scrollTo(0, 0);
+  };
+
+  // Intercept the "Coming soon" toast on the Bookings tile only
+  var _origOpenGalleriaCat = Z.openGalleriaCat;
+  Z.openGalleriaCat = function(key) {
+    if (key === 'bookings') { Z.openBookingsView(); return; }
+    if (typeof _origOpenGalleriaCat === 'function') return _origOpenGalleriaCat.apply(this, arguments);
+    Z.toast('Coming soon.');
+  };
+
+  // ============================================================
+  // 3. DRIVE VIEW OPENER (used by Hot row + Bookings tile + Lounge)
+  // ============================================================
+  Z.openDriveView = function(returnTo) {
+    var app = document.getElementById('app-container');
+    if (!app) return;
+
+    app.innerHTML =
+      '<div style="display:flex;flex-direction:column;gap:14px;">' +
+        '<div class="view-header">' +
+          '<button class="colored-back-btn" onclick="Z.showView(\'' + (returnTo || 'galleria') + '\')">' +
+            '<i class="fa-solid fa-arrow-left"></i> Back' +
+          '</button>' +
+          '<h2 class="view-title" style="margin-left:6px;">' +
+            '<i class="fa-solid fa-car-side" style="color:#10b981;margin-right:8px;"></i>ZYNIX Drive' +
+          '</h2>' +
+        '</div>' +
+        '<div id="zy-drive-mount"></div>' +
+      '</div>';
+
+    document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
+    var navG = document.getElementById('nav-galleria');
+    if (navG) navG.classList.add('active');
+
+    Z.State.currentView = 'galleria';
+    try { localStorage.setItem('zynix_last_view', 'galleria'); } catch(e) {}
+    window.scrollTo(0, 0);
+
+    setTimeout(function() {
+      var mount = document.getElementById('zy-drive-mount');
+      if (mount && typeof Z.renderDrive === 'function') {
+        try { Z.renderDrive(mount); } catch (e) { console.warn('[Drive mount]', e); }
+      }
+    }, 60);
+  };
+
+  // ============================================================
+  // 4. ADD ZYNIX DRIVE AS A LOUNGE SHORTCUT
+  // ============================================================
+  if (Array.isArray(Z.LOUNGE_AVAILABLE_ROWS)) {
+    var already = Z.LOUNGE_AVAILABLE_ROWS.some(function(r){ return r.id === 'drive'; });
+    if (!already) {
+      Z.LOUNGE_AVAILABLE_ROWS.push({
+        id: 'drive',
+        label: 'ZYNIX Drive',
+        icon: 'fa-solid fa-car-side'
+      });
+    }
+  }
+
+  // Lounge row renderer for 'drive'
+  var _origLoadLoungeRow = Z._loadLoungeRow;
+  if (typeof _origLoadLoungeRow === 'function') {
+    Z._loadLoungeRow = async function(rowId) {
+      if (rowId === 'drive') {
+        var body = document.getElementById('lounge-row-body-drive');
+        if (!body) return;
+        body.innerHTML = _renderLoungeDriveRow();
+        return;
+      }
+      return _origLoadLoungeRow.apply(this, arguments);
+    };
+  } else {
+    // Fallback if Section 15 hasn't run yet
+    Z._loadLoungeRow = async function(rowId) {
+      if (rowId !== 'drive') return;
+      var body = document.getElementById('lounge-row-body-drive');
+      if (body) body.innerHTML = _renderLoungeDriveRow();
+    };
+  }
+
+  function _renderLoungeDriveRow() {
+    return '<div style="display:flex;gap:12px;align-items:center;padding:14px;'
+      + 'background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));'
+      + 'border:1px solid rgba(16,185,129,.35);border-radius:14px;">'
+      + '<div style="width:52px;height:52px;border-radius:14px;'
+      + 'background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+      + '<i class="fa-solid fa-car-side" style="color:#10b981;font-size:22px;"></i>'
+      + '</div>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:14px;font-weight:800;color:#fff;">ZYNIX Ride</div>'
+      + '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Book a ride with bidding & escrow</div>'
+      + '</div>'
+      + '<button onclick="Z.openDriveView(\'lounge\')" '
+      + 'style="background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;'
+      + 'font-weight:800;padding:10px 16px;border-radius:10px;font-size:12px;cursor:pointer;'
+      + 'white-space:nowrap;">Open</button>'
+      + '</div>';
+  }
+
+})();
+</script>
 </body>
 </html>
 
