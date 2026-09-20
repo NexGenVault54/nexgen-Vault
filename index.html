@@ -11501,8 +11501,15 @@ function renderList(){
       });
     }
     host.innerHTML = h;
-    host.querySelectorAll('[data-sr-accept]').forEach(function(b){ b.addEventListener('click', async function(e){ e.stopPropagation(); var c2 = db(); if(!c2) return; await c2.from('drive_shared_bookings').update({status:'accepted'}).eq('id', this.getAttribute('data-sr-accept')); toast('Accepted'); loadList(); }); });
-    host.querySelectorAll('[data-sr-reject]').forEach(function(b){ b.addEventListener('click', async function(e){ e.stopPropagation(); var c2 = db(); if(!c2) return; await c2.from('drive_shared_bookings').update({status:'rejected'}).eq('id', this.getAttribute('data-sr-reject')); toast('Rejected'); loadList(); }); });
+       host.querySelectorAll('[data-sr-accept]').forEach(function(b){ b.addEventListener('click', async function(e){ e.stopPropagation(); var c2 = db(); if(!c2) return; var bid = this.getAttribute('data-sr-accept');
+      await c2.from('drive_shared_bookings').update({status:'accepted'}).eq('id', bid);
+      if(window.Z && Z.driveNotify){ try { var br = await c2.from('drive_shared_bookings').select('rider_id,journey_id').eq('id',bid).maybeSingle();
+        if(br.data){ var jr = await c2.from('drive_shared_journeys').select('start_name,end_name').eq('id', br.data.journey_id).maybeSingle();
+          var txt = 'Your seat request was accepted' + (jr.data ? (' · ' + jr.data.start_name + ' → ' + jr.data.end_name) : '');
+          Z.driveNotify(br.data.rider_id, txt, 'drive_share_accepted'); } } catch(e2){} }
+      toast('Accepted'); loadList(); }); });
+     
+     host.querySelectorAll('[data-sr-reject]').forEach(function(b){ b.addEventListener('click', async function(e){ e.stopPropagation(); var c2 = db(); if(!c2) return; await c2.from('drive_shared_bookings').update({status:'rejected'}).eq('id', this.getAttribute('data-sr-reject')); toast('Rejected'); loadList(); }); });
     return;
   }
 
@@ -11675,8 +11682,15 @@ function openBookModal(journeyId){
     try {
       var dup = await c.from('drive_shared_bookings').select('id').eq('journey_id', journeyId).eq('rider_id', u.id).in('status',['pending','accepted']).limit(1);
       if(dup.data && dup.data.length){ toast('You already have a booking on this journey'); btn.disabled = false; btn.textContent = 'Send request'; document.getElementById('zy-sr-book-modal').remove(); return; }
-      var r = await c.from('drive_shared_bookings').insert({ journey_id: journeyId, rider_id: u.id, seats: seats, message: msg || null, status:'pending' }).select();
+         var r = await c.from('drive_shared_bookings').insert({ journey_id: journeyId, rider_id: u.id, seats: seats, message: msg || null, status:'pending' }).select();
       if(r.error) throw r.error;
+      /* v9.1: bell notify the journey owner */
+      if(window.Z && Z.driveNotify && j && j.driver_id){
+        try { var pp = await c.from('profiles').select('username').eq('id', u.id).maybeSingle();
+          var uname = (pp.data && pp.data.username) || 'A rider';
+          Z.driveNotify(j.driver_id, uname + ' requested ' + seats + ' seat' + (seats === 1 ? '' : 's') + ' on ' + j.start_name + ' → ' + j.end_name, 'drive_share_request');
+        } catch(e){}
+      }
       document.getElementById('zy-sr-book-modal').remove();
       toast('Request sent. Driver will confirm shortly.');
       loadList();
@@ -11727,8 +11741,12 @@ async function openJourneyDetail(journeyId){
   h += '</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
   document.getElementById('zy-sr-d-x').onclick = function(){ document.getElementById('zy-sr-detail').remove(); };
-  document.querySelectorAll('[data-sr-accept]').forEach(function(b){ b.addEventListener('click', async function(){ var c2 = db(); if(!c2) return; await c2.from('drive_shared_bookings').update({status:'accepted'}).eq('id', this.getAttribute('data-sr-accept')); toast('Accepted'); document.getElementById('zy-sr-detail').remove(); openJourneyDetail(journeyId); loadList(); }); });
-  document.querySelectorAll('[data-sr-reject]').forEach(function(b){ b.addEventListener('click', async function(){ var c2 = db(); if(!c2) return; await c2.from('drive_shared_bookings').update({status:'rejected'}).eq('id', this.getAttribute('data-sr-reject')); toast('Rejected'); document.getElementById('zy-sr-detail').remove(); openJourneyDetail(journeyId); loadList(); }); });
+   document.querySelectorAll('[data-sr-accept]').forEach(function(b){ b.addEventListener('click', async function(){ var c2 = db(); if(!c2) return; var bid = this.getAttribute('data-sr-accept');
+    await c2.from('drive_shared_bookings').update({status:'accepted'}).eq('id', bid);
+    if(window.Z && Z.driveNotify){ try { var br = await c2.from('drive_shared_bookings').select('rider_id').eq('id',bid).maybeSingle();
+      if(br.data) Z.driveNotify(br.data.rider_id, 'Your seat request was accepted', 'drive_share_accepted'); } catch(e2){} }
+    toast('Accepted'); document.getElementById('zy-sr-detail').remove(); openJourneyDetail(journeyId); loadList(); }); });
+   document.querySelectorAll('[data-sr-reject]').forEach(function(b){ b.addEventListener('click', async function(){ var c2 = db(); if(!c2) return; await c2.from('drive_shared_bookings').update({status:'rejected'}).eq('id', this.getAttribute('data-sr-reject')); toast('Rejected'); document.getElementById('zy-sr-detail').remove(); openJourneyDetail(journeyId); loadList(); }); });
 }
 
 /* Realtime refresh */
@@ -11743,6 +11761,270 @@ setTimeout(srRealtime, 800);
 
 Z.shareRideState = SR;
 console.log('[ZYNIX Share Ride v3] ready');
+})();
+</script>
+   <!-- ============================================================ -->
+<!-- ZYNIX DRIVE — SECTION 17c (additive)                        -->
+<!-- Notification bridge · Driver ledger · Rider analytics        -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixDriveV9C) return; Z.__ZynixDriveV9C = true;
+
+function me(){ return (Z.State && Z.State.currentUser) || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function money(n, c){ var m = {GBP:'£',USD:'$',EUR:'€',PKR:'₨',INR:'₹',AED:'د.إ',SAR:'﷼'}; var cc = c || (Z.driveCurrency ? Z.driveCurrency() : 'GBP'); return (m[cc]||cc+' ') + (Number(n)||0).toFixed(2); }
+function cur(){ return Z.driveCurrency ? Z.driveCurrency() : 'GBP'; }
+function ago(ts){ if(!ts) return ''; var s = Math.floor((Date.now()-new Date(ts).getTime())/1000); if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+
+/* ================== NOTIFICATION BRIDGE ================== */
+/* Insert into the notifications table. Section 13 realtime already
+   picks it up and refreshes the bell badge. */
+Z.driveNotify = async function(userId, message, kind){
+  if(!userId || !message) return;
+  var c = db(); if(!c) return;
+  try {
+    await c.from('notifications').insert({
+      user_id: userId,
+      message: message,
+      kind: kind || 'drive',
+      read: false,
+      deliver_at: new Date().toISOString()
+    });
+  } catch(e){ /* table may not have kind — retry without it */
+    try {
+      await c.from('notifications').insert({
+        user_id: userId,
+        message: message,
+        read: false,
+        deliver_at: new Date().toISOString()
+      });
+    } catch(e2){ console.warn('[driveNotify]', e2); }
+  }
+};
+
+/* ================== DRIVER LEDGER ================== */
+Z.drvOpenLedger = async function(){
+  var u = me(); if(!u){ toast('Login first'); return; }
+  var c = db(); if(!c) return;
+  var html = '<div id="zy-ledger-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;"><div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:480px;max-height:92vh;overflow-y:auto;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><h3 style="margin:0;font-size:16px;color:#fff;"><i class="fa-solid fa-book" style="color:#3b82f6;margin-right:8px;"></i>My Ledger</h3><button id="zy-lgr-x" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;">&times;</button></div>'
+    + '<div id="zy-lgr-body"><div style="text-align:center;padding:30px;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:20px;"></i></div></div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;"><button id="zy-lgr-add" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-plus"></i> Add expense</button>'
+    + '<button id="zy-lgr-refresh" style="padding:12px 16px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-rotate"></i></button></div>'
+    + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('zy-lgr-x').onclick = function(){ document.getElementById('zy-ledger-modal').remove(); };
+  document.getElementById('zy-lgr-refresh').onclick = function(){ loadLedger(); };
+  document.getElementById('zy-lgr-add').onclick = openAddExpense;
+  loadLedger();
+};
+
+async function loadLedger(){
+  var body = document.getElementById('zy-lgr-body'); if(!body) return;
+  var u = me(); if(!u) return; var c = db(); if(!c) return;
+  body.innerHTML = '<div style="text-align:center;padding:30px;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:20px;"></i></div>';
+  try {
+    var ridesRes = await c.from('drive_rides').select('id,pickup_address,dest_address,agreed_fare,rider_offered_fare,tip_amount,fare_currency,completed_at,created_at')
+      .eq('driver_id', u.id).eq('status','completed').order('completed_at',{ascending:false}).limit(200);
+    var expensesRes = await c.from('drive_driver_expenses').select('*').eq('driver_id', u.id).order('created_at',{ascending:false}).limit(200);
+    var rides = ridesRes.data || [];
+    var expenses = expensesRes.data || [];
+
+    var totalIncome = 0, totalTips = 0;
+    rides.forEach(function(r){ totalIncome += (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0); totalTips += (Number(r.tip_amount)||0); });
+    var totalExpenses = expenses.reduce(function(s,e){ return s + (Number(e.amount)||0); }, 0);
+    var grossTotal = totalIncome + totalTips;
+    var net = grossTotal - totalExpenses;
+
+    /* Build unified entries */
+    var entries = [];
+    rides.forEach(function(r){ entries.push({ _t: new Date(r.completed_at||r.created_at).getTime(), type: 'income', amount: Number(r.agreed_fare)||Number(r.rider_offered_fare)||0, label: 'Ride · ' + (r.pickup_address||'') + ' → ' + (r.dest_address||''), cur: r.fare_currency || cur() }); });
+    rides.forEach(function(r){ if(Number(r.tip_amount) > 0) entries.push({ _t: new Date(r.completed_at||r.created_at).getTime() + 1, type: 'tip', amount: Number(r.tip_amount), label: 'Tip · ' + (r.pickup_address||'') + ' → ' + (r.dest_address||''), cur: r.fare_currency || cur() }); });
+    expenses.forEach(function(e){ entries.push({ _t: new Date(e.created_at).getTime(), type: 'expense', amount: Number(e.amount), label: 'Expense · ' + (e.category||'other') + (e.note ? (' · ' + e.note) : ''), cur: cur() }); });
+    entries.sort(function(a,b){ return b._t - a._t; });
+    entries = entries.slice(0, 100);
+
+    var h = '';
+    h += '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.28);margin-bottom:10px;">'
+      + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">NET BALANCE</div>'
+      + '<div style="font-size:28px;font-weight:900;color:' + (net>=0?'#10b981':'#ef4444') + ';margin-top:2px;">' + money(net, cur()) + '</div>'
+      + '<div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#cbd5e1;flex-wrap:wrap;">'
+      + '<span><b style="color:#10b981;">+' + money(totalIncome, cur()) + '</b> fares</span>'
+      + '<span><b style="color:#10b981;">+' + money(totalTips, cur()) + '</b> tips</span>'
+      + '<span><b style="color:#ef4444;">−' + money(totalExpenses, cur()) + '</b> expenses</span>'
+      + '</div></div>';
+
+    /* Quick categories summary */
+    if(expenses.length){
+      var byCat = {};
+      expenses.forEach(function(e){ byCat[e.category||'other'] = (byCat[e.category||'other']||0) + Number(e.amount||0); });
+      var keys = Object.keys(byCat).sort(function(a,b){ return byCat[b]-byCat[a]; }).slice(0,6);
+      if(keys.length){
+        h += '<div style="padding:10px 12px;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:10px;">'
+          + '<div style="font-size:10px;color:#94a3b8;font-weight:800;margin-bottom:6px;">TOP EXPENSE CATEGORIES</div>'
+          + '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+        keys.forEach(function(k){ h += '<span style="font-size:10px;padding:3px 8px;border-radius:10px;background:rgba(239,68,68,.12);color:#fca5a5;font-weight:700;">' + esc(k) + ' · ' + money(byCat[k], cur()) + '</span>'; });
+        h += '</div></div>';
+      }
+    }
+
+    /* Entry list */
+    if(!entries.length){ h += '<div style="text-align:center;padding:24px;color:#64748b;font-size:12px;">No activity yet.</div>'; }
+    else {
+      h += '<div style="font-size:10px;color:#94a3b8;font-weight:800;margin-bottom:6px;">ACTIVITY (last 100)</div>';
+      h += '<div style="max-height:280px;overflow-y:auto;">';
+      entries.forEach(function(e){
+        var sign = e.type === 'expense' ? '−' : '+';
+        var color = e.type === 'expense' ? '#ef4444' : (e.type === 'tip' ? '#fbbf24' : '#10b981');
+        var icon = e.type === 'expense' ? 'fa-solid fa-receipt' : (e.type === 'tip' ? 'fa-solid fa-hand-holding-dollar' : 'fa-solid fa-car');
+        h += '<div style="padding:8px 10px;border-radius:8px;background:rgba(0,0,0,0.2);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+          + '<div style="display:flex;gap:8px;align-items:center;min-width:0;flex:1;">'
+          + '<i class="' + icon + '" style="color:' + color + ';width:14px;text-align:center;font-size:12px;"></i>'
+          + '<div style="min-width:0;flex:1;"><div style="font-size:11px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(e.label) + '</div>'
+          + '<div style="font-size:9px;color:#64748b;">' + ago(e._t) + '</div></div></div>'
+          + '<div style="font-size:12px;font-weight:900;color:' + color + ';white-space:nowrap;">' + sign + money(e.amount, e.cur) + '</div>'
+          + '</div>';
+      });
+      h += '</div>';
+    }
+    body.innerHTML = h;
+  } catch(e){ body.innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;font-size:12px;">Failed: ' + esc(e.message) + '</div>'; }
+}
+
+function openAddExpense(){
+  var html = '<div id="zy-exp-modal" style="position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;"><div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:360px;">'
+    + '<h3 style="margin:0 0 12px 0;font-size:15px;color:#fff;">Add expense</h3>'
+    + '<label style="font-size:11px;color:#94a3b8;font-weight:800;">AMOUNT (' + esc(cur()) + ')</label>'
+    + '<input id="zy-exp-amt" type="number" min="0.01" step="0.5" placeholder="0.00" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:15px;box-sizing:border-box;outline:none;" />'
+    + '<label style="font-size:11px;color:#94a3b8;font-weight:800;">CATEGORY</label>'
+    + '<select id="zy-exp-cat" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;">'
+    + ['fuel','maintenance','tyres','insurance','cleaning','wash','parking','tolls','food','other'].map(function(x){ return '<option value="' + x + '">' + x.charAt(0).toUpperCase() + x.slice(1) + '</option>'; }).join('')
+    + '</select>'
+    + '<label style="font-size:11px;color:#94a3b8;font-weight:800;">NOTE (optional)</label>'
+    + '<input id="zy-exp-note" placeholder="e.g. Petrol at Shell" style="width:100%;padding:11px;margin:4px 0 14px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" />'
+    + '<div style="display:flex;gap:8px;"><button id="zy-exp-x" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">Cancel</button><button id="zy-exp-s" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;">Save</button></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('zy-exp-x').onclick = function(){ document.getElementById('zy-exp-modal').remove(); };
+  document.getElementById('zy-exp-s').onclick = async function(){
+    var u = me(); if(!u) return; var c = db(); if(!c) return;
+    var amt = parseFloat(document.getElementById('zy-exp-amt').value)||0;
+    if(amt <= 0){ toast('Enter an amount'); return; }
+    var cat = document.getElementById('zy-exp-cat').value;
+    var note = (document.getElementById('zy-exp-note').value||'').trim() || null;
+    try {
+      await c.from('drive_driver_expenses').insert({ driver_id: u.id, amount: amt, category: cat, note: note });
+      document.getElementById('zy-exp-modal').remove();
+      toast('Expense saved');
+      loadLedger();
+    } catch(e){ toast('Failed: ' + e.message); }
+  };
+}
+
+/* ================== RIDER ANALYTICS ================== */
+Z.drvOpenRiderAnalytics = async function(){
+  var u = me(); if(!u){ toast('Login first'); return; }
+  var c = db(); if(!c) return;
+  var html = '<div id="zy-ran-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;"><div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:460px;max-height:92vh;overflow-y:auto;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><h3 style="margin:0;font-size:16px;color:#fff;"><i class="fa-solid fa-chart-line" style="color:#3b82f6;margin-right:8px;"></i>My Analytics</h3><button id="zy-ran-x" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;">&times;</button></div>'
+    + '<div id="zy-ran-body"><div style="text-align:center;padding:30px;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:20px;"></i></div></div>'
+    + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('zy-ran-x').onclick = function(){ document.getElementById('zy-ran-modal').remove(); };
+
+  try {
+    var ridesRes = await c.from('drive_rides').select('id,agreed_fare,rider_offered_fare,tip_amount,fare_currency,completed_at,created_at')
+      .eq('traveller_id', u.id).eq('status','completed').order('created_at',{ascending:false}).limit(500);
+    var rides = ridesRes.data || [];
+
+    /* Offers used: promos by others where rider is a participant — placeholder for now */
+    var promosRes = await c.from('drive_promos').select('id,title,discount_pct,badge,created_at').eq('user_id', u.id).limit(20);
+    var myPromos = promosRes.data || [];
+
+    var total = rides.length;
+    var totalPaid = rides.reduce(function(s,r){ return s + (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0); }, 0);
+    var totalTips = rides.reduce(function(s,r){ return s + (Number(r.tip_amount)||0); }, 0);
+    var totalOut = totalPaid + totalTips;
+    var avgFare = total ? (totalPaid/total) : 0;
+
+    /* Week / month breakdown */
+    var now = Date.now();
+    var weekAgo = now - 7*24*60*60*1000;
+    var monthAgo = now - 30*24*60*60*1000;
+    var weekRides = rides.filter(function(r){ return new Date(r.created_at).getTime() >= weekAgo; });
+    var monthRides = rides.filter(function(r){ return new Date(r.created_at).getTime() >= monthAgo; });
+    var weekPaid = weekRides.reduce(function(s,r){ return s + (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0); }, 0);
+    var monthPaid = monthRides.reduce(function(s,r){ return s + (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0); }, 0);
+
+    /* 6-month bar chart */
+    var months = [];
+    for(var i = 5; i >= 0; i--){
+      var d = new Date(); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() - i);
+      var start = d.getTime();
+      var next = new Date(d); next.setMonth(next.getMonth() + 1);
+      var end = next.getTime();
+      var sum = 0, count = 0;
+      rides.forEach(function(r){ var t = new Date(r.created_at).getTime(); if(t >= start && t < end){ sum += (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0); count++; } });
+      months.push({ label: d.toLocaleString('en',{month:'short'}), amount: sum, count: count });
+    }
+    var maxBar = Math.max.apply(null, months.map(function(m){ return m.amount; }).concat([1]));
+
+    var h = '';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">'
+      + '<div style="padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.28);"><div style="font-size:10px;color:#94a3b8;font-weight:800;">TOTAL RIDES</div><div style="font-size:24px;font-weight:900;color:#fff;margin-top:2px;">' + total + '</div></div>'
+      + '<div style="padding:12px;border-radius:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.28);"><div style="font-size:10px;color:#94a3b8;font-weight:800;">AVG FARE</div><div style="font-size:24px;font-weight:900;color:#fbbf24;margin-top:2px;">' + money(avgFare, cur()) + '</div></div>'
+      + '</div>';
+
+    h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);margin-bottom:12px;">'
+      + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">TOTAL SPENT ON ZYNIX</div>'
+      + '<div style="font-size:26px;font-weight:900;color:#fff;margin-top:2px;">' + money(totalOut, cur()) + '</div>'
+      + '<div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:#cbd5e1;flex-wrap:wrap;">'
+      + '<span>Fares: <b style="color:#60a5fa;">' + money(totalPaid, cur()) + '</b></span>'
+      + '<span>Tips: <b style="color:#fbbf24;">' + money(totalTips, cur()) + '</b></span>'
+      + '</div></div>';
+
+    h += '<div style="display:flex;gap:8px;margin-bottom:12px;">'
+      + '<div style="flex:1;padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);text-align:center;"><div style="font-size:9px;color:#94a3b8;font-weight:800;">THIS WEEK</div><div style="font-size:15px;font-weight:900;color:#10b981;margin-top:2px;">' + money(weekPaid, cur()) + '</div><div style="font-size:9px;color:#64748b;">' + weekRides.length + ' rides</div></div>'
+      + '<div style="flex:1;padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);text-align:center;"><div style="font-size:9px;color:#94a3b8;font-weight:800;">THIS MONTH</div><div style="font-size:15px;font-weight:900;color:#10b981;margin-top:2px;">' + money(monthPaid, cur()) + '</div><div style="font-size:9px;color:#64748b;">' + monthRides.length + ' rides</div></div>'
+      + '</div>';
+
+    /* Bar chart */
+    h += '<div style="padding:14px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;margin-bottom:12px;">'
+      + '<div style="font-size:10px;color:#94a3b8;font-weight:800;margin-bottom:10px;">LAST 6 MONTHS</div>'
+      + '<div style="display:flex;align-items:flex-end;gap:6px;height:80px;">';
+    months.forEach(function(m){
+      var hp = maxBar > 0 ? (m.amount / maxBar) * 100 : 0;
+      h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;">'
+        + '<div style="font-size:8px;color:#64748b;">' + (m.amount > 0 ? Math.round(m.amount) : '') + '</div>'
+        + '<div style="width:100%;height:' + Math.max(4, hp) + '%;background:linear-gradient(180deg,#10b981,#3b82f6);border-radius:4px;min-height:4px;"></div>'
+        + '<div style="font-size:9px;color:#94a3b8;font-weight:800;">' + m.label + '</div></div>';
+    });
+    h += '</div></div>';
+
+    /* Promos created by this rider */
+    if(myPromos.length){
+      h += '<div style="padding:12px;border-radius:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.28);">'
+        + '<div style="font-size:10px;color:#94a3b8;font-weight:800;margin-bottom:8px;">MY OFFERS ON ZYNIX (' + myPromos.length + ')</div>';
+      myPromos.slice(0,5).forEach(function(p){
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,0.25);margin-bottom:6px;">'
+          + '<div style="font-size:12px;color:#fff;font-weight:700;">' + esc(p.title) + '</div>'
+          + (p.discount_pct ? '<span style="font-size:10px;padding:2px 6px;border-radius:6px;background:rgba(16,185,129,.18);color:#10b981;font-weight:900;">-' + p.discount_pct + '%</span>' : '')
+          + '</div>';
+      });
+      h += '</div>';
+    }
+
+    document.getElementById('zy-ran-body').innerHTML = h;
+  } catch(e){
+    document.getElementById('zy-ran-body').innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;font-size:12px;">Failed: ' + esc(e.message) + '</div>';
+  }
+};
+
+console.log('[ZYNIX Drive v9c] ready — notifications · ledger · analytics');
 })();
 </script>
 </body>
