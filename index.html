@@ -9656,14 +9656,16 @@ function openCurrencyPicker(){
 /* ================== RIDER HOME ================== */
 function renderRiderHome(c){
   var t = S.traveller || {total_rides:0};
-  var h = '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.3);margin-bottom:12px;display:flex;justify-content:space-between;">';
-  h += '<div><div style="font-size:10px;color:#94a3b8;font-weight:800;">YOUR RIDES</div><div style="font-size:22px;font-weight:900;color:#fff;">'+(t.total_rides||0)+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">completed trips</div></div>';
-  var wk = S.streakWeek||0; var nextTarget = wk < 3 ? 3 : wk < 5 ? 5 : wk < 10 ? 10 : null; var pct = nextTarget ? Math.min(100, Math.round((wk/nextTarget)*100)) : 100;
-  h += '<div style="flex:1;max-width:150px;text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:800;">STREAK</div><div style="font-size:15px;font-weight:900;color:#10b981;">'+wk+' ride'+(wk===1?'':'s')+' this week</div>'
-    + (nextTarget ? '<div style="font-size:9px;color:#64748b;margin-top:2px;">'+(nextTarget-wk)+' more to unlock credit</div>' : '<div style="font-size:9px;color:#10b981;margin-top:2px;">🔥 On fire!</div>')
-    + '<div style="height:4px;border-radius:2px;background:rgba(148,163,184,.15);margin-top:4px;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#10b981,#3b82f6);"></div></div></div></div>';
-
-  var saved = loadSavedRoutes();
+  var h = '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.3);margin-bottom:12px;">';
+  var wk = S.streakWeek||0; var nextTarget = wk < 3 ? 3 : wk < 5 ? 5 : wk < 10 ? 10 : null;
+  h += '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,0.25);margin-top:10px;">'
+    + '<i class="fa-solid fa-fire" style="color:#fbbf24;font-size:14px;"></i>'
+    + '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">STREAK</div>'
+    + '<div style="flex:1;font-size:12px;font-weight:800;color:#10b981;">'+wk+' ride'+(wk===1?'':'s')+' this week'+(nextTarget?(' · '+(nextTarget-wk)+' more to unlock credit'):' · 🔥 On fire!')+'</div>'
+    + '<button id="zy-r-analytics" style="background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:800;cursor:pointer;padding:0;">Analytics ›</button>'
+    + '</div></div>';
+   
+   var saved = loadSavedRoutes();
   if(saved.length){
     h += '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none;">';
     h += '<button data-route-clear="1" style="flex:0 0 auto;padding:8px 12px;border-radius:20px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;"><i class="fa-solid fa-times"></i> Clear</button>';
@@ -9688,8 +9690,10 @@ function renderRiderHome(c){
   h += '<div style="position:relative;margin-bottom:10px;"><input id="zy-r-search" placeholder="Search by name or mobile number…" value="'+esc(S.nearbySearch||'')+'" style="width:100%;padding:11px 40px 11px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" /><i class="fa-solid fa-magnifying-glass" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#64748b;font-size:12px;pointer-events:none;"></i></div>';
   h += '<div id="zy-r-drivers"><div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">Enter a route, then tap Find Drivers.</div></div>';
 
-  c.innerHTML = h;
+   c.innerHTML = h;
   bindRiderFormInputs();
+  var ab = document.getElementById('zy-r-analytics');
+  if(ab) ab.addEventListener('click', function(){ if(Z.drvOpenRiderAnalytics) Z.drvOpenRiderAnalytics(); else toast('Analytics loading…'); });
   var loc = document.getElementById('zy-r-loc');
   if(loc) loc.addEventListener('click',async function(){
     try { var p = await geo(); S.pos = p;
@@ -9781,10 +9785,12 @@ async function requestRide(driverId){
     var dup = arr.findIndex(function(x){ return x.pickup === pickup && x.dest === dest; });
     var entry = { pickup: pickup, dest: dest, fare: String(fare), label: label };
     if(dup >= 0) arr.splice(dup,1); arr.unshift(entry); saveSavedRoutes(arr); clearDraft();
-    toast('Ride requested'); bcSend('ride', S.activeRide); renderTab(); ensureRidePoll();
+       toast('Ride requested'); bcSend('ride', S.activeRide);
+    /* v9.1: bell notify the driver */
+    if(window.Z && Z.driveNotify) Z.driveNotify(driverId, 'New ride request — ' + pickup + ' → ' + dest + ' · ' + money(fare, getCurrency()), 'drive_ride_request');
+    renderTab(); ensureRidePoll();
   } catch(e){ toast('Failed: ' + e.message); }
 }
-
 /* ================== ACTIVE RIDE (RIDER) ================== */
 async function renderActiveRider(c){
   var r = S.activeRide; if(!r){ renderRiderHome(c); return; }
@@ -10369,31 +10375,47 @@ function renderNoDriver(c){
   var b = document.getElementById('zy-bd-onboard'); if(b) b.addEventListener('click',openDriverOnboard);
 }
 function renderDriverHome(c){
-  var d = S.driver; var online = !!d.is_available; var h = '';
+  var d = S.driver; var online = !!d.is_available;
+  var rating = (Number(d.rating_avg)||5).toFixed(1);
+  var earnings = Number(d.total_earnings)||0;
+  var thisWeek = (S.earningsWeek||[]).reduce(function(s,x){ return s + (x.amount||0); }, 0);
+  var h = '';
+
+  /* Demand banner */
   if(online && S.demandLevel >= 2){
-    h += '<div style="padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(239,68,68,.1));border:1px solid rgba(251,191,36,.4);margin-bottom:12px;display:flex;align-items:center;gap:10px;"><div style="font-size:20px;">🔥</div><div style="flex:1;"><div style="font-size:12px;font-weight:900;color:#fbbf24;">HIGH DEMAND</div><div style="font-size:10px;color:#cbd5e1;">'+S.demandLevel+' riders searching nearby. Stay online.</div></div></div>';
+    h += '<div style="padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(239,68,68,.1));border:1px solid rgba(251,191,36,.4);margin-bottom:10px;display:flex;align-items:center;gap:10px;"><div style="font-size:20px;">🔥</div><div style="flex:1;"><div style="font-size:12px;font-weight:900;color:#fbbf24;">HIGH DEMAND</div><div style="font-size:10px;color:#cbd5e1;">'+S.demandLevel+' riders searching nearby. Stay online.</div></div></div>';
   }
-  h += '<div style="padding:16px;border-radius:14px;background:#111827;border:1px solid #1e293b;margin-bottom:12px;">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:10px;color:#94a3b8;font-weight:800;">YOUR STATUS</div><div style="font-size:18px;font-weight:900;">'+(online?'<span style="color:#10b981;">● Online</span>':'<span style="color:#64748b;">● Offline</span>')+'</div></div><button id="zy-d-toggle" style="padding:12px 18px;border-radius:10px;'+(online?'border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:#fca5a5;':'border:none;background:#10b981;color:#000;')+'font-weight:900;font-size:12px;cursor:pointer;">'+(online?'Go Offline':'Go Online')+'</button></div>'
-    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px;">'
-    + '<div style="text-align:center;padding:8px;border-radius:10px;background:rgba(0,0,0,0.2);"><div style="font-size:10px;color:#94a3b8;font-weight:800;">RATING</div><div style="font-size:16px;font-weight:900;margin-top:2px;color:#fff;">'+(Number(d.rating_avg)||5).toFixed(1)+'</div></div>'
-    + '<div style="text-align:center;padding:8px;border-radius:10px;background:rgba(0,0,0,0.2);"><div style="font-size:10px;color:#94a3b8;font-weight:800;">RIDES</div><div style="font-size:16px;font-weight:900;margin-top:2px;color:#fff;">'+(d.total_rides||0)+'</div></div>'
-    + '<div style="text-align:center;padding:8px;border-radius:10px;background:rgba(0,0,0,0.2);"><div style="font-size:10px;color:#94a3b8;font-weight:800;">EARNED</div><div style="font-size:16px;font-weight:900;margin-top:2px;color:#10b981;">'+money(d.total_earnings||0, d.currency||getCurrency())+'</div></div></div>';
-  var comm = (d.commission_waived_until && new Date(d.commission_waived_until) > new Date()) ? '<span style="color:#10b981;">0% (early adopter)</span>' : ((d.commission_rate||10)+'%');
-  h += '<div style="font-size:10px;color:#94a3b8;margin-top:10px;text-align:center;">Commission: '+comm+'</div></div>';
-  if(S.earningsWeek && S.earningsWeek.length){
-    var max = Math.max.apply(null, S.earningsWeek.map(function(x){ return x.amount; }).concat([1]));
-    h += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:12px;"><div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:10px;">THIS WEEK · '+money(S.earningsWeek.reduce(function(s,x){return s+x.amount;},0), d.currency||getCurrency())+'</div><div style="display:flex;align-items:flex-end;gap:6px;height:70px;">';
-    S.earningsWeek.forEach(function(day){
-      var hp = max > 0 ? (day.amount/max)*100 : 0;
-      h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;"><div style="font-size:8px;color:#64748b;">'+(day.amount>0?curSymbol(d.currency||getCurrency())+Math.round(day.amount):'')+'</div><div style="width:100%;height:'+Math.max(4,hp)+'%;background:linear-gradient(180deg,#10b981,#3b82f6);border-radius:4px;min-height:4px;"></div><div style="font-size:9px;color:#94a3b8;font-weight:800;">'+day.label+'</div></div>';
-    });
-    h += '</div></div>';
-  }
-  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;"><div style="font-size:11px;font-weight:900;color:#e2e8f0;">RIDE REQUESTS</div><button id="zy-d-refresh" style="background:transparent;border:none;color:#10b981;font-weight:800;font-size:11px;cursor:pointer;padding:4px 8px;"><i class="fa-solid fa-rotate"></i> Refresh</button></div><div id="zy-d-requests"><div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">'+(online?'Searching for requests…':'Go online to see requests')+'</div></div>';
+
+  /* Compact row: Status + Rating + toggle */
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px;border-radius:14px;background:#111827;border:1px solid #1e293b;margin-bottom:10px;">'
+    + '<div style="display:flex;align-items:center;gap:10px;min-width:0;">'
+    + '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-user" style="color:#000;"></i></div>'
+    + '<div style="min-width:0;"><div style="font-size:13px;font-weight:900;color:#fff;">'+(online?'<span style="color:#10b981;">● Online</span>':'<span style="color:#64748b;">● Offline</span>')+'</div>'
+    + '<div style="font-size:11px;color:#cbd5e1;display:flex;align-items:center;gap:4px;">★ '+rating+' · '+(d.total_rides||0)+' rides</div></div>'
+    + '</div>'
+    + '<button id="zy-d-toggle" style="padding:10px 14px;border-radius:10px;'+(online?'border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:#fca5a5;':'border:none;background:#10b981;color:#000;')+'font-weight:900;font-size:11px;cursor:pointer;">'+(online?'Go Offline':'Go Online')+'</button>'
+    + '</div>';
+
+  /* Earnings row */
+  h += '<div style="display:flex;gap:8px;margin-bottom:10px;">'
+    + '<div style="flex:2;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.28);">'
+    + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">TOTAL EARNED</div>'
+    + '<div style="font-size:22px;font-weight:900;color:#10b981;margin-top:2px;">'+money(earnings, d.currency||getCurrency())+'</div>'
+    + '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">This week: '+money(thisWeek, d.currency||getCurrency())+'</div>'
+    + '</div>'
+    + '<button id="zy-d-ledger" style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:800;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;"><i class="fa-solid fa-book" style="font-size:18px;"></i>Ledger</button>'
+    + '</div>';
+
+  /* Requests list — biggest section */
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'
+    + '<div style="font-size:11px;font-weight:900;color:#e2e8f0;">RIDE REQUESTS</div>'
+    + '<button id="zy-d-refresh" style="background:transparent;border:none;color:#10b981;font-weight:800;font-size:11px;cursor:pointer;padding:4px 8px;"><i class="fa-solid fa-rotate"></i> Refresh</button></div>'
+    + '<div id="zy-d-requests" style="min-height:300px;"><div style="text-align:center;padding:40px 20px;color:#64748b;font-size:12px;">'+(online?'Searching for requests…':'Go online to see requests')+'</div></div>';
+
   c.innerHTML = h;
   var t = document.getElementById('zy-d-toggle'); if(t) t.addEventListener('click',toggleAvailability);
   var rf = document.getElementById('zy-d-refresh'); if(rf) rf.addEventListener('click',loadRequests);
+  var lb = document.getElementById('zy-d-ledger'); if(lb) lb.addEventListener('click', function(){ if(Z.drvOpenLedger) Z.drvOpenLedger(); else toast('Ledger loading…'); });
   if(online) loadRequests();
 }
 
