@@ -10670,6 +10670,142 @@ Z._toggleLoungeRow = function(rowId, ev){
 
 })();
 </script>
+<!-- ============================================================ -->
+<!-- ZYNIX COMPAT SHIM + HOT ROW ANIMATION                       -->
+<!-- Fixes: currentUser lookup, sb() call, adds motion to Hot.   -->
+<!-- Paste AFTER the Galleria/Bookings bridge block.             -->
+<!-- ============================================================ -->
+<script>
+(function(){
+  'use strict';
+  var Z = window.Z;
+  if (!Z) return;
+
+  // ---------- 1. Make Z.currentUser read from Z.State.currentUser ----------
+  try {
+    var existing = Object.getOwnPropertyDescriptor(Z, 'currentUser');
+    if (!existing || !existing.get) {
+      Object.defineProperty(Z, 'currentUser', {
+        get: function(){ return Z.State ? Z.State.currentUser : null; },
+        set: function(v){ if (Z.State) Z.State.currentUser = v; },
+        configurable: true
+      });
+    }
+  } catch(e){ console.warn('[shim currentUser]', e); }
+
+  // ---------- 2. Make Z.sb usable both as function and as client ----------
+  try {
+    if (typeof Z.sb === 'function' && !Z.sb.__zynixProxy) {
+      var _origSb = Z.sb;
+      var _sbProxy = new Proxy(_origSb, {
+        apply: function(target, thisArg, args) { return target.apply(thisArg, args); },
+        get: function(target, prop) {
+          if (prop === '__zynixProxy') return true;
+          if (prop in target && typeof target[prop] !== 'undefined') return target[prop];
+          var client = target();
+          if (client && typeof client[prop] !== 'undefined') {
+            var val = client[prop];
+            return typeof val === 'function' ? val.bind(client) : val;
+          }
+          return undefined;
+        }
+      });
+      Z.sb = _sbProxy;
+    }
+  } catch(e){ console.warn('[shim sb]', e); }
+
+  // ---------- 3. Motion animation CSS for Hot row ----------
+  try {
+    if (!document.getElementById('zynix-hot-anim-css')) {
+      var st = document.createElement('style');
+      st.id = 'zynix-hot-anim-css';
+      st.textContent =
+        // moving shine across the card
+        '.zynix-hot-card{position:relative;overflow:hidden !important;}' +
+        '.zynix-hot-card::before{content:"";position:absolute;top:0;left:-100%;width:100%;height:100%;' +
+        'background:linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent);' +
+        'animation:zynixHotShine 3s linear infinite;pointer-events:none;z-index:1;}' +
+        '@keyframes zynixHotShine{0%{left:-100%}100%{left:200%}}' +
+        // breathing/pulsing icon container
+        '.zynix-hot-icon-wrap{position:relative;z-index:2;' +
+        'animation:zynixHotIconPulse 2.6s ease-in-out infinite;}' +
+        '@keyframes zynixHotIconPulse{' +
+        '0%,100%{transform:scale(1);box-shadow:0 0 0 rgba(16,185,129,0);}' +
+        '50%{transform:scale(1.08);box-shadow:0 0 18px rgba(16,185,129,.35);}}' +
+        // pulsing tag (NEW badge)
+        '.zynix-hot-tag{z-index:2;position:relative;' +
+        'animation:zynixHotTagPulse 1.8s ease-in-out infinite;}' +
+        '@keyframes zynixHotTagPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.12);}}' +
+        // icon gentle float + tilt
+        '.zynix-hot-icon{animation:zynixHotIconBounce 2.4s ease-in-out infinite;display:inline-block;}' +
+        '@keyframes zynixHotIconBounce{' +
+        '0%,100%{transform:translateY(0) rotate(0deg);}' +
+        '25%{transform:translateY(-2px) rotate(-3deg);}' +
+        '75%{transform:translateY(2px) rotate(3deg);}}' +
+        // also animate the fire icon next to "Hot on ZYNIX"
+        '.zynix-hot-fire{animation:zynixHotFire 1.4s ease-in-out infinite;display:inline-block;}' +
+        '@keyframes zynixHotFire{' +
+        '0%,100%{transform:scale(1) rotate(0deg);filter:brightness(1);}' +
+        '50%{transform:scale(1.18) rotate(-6deg);filter:brightness(1.4);}}';
+      document.head.appendChild(st);
+    }
+  } catch(e){ console.warn('[hot css]', e); }
+
+  // ---------- 4. Re-render Hot row with animated classes ----------
+  Z._renderGalleriaHotRow = function() {
+    var items = [
+      { icon: 'fa-solid fa-car-side',     color: '#10b981', title: 'ZYNIX Drive', tag: 'NEW', sub: 'Ride · Bid · Go',  action: 'Z.openDriveView()' },
+      { icon: 'fa-solid fa-bolt',         color: '#8b5cf6', title: 'Sparks',      tag: '',    sub: 'Short videos',     action: "Z.showView('spark')" },
+      { icon: 'fa-solid fa-wallet',       color: '#3b82f6', title: 'Wallet',      tag: '',    sub: 'Cash & Bounty',    action: "Z.showView('wallet')" },
+      { icon: 'fa-solid fa-circle-nodes', color: '#ec4899', title: 'Circles',     tag: '',    sub: 'Communities',      action: "Z.showView('circles')" },
+      { icon: 'fa-solid fa-users',        color: '#f59e0b', title: 'People',      tag: '',    sub: 'Discover',         action: "Z.showView('people')" }
+    ];
+    var html = '<div style="margin-bottom:6px;">';
+    html += '<div style="padding:0 2px 8px;">';
+    html += '<div style="font-size:11px;font-weight:800;color:#e2e8f0;letter-spacing:.4px;text-transform:uppercase;">';
+    html += '<i class="fa-solid fa-fire zynix-hot-fire" style="color:#f59e0b;margin-right:6px;font-size:11px;"></i>Hot on ZYNIX';
+    html += '</div></div>';
+    html += '<div class="lounge-scroll">';
+    items.forEach(function(it) {
+      html += '<button onclick="' + it.action + '" class="zynix-hot-card" '
+        + 'style="flex:0 0 auto;min-width:150px;background:linear-gradient(160deg,#111827,#0f172a);'
+        + 'border:1px solid #1e293b;border-radius:16px;padding:14px 12px;text-align:left;'
+        + 'cursor:pointer;position:relative;overflow:hidden;">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;position:relative;z-index:2;">';
+      html += '<div class="zynix-hot-icon-wrap" style="width:38px;height:38px;border-radius:10px;'
+        + 'background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;">';
+      html += '<i class="' + it.icon + ' zynix-hot-icon" style="color:' + it.color + ';font-size:18px;"></i>';
+      html += '</div>';
+      if (it.tag) {
+        html += '<span class="zynix-hot-tag" style="background:' + it.color + ';color:#000;font-size:8px;font-weight:900;'
+          + 'padding:2px 7px;border-radius:20px;letter-spacing:.6px;">' + it.tag + '</span>';
+      }
+      html += '</div>';
+      html += '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:2px;position:relative;z-index:2;">' + it.title + '</div>';
+      html += '<div style="font-size:10px;color:#94a3b8;line-height:1.4;position:relative;z-index:2;">' + it.sub + '</div>';
+      html += '</button>';
+    });
+    html += '</div></div>';
+    return html;
+  };
+
+  // ---------- 5. Force a fresh Drive render each time it opens ----------
+  var _origOpenDrive = Z.openDriveView;
+  Z.openDriveView = function(returnTo) {
+    if (typeof _origOpenDrive === 'function') {
+      try { _origOpenDrive.call(this, returnTo); } catch(e){ console.warn('[drive open]', e); }
+    }
+    setTimeout(function(){
+      var mount = document.getElementById('zy-drive-mount');
+      if (mount && typeof Z.renderDrive === 'function') {
+        try { Z.renderDrive(mount); } catch(e){ console.warn('[drive rerender]', e); }
+      }
+    }, 120);
+  };
+
+  console.log('[ZYNIX] compat shim + hot animation installed');
+})();
+</script>
 </body>
 </html>
 
