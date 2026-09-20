@@ -9881,10 +9881,12 @@ async function renderActiveRider(c){
   if(cancel) cancel.addEventListener('click',function(){ confirm2('Cancel this ride?',async function(){ var c2 = db(); if(!c2) return; var upd = await c2.from('drive_rides').update({status:'cancelled_by_rider',cancellation_reason:'Cancelled by rider',updated_at:new Date().toISOString()}).eq('id',r.id).select(); S.activeRide = null; clearDraft(); toast('Cancelled'); if(upd.data&&upd.data[0]) bcSend('ride', upd.data[0]); stopRidePoll(); renderTab(); });});
   var start = document.getElementById('zy-r-start');
   if(start) start.addEventListener('click',async function(){ var c2 = db(); if(!c2) return; var upd = await c2.from('drive_rides').update({status:'in_progress',started_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id).select(); toast('Ride started'); if(upd.data&&upd.data[0]){ S.activeRide = upd.data[0]; bcSend('ride', upd.data[0]); } renderTab(); });
-  var comp = document.getElementById('zy-r-complete');
+   var comp = document.getElementById('zy-r-complete');
   if(comp) comp.addEventListener('click',async function(){ comp.disabled = true; comp.textContent = 'Completing…';
     try { var c2 = db(); if(!c2) throw new Error('no db'); var rr = await c2.rpc('complete_drive_ride',{p_ride_id:r.id}); if(rr.error) throw rr.error; toast('Ride completed');
       var upd = await c2.from('drive_rides').select('*').eq('id',r.id).maybeSingle(); S.activeRide = upd.data || Object.assign({},r,{status:'completed',payment_status:'released'});
+      try { var dRow = await c2.from('drive_drivers').select('wants_online').eq('user_id', r.driver_id).maybeSingle();
+        if(dRow.data && dRow.data.wants_online) await c2.from('drive_drivers').update({ is_available: true }).eq('user_id', r.driver_id); } catch(e){}
       bcSend('ride', S.activeRide); await refreshSideProfiles(); stopRidePoll(); renderTab();
     } catch(e){ comp.disabled = false; comp.textContent = 'Complete Ride'; toast('Failed: ' + e.message); }
   });
@@ -10537,9 +10539,12 @@ function renderActiveDriver(c){
   c.innerHTML = h;
   var ar = document.getElementById('zy-d-arrive'); if(ar) ar.addEventListener('click',async function(){ var c2 = db(); if(!c2) return; var upd = await c2.from('drive_rides').update({status:'driver_arriving',driver_arrived_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id).select(); if(upd.data&&upd.data[0]) S.activeDriverRide = upd.data[0]; bcSend('ride', S.activeDriverRide); renderTab(); });
   var st = document.getElementById('zy-d-start'); if(st) st.addEventListener('click',async function(){ var c2 = db(); if(!c2) return; var upd = await c2.from('drive_rides').update({status:'in_progress',started_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id).select(); if(upd.data&&upd.data[0]) S.activeDriverRide = upd.data[0]; bcSend('ride', S.activeDriverRide); renderTab(); });
-  var cp = document.getElementById('zy-d-complete'); if(cp) cp.addEventListener('click',async function(){ cp.disabled = true; cp.textContent = 'Completing…';
+   var cp = document.getElementById('zy-d-complete'); if(cp) cp.addEventListener('click',async function(){ cp.disabled = true; cp.textContent = 'Completing…';
     try { var c2 = db(); if(!c2) throw new Error('no db'); var rr = await c2.rpc('complete_drive_ride',{p_ride_id:r.id}); if(rr.error) throw rr.error; toast('Ride completed — funds released');
       var upd = await c2.from('drive_rides').select('*').eq('id',r.id).maybeSingle(); bcSend('ride', upd.data || Object.assign({},r,{status:'completed'}));
+      if(S.driver && S.driver.wants_online){
+        try { await c2.from('drive_drivers').update({ is_available: true }).eq('user_id', u.id); S.driver.is_available = true; } catch(e){}
+      }
       await refreshSideProfiles(); S.activeDriverRide = null; stopRidePoll(); renderTab();
     } catch(e){ cp.disabled = false; cp.textContent = 'Complete ride'; toast('Failed: ' + e.message); } });
   var pn = document.getElementById('zy-d-panic'); if(pn) pn.addEventListener('click',function(){ openPanic(r.id); });
