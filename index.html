@@ -10313,7 +10313,10 @@ async function sendVoiceBlob(blob, secs, mime){
   toast('Sending voice…');
   try {
     var ext = mime.indexOf('mp4') !== -1 ? 'mp4' : 'webm';
-    var file = new File([blob], 'voice_' + Date.now() + '.' + ext, { type: mime });
+    /* v9.1: strip codec suffix — server allowlist only accepts video/webm not video/webm;codecs=opus */
+    var cleanMime = (mime || 'video/webm').split(';')[0].trim();
+    if(cleanMime === 'audio/webm') cleanMime = 'video/webm';
+    var file = new File([blob], 'voice_' + Date.now() + '.' + ext, { type: cleanMime });
     var url = await Z.storeMedia(file);
     var c = db(); if(!c) throw new Error('no db');
     var u = me(); if(!u) throw new Error('no user');
@@ -10446,13 +10449,20 @@ async function acceptRequest(rideId){
   }
   var accepted = upd.data[0];
   try { await c.from('drive_escrow').insert({ride_id:rideId,traveller_id:ride.traveller_id,driver_id:u.id,amount:ride.rider_offered_fare,currency:ride.fare_currency||getCurrency(),status:'held'}); } catch(e){}
-  S.activeDriverRide = accepted; toast('Ride accepted'); bcSend('ride', accepted); ensureRidePoll(); renderTab();
+   S.activeDriverRide = accepted;
+  /* v9.1: mark unavailable while on duty so no new requests come here */
+  try { await c.from('drive_drivers').update({ is_available: false }).eq('user_id', u.id); } catch(e){}
+  if(S.driver) S.driver.is_available = false;
+  toast('Ride accepted'); bcSend('ride', accepted);
+  /* bell: notify rider */
+  if(window.Z && Z.driveNotify) Z.driveNotify(ride.traveller_id, 'Your driver accepted — they are on the way', 'drive_accepted');
+  ensureRidePoll(); renderTab();
 }
 
 async function toggleAvailability(){
   var u = me(); if(!u) return; var c = db(); if(!c) return;
   var d = S.driver; var next = !d.is_available;
-  var patch = { is_available:next, updated_at:new Date().toISOString() };
+  var patch = { is_available:next, wants_online: next, updated_at:new Date().toISOString() };
   if(next){ try { var p = await geo(); S.pos = p; patch.last_location = pointStr(p); patch.last_location_updated = new Date().toISOString(); } catch(e){ toast('Location needed to go online'); return; } }
   var r = await c.from('drive_drivers').update(patch).eq('user_id',u.id);
   if(r.error){ toast('Failed: ' + r.error.message); return; }
@@ -11059,8 +11069,24 @@ function rt_stop(){ var c = db(); if(!c) return; (S.rt||[]).forEach(function(ch)
 /* ================== VIEW NAV ================== */
 var _origShowView = Z.showView;
 Z.showView = async function(view, param){
+  var prevView = Z.State.currentView;
+  var prevParam = Z.State.currentParam;
   if(view !== 'drive' && view !== 'drive-profile'){ stopPeriodicSync(); stopRidePoll(); if(S.mapRefreshTimer){ clearInterval(S.mapRefreshTimer); S.mapRefreshTimer = null; } }
-  if(view === 'drive-profile'){
+   if(view === 'drive-profile'){
+    /* v9.1: push current view so back returns here */
+    if(prevView && prevView !== 'drive-profile'){
+      Z.State.navStack = Z.State.navStack || [];
+      Z.State.navStack.push({ view: prevView, param: prevParam });
+      if(Z.State.navStack.length > 40) Z.State.navStack.shift();
+      var _out = [];
+      for(var _i = 0; _i < Z.State.navStack.length; _i++){
+        var _top = _out[_out.length - 1];
+        if(!_top || _top.view !== Z.State.navStack[_i].view || _top.param !== Z.State.navStack[_i].param){
+          _out.push(Z.State.navStack[_i]);
+        }
+      }
+      Z.State.navStack = _out;
+    }
     Z.State.currentView = 'drive-profile';
     Z.State.currentParam = param;
     try { localStorage.setItem('zynix_last_view','drive-profile'); localStorage.setItem('zynix_last_param', param||''); } catch(e){}
