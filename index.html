@@ -9224,15 +9224,15 @@ Z._toggleLoungeRow = function(rowId, ev){
 })();
 </script>
 <!-- ============================================================ -->
-<!-- ZYNIX DRIVE — SECTION 17 v4 (Rider Version + counter/realtime fix) -->
+<!-- ZYNIX DRIVE — SECTION 17 v5 (Rider Version — realtime fixed) -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z;
 if(!Z) return;
-if(Z.__ZynixDriveV4) return;
-Z.__ZynixDriveV4 = true;
+if(Z.__ZynixDriveV5) return;
+Z.__ZynixDriveV5 = true;
 
 /* ================== HELPERS ================== */
 function me(){ return (Z.State && Z.State.currentUser) || null; }
@@ -9251,9 +9251,8 @@ function ratingFlag(avg, count){
   if(!count || count < 1) return '';
   var good = (Number(avg)||0) >= 6;
   var color = good ? '#10b981' : '#ef4444';
-  return '<span title="' + (good?'Good':'Low') + ' rated" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:900;color:'+color+';padding:2px 7px;border-radius:6px;background:'+(good?'rgba(16,185,129,.12)':'rgba(239,68,68,.12)')+';border:1px solid '+(good?'rgba(16,185,129,.35)':'rgba(239,68,68,.35)')+';margin-left:6px;">'
-    + '<i class="fa-solid fa-flag" style="font-size:9px;"></i> '
-    + (Number(avg)||5).toFixed(1) + '</span>';
+  return '<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:900;color:'+color+';padding:2px 7px;border-radius:6px;background:'+(good?'rgba(16,185,129,.12)':'rgba(239,68,68,.12)')+';border:1px solid '+(good?'rgba(16,185,129,.35)':'rgba(239,68,68,.35)')+';margin-left:6px;">'
+    + '<i class="fa-solid fa-flag" style="font-size:9px;"></i> ' + (Number(avg)||5).toFixed(1) + '</span>';
 }
 
 /* ================== STATE ================== */
@@ -9261,87 +9260,159 @@ var S = {
   mode:'rider', tab:'home',
   driver:null, traveller:null,
   activeRide:null, activeDriverRide:null,
-  nearby:[], incoming:[], myRated:{},
-  rt:[], trackTimer:null, pos:null, promoTimer:null,
-  syncTimer:null, renderToken:0
+  rideBids:[], nearby:[], incoming:[], myRated:{},
+  rt:[], bc:null, broadcastReady:false,
+  trackTimer:null, pollTimer:null, syncTimer:null,
+  pos:null, seenEventIds:{}
 };
 
-/* ================== STATS SYNC (SOURCE OF TRUTH) ================== */
-/* Recount rider stats from drive_rides + drive_ratings. Idempotent. */
+/* ================== BROADCAST BUS ================== */
+/* One shared topic 'drive-events'. Every logged-in Drive client
+   subscribes; each filters by involvement. This is the belt that
+   covers us when Postgres realtime is blocked by RLS. */
+function bcInit(){
+  var c = db(); if(!c) return;
+  var u = me(); if(!u) return;
+  try {
+    if(S.bc){ try { c.removeChannel(S.bc); } catch(e){} }
+    S.bc = c.channel('drive-events', { config: { broadcast: { self: false } } });
+    S.bc.on('broadcast', { event:'drive' }, function(msg){
+      try { bcHandle(msg && msg.payload); } catch(e){ console.warn('[bc]',e); }
+    });
+    S.bc.subscribe(function(status){
+      S.broadcastReady = (status === 'SUBSCRIBED');
+    });
+  } catch(e){ console.warn('[bcInit]', e); }
+}
+async function bcSend(kind, row){
+  if(!S.bc || !S.broadcastReady) return;
+  try {
+    await S.bc.send({ type:'broadcast', event:'drive', payload:{ kind:kind, row:row, ts:Date.now() }});
+  } catch(e){ /* silent */ }
+}
+function bcHandle(p){
+  if(!p || !p.kind || !p.row) return;
+  var u = me(); if(!u) return;
+  /* Idempotency: dedupe by row id + status + kind + timestamp. */
+  var key = p.kind + '|' + (p.row.id||'') + '|' + (p.row.status||'') + '|' + (p.ts||'');
+  if(S.seenEventIds[key]) return;
+  S.seenEventIds[key] = true;
+
+  if(p.kind === 'ride') handleRideRow(p.row);
+  else if(p.kind === 'bid') handleBidRow(p.row);
+  else if(p.kind === 'rating'){ refreshSideProfiles().then(function(){ if(S.tab==='profile') renderTab(); }); }
+  else if(p.kind === 'tip'){ refreshSideProfiles().then(function(){ if(S.tab==='home') renderTab(); }); }
+}
+
+function handleRideRow(row){
+  if(!row || !row.id) return;
+  var u = me(); if(!u) return;
+  var involvesMe = (row.traveller_id === u.id) || (row.driver_id === u.id);
+  if(!involvesMe) return;
+
+  /* Rider side */
+  if(row.traveller_id === u.id){
+    var prev = S.activeRide && S.activeRide.id === row.id ? S.activeRide.status : null;
+    if(['requested','bidding','accepted','driver_arriving','in_progress','completed'].indexOf(row.status) !== -1){
+      S.activeRide = row;
+    } else {
+      if(S.activeRide && S.activeRide.id === row.id) S.activeRide = null;
+    }
+    if(row.status === 'completed' && prev !== 'completed'){
+      refreshSideProfiles().then(function(){
+        if(!S.myRated[row.id] && !document.getElementById('zy-rate-modal')){
+          openRateModal(row.id, row.driver_id, 'traveller');
+        }
+      });
+    }
+    if(S.tab === 'home' && S.mode === 'rider') renderTab();
+    if(S.tab === 'history') renderTab();
+  }
+  /* Driver side */
+  if(row.driver_id === u.id){
+    var prevD = S.activeDriverRide && S.activeDriverRide.id === row.id ? S.activeDriverRide.status : null;
+    if(['accepted','driver_arriving','in_progress'].indexOf(row.status) !== -1){
+      S.activeDriverRide = row;
+    } else if(row.status === 'completed'){
+      S.activeDriverRide = null;
+      if(prevD !== 'completed'){
+        refreshSideProfiles().then(function(){
+          if(!S.myRated[row.id] && !document.getElementById('zy-rate-modal')){
+            openRateModal(row.id, row.traveller_id, 'driver');
+          }
+        });
+      }
+    } else {
+      if(S.activeDriverRide && S.activeDriverRide.id === row.id) S.activeDriverRide = null;
+    }
+    if(S.tab === 'home' && S.mode === 'driver') renderTab();
+  }
+  ensureRidePoll();
+}
+
+async function handleBidRow(row){
+  if(!row || !row.ride_id) return;
+  var u = me(); if(!u) return;
+  /* Only the rider of that ride needs to react */
+  if(S.activeRide && S.activeRide.id === row.ride_id){
+    await loadRideBids(row.ride_id);
+    if(S.tab === 'home' && S.mode === 'rider') renderTab();
+  }
+}
+
+async function loadRideBids(rideId){
+  var c = db(); if(!c) return;
+  try {
+    var r = await c.from('drive_bids')
+      .select('*').eq('ride_id', rideId).eq('status','pending')
+      .order('bid_amount',{ascending:true});
+    S.rideBids = r.data || [];
+  } catch(e){ S.rideBids = []; }
+}
+
+/* ================== STATS SYNC ================== */
 async function syncTravellerStats(){
   var u = me(); if(!u) return;
   var c = db(); if(!c) return;
   try {
-    var ridesRes = await c.from('drive_rides')
-      .select('id', {count:'exact', head:true})
-      .eq('traveller_id', u.id).eq('status','completed');
-    var totalRides = (ridesRes && ridesRes.count) || 0;
-
-    var ratingsRes = await c.from('drive_ratings')
-      .select('score').eq('ratee_id', u.id).eq('rater_type','driver');
-    var scores = (ratingsRes.data||[])
-      .map(function(x){ return Number(x.score)||0; })
-      .filter(function(x){ return x > 0; });
-    var avg = scores.length
-      ? scores.reduce(function(a,b){ return a+b; },0) / scores.length
-      : 5;
-
-    var payload = {
-      user_id: u.id,
-      total_rides: totalRides,
-      rating_avg: avg,
-      rating_count: scores.length
-    };
-    var up = await c.from('drive_travellers').upsert(payload, {onConflict:'user_id'});
-    if(!up.error){
-      S.traveller = Object.assign({}, S.traveller || {}, payload);
-    }
-  } catch(e){ console.warn('[syncTrav]', e); }
+    var rr = await c.from('drive_rides')
+      .select('id',{count:'exact',head:true})
+      .eq('traveller_id',u.id).eq('status','completed');
+    var totalRides = (rr && rr.count) || 0;
+    var rat = await c.from('drive_ratings')
+      .select('score').eq('ratee_id',u.id).eq('rater_type','driver');
+    var scores = (rat.data||[]).map(function(x){ return Number(x.score)||0; }).filter(function(x){ return x>0; });
+    var avg = scores.length ? scores.reduce(function(a,b){return a+b;},0)/scores.length : 5;
+    var payload = { user_id:u.id, total_rides: totalRides, rating_avg: avg, rating_count: scores.length };
+    await c.from('drive_travellers').upsert(payload,{onConflict:'user_id'});
+    S.traveller = Object.assign({}, S.traveller||{}, payload);
+  } catch(e){ console.warn('[syncTrav]',e); }
 }
-
-/* Recount driver stats from drive_rides + drive_ratings. Idempotent. */
 async function syncDriverStats(){
   var u = me(); if(!u) return;
   var c = db(); if(!c) return;
   if(!S.driver) return;
   try {
-    var ridesRes = await c.from('drive_rides')
-      .select('agreed_fare,rider_offered_fare')
-      .eq('driver_id', u.id).eq('status','completed');
-    var rides = ridesRes.data || [];
-    var totalRides = rides.length;
-    var gross = rides.reduce(function(sum,r){
-      return sum + (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0);
-    }, 0);
-
+    var rr = await c.from('drive_rides')
+      .select('agreed_fare,rider_offered_fare,tip_amount')
+      .eq('driver_id',u.id).eq('status','completed');
+    var rides = rr.data || [];
+    var gross = rides.reduce(function(s,r){
+      return s + (Number(r.agreed_fare)||Number(r.rider_offered_fare)||0) + (Number(r.tip_amount)||0);
+    },0);
     var comm = Number(S.driver.commission_rate) || 10;
-    var waivedUntil = S.driver.commission_waived_until ? new Date(S.driver.commission_waived_until) : null;
-    var waived = waivedUntil && waivedUntil > new Date();
-    var totalEarnings = waived ? gross : gross * (1 - comm/100);
-
-    var ratingsRes = await c.from('drive_ratings')
-      .select('score').eq('ratee_id', u.id).eq('rater_type','traveller');
-    var scores = (ratingsRes.data||[])
-      .map(function(x){ return Number(x.score)||0; })
-      .filter(function(x){ return x > 0; });
-    var avg = scores.length
-      ? scores.reduce(function(a,b){ return a+b; },0) / scores.length
-      : 5;
-
-    var payload = {
-      total_rides: totalRides,
-      total_earnings: totalEarnings,
-      rating_avg: avg,
-      rating_count: scores.length
-    };
-    var up = await c.from('drive_drivers').update(payload).eq('user_id', u.id);
-    if(!up.error){
-      S.driver = Object.assign({}, S.driver, payload);
-    }
-  } catch(e){ console.warn('[syncDrv]', e); }
+    var wu = S.driver.commission_waived_until ? new Date(S.driver.commission_waived_until) : null;
+    var waived = wu && wu > new Date();
+    var totalEarnings = waived ? gross : gross * (1-comm/100);
+    var rat = await c.from('drive_ratings')
+      .select('score').eq('ratee_id',u.id).eq('rater_type','traveller');
+    var scores = (rat.data||[]).map(function(x){ return Number(x.score)||0; }).filter(function(x){ return x>0; });
+    var avg = scores.length ? scores.reduce(function(a,b){return a+b;},0)/scores.length : 5;
+    var payload = { total_rides: rides.length, total_earnings: totalEarnings, rating_avg: avg, rating_count: scores.length };
+    await c.from('drive_drivers').update(payload).eq('user_id',u.id);
+    S.driver = Object.assign({}, S.driver, payload);
+  } catch(e){ console.warn('[syncDrv]',e); }
 }
-
-/* Refresh both sides from the DB. Called after every relevant event. */
 async function refreshSideProfiles(){
   var u = me(); if(!u) return;
   var c = db(); if(!c) return;
@@ -9356,8 +9427,46 @@ async function refreshSideProfiles(){
   } catch(e){}
 }
 
-/* Background re-sync while the drive view is on screen. Cheap and safe
-   (two count queries + two small upserts). Paused when tab is hidden. */
+/* ================== POLLING FALLBACK ================== */
+function ensureRidePoll(){
+  var active = (S.activeRide && ['requested','bidding','accepted','driver_arriving','in_progress'].indexOf(S.activeRide.status)!==-1)
+             || (S.activeDriverRide);
+  if(active && !S.pollTimer) startRidePoll();
+  if(!active && S.pollTimer) stopRidePoll();
+}
+function startRidePoll(){
+  stopRidePoll();
+  S.pollTimer = setInterval(async function(){
+    if(document.hidden) return;
+    var c = db(); if(!c) return;
+    var u = me(); if(!u) return;
+    /* Refresh rider's active ride */
+    if(S.activeRide && S.activeRide.id){
+      try {
+        var r = await c.from('drive_rides').select('*').eq('id', S.activeRide.id).maybeSingle();
+        if(r.data){
+          var prev = S.activeRide.status, next = r.data.status;
+          if(prev !== next){ handleRideRow(r.data); }
+          else { S.activeRide = r.data; }
+        }
+      } catch(e){}
+    }
+    /* Refresh driver's active ride */
+    if(S.activeDriverRide && S.activeDriverRide.id){
+      try {
+        var d = await c.from('drive_rides').select('*').eq('id', S.activeDriverRide.id).maybeSingle();
+        if(d.data){
+          var pd = S.activeDriverRide.status, nd = d.data.status;
+          if(pd !== nd){ handleRideRow(d.data); }
+          else { S.activeDriverRide = d.data; }
+        }
+      } catch(e){}
+    }
+  }, 4000);
+}
+function stopRidePoll(){ if(S.pollTimer){ clearInterval(S.pollTimer); S.pollTimer = null; } }
+
+/* Periodic stats re-sync */
 function startPeriodicSync(){
   if(S.syncTimer) return;
   S.syncTimer = setInterval(async function(){
@@ -9365,7 +9474,7 @@ function startPeriodicSync(){
     if(Z.State.currentView !== 'drive') return;
     await refreshSideProfiles();
     if(S.tab === 'home' || S.tab === 'profile') renderTab();
-  }, 20000);
+  }, 25000);
 }
 function stopPeriodicSync(){ if(S.syncTimer){ clearInterval(S.syncTimer); S.syncTimer = null; } }
 
@@ -9388,13 +9497,10 @@ async function init(container){
     S.traveller = tR && tR.data ? tR.data : null;
     S.myRated = {};
     (rR.data||[]).forEach(function(x){ S.myRated[x.ride_id] = true; });
-
     if(!S.traveller){
       await c.from('drive_travellers').upsert({user_id:u.id},{onConflict:'user_id'});
       S.traveller = {user_id:u.id, rating_avg:5, rating_count:0, total_rides:0};
     }
-
-    /* v4: always recompute from source of truth so a stale row self-heals */
     await syncTravellerStats();
     if(S.driver) await syncDriverStats();
 
@@ -9402,6 +9508,9 @@ async function init(container){
       .in('status',['requested','bidding','accepted','driver_arriving','in_progress'])
       .order('created_at',{ascending:false}).limit(1);
     S.activeRide = rr.data && rr.data[0] ? rr.data[0] : null;
+    if(S.activeRide && (S.activeRide.status === 'bidding' || S.activeRide.status === 'requested')){
+      await loadRideBids(S.activeRide.id);
+    }
 
     if(S.driver){
       var dr = await c.from('drive_rides').select('*').eq('driver_id',u.id)
@@ -9413,8 +9522,10 @@ async function init(container){
 
   S.mode = (S.driver && S.activeDriverRide) ? 'driver' : 'rider';
   renderShell(container);
+  bcInit();
   rt_start();
   startPeriodicSync();
+  ensureRidePoll();
 }
 
 /* ================== SHELL ================== */
@@ -9461,7 +9572,6 @@ function renderShell(container){
 
 function renderTab(){
   var c = document.getElementById('zy-content'); if(!c) return;
-  var token = ++S.renderToken;
   if(S.tab==='home'){
     if(S.mode==='rider'){ if(S.activeRide) renderActiveRider(c); else renderRiderHome(c); }
     else { if(!S.driver) renderNoDriver(c); else if(S.activeDriverRide) renderActiveDriver(c); else renderDriverHome(c); }
@@ -9472,15 +9582,16 @@ function renderTab(){
 }
 
 /* ================== RIDER HOME ================== */
+/* v5: rider's own rating is HIDDEN. Only rides-taken count is shown. */
 function renderRiderHome(c){
-  var t = S.traveller || {rating_avg:5,total_rides:0,rating_count:0};
+  var t = S.traveller || {total_rides:0};
   var h = '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.3);margin-bottom:12px;display:flex;justify-content:space-between;">';
-  h += '<div><div style="font-size:10px;color:#94a3b8;font-weight:800;">YOUR RIDER RATING</div>'
-     + '<div style="font-size:18px;font-weight:900;color:#fff;">'+(Number(t.rating_avg)||5).toFixed(1)+' / 10</div>'
-     + '<div style="font-size:9px;color:#64748b;margin-top:2px;">'+(t.rating_count||0)+' rating'+(t.rating_count===1?'':'s')+'</div></div>'
-     + '<div style="text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:800;">RIDES TAKEN</div>'
-     + '<div style="font-size:18px;font-weight:900;color:#fff;">'+(t.total_rides||0)+'</div>'
-     + '<div style="font-size:9px;color:#64748b;margin-top:2px;">completed</div></div></div>';
+  h += '<div><div style="font-size:10px;color:#94a3b8;font-weight:800;">YOUR RIDES</div>'
+     + '<div style="font-size:22px;font-weight:900;color:#fff;">'+(t.total_rides||0)+'</div>'
+     + '<div style="font-size:9px;color:#64748b;margin-top:2px;">completed trips</div></div>'
+     + '<div style="text-align:right;align-self:flex-end;"><div style="font-size:10px;color:#94a3b8;font-weight:800;">RIDER TIER</div>'
+     + '<div style="font-size:14px;font-weight:900;color:#10b981;margin-top:2px;">'
+     + ((t.total_rides||0) >= 50 ? 'Gold' : (t.total_rides||0) >= 15 ? 'Silver' : (t.total_rides||0) >= 5 ? 'Bronze' : 'New') + '</div></div></div>';
 
   h += '<div style="padding:16px;border-radius:14px;background:#111827;border:1px solid #1e293b;margin-bottom:14px;">'
      + '<div style="font-size:15px;font-weight:900;color:#fff;margin-bottom:12px;">Where to?</div>'
@@ -9567,22 +9678,35 @@ async function requestRide(driverId){
   if(!pickup.trim() || !dest.trim()){ toast('Enter pickup and destination'); return; }
   if(fare <= 0){ toast('Enter a fare'); return; }
   var loc = S.pos; if(!loc){ try { loc = await geo(); S.pos = loc; } catch(e){} }
-  var payload = {traveller_id:u.id,driver_id:driverId,pickup_address:pickup,dest_address:dest,
-    rider_offered_fare:fare,fare_currency:'GBP',status:'requested'};
+  /* Direct-to-driver: target_driver_id set, driver_id NULL until accept */
+  var payload = {
+    traveller_id:u.id,
+    target_driver_id:driverId,
+    driver_id:null,
+    pickup_address:pickup,
+    dest_address:dest,
+    rider_offered_fare:fare,
+    fare_currency:'GBP',
+    status:'requested'
+  };
   if(loc) payload.pickup_location = pointStr(loc);
   try {
     var r = await c.from('drive_rides').insert(payload).select().single();
     if(r.error) throw r.error;
     S.activeRide = r.data;
     toast('Ride requested');
+    bcSend('ride', r.data);
     renderTab();
+    ensureRidePoll();
   } catch(e){ toast('Failed: ' + e.message); }
 }
 
 /* ================== ACTIVE RIDE (RIDER) ================== */
-function renderActiveRider(c){
+async function renderActiveRider(c){
   var r = S.activeRide;
   if(!r){ renderRiderHome(c); return; }
+  if(r.status === 'bidding' || r.status === 'requested'){ await loadRideBids(r.id); }
+
   var map = {requested:'Waiting for driver',bidding:'Drivers bidding',accepted:'Driver accepted',
     driver_arriving:'Driver on the way',in_progress:'Ride in progress',completed:'Completed',
     cancelled_by_rider:'Cancelled by you',cancelled_by_driver:'Driver cancelled',disputed:'Disputed',expired:'Expired'};
@@ -9599,10 +9723,28 @@ function renderActiveRider(c){
 
   var fare = r.agreed_fare || r.rider_offered_fare;
   h += '<div style="padding:14px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);margin-bottom:12px;">'
-    + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">FARE</div>'
+    + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">'+(r.agreed_fare?'AGREED FARE':'YOUR OFFER')+'</div>'
     + '<div style="font-size:22px;font-weight:900;color:#10b981;">'+money(fare,r.fare_currency)+'</div>';
   if(r.payment_status === 'escrow_held') h += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;"><i class="fa-solid fa-lock"></i> Held in escrow</div>';
+  if(r.tip_amount > 0) h += '<div style="font-size:10px;color:#10b981;margin-top:4px;"><i class="fa-solid fa-hand-holding-dollar"></i> Tip added: '+money(r.tip_amount)+'</div>';
   h += '</div>';
+
+  /* v5: BIDS SECTION — shows driver counter-offers */
+  if((r.status === 'requested' || r.status === 'bidding') && S.rideBids.length){
+    h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.28);margin-bottom:12px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+      + '<div style="font-size:11px;font-weight:900;color:#fff;"><i class="fa-solid fa-gavel" style="color:#3b82f6;"></i> DRIVER BIDS ('+S.rideBids.length+')</div>'
+      + '<div style="font-size:10px;color:#94a3b8;">Accept one to lock it in</div></div>';
+    S.rideBids.forEach(function(b){
+      h += '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:8px;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;">'
+        + '<div style="font-size:13px;font-weight:900;color:#10b981;">'+money(b.bid_amount)+'</div>'
+        + '<div style="font-size:11px;color:#cbd5e1;">ETA '+(b.estimated_arrival_minutes||'?')+' min</div></div>'
+        + (b.message ? '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;font-style:italic;">"'+esc(b.message)+'"</div>' : '')
+        + '<button data-accept-bid="'+esc(b.id)+'" data-bid-driver="'+esc(b.driver_id)+'" data-bid-amount="'+esc(b.bid_amount)+'" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Accept '+money(b.bid_amount)+'</button></div>';
+    });
+    h += '</div>';
+  }
 
   if(r.driver_id){
     h += '<div id="zy-r-driver-box" style="padding:14px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.28);margin-bottom:12px;"><div style="text-align:center;color:#64748b;font-size:12px;">Loading driver…</div></div>';
@@ -9618,23 +9760,61 @@ function renderActiveRider(c){
        + '<button id="zy-r-share" style="flex:1;padding:13px;border-radius:10px;border:1px solid #1e293b;background:rgba(255,255,255,0.05);color:#cbd5e1;font-weight:800;cursor:pointer;font-size:12px;"><i class="fa-solid fa-share-nodes"></i> Share</button></div>';
   }
   if(r.status==='completed'){
-    if(!S.myRated[r.id]) h += '<button onclick="Z.drvOpenRateFromList(\''+esc(r.id)+'\')" style="width:100%;padding:14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;margin-bottom:8px;"><i class="fa-solid fa-star"></i> Rate</button>';
+    if(!S.myRated[r.id]) h += '<button onclick="Z.drvOpenRateFromList(\''+esc(r.id)+'\')" style="width:100%;padding:14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;margin-bottom:8px;"><i class="fa-solid fa-star"></i> Rate Driver</button>';
+    if((r.tip_amount||0) === 0){
+      h += '<button id="zy-r-tip" style="width:100%;padding:14px;border-radius:10px;border:1px solid rgba(251,191,36,.45);background:rgba(251,191,36,.08);color:#fbbf24;font-weight:900;cursor:pointer;margin-bottom:8px;"><i class="fa-solid fa-hand-holding-dollar"></i> Add a Tip</button>';
+    } else {
+      h += '<div style="padding:10px;border-radius:10px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.06);color:#fbbf24;font-weight:800;font-size:12px;text-align:center;margin-bottom:8px;">Tip sent: '+money(r.tip_amount)+'</div>';
+    }
     h += '<button id="zy-r-dismiss" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">New ride</button>';
   }
 
   c.innerHTML = h;
 
+  /* Bind: accept a bid */
+  c.querySelectorAll('[data-accept-bid]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      var bidId = this.getAttribute('data-accept-bid');
+      var drvId = this.getAttribute('data-bid-driver');
+      var amt = parseFloat(this.getAttribute('data-bid-amount'))||0;
+      var c2 = db(); if(!c2) return;
+      this.disabled = true; this.textContent = 'Accepting…';
+      try {
+        /* Try the RPC if it exists; otherwise update directly */
+        var rr = await c2.rpc('accept_ride_bid',{p_ride_id:r.id, p_bid_id:bidId});
+        if(rr.error){
+          /* Fallback: manual update */
+          var upd = await c2.from('drive_rides').update({
+            driver_id: drvId, agreed_fare: amt, status:'accepted',
+            accepted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            payment_status:'escrow_held'
+          }).eq('id', r.id).select().single();
+          if(upd.error) throw upd.error;
+          await c2.from('drive_bids').update({status:'accepted'}).eq('id', bidId);
+          try { await c2.from('drive_escrow').insert({ride_id:r.id, traveller_id:r.traveller_id, driver_id:drvId, amount:amt, currency:r.fare_currency||'GBP', status:'held'}); } catch(e){}
+          S.activeRide = upd.data;
+        } else {
+          S.activeRide = Object.assign({}, r, {driver_id:drvId, agreed_fare:amt, status:'accepted', payment_status:'escrow_held'});
+        }
+        toast('Bid accepted — driver locked in');
+        bcSend('ride', S.activeRide);
+        ensureRidePoll();
+        renderTab();
+      } catch(e){ toast('Failed: ' + e.message); this.disabled=false; this.textContent='Accept'; }
+    });
+  });
+
   var cancel = document.getElementById('zy-r-cancel');
   if(cancel) cancel.addEventListener('click',function(){ confirm2('Cancel this ride?',async function(){
     var c2 = db(); if(!c2) return;
-    await c2.from('drive_rides').update({status:'cancelled_by_rider',cancellation_reason:'Cancelled by rider',updated_at:new Date().toISOString()}).eq('id',r.id);
-    toast('Cancelled'); S.activeRide = null; renderTab();
+    var upd = await c2.from('drive_rides').update({status:'cancelled_by_rider',cancellation_reason:'Cancelled by rider',updated_at:new Date().toISOString()}).eq('id',r.id).select().single();
+    toast('Cancelled'); S.activeRide = null; bcSend('ride', upd.data||r); stopRidePoll(); renderTab();
   });});
   var start = document.getElementById('zy-r-start');
   if(start) start.addEventListener('click',async function(){
     var c2 = db(); if(!c2) return;
-    await c2.from('drive_rides').update({status:'in_progress',started_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id);
-    toast('Ride started'); renderTab();
+    var upd = await c2.from('drive_rides').update({status:'in_progress',started_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id).select().single();
+    toast('Ride started'); bcSend('ride', upd.data||r); renderTab();
   });
   var comp = document.getElementById('zy-r-complete');
   if(comp) comp.addEventListener('click',async function(){
@@ -9644,9 +9824,11 @@ function renderActiveRider(c){
       var rr = await c2.rpc('complete_drive_ride',{p_ride_id:r.id});
       if(rr.error) throw rr.error;
       toast('Ride completed');
-      S.activeRide = Object.assign({},r,{status:'completed',payment_status:'released'});
-      /* v4: recompute stats for both parties immediately */
+      var upd = await c2.from('drive_rides').select('*').eq('id',r.id).maybeSingle();
+      S.activeRide = upd.data || Object.assign({},r,{status:'completed',payment_status:'released'});
+      bcSend('ride', S.activeRide);
       await refreshSideProfiles();
+      stopRidePoll();
       renderTab();
     } catch(e){ comp.disabled = false; comp.textContent = 'Complete Ride'; toast('Failed: ' + e.message); }
   });
@@ -9660,11 +9842,12 @@ function renderActiveRider(c){
     if(navigator.share) navigator.share({title:'ZYNIX Drive',text:txt,url:location.origin}).catch(function(){});
     else if(navigator.clipboard){ navigator.clipboard.writeText(txt); toast('Copied'); }
   });
+  var tip = document.getElementById('zy-r-tip');
+  if(tip) tip.addEventListener('click', function(){ openTipModal(r); });
 }
 
 async function loadDriverBox(driverId){
   var box = document.getElementById('zy-r-driver-box'); if(!box) return;
-  /* Safety: never leave "Loading driver…" for more than 3s */
   var guard = setTimeout(function(){
     if(box && box.innerHTML.indexOf('Loading driver') !== -1){
       box.innerHTML = '<div style="text-align:center;color:#94a3b8;font-size:12px;">Driver info unavailable.</div>';
@@ -9687,7 +9870,73 @@ async function loadDriverBox(driverId){
       + '</div></div>'
       + '<button onclick="Z.drvShowProfile(\''+esc(driverId)+'\')" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">View profile</button>';
     clearTimeout(guard);
-  } catch(e){ clearTimeout(guard); console.warn('[driver box]',e); }
+  } catch(e){ clearTimeout(guard); }
+}
+
+/* ================== TIP MODAL ================== */
+function openTipModal(ride){
+  if(!ride || !ride.driver_id){ toast('Nothing to tip'); return; }
+  var html = '<div id="zy-tip-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;">'
+    + '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:22px;width:100%;max-width:360px;">'
+    + '<h3 style="margin:0 0 4px 0;font-size:17px;color:#fff;">Add a tip</h3>'
+    + '<p style="font-size:11px;color:#94a3b8;margin:0 0 16px 0;">100% goes to your driver.</p>'
+    + '<div id="zy-tip-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">'
+    + '<button data-v="1" style="padding:14px 6px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-weight:900;font-size:14px;cursor:pointer;">£1</button>'
+    + '<button data-v="2" style="padding:14px 6px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-weight:900;font-size:14px;cursor:pointer;">£2</button>'
+    + '<button data-v="5" style="padding:14px 6px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-weight:900;font-size:14px;cursor:pointer;">£5</button>'
+    + '<button data-v="10" style="padding:14px 6px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-weight:900;font-size:14px;cursor:pointer;">£10</button>'
+    + '<button data-v="custom" style="grid-column:span 2;padding:14px 6px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:900;font-size:13px;cursor:pointer;">Custom amount</button>'
+    + '</div>'
+    + '<input id="zy-tip-custom" type="number" min="1" step="0.5" placeholder="Custom £" style="display:none;width:100%;padding:11px;margin-bottom:12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;box-sizing:border-box;outline:none;" />'
+    + '<div style="display:flex;gap:8px;">'
+    + '<button id="zy-tip-x" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">Skip</button>'
+    + '<button id="zy-tip-s" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;cursor:pointer;">Send Tip</button>'
+    + '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+
+  var tipAmount = 0, customMode = false;
+  document.querySelectorAll('#zy-tip-grid button').forEach(function(b){
+    b.onclick = function(){
+      document.querySelectorAll('#zy-tip-grid button').forEach(function(x){ x.style.borderColor='#1e293b'; x.style.background='#0f172a'; });
+      this.style.borderColor = '#fbbf24';
+      this.style.background = 'rgba(251,191,36,.15)';
+      var v = this.getAttribute('data-v');
+      if(v === 'custom'){ customMode = true; document.getElementById('zy-tip-custom').style.display = 'block'; document.getElementById('zy-tip-custom').focus(); }
+      else { customMode = false; document.getElementById('zy-tip-custom').style.display='none'; tipAmount = parseFloat(v); }
+    };
+  });
+  document.getElementById('zy-tip-x').onclick = function(){ document.getElementById('zy-tip-modal').remove(); };
+  document.getElementById('zy-tip-s').onclick = async function(){
+    var btn = this;
+    var amt = customMode ? (parseFloat(document.getElementById('zy-tip-custom').value)||0) : tipAmount;
+    if(!amt || amt <= 0){ toast('Pick an amount'); return; }
+    if(amt > 500){ toast('Max tip is £500'); return; }
+    var c = db(); if(!c) return;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      var upd = await c.from('drive_rides').update({ tip_amount: amt, tip_currency:'GBP', updated_at:new Date().toISOString() }).eq('id', ride.id).select().single();
+      if(upd.error) throw upd.error;
+      /* Credit driver: increment their total_earnings by tip (post-commission) */
+      try {
+        var dRes = await c.from('drive_drivers').select('total_earnings,commission_rate,commission_waived_until').eq('user_id', ride.driver_id).maybeSingle();
+        if(dRes.data){
+          var comm = Number(dRes.data.commission_rate)||10;
+          var wu = dRes.data.commission_waived_until ? new Date(dRes.data.commission_waived_until) : null;
+          var net = (wu && wu > new Date()) ? amt : amt * (1-comm/100);
+          await c.from('drive_drivers').update({
+            total_earnings: (Number(dRes.data.total_earnings)||0) + net
+          }).eq('user_id', ride.driver_id);
+        }
+      } catch(e){}
+      S.activeRide = upd.data;
+      bcSend('tip', upd.data);
+      bcSend('ride', upd.data);
+      document.getElementById('zy-tip-modal').remove();
+      toast('Tip sent!');
+      await refreshSideProfiles();
+      renderTab();
+    } catch(e){ btn.disabled=false; btn.textContent='Send Tip'; toast('Failed: ' + e.message); }
+  };
 }
 
 /* ================== DRIVER HOME ================== */
@@ -9736,8 +9985,10 @@ async function loadRequests(){
   var u = me(); if(!u) return;
   wrap.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
   try {
+    /* v5: exclude my own requests (dual-account privacy fix) */
     var r = await c.from('drive_rides').select('*').eq('status','requested')
       .or('driver_id.is.null,driver_id.eq.'+u.id)
+      .neq('traveller_id', u.id)
       .order('created_at',{ascending:false}).limit(20);
     if(r.error) throw r.error;
     S.incoming = r.data||[];
@@ -9805,17 +10056,28 @@ async function acceptRequest(rideId){
   if(rr.error || !rr.data){ toast('Ride not found'); return; }
   var ride = rr.data;
   if(ride.driver_id && ride.driver_id !== u.id){ toast('Already taken'); loadRequests(); return; }
-  var upd = await c.from('drive_rides').update({driver_id:u.id,agreed_fare:ride.rider_offered_fare,status:'accepted',accepted_at:new Date().toISOString(),updated_at:new Date().toISOString(),payment_status:'escrow_held'}).eq('id',rideId).or('driver_id.is.null,driver_id.eq.'+u.id);
+  var upd = await c.from('drive_rides').update({
+    driver_id:u.id, agreed_fare:ride.rider_offered_fare, status:'accepted',
+    accepted_at:new Date().toISOString(), updated_at:new Date().toISOString(), payment_status:'escrow_held'
+  }).eq('id',rideId).is('driver_id', null).select().single();
   if(upd.error){
-    var upd2 = await c.from('drive_rides').update({driver_id:u.id,agreed_fare:ride.rider_offered_fare,status:'accepted',accepted_at:new Date().toISOString(),updated_at:new Date().toISOString(),payment_status:'escrow_held'}).eq('id',rideId).eq('driver_id',u.id);
+    /* Race: someone else grabbed it */
+    var upd2 = await c.from('drive_rides').update({
+      agreed_fare:ride.rider_offered_fare, status:'accepted',
+      accepted_at:new Date().toISOString(), updated_at:new Date().toISOString(), payment_status:'escrow_held'
+    }).eq('id',rideId).eq('driver_id',u.id).select().single();
     if(upd2.error){ toast('Failed: ' + upd2.error.message); return; }
+    upd = upd2;
   }
   try { await c.from('drive_escrow').insert({ride_id:rideId,traveller_id:ride.traveller_id,driver_id:u.id,amount:ride.rider_offered_fare,currency:ride.fare_currency||'GBP',status:'held'}); } catch(e){}
-  S.activeDriverRide = Object.assign({},ride,{driver_id:u.id,status:'accepted',agreed_fare:ride.rider_offered_fare});
+  S.activeDriverRide = upd.data || Object.assign({},ride,{driver_id:u.id,status:'accepted',agreed_fare:ride.rider_offered_fare});
   toast('Ride accepted');
+  bcSend('ride', S.activeDriverRide);
+  ensureRidePoll();
   renderTab();
 }
 
+/* Counter offer — now broadcasts the bid so the rider sees it instantly */
 function openCounter(rideId){
   var html = '<div id="zy-ct-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px;">'
     + '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:400px;">'
@@ -9837,9 +10099,25 @@ function openCounter(rideId){
     var eta = parseInt(document.getElementById('zy-ct-eta').value)||0;
     var msg = document.getElementById('zy-ct-msg').value.trim();
     if(amt <= 0){ toast('Enter amount'); return; }
-    try { await c.from('drive_bids').upsert({ride_id:rideId,driver_id:u.id,bid_amount:amt,estimated_arrival_minutes:eta,message:msg,status:'pending'},{onConflict:'ride_id,driver_id'});
-      document.getElementById('zy-ct-modal').remove(); toast('Counter offer sent');
-    } catch(e){ toast('Failed: ' + e.message); }
+    var btn = this; btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      var rr = await c.from('drive_bids').upsert({
+        ride_id: rideId, driver_id: u.id, bid_amount: amt,
+        estimated_arrival_minutes: eta, message: msg, status:'pending'
+      }, {onConflict:'ride_id,driver_id'}).select().single();
+      if(rr.error) throw rr.error;
+      /* Also bump ride status to 'bidding' so the rider's UI shows the section */
+      try {
+        await c.from('drive_rides').update({status:'bidding', updated_at:new Date().toISOString()}).eq('id',rideId).eq('status','requested');
+      } catch(e){}
+      /* Broadcast the bid so the rider's app updates instantly */
+      bcSend('bid', rr.data);
+      /* Broadcast a ride event too */
+      bcSend('ride', Object.assign({}, {id: rideId, status:'bidding'}, S.activeRide||{}));
+      document.getElementById('zy-ct-modal').remove();
+      toast('Counter offer sent');
+      loadRequests();
+    } catch(e){ btn.disabled=false; btn.textContent='Send'; toast('Failed: ' + e.message); }
   };
 }
 
@@ -9868,12 +10146,16 @@ function renderActiveDriver(c){
 
   var ar = document.getElementById('zy-d-arrive');
   if(ar) ar.addEventListener('click',async function(){ var c2 = db(); if(!c2) return;
-    await c2.from('drive_rides').update({status:'driver_arriving',driver_arrived_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id);
-    S.activeDriverRide.status = 'driver_arriving'; renderTab(); });
+    var upd = await c2.from('drive_rides').update({status:'driver_arriving',driver_arrived_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id).select().single();
+    S.activeDriverRide.status = 'driver_arriving';
+    bcSend('ride', upd.data||S.activeDriverRide);
+    renderTab(); });
   var st = document.getElementById('zy-d-start');
   if(st) st.addEventListener('click',async function(){ var c2 = db(); if(!c2) return;
-    await c2.from('drive_rides').update({status:'in_progress',started_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id);
-    S.activeDriverRide.status = 'in_progress'; renderTab(); });
+    var upd = await c2.from('drive_rides').update({status:'in_progress',started_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',r.id).select().single();
+    S.activeDriverRide.status = 'in_progress';
+    bcSend('ride', upd.data||S.activeDriverRide);
+    renderTab(); });
   var cp = document.getElementById('zy-d-complete');
   if(cp) cp.addEventListener('click',async function(){
     cp.disabled = true; cp.textContent = 'Completing…';
@@ -9882,9 +10164,12 @@ function renderActiveDriver(c){
       var rr = await c2.rpc('complete_drive_ride',{p_ride_id:r.id});
       if(rr.error) throw rr.error;
       toast('Ride completed — funds released');
-      /* v4: recompute driver stats immediately after completion */
+      var upd = await c2.from('drive_rides').select('*').eq('id',r.id).maybeSingle();
+      var finalRow = upd.data || Object.assign({},r,{status:'completed'});
+      bcSend('ride', finalRow);
       await refreshSideProfiles();
       S.activeDriverRide = null;
+      stopRidePoll();
       renderTab();
     } catch(e){ cp.disabled = false; cp.textContent = 'Complete ride'; toast('Failed: ' + e.message); }
   });
@@ -9912,7 +10197,7 @@ async function loadRiderBox(uid){
       + '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;"><span style="color:#fbbf24;">★</span> '+((Number(trv.rating_avg)||5).toFixed(1))+' / 10 · '+(trv.total_rides||0)+' rides</div></div></div>'
       + '<button onclick="Z.drvShowProfile(\''+esc(uid)+'\')" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">View profile</button>';
     clearTimeout(guard);
-  } catch(e){ clearTimeout(guard); console.warn('[rider box]',e); }
+  } catch(e){ clearTimeout(guard); }
 }
 
 /* ================== HISTORY ================== */
@@ -9948,7 +10233,7 @@ async function renderHistory(c){
         + '<div style="font-size:12px;color:#cbd5e1;line-height:1.5;">'+esc(x.pickup_address||'—')+' <span style="color:#475569;">→</span> '+esc(x.dest_address||'—')+'</div>'
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">'
         + '<div style="font-size:10px;color:#64748b;">'+ago(x.created_at)+'</div>'
-        + '<div style="font-size:13px;font-weight:900;color:#10b981;">'+money(x.agreed_fare||x.rider_offered_fare,x.fare_currency)+'</div></div>';
+        + '<div style="font-size:13px;font-weight:900;color:#10b981;">'+money(x.agreed_fare||x.rider_offered_fare,x.fare_currency)+(x.tip_amount>0?' <span style="color:#fbbf24;font-size:10px;">+ '+money(x.tip_amount)+' tip</span>':'')+'</div></div>';
       if(needsRate){
         h += '<button onclick="Z.drvOpenRateFromHistory(\''+esc(x.id)+'\',\''+esc(otherId)+'\',\''+(isRider?'traveller':'driver')+'\')" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-star"></i> Rate</button>';
       }
@@ -9962,6 +10247,7 @@ async function renderHistory(c){
 /* ================== RATING MODAL ================== */
 function openRateModal(rideId, rateeId, raterType){
   if(!rateeId){ toast('Nothing to rate'); return; }
+  if(document.getElementById('zy-rate-modal')) return;
   var isRider = raterType === 'traveller';
   var headerText = isRider ? 'Rate your driver' : 'Rate your rider';
   var issues = isRider
@@ -10025,7 +10311,7 @@ function openRateModal(rideId, rateeId, raterType){
       document.getElementById('zy-rate-modal').remove();
       S.myRated[rideId] = true;
       toast('Rating submitted. Thank you!');
-      /* v4: recompute both parties' averages from source of truth */
+      bcSend('rating', {id:rr.data.id, ratee_id:rateeId});
       await refreshSideProfiles();
       renderTab();
     } catch(e){ btn.disabled = false; btn.textContent = 'Submit'; toast('Failed: ' + e.message); }
@@ -10154,6 +10440,7 @@ function openPromoCreate(){
 }
 
 /* ================== PROFILE TAB ================== */
+/* v5: rider's own rating is HIDDEN here too, even if user has both roles */
 function renderProfileTab(c){
   var u = me(); if(!u) return;
   var dr = S.driver, tr = S.traveller;
@@ -10162,10 +10449,11 @@ function renderProfileTab(c){
     + '<img src="'+esc(Z.displayAvatar?Z.displayAvatar(u):'')+'" style="width:56px;height:56px;border-radius:50%;object-fit:cover;">'
     + '<div><div style="font-weight:900;font-size:15px;color:#fff;">'+esc(u.name||u.username||'You')+'</div>'
     + '<div style="font-size:11px;color:#94a3b8;">@'+esc(u.username||'user')+'</div></div></div></div>';
+  /* Rider card: NO rating shown to self */
   h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.28);margin-bottom:10px;">'
     + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">RIDER PROFILE</div>'
-    + '<div style="font-size:22px;font-weight:900;margin-top:4px;color:#fff;"><span style="color:#fbbf24;">★</span> '+(Number((tr&&tr.rating_avg)||5).toFixed(1))+' / 10</div>'
-    + '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;">'+((tr&&tr.total_rides)||0)+' rides taken · '+((tr&&tr.rating_count)||0)+' rating'+((tr&&tr.rating_count)===1?'':'s')+'</div></div>';
+    + '<div style="font-size:22px;font-weight:900;margin-top:4px;color:#fff;">'+(tr?tr.total_rides:0)+'</div>'
+    + '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;">completed rides · rating visible only to drivers</div></div>';
   if(dr){
     h += '<div style="padding:14px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.28);margin-bottom:10px;">'
       + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">DRIVER PROFILE</div>'
@@ -10225,7 +10513,6 @@ function openDriverOnboard(){
     try {
       var rr = await c.from('drive_drivers').upsert(payload,{onConflict:'user_id'});
       if(rr.error) throw rr.error;
-      if(!S.driver) { try { await c.from('drive_early_adopters').upsert({user_id:u.id,role:'driver',commission_waived:true},{onConflict:'user_id'}); } catch(e){} }
       await refreshSideProfiles();
       document.getElementById('zy-do-modal').remove();
       toast(S.driver?'Driver profile updated':'Welcome, ZYNIX Driver!');
@@ -10234,102 +10521,68 @@ function openDriverOnboard(){
   };
 }
 
-/* ================== REALTIME (v4) ================== */
+/* ================== REALTIME DB (belt) ================== */
 function rt_start(){
   rt_stop();
   var c = db(); if(!c) return;
   var u = me(); if(!u) return;
   try {
-    /* 1. Rides — single table covers both roles */
     var ch1 = c.channel('zy-drive-rides-'+u.id)
       .on('postgres_changes',{event:'*',schema:'public',table:'drive_rides'},function(payload){
         var row = payload.new || payload.old;
         if(!row) return;
-        if(row.traveller_id === u.id){
-          if(payload.eventType === 'DELETE'){
-            if(S.activeRide && S.activeRide.id === row.id) S.activeRide = null;
-          } else {
-            var st = payload.new.status;
-            if(['requested','bidding','accepted','driver_arriving','in_progress'].indexOf(st) !== -1){
-              S.activeRide = payload.new;
-            } else if(st === 'completed'){
-              S.activeRide = payload.new;
-              /* v4: recompute stats + show rating modal */
-              refreshSideProfiles().then(function(){
-                if(!S.myRated[row.id] && !document.getElementById('zy-rate-modal')){
-                  openRateModal(row.id, payload.new.driver_id, 'traveller');
-                }
-              });
-            } else {
-              if(S.activeRide && S.activeRide.id === row.id) S.activeRide = null;
-            }
-          }
-          if(S.tab === 'home' && S.mode === 'rider') renderTab();
+        if(payload.eventType === 'DELETE'){
+          if(S.activeRide && S.activeRide.id === row.id) S.activeRide = null;
+          if(S.activeDriverRide && S.activeDriverRide.id === row.id) S.activeDriverRide = null;
+          if(S.tab === 'home') renderTab();
+          return;
         }
-        if(row.driver_id === u.id){
-          if(payload.eventType === 'DELETE'){
-            if(S.activeDriverRide && S.activeDriverRide.id === row.id) S.activeDriverRide = null;
-          } else {
-            var st2 = payload.new.status;
-            if(['accepted','driver_arriving','in_progress'].indexOf(st2) !== -1){
-              S.activeDriverRide = payload.new;
-            } else if(st2 === 'completed'){
-              S.activeDriverRide = null;
-              /* v4: recompute stats + show rating modal */
-              refreshSideProfiles().then(function(){
-                if(!S.myRated[row.id] && !document.getElementById('zy-rate-modal')){
-                  openRateModal(row.id, payload.new.traveller_id, 'driver');
-                }
-              });
-            } else {
-              if(S.activeDriverRide && S.activeDriverRide.id === row.id) S.activeDriverRide = null;
-            }
-          }
-          if(S.tab === 'home' && S.mode === 'driver') renderTab();
-        }
+        handleRideRow(payload.new);
+        /* New open request visible to available drivers */
         if(!row.driver_id && payload.eventType === 'INSERT'){
           if(S.tab === 'home' && S.mode === 'driver' && S.driver && S.driver.is_available) loadRequests();
         }
       }).subscribe();
     S.rt.push(ch1);
 
-    /* 2. Promos */
     var ch2 = c.channel('zy-drive-promos')
       .on('postgres_changes',{event:'*',schema:'public',table:'drive_promos'},function(){
         if(S.tab === 'promos') renderTab();
       }).subscribe();
     S.rt.push(ch2);
 
-    /* 3. Ratings — on new rating, recompute both parties' averages */
     var ch3 = c.channel('zy-drive-ratings-'+u.id)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'drive_ratings'},function(){
-        refreshSideProfiles().then(function(){
-          if(S.tab === 'profile' || S.tab === 'history') renderTab();
-        });
+        refreshSideProfiles().then(function(){ if(S.tab === 'profile' || S.tab === 'history') renderTab(); });
       }).subscribe();
     S.rt.push(ch3);
 
-    /* 4. v4: drive_travellers — react to any change on our own row */
-    var ch4 = c.channel('zy-drive-traveller-'+u.id)
-      .on('postgres_changes',{event:'*',schema:'public',table:'drive_travellers',filter:'user_id=eq.'+u.id},function(payload){
-        if(payload.new){
-          S.traveller = Object.assign({}, S.traveller||{}, payload.new);
+    var ch4 = c.channel('zy-drive-bids-'+u.id)
+      .on('postgres_changes',{event:'*',schema:'public',table:'drive_bids'},function(payload){
+        var row = payload.new || payload.old;
+        if(!row || !row.ride_id) return;
+        if(S.activeRide && S.activeRide.id === row.ride_id){
+          loadRideBids(row.ride_id).then(function(){
+            if(S.tab === 'home' && S.mode === 'rider') renderTab();
+          });
         }
-        if(S.tab === 'home' && S.mode === 'rider') renderTab();
-        if(S.tab === 'profile') renderTab();
       }).subscribe();
     S.rt.push(ch4);
 
-    /* 5. v4: drive_drivers — react to any change on our own row */
-    var ch5 = c.channel('zy-drive-driver-'+u.id)
-      .on('postgres_changes',{event:'*',schema:'public',table:'drive_drivers',filter:'user_id=eq.'+u.id},function(payload){
-        if(payload.new){
-          S.driver = Object.assign({}, S.driver||{}, payload.new);
-        }
-        if(S.tab === 'home') renderTab();
+    var ch5 = c.channel('zy-drive-traveller-'+u.id)
+      .on('postgres_changes',{event:'*',schema:'public',table:'drive_travellers',filter:'user_id=eq.'+u.id},function(payload){
+        if(payload.new){ S.traveller = Object.assign({}, S.traveller||{}, payload.new); }
+        if(S.tab === 'home' && S.mode === 'rider') renderTab();
         if(S.tab === 'profile') renderTab();
       }).subscribe();
     S.rt.push(ch5);
+
+    var ch6 = c.channel('zy-drive-driver-'+u.id)
+      .on('postgres_changes',{event:'*',schema:'public',table:'drive_drivers',filter:'user_id=eq.'+u.id},function(payload){
+        if(payload.new){ S.driver = Object.assign({}, S.driver||{}, payload.new); }
+        if(S.tab === 'home' || S.tab === 'profile') renderTab();
+      }).subscribe();
+    S.rt.push(ch6);
   } catch(e){ console.warn('[rt_start]',e); }
 }
 function rt_stop(){
@@ -10341,6 +10594,7 @@ function rt_stop(){
 /* ================== VIEW NAV ================== */
 var _origShowView = Z.showView;
 Z.showView = async function(view, param){
+  if(view !== 'drive') { stopPeriodicSync(); stopRidePoll(); }
   if(view === 'drive'){
     var app = document.getElementById('app-container');
     if(!app) return;
@@ -10374,10 +10628,9 @@ Z.drvOpenRateFromHistory = function(rideId, otherId, raterType){
   openRateModal(rideId, otherId, raterType);
 };
 Z.openDriveView = function(){ Z.showView('drive'); };
-/* v4: expose sync helpers for manual triggers if ever needed */
 Z.driveSyncStats = refreshSideProfiles;
 
-/* ================== GALLERIA HOT ROW + BOOKINGS + LOUNGE (unchanged) ================== */
+/* ================== GALLERIA HOT ROW + BOOKINGS + LOUNGE ================== */
 function hotRowHTML(){
   var items = [
     { icon:'fa-solid fa-car-side', color:'#10b981', title:'ZYNIX Drive', tag:'NEW', sub:'Ride · Bid · Go', action:'Z.showView(\'drive\')' },
@@ -10503,15 +10756,8 @@ if(!document.getElementById('zynix-hot-anim-css')){
   document.head.appendChild(st);
 }
 
-/* Pause periodic sync when leaving the drive view */
-var _origShowViewSync = Z.showView;
-Z.showView = async function(view, param){
-  if(view !== 'drive') stopPeriodicSync();
-  return _origShowViewSync.call(this, view, param);
-};
-
-window.addEventListener('beforeunload', function(){ stopTrack(); stopPeriodicSync(); rt_stop(); });
-console.log('[ZYNIX Drive v4] ready — counter + realtime fix');
+window.addEventListener('beforeunload', function(){ stopTrack(); stopPeriodicSync(); stopRidePoll(); rt_stop(); });
+console.log('[ZYNIX Drive v5] ready — broadcast + polling + tip + bids');
 })();
 </script>
 </body>
