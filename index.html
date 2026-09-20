@@ -9223,6 +9223,1207 @@ Z._toggleLoungeRow = function(rowId, ev){
 })();
 })();
 </script>
+   <!-- ============================================================ -->
+<!-- ============================================================ -->
+<!--                                                              -->
+<!--   SECTION 17 — ZYNIX DRIVE                                   -->
+<!--   Global ride-hailing with bidding, escrow, dual rating,     -->
+<!--   and safety tools.                                          -->
+<!--                                                              -->
+<!--   Add this block directly BEFORE </body>.                    -->
+<!--   Do NOT paste inside another <script> block.                -->
+<!--                                                              -->
+<!--   START OF SECTION 17                                        -->
+<!--                                                              -->
+<!-- ============================================================ -->
+<!-- ============================================================ -->
+
+<script>
+/* ============================================================
+   ZYNIX DRIVE — Section 17
+   Rider + Driver app. Bidding. Escrow. Dual 1-10 rating. Safety.
+   ============================================================ */
+(function() {
+  'use strict';
+
+  var Z = window.Z || {};
+  window.Z = Z;
+
+  // ============================================================
+  // STATE
+  // ============================================================
+  var _mode = 'rider'; // 'rider' or 'driver'
+  var _driverProfile = null;
+  var _travellerProfile = null;
+  var _activeRide = null;
+  var _myRideRequest = null;
+  var _nearbyDrivers = [];
+  var _myBids = [];
+  var _incomingBids = [];
+  var _locationWatchId = null;
+  var _trackingInterval = null;
+  var _currentPosition = null;
+
+  // ============================================================
+  // UTILITIES
+  // ============================================================
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function toast(msg, ms) {
+    if (Z.toast) Z.toast(msg, ms);
+    else console.log('[Drive]', msg);
+  }
+
+  function confirmBox(msg, onYes) {
+    if (window.confirm) {
+      if (window.confirm(msg)) onYes();
+    } else {
+      onYes();
+    }
+  }
+
+  function fmtMoney(n, cur) {
+    cur = cur || 'GBP';
+    var sym = cur === 'GBP' ? '£' : cur === 'USD' ? '$' : cur === 'EUR' ? '€' : cur + ' ';
+    return sym + (Number(n) || 0).toFixed(2);
+  }
+
+  function fmtTimeAgo(ts) {
+    if (!ts) return '';
+    var s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  function getLocation() {
+    return new Promise(function(resolve, reject) {
+      if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+      navigator.geolocation.getCurrentPosition(
+        function(pos) { resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+        function(err) { reject(err); },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      );
+    });
+  }
+
+  function watchLocation(callback) {
+    if (_locationWatchId != null) return;
+    if (!navigator.geolocation) return;
+    _locationWatchId = navigator.geolocation.watchPosition(
+      function(pos) {
+        var loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        _currentPosition = loc;
+        if (callback) callback(loc);
+      },
+      function() {},
+      { enableHighAccuracy: true, maximumAge: 5000 }
+    );
+  }
+
+  function stopWatch() {
+    if (_locationWatchId != null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(_locationWatchId);
+      _locationWatchId = null;
+    }
+  }
+
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
+  async function renderDrive(container) {
+    container = container || document.getElementById('zy-drive-mount');
+    if (!container) return;
+
+    if (!Z.currentUser) {
+      container.innerHTML = '<div style="padding:40px;text-align:center;opacity:0.6;">Please sign in to use ZYNIX Drive.</div>';
+      return;
+    }
+
+    container.innerHTML = '<div style="padding:30px;text-align:center;opacity:0.5;">'
+      + '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:28px;"></i></div>';
+
+    // Load both profiles
+    try {
+      var dRes = await Z.sb.from('drive_drivers').select('*').eq('user_id', Z.currentUser.id).maybeSingle();
+      _driverProfile = dRes.data || null;
+
+      var tRes = await Z.sb.from('drive_travellers').select('*').eq('user_id', Z.currentUser.id).maybeSingle();
+      _travellerProfile = tRes.data || null;
+
+      // Ensure traveller profile exists for everyone (riders are travellers by default)
+      if (!_travellerProfile) {
+        await Z.sb.from('drive_travellers').upsert({ user_id: Z.currentUser.id }, { onConflict: 'user_id' });
+        _travellerProfile = { user_id: Z.currentUser.id, rating_avg: 5.0, rating_count: 0, total_rides: 0 };
+      }
+    } catch (e) {
+      console.warn('[Drive] profile load failed:', e.message);
+    }
+
+    renderShell(container);
+  }
+
+  function renderShell(container) {
+    var hasDriverProfile = !!_driverProfile;
+
+    var html = '';
+    html += '<div class="zy-section" id="zy-drive-root">';
+
+    // Header
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 12px;">';
+    html += '<h2 style="margin:0;font-size:20px;"><i class="fa-solid fa-car-side"></i> ZYNIX Drive</h2>';
+    html += '<div style="display:flex;gap:6px;">';
+    if (hasDriverProfile) {
+      html += '<button id="zy-drv-mode-toggle" style="padding:8px 14px;border-radius:20px;border:none;'
+        + 'background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:600;font-size:12px;cursor:pointer;">'
+        + (_mode === 'rider' ? '<i class="fa-solid fa-steering-wheel"></i> Driver Mode' : '<i class="fa-solid fa-user"></i> Rider Mode')
+        + '</button>';
+    } else {
+      html += '<button id="zy-drv-become-driver" style="padding:8px 14px;border-radius:20px;border:none;'
+        + 'background:rgba(255,255,255,0.1);color:#fff;font-weight:600;font-size:12px;cursor:pointer;">'
+        + '<i class="fa-solid fa-plus"></i> Become Driver</button>';
+    }
+    html += '</div></div>';
+
+    // Body
+    html += '<div id="zy-drv-body"></div>';
+
+    html += '</div>';
+    container.innerHTML = html;
+
+    var toggle = document.getElementById('zy-drv-mode-toggle');
+    if (toggle) toggle.addEventListener('click', function() {
+      _mode = _mode === 'rider' ? 'driver' : 'rider';
+      renderShell(container);
+    });
+
+    var become = document.getElementById('zy-drv-become-driver');
+    if (become) become.addEventListener('click', openBecomeDriverModal);
+
+    if (_mode === 'rider') renderRiderView();
+    else renderDriverView();
+  }
+
+  // ============================================================
+  // RIDER VIEW
+  // ============================================================
+  async function renderRiderView() {
+    var body = document.getElementById('zy-drv-body');
+    if (!body) return;
+
+    // Check if there's an active ride
+    var { data: rides } = await Z.sb.from('drive_rides')
+      .select('*')
+      .eq('traveller_id', Z.currentUser.id)
+      .in('status', ['requested','bidding','accepted','driver_arriving','in_progress'])
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    _activeRide = (rides && rides[0]) || null;
+
+    if (_activeRide) {
+      renderActiveRideView(body, _activeRide);
+      return;
+    }
+
+    // New ride form
+    var html = '';
+    html += '<div style="padding:12px;">';
+
+    // Rider stats banner
+    html += '<div style="padding:10px 14px;border-radius:12px;background:rgba(255,255,255,0.04);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">';
+    html += '<div><div style="font-size:11px;opacity:0.6;">Your rider rating</div>';
+    html += '<div style="font-size:18px;font-weight:700;">' + (_travellerProfile.rating_avg || 5).toFixed(1) + ' / 10</div></div>';
+    html += '<div style="text-align:right;"><div style="font-size:11px;opacity:0.6;">Rides taken</div>';
+    html += '<div style="font-size:18px;font-weight:700;">' + (_travellerProfile.total_rides || 0) + '</div></div>';
+    html += '</div>';
+
+    // Form
+    html += '<div style="padding:18px;border-radius:14px;background:rgba(255,255,255,0.05);margin-bottom:14px;">';
+    html += '<h4 style="margin:0 0 12px 0;font-size:15px;">Where are you going?</h4>';
+
+    html += '<label style="font-size:12px;opacity:0.7;">Pickup</label>';
+    html += '<input id="zy-drv-pickup" placeholder="Enter pickup address" '
+      + 'style="width:100%;padding:12px;margin:4px 0 10px 0;border-radius:10px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);'
+      + 'color:#fff;font-size:14px;box-sizing:border-box;" />';
+
+    html += '<button id="zy-drv-use-location" style="padding:8px 12px;margin-bottom:12px;'
+      + 'border-radius:8px;border:1px solid rgba(255,255,255,0.15);'
+      + 'background:transparent;color:#fff;font-size:12px;cursor:pointer;">'
+      + '<i class="fa-solid fa-location-crosshairs"></i> Use my current location</button>';
+
+    html += '<label style="font-size:12px;opacity:0.7;">Destination</label>';
+    html += '<input id="zy-drv-dest" placeholder="Enter destination address" '
+      + 'style="width:100%;padding:12px;margin:4px 0 12px 0;border-radius:10px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);'
+      + 'color:#fff;font-size:14px;box-sizing:border-box;" />';
+
+    html += '<label style="font-size:12px;opacity:0.7;">Your offered fare (drivers can accept or counter)</label>';
+    html += '<div style="display:flex;gap:8px;margin:4px 0 12px 0;">';
+    html += '<input id="zy-drv-fare" type="number" min="1" step="0.5" value="8.00" '
+      + 'style="flex:1;padding:12px;border-radius:10px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);'
+      + 'color:#fff;font-size:14px;box-sizing:border-box;" />';
+    html += '<div style="padding:12px 14px;border-radius:10px;background:rgba(255,255,255,0.06);'
+      + 'font-weight:700;font-size:14px;">GBP</div>';
+    html += '</div>';
+    html += '<div style="font-size:11px;opacity:0.5;margin-bottom:12px;">'
+      + 'Average local fare for this distance: ~£7.50. You can offer what you want. No hidden surge.</div>';
+
+    html += '<button id="zy-drv-find" style="width:100%;padding:16px;border-radius:12px;border:none;'
+      + 'background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:700;'
+      + 'font-size:15px;cursor:pointer;">'
+      + '<i class="fa-solid fa-magnifying-glass-location"></i> Find Drivers Nearby</button>';
+    html += '</div>';
+
+    // Nearby drivers list
+    html += '<h4 style="font-size:14px;opacity:0.7;margin:0 0 8px 0;">Available Now</h4>';
+    html += '<div id="zy-drv-drivers-list">'
+      + '<div style="text-align:center;padding:20px;opacity:0.5;font-size:13px;">'
+      + 'Tap "Find Drivers Nearby" to see who is around you.</div></div>';
+
+    html += '</div>';
+    body.innerHTML = html;
+
+    // Events
+    var useLoc = document.getElementById('zy-drv-use-location');
+    if (useLoc) useLoc.addEventListener('click', async function() {
+      try {
+        var loc = await getLocation();
+        _currentPosition = loc;
+        document.getElementById('zy-drv-pickup').value = 'My location (' + loc.lat.toFixed(4) + ', ' + loc.lng.toFixed(4) + ')';
+      } catch (e) { toast('Could not get location'); }
+    });
+
+    var findBtn = document.getElementById('zy-drv-find');
+    if (findBtn) findBtn.addEventListener('click', findDriversNearby);
+  }
+
+  async function findDriversNearby() {
+    var pickupEl = document.getElementById('zy-drv-pickup');
+    var destEl = document.getElementById('zy-drv-dest');
+    var listEl = document.getElementById('zy-drv-drivers-list');
+    if (!listEl) return;
+
+    var pickup = (pickupEl && pickupEl.value.trim()) || '';
+    var dest = (destEl && destEl.value.trim()) || '';
+    if (!pickup || !dest) { toast('Enter pickup and destination'); return; }
+
+    listEl.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.5;">'
+      + '<i class="fa-solid fa-circle-notch fa-spin"></i></div>';
+
+    var loc;
+    try { loc = await getLocation(); _currentPosition = loc; }
+    catch (e) { toast('Enable location to find nearby drivers'); 
+      listEl.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.5;font-size:13px;">'
+        + 'Location access is needed to find drivers near you.</div>';
+      return; }
+
+    try {
+      var { data: drivers, error } = await Z.sb.rpc('find_nearby_drivers', {
+        p_lat: loc.lat, p_lng: loc.lng, p_radius_km: 5, p_limit: 20
+      });
+      if (error) throw error;
+      _nearbyDrivers = drivers || [];
+
+      if (!_nearbyDrivers.length) {
+        listEl.innerHTML = '<div style="text-align:center;padding:24px;opacity:0.5;font-size:13px;">'
+          + 'No drivers available within 5 km right now.<br>Try again in a few minutes.</div>';
+        return;
+      }
+
+      var html = '';
+      _nearbyDrivers.forEach(function(d) {
+        html += driverCardHTML(d);
+      });
+      listEl.innerHTML = html;
+
+      listEl.querySelectorAll('[data-request-driver]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          requestRide(this.getAttribute('data-request-driver'));
+        });
+      });
+    } catch (e) {
+      listEl.innerHTML = '<div style="text-align:center;padding:20px;color:#f66;font-size:13px;">'
+        + 'Failed to load drivers: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function driverCardHTML(d) {
+    var initials = (d.driver_name || 'D').substring(0, 1).toUpperCase();
+    var avatar = d.driver_avatar
+      ? '<img src="' + esc(d.driver_avatar) + '" style="width:100%;height:100%;object-fit:cover;" />'
+      : '<span style="font-size:20px;font-weight:700;">' + initials + '</span>';
+
+    var womenBadge = d.is_women_only
+      ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(255,100,150,0.2);margin-left:6px;">Women only</span>'
+      : '';
+
+    return '<div style="padding:12px;border-radius:12px;background:rgba(255,255,255,0.04);margin-bottom:8px;">'
+      + '<div style="display:flex;gap:12px;align-items:center;">'
+      +   '<div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#6a1fc9,#9b4dff);'
+      +     'display:flex;align-items:center;justify-content:center;color:#fff;overflow:hidden;flex-shrink:0;">'
+      +     avatar + '</div>'
+      +   '<div style="flex:1;min-width:0;">'
+      +     '<div style="font-weight:600;font-size:14px;">' + esc(d.driver_name || 'Driver') + womenBadge + '</div>'
+      +     '<div style="font-size:12px;opacity:0.6;">'
+      +       esc((d.vehicle_make || '') + ' ' + (d.vehicle_model || '') + ' · ' + (d.vehicle_color || ''))
+      +     '</div>'
+      +     '<div style="font-size:12px;margin-top:2px;">'
+      +       '<span style="color:#ffc800;">★</span> '
+      +       (Number(d.rating_avg) || 5).toFixed(1) + ' / 10 · '
+      +       (d.total_rides || 0) + ' rides · '
+      +       '<span style="opacity:0.6;">' + (d.distance_km || 0) + ' km away</span>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:10px;">'
+      +   '<button data-request-driver="' + esc(d.driver_user_id) + '" '
+      +     'style="flex:1;padding:10px;border-radius:8px;border:none;'
+      +     'background:linear-gradient(135deg,#0d9e4a,#0a7d3a);color:#fff;'
+      +     'font-weight:600;font-size:13px;cursor:pointer;">Request Ride</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  async function requestRide(driverId) {
+    var pickup = document.getElementById('zy-drv-pickup').value.trim();
+    var dest = document.getElementById('zy-drv-dest').value.trim();
+    var fare = parseFloat(document.getElementById('zy-drv-fare').value) || 0;
+    if (!pickup || !dest) { toast('Missing pickup or destination'); return; }
+    if (fare <= 0) { toast('Enter a fare amount'); return; }
+
+    var loc = _currentPosition;
+    if (!loc) { try { loc = await getLocation(); } catch (e) {} }
+
+    try {
+      var { data, error } = await Z.sb.from('drive_rides').insert({
+        traveller_id: Z.currentUser.id,
+        driver_id: driverId,
+        pickup_address: pickup,
+        dest_address: dest,
+        rider_offered_fare: fare,
+        fare_currency: 'GBP',
+        status: 'requested'
+      }).select().single();
+      if (error) throw error;
+      _activeRide = data;
+      toast('Ride requested. Waiting for driver to confirm.');
+      renderRiderView();
+    } catch (e) {
+      toast('Failed: ' + e.message);
+    }
+  }
+
+  // ============================================================
+  // ACTIVE RIDE VIEW (for rider)
+  // ============================================================
+  function renderActiveRideView(body, ride) {
+    var statusLabels = {
+      requested: 'Waiting for driver',
+      bidding: 'Drivers are bidding',
+      accepted: 'Driver accepted',
+      driver_arriving: 'Driver on the way',
+      in_progress: 'Ride in progress',
+      completed: 'Completed',
+      cancelled_by_rider: 'You cancelled',
+      cancelled_by_driver: 'Driver cancelled',
+      disputed: 'In dispute',
+      expired: 'Expired'
+    };
+
+    var html = '';
+    html += '<div style="padding:14px;">';
+
+    // Status banner
+    html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(106,31,201,0.25),rgba(155,77,255,0.15));'
+      + 'margin-bottom:14px;">';
+    html += '<div style="font-size:11px;opacity:0.7;text-transform:uppercase;letter-spacing:1px;">Current ride</div>';
+    html += '<div style="font-size:20px;font-weight:700;margin-top:4px;">'
+      + esc(statusLabels[ride.status] || ride.status) + '</div>';
+    html += '<div style="font-size:12px;opacity:0.7;margin-top:6px;">' + fmtTimeAgo(ride.requested_at) + '</div>';
+    html += '</div>';
+
+    // Route
+    html += '<div style="padding:14px;border-radius:12px;background:rgba(255,255,255,0.04);margin-bottom:12px;">';
+    html += '<div style="display:flex;gap:10px;margin-bottom:10px;">'
+      + '<div style="width:10px;height:10px;border-radius:50%;background:#0d9e4a;margin-top:5px;"></div>'
+      + '<div><div style="font-size:11px;opacity:0.6;">Pickup</div>'
+      + '<div style="font-size:14px;">' + esc(ride.pickup_address || '—') + '</div></div></div>';
+    html += '<div style="display:flex;gap:10px;">'
+      + '<div style="width:10px;height:10px;border-radius:50%;background:#b02020;margin-top:5px;"></div>'
+      + '<div><div style="font-size:11px;opacity:0.6;">Destination</div>'
+      + '<div style="font-size:14px;">' + esc(ride.dest_address || '—') + '</div></div></div>';
+    html += '</div>';
+
+    // Fare
+    var fare = ride.agreed_fare || ride.rider_offered_fare;
+    html += '<div style="padding:14px;border-radius:12px;background:rgba(255,200,0,0.06);'
+      + 'border:1px solid rgba(255,200,0,0.15);margin-bottom:12px;">';
+    html += '<div style="font-size:11px;opacity:0.7;">Fare</div>';
+    html += '<div style="font-size:24px;font-weight:700;color:#ffc800;">' + fmtMoney(fare, ride.fare_currency) + '</div>';
+    if (ride.payment_status === 'escrow_held') {
+      html += '<div style="font-size:11px;opacity:0.6;margin-top:4px;">'
+        + '<i class="fa-solid fa-lock"></i> Held in escrow until ride completes</div>';
+    }
+    html += '</div>';
+
+    // Driver info (if accepted)
+    if (ride.driver_id) {
+      loadDriverInfoInto(html, ride);
+      html = _lastDriverInfoHTML || html;
+    }
+
+    // Actions
+    html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">';
+
+    if (ride.status === 'requested' || ride.status === 'bidding') {
+      html += '<button id="zy-drv-cancel-rider" style="width:100%;padding:14px;border-radius:10px;'
+        + 'border:1px solid rgba(255,100,100,0.4);background:rgba(255,100,100,0.1);'
+        + 'color:#ff8888;font-weight:600;cursor:pointer;">Cancel Ride</button>';
+    }
+
+    if (ride.status === 'driver_arriving' || ride.status === 'accepted') {
+      html += '<button id="zy-drv-start-ride" style="width:100%;padding:14px;border-radius:10px;'
+        + 'border:none;background:linear-gradient(135deg,#0d9e4a,#0a7d3a);color:#fff;'
+        + 'font-weight:600;cursor:pointer;">Driver has arrived — Start Ride</button>';
+    }
+
+    if (ride.status === 'in_progress') {
+      html += '<button id="zy-drv-complete-ride" style="width:100%;padding:14px;border-radius:10px;'
+        + 'border:none;background:linear-gradient(135deg,#0d9e4a,#0a7d3a);color:#fff;'
+        + 'font-weight:600;cursor:pointer;">Complete Ride</button>';
+    }
+
+    // Safety row (always visible during active ride)
+    if (['accepted','driver_arriving','in_progress'].indexOf(ride.status) !== -1) {
+      html += '<div style="display:flex;gap:8px;margin-top:6px;">';
+      html += '<button id="zy-drv-panic" style="flex:1;padding:14px;border-radius:10px;'
+        + 'border:none;background:linear-gradient(135deg,#b02020,#e03030);color:#fff;'
+        + 'font-weight:700;cursor:pointer;font-size:13px;">'
+        + '<i class="fa-solid fa-triangle-exclamation"></i> Emergency</button>';
+      html += '<button id="zy-drv-share-loc" style="flex:1;padding:14px;border-radius:10px;'
+        + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;'
+        + 'font-weight:600;cursor:pointer;font-size:13px;">'
+        + '<i class="fa-solid fa-share-nodes"></i> Share Location</button>';
+      html += '</div>';
+    }
+
+    html += '</div></div>';
+    body.innerHTML = html;
+
+    // Events
+    bindActiveRideEvents(ride);
+  }
+
+  var _lastDriverInfoHTML = null;
+  async function loadDriverInfoInto(placeholder, ride) {
+    if (!ride.driver_id) return;
+    try {
+      var { data: driver } = await Z.sb.from('drive_drivers')
+        .select('*, profiles!inner(username, avatar_url)')
+        .eq('user_id', ride.driver_id).maybeSingle();
+      if (!driver) return;
+
+      var name = driver.profiles ? driver.profiles.username : 'Driver';
+      var avatar = driver.profiles && driver.profiles.avatar_url
+        ? '<img src="' + esc(driver.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;" />'
+        : '<i class="fa-solid fa-user"></i>';
+
+      var driverHTML = '<div style="padding:14px;border-radius:12px;background:rgba(255,255,255,0.04);margin-bottom:12px;">';
+      driverHTML += '<div style="display:flex;gap:12px;align-items:center;">';
+      driverHTML += '<div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#6a1fc9,#9b4dff);'
+        + 'display:flex;align-items:center;justify-content:center;color:#fff;overflow:hidden;">' + avatar + '</div>';
+      driverHTML += '<div style="flex:1;"><div style="font-weight:600;">' + esc(name) + '</div>';
+      driverHTML += '<div style="font-size:12px;opacity:0.6;">'
+        + esc((driver.vehicle_make || '') + ' ' + (driver.vehicle_model || '') + ' · ' + (driver.vehicle_color || '')) + '</div>';
+      driverHTML += '<div style="font-size:12px;"><span style="color:#ffc800;">★</span> '
+        + (Number(driver.rating_avg) || 5).toFixed(1) + ' / 10</div>';
+      driverHTML += '</div>';
+      driverHTML += '<button id="zy-drv-ping-driver" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:#fff;font-size:12px;cursor:pointer;">Ping</button>';
+      driverHTML += '</div></div>';
+
+      // Find insertion point: after fare block
+      var marker = '<!--DRIVER_INFO-->';
+      placeholder = placeholder.replace('<!--DRIVER_INFO-->', driverHTML);
+      if (placeholder.indexOf('<!--DRIVER_INFO-->') !== -1) {
+        placeholder = placeholder.replace('<!--DRIVER_INFO-->', driverHTML);
+      }
+
+      // Simplest: re-render body with driver info inserted at right spot
+      // We'll append it after fare by replacing a known anchor
+      var body = document.getElementById('zy-drv-body');
+      if (body) {
+        // Re-render is complex; instead, inject a new element after the fare block
+        var fareBlocks = body.querySelectorAll('div');
+        // Just add driver info to top of actions row
+        var actionsDiv = body.querySelector('button#zy-drv-panic') && body.querySelector('button#zy-drv-panic').parentElement;
+        if (actionsDiv && !body.querySelector('#zy-drv-driver-info')) {
+          var wrap = document.createElement('div');
+          wrap.id = 'zy-drv-driver-info';
+          wrap.innerHTML = driverHTML;
+          actionsDiv.parentNode.insertBefore(wrap, actionsDiv);
+        }
+      }
+
+      var pingBtn = document.getElementById('zy-drv-ping-driver');
+      if (pingBtn) pingBtn.addEventListener('click', function() {
+        if (Z.openPingModal) Z.openPingModal(ride.driver_id);
+        else toast('Ping: open chat with driver');
+      });
+    } catch (e) { console.warn('[Drive] driver load failed', e); }
+  }
+
+  function bindActiveRideEvents(ride) {
+    var cancelBtn = document.getElementById('zy-drv-cancel-rider');
+    if (cancelBtn) cancelBtn.addEventListener('click', async function() {
+      confirmBox('Cancel this ride?', async function() {
+        await Z.sb.from('drive_rides').update({
+          status: 'cancelled_by_rider',
+          cancellation_reason: 'Cancelled by rider',
+          updated_at: new Date().toISOString()
+        }).eq('id', ride.id);
+        toast('Ride cancelled');
+        _activeRide = null;
+        renderDrive();
+      });
+    });
+
+    var startBtn = document.getElementById('zy-drv-start-ride');
+    if (startBtn) startBtn.addEventListener('click', async function() {
+      await Z.sb.from('drive_rides').update({
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq('id', ride.id);
+      toast('Ride started');
+      renderDrive();
+    });
+
+    var completeBtn = document.getElementById('zy-drv-complete-ride');
+    if (completeBtn) completeBtn.addEventListener('click', async function() {
+      completeBtn.disabled = true; completeBtn.textContent = 'Completing...';
+      try {
+        var { data, error } = await Z.sb.rpc('complete_drive_ride', { p_ride_id: ride.id });
+        if (error) throw error;
+        toast('Ride completed. Please rate your driver.');
+        openRatingModal(ride.id, ride.driver_id, 'your driver', 'traveller');
+        _activeRide = null;
+        renderDrive();
+      } catch (e) {
+        completeBtn.disabled = false; completeBtn.textContent = 'Complete Ride';
+        toast('Failed: ' + e.message);
+      }
+    });
+
+    var panicBtn = document.getElementById('zy-drv-panic');
+    if (panicBtn) panicBtn.addEventListener('click', function() { openPanicModal(ride.id); });
+
+    var shareBtn = document.getElementById('zy-drv-share-loc');
+    if (shareBtn) shareBtn.addEventListener('click', shareLocation);
+  }
+
+  function shareLocation() {
+    if (!navigator.share) {
+      // Fallback: copy to clipboard
+      var text = 'I am on a ZYNIX Drive ride. Track me at: ' + window.location.origin;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+        toast('Tracking link copied. Send to a trusted contact.');
+      } else {
+        toast('Sharing not available on this device');
+      }
+      return;
+    }
+    navigator.share({ title: 'My ZYNIX Drive ride', text: 'I am on a ZYNIX Drive ride. Track me live.', url: window.location.origin })
+      .catch(function() {});
+  }
+
+  // ============================================================
+  // DRIVER VIEW
+  // ============================================================
+  async function renderDriverView() {
+    var body = document.getElementById('zy-drv-body');
+    if (!body) return;
+
+    if (!_driverProfile) {
+      body.innerHTML = '<div style="padding:40px;text-align:center;">'
+        + '<i class="fa-solid fa-car" style="font-size:48px;opacity:0.3;"></i>'
+        + '<h3 style="margin:12px 0 6px 0;">Become a ZYNIX Driver</h3>'
+        + '<p style="font-size:13px;opacity:0.6;">Set your vehicle. Go online. Accept rides. Keep 90–100% of the fare.</p>'
+        + '<button id="zy-drv-driver-onboard" style="padding:12px 24px;border-radius:10px;border:none;'
+        + 'background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:600;margin-top:12px;cursor:pointer;">'
+        + 'Create Driver Profile</button></div>';
+      var ob = document.getElementById('zy-drv-driver-onboard');
+      if (ob) ob.addEventListener('click', openBecomeDriverModal);
+      return;
+    }
+
+    // Active ride for driver
+    var { data: rides } = await Z.sb.from('drive_rides')
+      .select('*')
+      .eq('driver_id', Z.currentUser.id)
+      .in('status', ['accepted','driver_arriving','in_progress'])
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    var activeDriverRide = (rides && rides[0]) || null;
+
+    var html = '';
+    html += '<div style="padding:12px;">';
+
+    // Status card
+    html += '<div style="padding:16px;border-radius:14px;background:rgba(255,255,255,0.04);margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+    html += '<div><div style="font-size:11px;opacity:0.6;">Your status</div>';
+    html += '<div style="font-size:18px;font-weight:700;">'
+      + (_driverProfile.is_available ? '<span style="color:#0d9e4a;">● Online</span>' : '<span style="opacity:0.5;">● Offline</span>')
+      + '</div></div>';
+    html += '<button id="zy-drv-avail-toggle" style="padding:12px 18px;border-radius:10px;border:none;'
+      + (_driverProfile.is_available
+        ? 'background:linear-gradient(135deg,#b02020,#e03030);'
+        : 'background:linear-gradient(135deg,#0d9e4a,#0a7d3a);')
+      + 'color:#fff;font-weight:700;cursor:pointer;">'
+      + (_driverProfile.is_available ? 'Go Offline' : 'Go Online') + '</button>';
+    html += '</div>';
+    html += '<div style="display:flex;gap:16px;margin-top:12px;font-size:12px;">';
+    html += '<div><span style="opacity:0.6;">Rating</span> <strong>' + (Number(_driverProfile.rating_avg) || 5).toFixed(1) + '/10</strong></div>';
+    html += '<div><span style="opacity:0.6;">Rides</span> <strong>' + (_driverProfile.total_rides || 0) + '</strong></div>';
+    html += '<div><span style="opacity:0.6;">Earned</span> <strong>' + fmtMoney(_driverProfile.total_earnings || 0) + '</strong></div>';
+    html += '</div>';
+    html += '<div style="font-size:11px;opacity:0.5;margin-top:8px;">Commission: '
+      + (_driverProfile.commission_waived_until && new Date(_driverProfile.commission_waived_until) > new Date()
+          ? '<span style="color:#0d9e4a;">0% (early adopter)</span>'
+          : (_driverProfile.commission_rate || 10) + '%')
+      + '</div>';
+    html += '</div>';
+
+    // Active ride
+    if (activeDriverRide) {
+      html += '<div style="padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(13,158,74,0.15),rgba(10,125,58,0.08));margin-bottom:14px;">';
+      html += '<div style="font-size:11px;opacity:0.7;">ACTIVE RIDE</div>';
+      html += '<div style="font-size:16px;font-weight:700;margin:4px 0 8px 0;">' + esc(activeDriverRide.status) + '</div>';
+      html += '<div style="font-size:13px;margin-bottom:4px;"><strong>Pickup:</strong> ' + esc(activeDriverRide.pickup_address || '') + '</div>';
+      html += '<div style="font-size:13px;margin-bottom:8px;"><strong>Drop:</strong> ' + esc(activeDriverRide.dest_address || '') + '</div>';
+      html += '<div style="font-size:16px;font-weight:700;color:#ffc800;margin-bottom:10px;">' + fmtMoney(activeDriverRide.agreed_fare || activeDriverRide.rider_offered_fare) + '</div>';
+
+      if (activeDriverRide.status === 'accepted') {
+        html += '<button id="zy-drv-arriving" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:600;cursor:pointer;margin-bottom:6px;">I am arriving</button>';
+      }
+      if (activeDriverRide.status === 'driver_arriving') {
+        html += '<button id="zy-drv-start-d" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#0d9e4a,#0a7d3a);color:#fff;font-weight:600;cursor:pointer;margin-bottom:6px;">Start Ride</button>';
+      }
+      if (activeDriverRide.status === 'in_progress') {
+        html += '<button id="zy-drv-end-d" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#0d9e4a,#0a7d3a);color:#fff;font-weight:600;cursor:pointer;margin-bottom:6px;">Complete Ride</button>';
+      }
+      html += '<button id="zy-drv-panic-d" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#b02020,#e03030);color:#fff;font-weight:700;cursor:pointer;margin-bottom:6px;">'
+        + '<i class="fa-solid fa-triangle-exclamation"></i> Emergency</button>';
+      html += '</div>';
+    }
+
+    // Incoming ride requests
+    html += '<h4 style="font-size:14px;opacity:0.7;margin:0 0 8px 0;">Ride Requests Near You</h4>';
+    html += '<div id="zy-drv-requests">'
+      + '<div style="text-align:center;padding:20px;opacity:0.5;font-size:13px;">'
+      + (_driverProfile.is_available ? 'Searching for requests...' : 'Go online to see requests')
+      + '</div></div>';
+
+    html += '</div>';
+    body.innerHTML = html;
+
+    // Events
+    var availToggle = document.getElementById('zy-drv-avail-toggle');
+    if (availToggle) availToggle.addEventListener('click', toggleAvailability);
+
+    if (activeDriverRide) bindDriverActiveRide(activeDriverRide);
+
+    if (_driverProfile.is_available) loadRideRequests();
+  }
+
+  async function toggleAvailability() {
+    var newState = !_driverProfile.is_available;
+    try {
+      var update = { is_available: newState, updated_at: new Date().toISOString() };
+
+      if (newState) {
+        try {
+          var loc = await getLocation();
+          update.last_location = 'POINT(' + loc.lng + ' ' + loc.lat + ')';
+          update.last_location_updated = new Date().toISOString();
+          _currentPosition = loc;
+        } catch (e) { toast('Location needed to go online'); return; }
+      }
+
+      var { error } = await Z.sb.from('drive_drivers').update(update).eq('user_id', Z.currentUser.id);
+      if (error) throw error;
+      _driverProfile.is_available = newState;
+      toast(newState ? 'You are online' : 'You are offline');
+      renderDriverView();
+
+      if (newState) {
+        startDriverLocationBroadcast();
+      } else {
+        stopDriverLocationBroadcast();
+      }
+    } catch (e) {
+      toast('Failed: ' + e.message);
+    }
+  }
+
+  function startDriverLocationBroadcast() {
+    stopDriverLocationBroadcast();
+    _trackingInterval = setInterval(async function() {
+      try {
+        var loc = await getLocation();
+        await Z.sb.from('drive_drivers').update({
+          last_location: 'POINT(' + loc.lng + ' ' + loc.lat + ')',
+          last_location_updated: new Date().toISOString()
+        }).eq('user_id', Z.currentUser.id);
+      } catch (e) {}
+    }, 15000);
+  }
+
+  function stopDriverLocationBroadcast() {
+    if (_trackingInterval) { clearInterval(_trackingInterval); _trackingInterval = null; }
+  }
+
+  async function loadRideRequests() {
+    var wrap = document.getElementById('zy-drv-requests');
+    if (!wrap) return;
+    try {
+      var { data: requests } = await Z.sb.from('drive_rides')
+        .select('*')
+        .is('driver_id', null)
+        .eq('status', 'requested')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (!requests || !requests.length) {
+        wrap.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.5;font-size:13px;">No open requests right now.</div>';
+        return;
+      }
+
+      var html = '';
+      requests.forEach(function(r) {
+        html += rideRequestCardHTML(r);
+      });
+      wrap.innerHTML = html;
+
+      wrap.querySelectorAll('[data-accept]').forEach(function(b) {
+        b.addEventListener('click', function() { acceptRequest(this.getAttribute('data-accept')); });
+      });
+      wrap.querySelectorAll('[data-counter]').forEach(function(b) {
+        b.addEventListener('click', function() { openCounterModal(this.getAttribute('data-counter')); });
+      });
+    } catch (e) {
+      wrap.innerHTML = '<div style="text-align:center;padding:20px;color:#f66;font-size:13px;">Failed: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function rideRequestCardHTML(r) {
+    return '<div style="padding:12px;border-radius:12px;background:rgba(255,255,255,0.04);margin-bottom:8px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+      +   '<div style="font-size:11px;opacity:0.5;">' + fmtTimeAgo(r.requested_at) + '</div>'
+      +   '<div style="font-size:16px;font-weight:700;color:#ffc800;">' + fmtMoney(r.rider_offered_fare, r.fare_currency) + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;margin-bottom:6px;">'
+      +   '<div style="width:8px;height:8px;border-radius:50%;background:#0d9e4a;margin-top:5px;"></div>'
+      +   '<div style="font-size:13px;">' + esc(r.pickup_address) + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;margin-bottom:10px;">'
+      +   '<div style="width:8px;height:8px;border-radius:50%;background:#b02020;margin-top:5px;"></div>'
+      +   '<div style="font-size:13px;">' + esc(r.dest_address) + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;">'
+      +   '<button data-accept="' + esc(r.id) + '" style="flex:1;padding:10px;border-radius:8px;border:none;'
+      +     'background:linear-gradient(135deg,#0d9e4a,#0a7d3a);color:#fff;font-weight:600;font-size:13px;cursor:pointer;">Accept</button>'
+      +   '<button data-counter="' + esc(r.id) + '" style="flex:1;padding:10px;border-radius:8px;'
+      +     'border:1px solid rgba(255,255,255,0.15);background:transparent;color:#fff;font-weight:600;font-size:13px;cursor:pointer;">Counter</button>'
+      + '</div></div>';
+  }
+
+  async function acceptRequest(rideId) {
+    try {
+      // Get ride details
+      var { data: ride } = await Z.sb.from('drive_rides').select('*').eq('id', rideId).single();
+      if (!ride) { toast('Ride not found'); return; }
+
+      // Update ride
+      await Z.sb.from('drive_rides').update({
+        driver_id: Z.currentUser.id,
+        agreed_fare: ride.rider_offered_fare,
+        status: 'accepted',
+        accepted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        payment_status: 'escrow_held'
+      }).eq('id', rideId).is('driver_id', null);
+
+      // Create escrow
+      await Z.sb.from('drive_escrow').insert({
+        ride_id: rideId,
+        traveller_id: ride.traveller_id,
+        driver_id: Z.currentUser.id,
+        amount: ride.rider_offered_fare,
+        currency: ride.fare_currency || 'GBP',
+        status: 'held'
+      });
+
+      toast('Ride accepted');
+      renderDriverView();
+    } catch (e) {
+      toast('Failed: ' + e.message);
+    }
+  }
+
+  function openCounterModal(rideId) {
+    var html = '<div id="zy-drv-counter-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;padding:16px;">';
+    html += '<div style="background:#1a1a2e;border-radius:14px;padding:20px;width:100%;max-width:400px;">';
+    html += '<h3 style="margin:0 0 12px 0;">Counter Offer</h3>';
+    html += '<label style="font-size:12px;opacity:0.7;">Your fare (GBP)</label>';
+    html += '<input id="zy-cm-amount" type="number" min="1" step="0.5" value="10.00" '
+      + 'style="width:100%;padding:12px;margin:6px 0 10px 0;border-radius:10px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-size:16px;box-sizing:border-box;" />';
+    html += '<label style="font-size:12px;opacity:0.7;">ETA (minutes)</label>';
+    html += '<input id="zy-cm-eta" type="number" min="1" value="5" '
+      + 'style="width:100%;padding:12px;margin:6px 0 10px 0;border-radius:10px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-size:16px;box-sizing:border-box;" />';
+    html += '<label style="font-size:12px;opacity:0.7;">Message (optional)</label>';
+    html += '<input id="zy-cm-msg" placeholder="e.g. Heavy traffic, 10 min away" '
+      + 'style="width:100%;padding:10px;margin:6px 0 14px 0;border-radius:10px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-size:14px;box-sizing:border-box;" />';
+    html += '<div style="display:flex;gap:8px;">';
+    html += '<button id="zy-cm-cancel" style="flex:1;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:#fff;font-weight:600;cursor:pointer;">Cancel</button>';
+    html += '<button id="zy-cm-send" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:600;cursor:pointer;">Send</button>';
+    html += '</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    document.getElementById('zy-cm-cancel').onclick = function() { document.getElementById('zy-drv-counter-modal').remove(); };
+    document.getElementById('zy-cm-send').onclick = async function() {
+      var amount = parseFloat(document.getElementById('zy-cm-amount').value) || 0;
+      var eta = parseInt(document.getElementById('zy-cm-eta').value) || 0;
+      var msg = document.getElementById('zy-cm-msg').value.trim();
+      if (amount <= 0) { toast('Enter an amount'); return; }
+      try {
+        await Z.sb.from('drive_bids').upsert({
+          ride_id: rideId,
+          driver_id: Z.currentUser.id,
+          bid_amount: amount,
+          estimated_arrival_minutes: eta,
+          message: msg,
+          status: 'pending'
+        }, { onConflict: 'ride_id,driver_id' });
+        document.getElementById('zy-drv-counter-modal').remove();
+        toast('Counter offer sent');
+      } catch (e) { toast('Failed: ' + e.message); }
+    };
+  }
+
+  function bindDriverActiveRide(ride) {
+    var arr = document.getElementById('zy-drv-arriving');
+    if (arr) arr.addEventListener('click', async function() {
+      await Z.sb.from('drive_rides').update({ status: 'driver_arriving', driver_arrived_at: new Date().toISOString() }).eq('id', ride.id);
+      renderDriverView();
+    });
+
+    var start = document.getElementById('zy-drv-start-d');
+    if (start) start.addEventListener('click', async function() {
+      await Z.sb.from('drive_rides').update({ status: 'in_progress', started_at: new Date().toISOString() }).eq('id', ride.id);
+      renderDriverView();
+    });
+
+    var end = document.getElementById('zy-drv-end-d');
+    if (end) end.addEventListener('click', async function() {
+      end.disabled = true;
+      try {
+        var { data, error } = await Z.sb.rpc('complete_drive_ride', { p_ride_id: ride.id });
+        if (error) throw error;
+        toast('Ride completed. Funds released.');
+        openRatingModal(ride.id, ride.traveller_id, 'the rider', 'driver');
+        renderDriverView();
+      } catch (e) { end.disabled = false; toast('Failed: ' + e.message); }
+    });
+
+    var panic = document.getElementById('zy-drv-panic-d');
+    if (panic) panic.addEventListener('click', function() { openPanicModal(ride.id); });
+  }
+
+  // ============================================================
+  // DRIVER ONBOARDING
+  // ============================================================
+  function openBecomeDriverModal() {
+    var html = '<div id="zy-drv-onboard-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;">';
+    html += '<div style="background:#1a1a2e;border-radius:14px;padding:20px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto;">';
+    html += '<h3 style="margin:0 0 4px 0;"><i class="fa-solid fa-car"></i> Become a ZYNIX Driver</h3>';
+    html += '<p style="font-size:12px;opacity:0.6;margin:0 0 14px 0;">Early adopters keep 100% of fares for 6 months. Standard commission is 10%.</p>';
+
+    html += fieldRow('Vehicle Make', 'zy-dm-make', 'text', 'e.g. Toyota');
+    html += fieldRow('Vehicle Model', 'zy-dm-model', 'text', 'e.g. Corolla');
+    html += fieldRow('Colour', 'zy-dm-color', 'text', 'e.g. Silver');
+    html += fieldRow('Plate (last 3 chars)', 'zy-dm-plate', 'text', 'e.g. ABC');
+    html += fieldRow('Vehicle Year', 'zy-dm-year', 'number', '2020');
+
+    html += '<label style="font-size:12px;opacity:0.7;">Vehicle Type</label>';
+    html += '<select id="zy-dm-type" style="width:100%;padding:10px;margin:4px 0 10px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;font-size:14px;box-sizing:border-box;">';
+    html += '<option value="car">Car</option><option value="suv">SUV</option><option value="van">Van</option><option value="bike">Motorbike</option><option value="auto">Auto rickshaw</option>';
+    html += '</select>';
+
+    html += fieldRow('Seats Available', 'zy-dm-seats', 'number', '4');
+
+    html += '<label style="font-size:12px;opacity:0.7;display:flex;align-items:center;gap:8px;margin:6px 0;">';
+    html += '<input id="zy-dm-women" type="checkbox" /> Women riders only</label>';
+
+    html += '<label style="font-size:12px;opacity:0.7;display:flex;align-items:center;gap:8px;margin:6px 0 14px 0;">';
+    html += '<input id="zy-dm-audio" type="checkbox" checked /> Enable in-app audio recording during rides</label>';
+
+    html += '<div style="display:flex;gap:8px;">';
+    html += '<button id="zy-dm-cancel" style="flex:1;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:#fff;font-weight:600;cursor:pointer;">Cancel</button>';
+    html += '<button id="zy-dm-save" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:600;cursor:pointer;">Create Profile</button>';
+    html += '</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    document.getElementById('zy-dm-cancel').onclick = function() { document.getElementById('zy-drv-onboard-modal').remove(); };
+    document.getElementById('zy-dm-save').onclick = async function() {
+      var btn = this; btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        await Z.sb.from('drive_drivers').upsert({
+          user_id: Z.currentUser.id,
+          vehicle_make: document.getElementById('zy-dm-make').value.trim(),
+          vehicle_model: document.getElementById('zy-dm-model').value.trim(),
+          vehicle_color: document.getElementById('zy-dm-color').value.trim(),
+          vehicle_plate: document.getElementById('zy-dm-plate').value.trim(),
+          vehicle_year: parseInt(document.getElementById('zy-dm-year').value) || null,
+          vehicle_type: document.getElementById('zy-dm-type').value,
+          seats_available: parseInt(document.getElementById('zy-dm-seats').value) || 4,
+          is_women_only: document.getElementById('zy-dm-women').checked,
+          audio_recording_enabled: document.getElementById('zy-dm-audio').checked,
+          commission_waived_until: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString()
+        }, { onConflict: 'user_id' });
+
+        // Early adopter tracking
+        await Z.sb.from('drive_early_adopters').upsert({
+          user_id: Z.currentUser.id,
+          role: 'driver',
+          commission_waived: true
+        }, { onConflict: 'user_id' });
+
+        document.getElementById('zy-drv-onboard-modal').remove();
+        toast('Welcome, ZYNIX Driver!');
+        renderDrive();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Create Profile';
+        toast('Failed: ' + e.message);
+      }
+    };
+  }
+
+  function fieldRow(label, id, type, placeholder) {
+    return '<label style="font-size:12px;opacity:0.7;">' + label + '</label>'
+      + '<input id="' + id + '" type="' + type + '" placeholder="' + esc(placeholder) + '" '
+      + 'style="width:100%;padding:10px;margin:4px 0 8px 0;border-radius:8px;'
+      + 'border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);'
+      + 'color:#fff;font-size:14px;box-sizing:border-box;" />';
+  }
+
+  // ============================================================
+  // RATING MODAL (1-10 both sides)
+  // ============================================================
+  function openRatingModal(rideId, rateeId, rateeName, raterType) {
+    var html = '<div id="zy-drv-rate-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;">';
+    html += '<div style="background:#1a1a2e;border-radius:14px;padding:20px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto;">';
+    html += '<h3 style="margin:0 0 4px 0;">Rate ' + esc(rateeName) + '</h3>';
+    html += '<p style="font-size:12px;opacity:0.6;margin:0 0 14px 0;">'
+      + (raterType === 'traveller'
+          ? 'Your honest rating helps other travellers and rewards good drivers.'
+          : 'Your rating is visible only to other drivers.')
+      + '</p>';
+
+    html += '<label style="font-size:12px;opacity:0.7;">Score (1-10)</label>';
+    html += '<div id="zy-rm-scale" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px 0;">';
+    for (var i = 1; i <= 10; i++) {
+      html += '<span data-v="' + i + '" style="width:38px;height:38px;border-radius:10px;'
+        + 'display:inline-flex;align-items:center;justify-content:center;'
+        + 'background:rgba(255,255,255,0.08);cursor:pointer;font-weight:700;font-size:15px;'
+        + 'color:#fff;">' + i + '</span>';
+    }
+    html += '</div>';
+
+    html += '<label style="font-size:12px;opacity:0.7;">Issues (tap any that apply)</label>';
+    html += '<div id="zy-rm-issues" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px 0;">';
+    var issues = ['Late','Behaviour','Non-payment','Cleanliness','Safety','Route deviation','Wrong pickup','Harassment'];
+    issues.forEach(function(iss) {
+      var key = 'issue_' + iss.toLowerCase().replace(/ /g, '_');
+      html += '<label data-issue="' + key + '" style="font-size:11px;padding:6px 12px;border-radius:16px;'
+        + 'background:rgba(255,255,255,0.06);cursor:pointer;user-select:none;">' + iss + '</label>';
+    });
+    html += '</div>';
+
+    html += '<label style="font-size:12px;opacity:0.7;">Comment (optional)</label>';
+    html += '<textarea id="zy-rm-comment" rows="3" placeholder="Anything else to add?" '
+      + 'style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);'
+      + 'background:rgba(255,255,255,0.05);color:#fff;font-size:13px;resize:vertical;'
+      + 'margin:4px 0 14px 0;box-sizing:border-box;"></textarea>';
+
+    html += '<div style="display:flex;gap:8px;">';
+    html += '<button id="zy-rm-skip" style="flex:1;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:#fff;font-weight:600;cursor:pointer;">Skip</button>';
+    html += '<button id="zy-rm-submit" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#6a1fc9,#9b4dff);color:#fff;font-weight:600;cursor:pointer;">Submit</button>';
+    html += '</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    var selectedScore = 0;
+    var selectedIssues = {};
+
+    document.querySelectorAll('#zy-rm-scale span').forEach(function(el) {
+      el.onclick = function() {
+        selectedScore = parseInt(this.getAttribute('data-v'));
+        document.querySelectorAll('#zy-rm-scale span').forEach(function(s) {
+          var v = parseInt(s.getAttribute('data-v'));
+          s.style.background = v <= selectedScore
+            ? 'linear-gradient(135deg,#6a1fc9,#9b4dff)'
+            : 'rgba(255,255,255,0.08)';
+        });
+      };
+    });
+
+    document.querySelectorAll('#zy-rm-issues label').forEach(function(el) {
+      el.onclick = function() {
+        var key = this.getAttribute('data-issue');
+        if (selectedIssues[key]) {
+          delete selectedIssues[key];
+          this.style.background = 'rgba(255,255,255,0.06)';
+        } else {
+          selectedIssues[key] = true;
+          this.style.background = 'rgba(155,77,255,0.5)';
+        }
+      };
+    });
+
+    document.getElementById('zy-rm-skip').onclick = function() {
+      document.getElementById('zy-drv-rate-modal').remove();
+    };
+
+    document.getElementById('zy-rm-submit').onclick = async function() {
+      if (!selectedScore) { toast('Select a score 1-10'); return; }
+      var btn = this; btn.disabled = true; btn.textContent = 'Sending...';
+
+      var payload = {
+        ride_id: rideId,
+        rater_id: Z.currentUser.id,
+        ratee_id: rateeId,
+        rater_type: raterType,
+        score: selectedScore,
+        comment: document.getElementById('zy-rm-comment').value.trim(),
+        is_visible_to_drivers: raterType === 'driver'
+      };
+      Object.keys(selectedIssues).forEach(function(k) { payload[k] = true; });
+
+      try {
+        await Z.sb.from('drive_ratings').insert(payload);
+        document.getElementById('zy-drv-rate-modal').remove();
+        toast('Rating submitted. Thank you.');
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Submit';
+        toast('Failed: ' + e.message);
+      }
+    };
+  }
+
+  // ============================================================
+  // PANIC / SAFETY MODAL
+  // ============================================================
+  function openPanicModal(rideId) {
+    confirmBox(
+      'EMERGENCY: This will alert ZYNIX safety team and share your live location. Continue?',
+      async function() {
+        try {
+          var loc = null;
+          try { loc = await getLocation(); } catch (e) {}
+
+          await Z.sb.from('drive_safety_incidents').insert({
+            ride_id: rideId,
+            reported_by: Z.currentUser.id,
+            incident_type: 'panic_button',
+            description: 'Panic button pressed',
+            location: loc ? 'POINT(' + loc.lng + ' ' + loc.lat + ')' : null,
+            status: 'open'
+          });
+
+          await Z.sb.from('drive_rides').update({
+            panic_triggered: true,
+            updated_at: new Date().toISOString()
+          }).eq('id', rideId);
+
+          toast('EMERGENCY ALERTED. ZYNIX team notified. Stay on this screen.', 8000);
+        } catch (e) {
+          toast('Alert failed. Call local emergency services: 999 (UK) / 911 (US) / 112 (EU)', 8000);
+        }
+      }
+    );
+  }
+
+  // ============================================================
+  // LIVE TRACKING SUBSCRIPTION (rider sees driver)
+  // ============================================================
+  function subscribeToActiveRide(rideId) {
+    if (!Z.sb) return;
+    var ch = Z.sb.channel('zy-drive-ride-' + rideId)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'drive_rides', filter: 'id=eq.' + rideId },
+        function(payload) {
+          if (payload.new) {
+            _activeRide = payload.new;
+            renderDrive();
+          }
+        })
+      .subscribe();
+    return ch;
+  }
+
+  // ============================================================
+  // PUBLIC API
+  // ============================================================
+  Z.renderDrive = renderDrive;
+  Z.openRatingModal = openRatingModal;
+  Z.openPanicModal = openPanicModal;
+  Z.subscribeToActiveRide = subscribeToActiveRide;
+
+  // Cleanup on unload
+  window.addEventListener('beforeunload', function() {
+    stopWatch();
+    stopDriverLocationBroadcast();
+  });
+
+  // Auto-mount if the mount point exists
+  document.addEventListener('DOMContentLoaded', function() {
+    var c = document.getElementById('zy-drive-mount');
+    if (c) renderDrive(c);
+  });
+
+})();
+</script>
+
+<!-- ============================================================ -->
+<!-- MOUNT POINTS FOR ZYNIX DRIVE                                 -->
+<!-- Add these just above the script if your app uses view divs.  -->
+<!-- If your router already renders a container, delete these.    -->
+<!-- ============================================================ -->
+<div id="view-drive" class="view" style="display:none;">
+  <div id="zy-drive-mount"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ============================================================ -->
+<!--                                                              -->
+<!--   END OF SECTION 17 — ZYNIX DRIVE                            -->
+<!--                                                              -->
+<!-- ============================================================ -->
+<!-- ============================================================ -->
 </body>
 </html>
 
