@@ -10853,6 +10853,62 @@ Z._toggleLoungeRow = function(rowId, ev){
   console.log('[ZYNIX] drive request visibility shim installed');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- ZYNIX DRIVE — DIRECT REQUEST VISIBILITY FIX (v2)            -->
+<!-- Actually patches .is() at the prototype level so it fires   -->
+<!-- on the correct object. Only affects drive_rides queries.    -->
+<!-- Paste BEFORE </body>, after any earlier shim block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+  'use strict';
+  var Z = window.Z;
+  if (!Z) return;
+  if (Z._driveRequestShimV2) return;
+  Z._driveRequestShimV2 = true;
+
+  var client = null;
+  try { client = Z.sb(); } catch(e){ return; }
+  if (!client || typeof client.from !== 'function') return;
+
+  try {
+    /* Probe once to grab the real filter-builder prototype. */
+    var probe = client.from('drive_rides').select('id');
+    var proto = Object.getPrototypeOf(probe);
+    if (!proto) return;
+    if (proto.__zynixDriveIsPatched) return;
+
+    var origIs = proto.is;
+    if (typeof origIs !== 'function') return;
+
+    proto.is = function(col, val) {
+      /* Only rewrite the exact pattern: driver_id IS NULL on drive_rides.
+         Every other .is() call on every other table behaves normally. */
+      if (col === 'driver_id' && val === null) {
+        var href = '';
+        try {
+          href = (this.url && this.url.href) ? String(this.url.href) : String(this.url || '');
+        } catch(e){}
+        if (href.indexOf('drive_rides') !== -1) {
+          var me = Z.State && Z.State.currentUser;
+          if (me && me.id) {
+            /* Replace 'driver_id IS NULL' with:
+               driver_id IS NULL OR driver_id = me
+               so a driver also sees rides addressed directly to them. */
+            return this.or('driver_id.is.null,driver_id.eq.' + me.id);
+          }
+        }
+      }
+      return origIs.call(this, col, val);
+    };
+
+    proto.__zynixDriveIsPatched = true;
+    console.log('[ZYNIX] drive request visibility v2 installed');
+  } catch(e) {
+    console.warn('[ZYNIX] drive shim v2 error', e);
+  }
+})();
+</script>
 </body>
 </html>
 
