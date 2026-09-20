@@ -10429,6 +10429,207 @@ console.log('[ZYNIX Drive v2.1] ready');
 
 })();
 </script>
+   <!-- ============================================================ -->
+<!-- ZYNIX DRIVE — UI BRIDGE                                      -->
+<!-- 1. Adds "Hot on ZYNIX" row to Galleria top                   -->
+<!-- 2. Makes Bookings tile open a full Bookings page             -->
+<!-- 3. Adds ZYNIX Drive to Lounge Customize list                 -->
+<!-- Requires: Section 17 v2.1 already pasted (defines            -->
+<!-- Z.openDriveView). This block ONLY wires UI entry points.     -->
+<!-- ============================================================ -->
+<script>
+(function(){
+  'use strict';
+  var Z = window.Z;
+  if(!Z) return;
+  if(Z.__ZynixDriveBridge) return;
+  Z.__ZynixDriveBridge = true;
+
+  /* ============================================================
+     1. HOT ON ZYNIX ROW — injected at top of Galleria
+     ============================================================ */
+  function hotRowHTML(){
+    var items = [
+      { icon:'fa-solid fa-car-side',     color:'#10b981', title:'ZYNIX Drive', tag:'NEW', sub:'Ride · Bid · Go',  action:'Z.openDriveView()' },
+      { icon:'fa-solid fa-bolt',         color:'#8b5cf6', title:'Sparks',      tag:'',    sub:'Short videos',     action:"Z.showView('spark')" },
+      { icon:'fa-solid fa-wallet',       color:'#3b82f6', title:'Wallet',      tag:'',    sub:'Cash & Bounty',    action:"Z.showView('wallet')" },
+      { icon:'fa-solid fa-circle-nodes', color:'#ec4899', title:'Circles',     tag:'',    sub:'Communities',      action:"Z.showView('circles')" },
+      { icon:'fa-solid fa-users',        color:'#f59e0b', title:'People',      tag:'',    sub:'Discover',         action:"Z.showView('people')" }
+    ];
+    var h = '<div style="margin-bottom:12px;">';
+    h += '<div style="padding:0 2px 8px;">';
+    h += '<div style="font-size:11px;font-weight:800;color:#e2e8f0;letter-spacing:.4px;text-transform:uppercase;">';
+    h += '<i class="fa-solid fa-fire" style="color:#f59e0b;margin-right:6px;font-size:11px;"></i>Hot on ZYNIX</div>';
+    h += '</div>';
+    h += '<div class="lounge-scroll">';
+    items.forEach(function(it){
+      h += '<button onclick="' + it.action + '" class="zynix-hot-card" '
+        +  'style="flex:0 0 auto;min-width:150px;background:linear-gradient(160deg,#111827,#0f172a);'
+        +  'border:1px solid #1e293b;border-radius:16px;padding:14px 12px;text-align:left;'
+        +  'cursor:pointer;position:relative;overflow:hidden;">';
+      h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;position:relative;z-index:2;">';
+      h += '<div class="zynix-hot-icon-wrap" style="width:38px;height:38px;border-radius:10px;'
+        +  'background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;">';
+      h += '<i class="' + it.icon + ' zynix-hot-icon" style="color:' + it.color + ';font-size:18px;"></i>';
+      h += '</div>';
+      if(it.tag) h += '<span class="zynix-hot-tag" style="background:' + it.color + ';color:#000;font-size:8px;font-weight:900;padding:2px 7px;border-radius:20px;letter-spacing:.6px;">' + it.tag + '</span>';
+      h += '</div>';
+      h += '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:2px;position:relative;z-index:2;">' + it.title + '</div>';
+      h += '<div style="font-size:10px;color:#94a3b8;line-height:1.4;position:relative;z-index:2;">' + it.sub + '</div>';
+      h += '</button>';
+    });
+    h += '</div></div>';
+    return h;
+  }
+
+  /* Wrap renderGalleria to inject Hot row at top */
+  var _origGalleria = Z.renderGalleria;
+  if(typeof _origGalleria === 'function'){
+    Z.renderGalleria = function(){
+      var base = _origGalleria.apply(this, arguments) || '';
+      var hot = hotRowHTML();
+      var marker = '<div style="background:linear-gradient(135deg,#10b981,#3b82f6)';
+      var i = base.indexOf(marker);
+      if(i !== -1) return base.slice(0, i) + hot + base.slice(i);
+      return hot + base;
+    };
+  }
+
+  /* ============================================================
+     2. BOOKINGS PAGE — all 12 sections, only ZYNIX Ride live
+     ============================================================ */
+  var BOOKINGS = [
+    { icon:'fa-solid fa-car-side',          color:'#10b981', title:'ZYNIX Ride',         sub:'Bid · Go · Pay',        active:true  },
+    { icon:'fa-solid fa-hotel',              color:'#3b82f6', title:'Hotels & Stays',     sub:'Rooms, houses, hostels', active:false },
+    { icon:'fa-solid fa-utensils',           color:'#f59e0b', title:'Restaurant Table',   sub:'Reserve a table',       active:false },
+    { icon:'fa-solid fa-plane',              color:'#8b5cf6', title:'Flights',            sub:'Domestic & international', active:false },
+    { icon:'fa-solid fa-ticket',             color:'#ec4899', title:'Event Tickets',      sub:'Concerts, sports, shows', active:false },
+    { icon:'fa-solid fa-scissors',           color:'#06b6d4', title:'Salon & Spa',        sub:'Appointment booking',   active:false },
+    { icon:'fa-solid fa-key',                color:'#ef4444', title:'Car Rental',         sub:'Self-drive & with driver', active:false },
+    { icon:'fa-solid fa-map-location-dot',   color:'#22c55e', title:'Tour Guide',         sub:'Local guides, day trips', active:false },
+    { icon:'fa-solid fa-screwdriver-wrench', color:'#a855f7', title:'Home Service',       sub:'Plumber, electric, repair', active:false },
+    { icon:'fa-solid fa-stethoscope',        color:'#14b8a6', title:'Clinic Appointment', sub:'Doctor, dentist, lab',  active:false },
+    { icon:'fa-solid fa-building-columns',   color:'#f97316', title:'Venue Booking',      sub:'Halls, studios, parks', active:false },
+    { icon:'fa-solid fa-truck-fast',         color:'#6366f1', title:'Freight & Move',     sub:'Moving, courier, cargo', active:false }
+  ];
+
+  Z.openBookingsView = function(){
+    var app = document.getElementById('app-container');
+    if(!app) return;
+
+    var h = '<div style="display:flex;flex-direction:column;gap:14px;">';
+    h += '<div class="view-header">';
+    h += '<button class="colored-back-btn" onclick="Z.showView(\'galleria\')"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+    h += '<h2 class="view-title" style="margin-left:6px;"><i class="fa-solid fa-calendar-check" style="color:#10b981;margin-right:8px;"></i>Bookings</h2>';
+    h += '</div>';
+
+    h += '<div style="background:linear-gradient(135deg,#10b981,#3b82f6);border-radius:16px;padding:18px;">';
+    h += '<div style="font-size:20px;font-weight:900;color:#000;">Bookings</div>';
+    h += '<div style="font-size:12px;color:rgba(0,0,0,.75);margin-top:4px;line-height:1.5;">Reserve rides, tables, rooms, tickets, and services. ZYNIX Ride is live — the rest open soon.</div>';
+    h += '</div>';
+
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+    BOOKINGS.forEach(function(c){
+      var onclick = c.active ? 'Z.openDriveView()' : "Z.toast('" + c.title + " coming soon')";
+      h += '<button onclick="' + onclick + '" style="background:#111827;border:1px solid '
+        + (c.active ? 'rgba(16,185,129,.4)' : '#1e293b')
+        + ';border-radius:16px;padding:14px;text-align:left;cursor:pointer;position:relative;overflow:hidden;">';
+      if(c.active){
+        h += '<div style="position:absolute;top:8px;right:8px;background:#10b981;color:#000;font-size:8px;font-weight:900;padding:2px 7px;border-radius:20px;letter-spacing:.5px;">LIVE</div>';
+      } else {
+        h += '<div style="position:absolute;top:8px;right:8px;background:rgba(148,163,184,.18);color:#94a3b8;font-size:8px;font-weight:800;padding:2px 6px;border-radius:20px;letter-spacing:.05em;">SOON</div>';
+      }
+      h += '<div style="width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:10px;">';
+      h += '<i class="' + c.icon + '" style="color:' + c.color + ';"></i></div>';
+      h += '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:2px;">' + c.title + '</div>';
+      h += '<div style="font-size:10px;color:#94a3b8;line-height:1.5;">' + c.sub + '</div>';
+      h += '</button>';
+    });
+    h += '</div></div>';
+
+    app.innerHTML = h;
+    document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
+    var navG = document.getElementById('nav-galleria');
+    if(navG) navG.classList.add('active');
+    Z.State.currentView = 'galleria';
+    try { localStorage.setItem('zynix_last_view','galleria'); } catch(e){}
+    window.scrollTo(0,0);
+  };
+
+  /* Intercept the "bookings" tile in Galleria */
+  var _origCat = Z.openGalleriaCat;
+  Z.openGalleriaCat = function(key){
+    if(key === 'bookings'){ Z.openBookingsView(); return; }
+    if(typeof _origCat === 'function') return _origCat.apply(this, arguments);
+    Z.toast('Coming soon.');
+  };
+
+  /* ============================================================
+     3. LOUNGE CUSTOMIZE — add ZYNIX Drive entry
+     ============================================================ */
+  if(Array.isArray(Z.LOUNGE_AVAILABLE_ROWS)){
+    var exists = Z.LOUNGE_AVAILABLE_ROWS.some(function(r){ return r.id === 'drive'; });
+    if(!exists){
+      Z.LOUNGE_AVAILABLE_ROWS.push({
+        id: 'drive',
+        label: 'ZYNIX Drive',
+        icon: 'fa-solid fa-car-side'
+      });
+    }
+  }
+
+  /* Lounge row renderer for 'drive' */
+  var _origLoadRow = Z._loadLoungeRow;
+  if(typeof _origLoadRow === 'function'){
+    Z._loadLoungeRow = async function(rowId){
+      if(rowId === 'drive'){
+        var body = document.getElementById('lounge-row-body-drive');
+        if(!body) return;
+        body.innerHTML =
+          '<div style="display:flex;gap:12px;align-items:center;padding:14px;'
+          + 'background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));'
+          + 'border:1px solid rgba(16,185,129,.35);border-radius:14px;">'
+          + '<div style="width:52px;height:52px;border-radius:14px;background:rgba(16,185,129,.15);'
+          + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+          + '<i class="fa-solid fa-car-side" style="color:#10b981;font-size:22px;"></i></div>'
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:14px;font-weight:800;color:#fff;">ZYNIX Ride</div>'
+          + '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Book a ride with bidding & escrow</div>'
+          + '</div>'
+          + '<button onclick="Z.openDriveView(\'lounge\')" '
+          + 'style="background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;'
+          + 'font-weight:800;padding:10px 16px;border-radius:10px;font-size:12px;cursor:pointer;'
+          + 'white-space:nowrap;">Open</button></div>';
+        return;
+      }
+      return _origLoadRow.apply(this, arguments);
+    };
+  }
+
+  /* ============================================================
+     ANIMATION CSS — motion on Hot row
+     ============================================================ */
+  if(!document.getElementById('zynix-hot-anim-css')){
+    var st = document.createElement('style');
+    st.id = 'zynix-hot-anim-css';
+    st.textContent =
+      '.zynix-hot-card{position:relative;overflow:hidden !important;}' +
+      '.zynix-hot-card::before{content:"";position:absolute;top:0;left:-100%;width:100%;height:100%;' +
+      'background:linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent);' +
+      'animation:zynixHotShine 3s linear infinite;pointer-events:none;z-index:1;}' +
+      '@keyframes zynixHotShine{0%{left:-100%}100%{left:200%}}' +
+      '.zynix-hot-icon-wrap{position:relative;z-index:2;animation:zynixHotIconPulse 2.6s ease-in-out infinite;}' +
+      '@keyframes zynixHotIconPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}' +
+      '.zynix-hot-tag{z-index:2;position:relative;animation:zynixHotTagPulse 1.8s ease-in-out infinite;}' +
+      '@keyframes zynixHotTagPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.12);}}' +
+      '.zynix-hot-icon{animation:zynixHotIconBounce 2.4s ease-in-out infinite;display:inline-block;}' +
+      '@keyframes zynixHotIconBounce{0%,100%{transform:translateY(0) rotate(0deg);}25%{transform:translateY(-2px) rotate(-3deg);}75%{transform:translateY(2px) rotate(3deg);}}';
+    document.head.appendChild(st);
+  }
+
+  console.log('[ZYNIX Drive Bridge] installed — Hot row · Bookings · Lounge');
+})();
+</script>
 </body>
 </html>
 
