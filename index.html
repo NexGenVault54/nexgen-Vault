@@ -10525,6 +10525,7 @@ function openCounter(rideId){
 /* ================== ACTIVE RIDE (DRIVER) ================== */
 function renderActiveDriver(c){
   var r = S.activeDriverRide; if(!r){ renderDriverHome(c); return; }
+  var u = me(); if(!u){ renderDriverHome(c); return; }
   var h = '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(59,130,246,.12));border:1px solid rgba(16,185,129,.35);margin-bottom:12px;"><div style="font-size:10px;color:#94a3b8;font-weight:800;">ACTIVE RIDE</div><div style="font-size:18px;font-weight:900;margin-top:4px;color:#fff;">'+esc(r.status.replace(/_/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase();}))+'</div></div>';
   h += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:12px;">'
     + '<div style="display:flex;gap:10px;margin-bottom:10px;"><div style="width:10px;height:10px;border-radius:50%;background:#10b981;margin-top:5px;"></div><div><div style="font-size:10px;color:#94a3b8;font-weight:800;">PICKUP</div><div style="font-size:13px;color:#fff;">'+esc(r.pickup_address||'—')+'</div></div></div>'
@@ -10745,14 +10746,24 @@ async function paintDiscover(){
       var r = await qb;
       var all = r.data||[];
       if(q) all = all.filter(function(p){ return ((p.title||'')+' '+(p.description||'')+' '+(p.departure_location||'')+' '+(p.arrival_location||'')).toLowerCase().indexOf(q) >= 0; });
-      if(!all.length){ body.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;font-size:12px;">No offers match your filters.</div>'; return; }
-      var h = '<div style="display:flex;flex-direction:column;gap:8px;">';
+           if(!all.length){
+        body.innerHTML = '<div style="display:flex;flex-direction:column;gap:10px;">'
+          + '<button id="zy-dc-create-offer" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-plus"></i> Create your first offer</button>'
+          + '<div style="text-align:center;padding:30px;color:#64748b;font-size:12px;">No offers match your filters.</div></div>';
+        var cBtn2 = document.getElementById('zy-dc-create-offer');
+        if(cBtn2) cBtn2.addEventListener('click', function(){ if(typeof openPromoCreate === 'function') openPromoCreate(); });
+        return;
+      }
+       var h = '<div style="display:flex;justify-content:flex-end;margin-bottom:8px;"><button id="zy-dc-create-offer" style="padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;"><i class="fa-solid fa-plus"></i> Create offer</button></div>';
+      h += '<div style="display:flex;flex-direction:column;gap:8px;">';
       var u = me();
       all.forEach(function(p){ h += offerCardHTML(p, u); });
       h += '</div>';
       body.innerHTML = h;
+      var cBtn = document.getElementById('zy-dc-create-offer');
+      if(cBtn) cBtn.addEventListener('click', function(){ if(typeof openPromoCreate === 'function') openPromoCreate(); });
       body.querySelectorAll('[data-promo-del]').forEach(function(b){ b.addEventListener('click', async function(){ if(!confirm('Stop this offer?')) return; var c3 = db(); if(!c3) return; await c3.from('drive_promos').update({active:false}).eq('id', this.getAttribute('data-promo-del')); toast('Offer stopped'); paintDiscover(); }); });
-      body.querySelectorAll('[data-drive-profile]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.tagName === 'BUTTON') return; Z.showView('drive-profile', this.getAttribute('data-drive-profile')); }); });
+       body.querySelectorAll('[data-drive-profile]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.tagName === 'BUTTON') return; Z.showView('drive-profile', this.getAttribute('data-drive-profile')); }); });
     } else if(S.discoverSub === 'share'){
       var qs = c.from('drive_shared_journeys').select('*').eq('is_active',true).eq('is_public',true);
       if(since) qs = qs.gte('departure_time', new Date().toISOString());
@@ -11147,7 +11158,7 @@ Z.drvOpenRateFromHistory = function(rideId, otherId, raterType){ openRateModal(r
 Z.drvViewMyRating = function(rideId){ viewMyRating(rideId); };
 Z.openDriveView = function(){ Z.showView('drive'); };
 Z.driveSyncStats = refreshSideProfiles;
-Z.driveState = S;
+Z.driveState = function(){ return S; };
 Z.driveCurrency = getCurrency;
 Z.driveSetCurrency = setCurrency;
 
