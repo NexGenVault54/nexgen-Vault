@@ -10806,6 +10806,53 @@ Z._toggleLoungeRow = function(rowId, ev){
   console.log('[ZYNIX] compat shim + hot animation installed');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- ZYNIX DRIVE — DIRECT REQUEST VISIBILITY FIX                 -->
+<!-- Lets drivers see rides that were sent TO them, not only     -->
+<!-- broadcast rides. Also lets them accept direct requests.     -->
+<!-- Paste AFTER the compat shim block, before </body>.          -->
+<!-- ============================================================ -->
+<script>
+(function(){
+  'use strict';
+  var Z = window.Z;
+  if (!Z) return;
+  if (Z._driveRequestShimInstalled) return;
+  Z._driveRequestShimInstalled = true;
+
+  var client = null;
+  try { client = Z.sb(); } catch(e){ console.warn('[drive shim] sb unavailable', e); return; }
+  if (!client || typeof client.from !== 'function') return;
+
+  var realFrom = client.from.bind(client);
+
+  client.from = function(table) {
+    var q = realFrom(table);
+    if (table !== 'drive_rides') return q;
+    if (!q || q.__zynixDriveShim) return q;
+
+    /* When the driver's code asks for rides where driver_id is null,
+       also include rides that are directly targeted at this driver. */
+    if (typeof q.is === 'function') {
+      var _origIs = q.is.bind(q);
+      q.is = function(col, val) {
+        if (col === 'driver_id' && val === null) {
+          var me = Z.State && Z.State.currentUser;
+          if (me && me.id) {
+            return q.or('driver_id.is.null,driver_id.eq.' + me.id);
+          }
+        }
+        return _origIs(col, val);
+      };
+    }
+
+    q.__zynixDriveShim = true;
+    return q;
+  };
+
+  console.log('[ZYNIX] drive request visibility shim installed');
+})();
+</script>
 </body>
 </html>
 
