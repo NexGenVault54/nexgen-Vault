@@ -13279,5 +13279,282 @@ if(!Z.__bizRenderWrapped2){
 console.log('[ZYNIX Biz v4.0 Part 3] Active Users + Earnings + Referrals + Ledger ready');
 })();
 </script>
+   <!-- ============================================================ -->
+<!-- SECTION 18 v4.0 — Patch 1                                    -->
+<!-- Fix: renderActiveUsers was async, now sync                   -->
+<!-- Also: safety net for any future async biz pages              -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixBizV4Patch1) return; Z.__ZynixBizV4Patch1 = true;
+
+/* ---------- helpers ---------- */
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n, c){
+  var sym = c === 'PKR' ? '₨' : c === 'USD' ? '$' : c === 'EUR' ? '€' : '£';
+  return sym + (Number(n)||0).toFixed(2);
+}
+function me(){ return (Z.State && Z.State.currentUser) || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function ago(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+/* ---------- shell (identical to Part 3) ---------- */
+function shell(opts){
+  var id = 'biz-shell-' + opts.id;
+  var left = '';
+  if(opts.hub){
+    left = '<button onclick="Z.goBack()" class="colored-back-btn" style="display:inline-flex;align-items:center;gap:6px;">' +
+      '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  }
+  var right = '';
+  if(!opts.hub){
+    right += '<button class="biz-explain-btn" title="How it works" ' +
+      'onclick="document.getElementById(\'' + id + '\').classList.toggle(\'guide-open\')">?</button>';
+    right += '<button onclick="Z.goBack()" title="Close" ' +
+      'style="background:rgba(30,41,59,.7);border:1px solid #1e293b;color:#cbd5e1;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+      '<i class="fa-solid fa-xmark"></i></button>';
+  }
+  var rightWrap = right ? '<div style="display:flex;gap:6px;align-items:center;">' + right + '</div>' : '';
+
+  var guideHtml = '';
+  if(opts.guideKey){
+    var guides = Z.bizGetGuides ? Z.bizGetGuides() : {};
+    var g = guides[opts.guideKey];
+    if(g){
+      guideHtml = '<div class="biz-guide-panel">';
+      g.sections.forEach(function(s){
+        guideHtml += '<h4>' + esc(s.h) + '</h4><p>' + esc(s.p) + '</p>';
+      });
+      guideHtml += '</div>';
+    }
+  }
+
+  return (
+    '<div class="biz-shell" id="' + id + '">' +
+      '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">' +
+        '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">' +
+          left +
+          '<h2 class="view-title" style="margin:0;display:flex;align-items:center;gap:6px;min-width:0;">' +
+            '<i class="' + opts.icon + '" style="color:#10b981;"></i>' +
+            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(opts.title) + '</span>' +
+          '</h2>' +
+        '</div>' +
+        rightWrap +
+      '</div>' +
+      guideHtml +
+      opts.body +
+    '</div>'
+  );
+}
+
+function progressBar(current, target){
+  var pct = target <= 0 ? 100 : Math.min(100, Math.round((current / target) * 100));
+  var col = pct >= 100 ? '#10b981' : '#a16262';
+  return '<div style="margin-top:6px;">' +
+    '<div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;font-weight:800;margin-bottom:4px;">' +
+      '<span>' + current + ' / ' + target + '</span>' +
+      '<span style="color:' + col + ';">' + pct + '%</span>' +
+    '</div>' +
+    '<div style="height:8px;border-radius:4px;background:rgba(0,0,0,0.35);overflow:hidden;">' +
+      '<div style="height:100%;width:' + pct + '%;background:' + col + ';transition:width .4s ease,background .3s ease;"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* ---------- async loader ---------- */
+async function loadRecentActivity(){
+  var c = db(); var u = me(); if(!c || !u) return [];
+  try {
+    var r = await c.from('score_events')
+      .select('action, points, created_at')
+      .eq('user_id', u.id)
+      .order('created_at', {ascending: false})
+      .limit(20);
+    return r.data || [];
+  } catch(e){ return []; }
+}
+
+/* ---------- Active Users — SYNC now ---------- */
+function renderActiveUsers(){
+  var u = me();
+  if(!u){
+    return '<div class="empty-state">' +
+      '<i class="fa-solid fa-user-check"></i>' +
+      '<p>Please log in.</p>' +
+      '<button class="empty-state-cta" onclick="Z.openAuthModal(\'login\')">Login</button>' +
+    '</div>';
+  }
+
+  var ck = Z.bizGetChecklist();
+  var lvl = Z.bizGetScoreLevel();
+  var score = Z.bizGetScore();
+  var next = null;
+  var levels = [
+    { min:0, name:'Newcomer' }, { min:100, name:'Member' }, { min:500, name:'Contributor' },
+    { min:2000, name:'Pro' }, { min:10000, name:'Expert' }, { min:50000, name:'Partner' }
+  ];
+  for(var i = 0; i < levels.length - 1; i++){
+    if(score < levels[i+1].min){ next = levels[i+1]; break; }
+  }
+  var caps = Z.bizGetCaps();
+  var statusCol = ck.complete ? '#10b981' : '#a16262';
+  var statusTxt = ck.complete ? 'ACTIVE USER' : 'NOT ACTIVE';
+  var statusMsg = ck.complete
+    ? 'All requirements met. You are earning this month.'
+    : (ck.total - ck.done) + ' more items to unlock this month\'s earnings.';
+
+  var body = '';
+
+  body += '<div style="padding:18px;border-radius:14px;background:' + (ck.complete ? 'rgba(16,185,129,.10)' : 'rgba(161,98,98,.10)') + ';border:1px solid ' + statusCol + '55;">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">THIS MONTH\'S STATUS</div>' +
+    '<div style="font-size:26px;font-weight:900;color:' + statusCol + ';margin-top:4px;">' + statusTxt + '</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">' + esc(statusMsg) + '</div>' +
+    '<div style="margin-top:12px;height:10px;border-radius:5px;background:rgba(0,0,0,0.35);overflow:hidden;">' +
+      '<div style="height:100%;width:' + Math.round((ck.done / ck.total) * 100) + '%;background:' + statusCol + ';transition:width .4s ease;"></div>' +
+    '</div>' +
+    '<div style="font-size:11px;color:#94a3b8;font-weight:800;margin-top:6px;text-align:right;">' + ck.done + ' / ' + ck.total + '</div>' +
+  '</div>';
+
+  body += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);display:flex;justify-content:space-between;align-items:center;">' +
+    '<div>' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;">CONTRIBUTION SCORE</div>' +
+      '<div style="font-size:20px;font-weight:900;color:#10b981;margin-top:2px;">' + score + '</div>' +
+      (next
+        ? '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + (next.min - score) + ' more to reach ' + esc(next.name) + '</div>'
+        : '<div style="font-size:10px;color:#10b981;margin-top:2px;font-weight:800;">Maximum level</div>') +
+    '</div>' +
+    '<div style="text-align:right;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;">MULTIPLIER</div>' +
+      '<div style="font-size:18px;font-weight:900;color:#10b981;margin-top:2px;">' + lvl.mult + 'x</div>' +
+      '<div style="font-size:10px;color:#64748b;">on all caps</div>' +
+    '</div>' +
+  '</div>';
+
+  body += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">MONTHLY CHECKLIST</div>';
+  ck.items.forEach(function(item){
+    var col = item.done ? '#10b981' : '#a16262';
+    body += '<div style="padding:12px 14px;border-radius:12px;background:#111827;border:1px solid ' + (item.done ? 'rgba(16,185,129,.35)' : '#1e293b') + ';">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;min-width:0;">' +
+          '<div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+            '<i class="' + item.icon + '" style="color:' + col + ';font-size:14px;"></i>' +
+          '</div>' +
+          '<div style="font-size:13px;font-weight:800;color:' + (item.done ? '#10b981' : '#fff') + ';">' + esc(item.label) + '</div>' +
+        '</div>' +
+        (item.done ? '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:16px;"></i>' : '') +
+      '</div>' +
+      progressBar(item.current, item.target) +
+    '</div>';
+  });
+
+  body += '<div style="padding:14px;border-radius:12px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);">' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;">' +
+      '<i class="fa-solid fa-gauge-high" style="color:#a18554;margin-right:6px;"></i>EARNING CAPS THIS MONTH' +
+    '</div>' +
+    '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.5;">' +
+      'Referral income requires Active User status. Content bounty and Peer Support earnings are always available — capped by tier.' +
+    '</div>' +
+    '<div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+      '<div style="padding:10px;border-radius:8px;background:rgba(0,0,0,0.25);">' +
+        '<div style="font-size:9px;color:#94a3b8;font-weight:900;">REFERRAL CAP</div>' +
+        '<div style="font-size:14px;font-weight:900;color:#10b981;margin-top:2px;">' + money(caps.passive, 'USD') + '</div>' +
+        '<div style="font-size:9px;color:#64748b;">Active users only</div>' +
+      '</div>' +
+      '<div style="padding:10px;border-radius:8px;background:rgba(0,0,0,0.25);">' +
+        '<div style="font-size:9px;color:#94a3b8;font-weight:900;">WORK CAP</div>' +
+        '<div style="font-size:14px;font-weight:900;color:#10b981;margin-top:2px;">' + money(caps.active, 'USD') + '</div>' +
+        '<div style="font-size:9px;color:#64748b;">Always available</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+  body += '<div id="biz-recent-activity-host">' +
+    '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
+      '<div style="text-align:center;color:#64748b;font-size:11px;">Loading activity…</div>' +
+    '</div>' +
+  '</div>';
+
+  /* fire and forget — injects into DOM after paint */
+  loadRecentActivity().then(function(events){
+    var host = document.getElementById('biz-recent-activity-host');
+    if(!host) return;
+    if(!events.length){
+      host.innerHTML = '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;text-align:center;color:#64748b;font-size:11px;">No activity this month yet.</div>';
+      return;
+    }
+    var actionLabels = {
+      daily_login:'Daily login', post_published:'Post published',
+      faq_helpful:'FAQ answer marked helpful', faq_upvoted:'FAQ answer upvoted',
+      post_liked:'Post reached 10+ reactions', referral_converts:'Referral converted',
+      bug_reported:'Bug report accepted', translation:'Translation contributed',
+      report_upheld:'Report upheld', post_removed:'Post removed',
+      referral_churns:'Referral churned'
+    };
+    var h = '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
+      '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:8px;">' +
+        '<i class="fa-solid fa-clock-rotate-left" style="color:#94a3b8;margin-right:6px;"></i>RECENT ACTIVITY' +
+      '</div>';
+    events.slice(0, 15).forEach(function(e){
+      var col = (Number(e.points) >= 0) ? '#10b981' : '#a16262';
+      var sign = (Number(e.points) >= 0) ? '+' : '';
+      h += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+        '<div style="font-size:11px;color:#cbd5e1;">' + esc(actionLabels[e.action] || e.action) + '</div>' +
+        '<div style="font-size:11px;font-weight:900;color:' + col + ';white-space:nowrap;margin-left:8px;">' + sign + e.points + ' · ' + ago(e.created_at) + '</div>' +
+      '</div>';
+    });
+    h += '</div>';
+    host.innerHTML = h;
+  });
+
+  return shell({
+    id: 'active-users',
+    title: 'Active Users',
+    icon: 'fa-solid fa-user-check',
+    hub: false,
+    guideKey: 'active',
+    body: body
+  });
+}
+
+/* ---------- Re-register ---------- */
+Z._bizPages = Z._bizPages || {};
+Z._bizPages['active-users'] = renderActiveUsers;
+
+/* ---------- Safety net: any future async biz page is
+     treated as loading, never printed as [object Promise] ---------- */
+if(!Z.__bizRenderWrapped3){
+  Z.__bizRenderWrapped3 = true;
+  var _prev = Z.renderView;
+  Z.renderView = function(view, param){
+    var result;
+    if(Z._bizPages && Z._bizPages[view]) result = Z._bizPages[view](param);
+    else result = _prev.call(this, view, param);
+    if(result && typeof result.then === 'function'){
+      return '<div style="padding:40px;text-align:center;color:#64748b;font-size:12px;">' +
+        '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#10b981;"></i>' +
+        '<div style="margin-top:10px;">Loading…</div>' +
+      '</div>';
+    }
+    return result;
+  };
+}
+
+console.log('[ZYNIX Biz v4.0 Patch 1] Active Users fixed');
+})();
+</script>
 </body>
 </html>
