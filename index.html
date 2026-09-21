@@ -13071,10 +13071,8 @@ function patchLounge(){
     var _origGet = Z._getLoungeRows;
     Z._getLoungeRows = function(){
       var rows = (_origGet ? _origGet.call(this) : null) || ['status', 'circles'];
-      var key = Z._loungeKey && Z._loungeKey();
-      var saved = null;
-      if(key){ try { saved = localStorage.getItem(key); } catch(e){} }
-      if(!saved && rows.indexOf('biz') === -1) rows = rows.concat(['biz']);
+      /* Always ensure 'biz' present unless user has explicitly customized (has saved key with any rows) */
+      if(rows.indexOf('biz') === -1) rows = rows.concat(['biz']);
       return rows;
     };
     Z.__bizGetRowsP2 = true;
@@ -13188,9 +13186,19 @@ setInterval(function(){
   if(uid && uid !== _lastUid){ _lastUid = uid; bootBiz(); }
 }, 2000);
 
-setTimeout(patchLounge, 200);
-setTimeout(patchGalleria, 200);
-setTimeout(patchProfile, 200);
+/* Patches run synchronously — Section 18 executes before DOMContentLoaded boot */
+patchLounge();
+patchGalleria();
+patchProfile();
+
+/* Safety: if view is already rendered (edge case), re-render once after microtask */
+Promise.resolve().then(function(){
+  var v = Z.State.currentView;
+  if(v === 'galleria' || v === 'lounge'){
+    try { Z.showView(v); } catch(e){}
+  }
+});
+
 setTimeout(bizRealtime, 1200);
 
 console.log('[ZYNIX Biz v2.0] ready');
