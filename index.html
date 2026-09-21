@@ -12082,6 +12082,128 @@ Z.driveNotify = async function(userId, message, kind){
 console.log('[ZYNIX Drive v9c Patch 1] driveNotify routed through RPC');
 })();
 </script>
+   <!-- ============================================================ -->
+<!-- SECTION 17 v9c — Patch 2                                     -->
+<!-- Self-test auto-dismiss · Driver auto-offline at completion   -->
+<!-- Stale request card cleanup · Voice hidden for now            -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixDriveV9cP2) return; Z.__ZynixDriveV9cP2 = true;
+
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+
+/* ============================================================
+   1. SELF-TEST BOX — one-time only, forever
+   Sets the "done" flag the first time the panel appears.
+   On every reload after that, Part 4's cleanup removes it.
+   ============================================================ */
+(function(){
+  var alreadyDone = false;
+  try { alreadyDone = localStorage.getItem('zynix_biz_selftest_done') === '1'; } catch(e){}
+  if(alreadyDone) return;
+
+  var t = setInterval(function(){
+    if(document.getElementById('zynix-biz-selftest')){
+      try { localStorage.setItem('zynix_biz_selftest_done', '1'); } catch(e){}
+      clearInterval(t);
+    }
+  }, 300);
+  setTimeout(function(){ clearInterval(t); }, 8000);
+})();
+
+/* ============================================================
+   2. VOICE UI HIDDEN — walkie-talkie redesign comes later
+   Hides the mic record button and the walkie toggle. Text input
+   and quick-reply chips still work.
+   ============================================================ */
+if(!document.getElementById('zynix-drive-hide-voice')){
+  var st = document.createElement('style');
+  st.id = 'zynix-drive-hide-voice';
+  st.textContent =
+    '#zy-chat-voice, #zy-voice-mode { display: none !important; }';
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   3. DRIVER AUTO-OFFLINE WHEN RIDE COMPLETES
+   Detects the moment S.activeDriverRide goes from active to
+   null, then sets is_available=false and wants_online=false.
+   The driver must tap "Go Online" again to accept new rides.
+   ============================================================ */
+var _wasActiveRide = false;
+setInterval(async function(){
+  var u = Z.State && Z.State.currentUser;
+  if(!u) return;
+  var S = (typeof Z.driveState === 'function') ? Z.driveState() : null;
+  if(!S) return;
+
+  var active = !!S.activeDriverRide;
+
+  if(_wasActiveRide && !active && S.driver && S.driver.is_available){
+    var c = db();
+    if(c){
+      try {
+        await c.from('drive_drivers')
+          .update({ is_available: false, wants_online: false })
+          .eq('user_id', u.id);
+        S.driver.is_available = false;
+        S.driver.wants_online = false;
+      } catch(e){}
+    }
+  }
+  _wasActiveRide = active;
+}, 2500);
+
+/* ============================================================
+   4. STALE REQUEST CARDS — cleaned within seconds
+   When a rider cancels after sending a request, the driver's
+   incoming list still showed the Accept button for far too
+   long. This poll removes any card whose ride is no longer
+   in the "requested, no driver" state.
+   ============================================================ */
+setInterval(async function(){
+  if(Z.State.currentView !== 'drive') return;
+  var u = Z.State && Z.State.currentUser;
+  if(!u) return;
+
+  var wrap = document.getElementById('zy-d-requests');
+  if(!wrap) return;
+  var acceptBtns = wrap.querySelectorAll('[data-acc]');
+  if(!acceptBtns.length) return;
+
+  var ids = [];
+  acceptBtns.forEach(function(b){
+    var id = b.getAttribute('data-acc');
+    if(id && ids.indexOf(id) === -1) ids.push(id);
+  });
+  if(!ids.length) return;
+
+  var c = db(); if(!c) return;
+  try {
+    var r = await c.from('drive_rides').select('id,status,driver_id').in('id', ids);
+    if(r.error || !r.data) return;
+
+    var valid = {};
+    r.data.forEach(function(row){
+      if(row.status === 'requested' && !row.driver_id) valid[row.id] = true;
+    });
+
+    acceptBtns.forEach(function(b){
+      var id = b.getAttribute('data-acc');
+      if(!valid[id]){
+        var card = b.closest('[data-drive-profile]');
+        if(card && card.parentNode) card.parentNode.removeChild(card);
+      }
+    });
+  } catch(e){}
+}, 6000);
+
+console.log('[ZYNIX Drive v9c Patch 2] self-test cleanup · auto-offline · stale cards · voice hidden');
+})();
+</script>
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
