@@ -12341,15 +12341,16 @@ try {
 })();
 </script>
 <!-- ============================================================ -->
-<!-- SECTION 17 v9c — Patch 5b: Clean Driver Modal                -->
-<!-- Full replacement. Intercepts trigger clicks, opens new modal -->
-<!-- with composer-style media preview (local blob → upload).     -->
+<!-- SECTION 17 v9c — Patch 5 (full replacement)                  -->
+<!-- Modal: avatar + banner + insurance proof + engine work       -->
+<!-- Save: uploads all fields, writes them to drive_drivers       -->
+<!-- Profile: avatar clickable → opens SPACE                      -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__ZynixDriverModalV2) return; Z.__ZynixDriverModalV2 = true;
+if(Z.__ZynixDriverModalV3) return; Z.__ZynixDriverModalV3 = true;
 
 function me(){ return (Z.State && Z.State.currentUser) || null; }
 function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
@@ -12361,126 +12362,175 @@ function cur(){ return Z.driveCurrency ? Z.driveCurrency() : 'GBP'; }
 var PHOTO_KEYS = ['front','back','left','right','int_front','int_back'];
 var PHOTO_LABELS = { front:'Front', back:'Back', left:'Left side', right:'Right side', int_front:'Interior front', int_back:'Interior rear' };
 
-var FV = { videoFile:null, videoLocalUrl:'', videoRemoveFlag:false, photos:{}, photoRemoveFlags:{}, avatarFile:null, avatarLocalUrl:'', bannerFile:null, bannerLocalUrl:'' };
+var FV = {
+  avatarFile:null, avatarLocalUrl:'', avatarRemoveFlag:false,
+  bannerFile:null, bannerLocalUrl:'', bannerRemoveFlag:false,
+  videoFile:null, videoLocalUrl:'', videoRemoveFlag:false,
+  insProofFile:null, insProofLocalUrl:'', insProofRemoveFlag:false,
+  photos:{}, photoRemoveFlags:{}
+};
 function resetFV(){
-  if(FV.videoLocalUrl){ try { URL.revokeObjectURL(FV.videoLocalUrl); } catch(e){} }
+  ['avatarLocalUrl','bannerLocalUrl','videoLocalUrl','insProofLocalUrl'].forEach(function(k){
+    if(FV[k]){ try { URL.revokeObjectURL(FV[k]); } catch(e){} }
+  });
   Object.keys(FV.photos||{}).forEach(function(k){
     if(FV.photos[k] && FV.photos[k].localUrl){ try { URL.revokeObjectURL(FV.photos[k].localUrl); } catch(e){} }
   });
-  FV = { videoFile:null, videoLocalUrl:'', videoRemoveFlag:false, photos:{}, photoRemoveFlags:{} };
+  FV = {
+    avatarFile:null, avatarLocalUrl:'', avatarRemoveFlag:false,
+    bannerFile:null, bannerLocalUrl:'', bannerRemoveFlag:false,
+    videoFile:null, videoLocalUrl:'', videoRemoveFlag:false,
+    insProofFile:null, insProofLocalUrl:'', insProofRemoveFlag:false,
+    photos:{}, photoRemoveFlags:{}
+  };
 }
 
 /* ============================================================
-   BUILD MODAL
+   MODAL RENDER
    ============================================================ */
 function renderModal(){
   var S = getS(); if(!S){ toast('State unavailable'); return; }
   var d = S.driver || {};
   var existingPhotos = d.car_photos || {};
-  var existingVideo = d.car_video_url || '';
 
   var old = document.getElementById('zy-do-modal');
   if(old) old.remove();
 
   var h = '<div id="zy-do-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;">';
-  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:440px;max-height:92vh;overflow-y:auto;">';
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:460px;max-height:92vh;overflow-y:auto;">';
   h += '<h3 style="margin:0 0 4px 0;font-size:16px;color:#fff;">' + (d.user_id ? 'Edit' : 'Become') + ' a ZYNIX Driver</h3>';
   h += '<p style="font-size:11px;color:#94a3b8;margin:0 0 14px 0;">Early adopters keep <b style="color:#10b981;">100%</b> for 6 months.</p>';
 
-  // Vehicle basics
+  /* DRIVE AVATAR */
+  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">DRIVE AVATAR</label>';
+  h += '<div style="margin:4px 0 12px 0;">';
+  h += '<button type="button" id="zy-do-avatar-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-user-circle"></i> Choose avatar</button>';
+  h += '<input type="file" id="zy-do-avatar-input" accept="image/*" style="display:none;">';
+  h += '<div id="zy-do-avatar-preview" style="margin-top:8px;"></div>';
+  h += '</div>';
+
+  /* DRIVE BANNER */
+  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">DRIVE BANNER</label>';
+  h += '<div style="margin:4px 0 12px 0;">';
+  h += '<button type="button" id="zy-do-banner-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-image"></i> Choose banner</button>';
+  h += '<input type="file" id="zy-do-banner-input" accept="image/*" style="display:none;">';
+  h += '<div id="zy-do-banner-preview" style="margin-top:8px;"></div>';
+  h += '</div>';
+
+  /* VEHICLE FIELDS */
   var fields = [
-    ['make', 'Vehicle make', 'text', 'Toyota', d.vehicle_make],
-    ['model', 'Vehicle model', 'text', 'Corolla', d.vehicle_model],
-    ['color', 'Colour', 'text', 'Silver', d.vehicle_color],
-    ['plate', 'Plate (last 3)', 'text', 'ABC', d.vehicle_plate],
-    ['year', 'Year', 'number', '2020', d.vehicle_year],
-    ['seats', 'Seats', 'number', '4', d.seats_available]
+    ['make','Vehicle make','text','Toyota', d.vehicle_make],
+    ['model','Vehicle model','text','Corolla', d.vehicle_model],
+    ['color','Colour','text','Silver', d.vehicle_color],
+    ['plate','Plate (last 3)','text','ABC', d.vehicle_plate],
+    ['year','Year','number','2020', d.vehicle_year],
+    ['seats','Seats','number','4', d.seats_available]
   ];
   fields.forEach(function(f){
     h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">' + f[1].toUpperCase() + '</label>';
-    h += '<input id="zy-do2-' + f[0] + '" type="' + f[2] + '" placeholder="' + f[3] + '" value="' + esc(f[4]||'') + '" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" />';
+    h += '<input id="zy-do-' + f[0] + '" type="' + f[2] + '" placeholder="' + f[3] + '" value="' + esc(f[4]||'') + '" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" />';
   });
 
   h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">VEHICLE TYPE</label>';
-  h += '<select id="zy-do2-type" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;">';
+  h += '<select id="zy-do-type" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;">';
   ['car','suv','van','bike','auto'].forEach(function(t){
     h += '<option value="' + t + '" ' + ((d.vehicle_type||'car') === t ? 'selected' : '') + '>' + t.toUpperCase() + '</option>';
   });
   h += '</select>';
 
   h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">OWNERSHIP</label>';
-  h += '<select id="zy-do2-own" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;">';
+  h += '<select id="zy-do-own" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;">';
   ['owner','rented','leased'].forEach(function(x){
     h += '<option value="' + x + '" ' + ((d.vehicle_ownership||'owner') === x ? 'selected' : '') + '>' + x.charAt(0).toUpperCase() + x.slice(1) + '</option>';
   });
   h += '</select>';
 
+  /* TRUST DATES */
   [['tyre','Last tyre change', d.last_tyre_change],['safety','Last safety check', d.last_safety_check],['ins','Insurance expiry', d.insurance_expiry]].forEach(function(f){
     h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">' + f[1].toUpperCase() + '</label>';
-    h += '<input id="zy-do2-' + f[0] + '" type="date" value="' + esc(f[2]||'') + '" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" />';
+    h += '<input id="zy-do-' + f[0] + '" type="date" value="' + esc(f[2]||'') + '" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" />';
   });
 
-  h += '<div style="padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);margin:14px 0;font-size:11px;color:#cbd5e1;"><b>Car media</b> — helps riders feel safe. Max 50 MB video, 3 MB per photo.</div>';
-
-  // Video
-  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">CAR VIDEO (optional)</label>';
-  h += '<div style="margin:4px 0 10px 0;">';
-  h += '<button type="button" id="zy-do2-video-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-video"></i> ' + (existingVideo ? 'Replace video' : 'Choose video') + '</button>';
-  h += '<input type="file" id="zy-do2-video-input" accept="video/*" style="display:none;">';
-  h += '<div id="zy-do2-video-preview" style="margin-top:8px;"></div>';
+  /* INSURANCE PROOF */
+  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">INSURANCE PROOF (optional)</label>';
+  h += '<div style="margin:4px 0 12px 0;">';
+  h += '<button type="button" id="zy-do-insproof-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-file-image"></i> Choose proof</button>';
+  h += '<input type="file" id="zy-do-insproof-input" accept="image/*" style="display:none;">';
+  h += '<div id="zy-do-insproof-preview" style="margin-top:8px;"></div>';
   h += '</div>';
 
-  // Photos
+  /* ENGINE WORK */
+  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">ENGINE WORK NOTES (optional)</label>';
+  h += '<textarea id="zy-do-engine-notes" rows="2" placeholder="e.g. Full service at 60k km" style="width:100%;padding:11px;margin:4px 0 10px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;resize:vertical;outline:none;font-family:inherit;">' + esc(d.engine_work_notes||'') + '</textarea>';
+  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">ENGINE WORK DATE</label>';
+  h += '<input id="zy-do-engine-date" type="date" value="' + esc(d.engine_work_date||'') + '" style="width:100%;padding:11px;margin:4px 0 12px 0;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;" />';
+
+  /* CAR MEDIA */
+  h += '<div style="padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);margin:14px 0;font-size:11px;color:#cbd5e1;"><b>Car media</b> — helps riders feel safe. Max 50 MB video, 3 MB per photo.</div>';
+
+  h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">CAR VIDEO (optional)</label>';
+  h += '<div style="margin:4px 0 10px 0;">';
+  h += '<button type="button" id="zy-do-video-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-video"></i> Choose video</button>';
+  h += '<input type="file" id="zy-do-video-input" accept="video/*" style="display:none;">';
+  h += '<div id="zy-do-video-preview" style="margin-top:8px;"></div>';
+  h += '</div>';
+
   PHOTO_KEYS.forEach(function(k){
-    var existing = existingPhotos[k];
     h += '<div style="margin-bottom:8px;">';
     h += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">' + PHOTO_LABELS[k].toUpperCase() + '</label>';
     h += '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap;">';
-    h += '<button type="button" data-do2-photo-btn="' + k + '" style="padding:7px 12px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-camera"></i> ' + (existing ? 'Replace' : 'Choose') + '</button>';
-    h += '<div id="zy-do2-photo-preview-' + k + '" style="display:flex;align-items:center;gap:6px;"></div>';
+    h += '<button type="button" data-do-photo-btn="' + k + '" style="padding:7px 12px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:700;cursor:pointer;"><i class="fa-solid fa-camera"></i> Choose</button>';
+    h += '<div id="zy-do-photo-preview-' + k + '" style="display:flex;align-items:center;gap:6px;"></div>';
     h += '</div>';
-    h += '<input type="file" data-do2-photo-input="' + k + '" accept="image/*" style="display:none;">';
+    h += '<input type="file" data-do-photo-input="' + k + '" accept="image/*" style="display:none;">';
     h += '</div>';
   });
 
-  h += '<label style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:8px;margin:10px 0 6px 0;"><input id="zy-do2-women" type="checkbox" ' + (d.is_women_only?'checked':'') + '> Women riders only</label>';
-  h += '<label style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:8px;margin:6px 0 14px 0;"><input id="zy-do2-audio" type="checkbox" ' + (d.audio_recording_enabled!==false?'checked':'') + '> Enable audio recording</label>';
+  h += '<label style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:8px;margin:10px 0 6px 0;"><input id="zy-do-women" type="checkbox" ' + (d.is_women_only?'checked':'') + '> Women riders only</label>';
+  h += '<label style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:8px;margin:6px 0 14px 0;"><input id="zy-do-audio" type="checkbox" ' + (d.audio_recording_enabled!==false?'checked':'') + '> Enable audio recording</label>';
 
   h += '<div style="display:flex;gap:8px;">';
-  h += '<button id="zy-do2-cancel" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">Cancel</button>';
-  h += '<button id="zy-do2-save" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;">Save</button>';
+  h += '<button id="zy-do-cancel" style="flex:1;padding:12px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">Cancel</button>';
+  h += '<button id="zy-do-save" style="flex:1;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;">Save</button>';
   h += '</div>';
   h += '</div></div>';
 
   document.body.insertAdjacentHTML('beforeend', h);
   wireModal();
-  paintVideoPreview();
-  PHOTO_KEYS.forEach(paintPhotoPreview);
-   paintAvatarPreview();
-  paintBannerPreview();
+  paintAll();
 }
 
 /* ============================================================
-   WIRE HANDLERS
+   WIRING
    ============================================================ */
+function pickImg(btnId, inputId, key, maxMB, label){
+  var btn = document.getElementById(btnId);
+  var inp = document.getElementById(inputId);
+  if(!btn || !inp) return;
+  btn.onclick = function(){ inp.click(); };
+  inp.onchange = function(){
+    var f = this.files && this.files[0];
+    if(!f) return;
+    if(f.size > maxMB*1024*1024){ toast(label + ' under ' + maxMB + ' MB', 'error'); this.value=''; return; }
+    var localKey = key + 'LocalUrl';
+    var fileKey = key + 'File';
+    var rmKey = key + 'RemoveFlag';
+    if(FV[localKey]){ try { URL.revokeObjectURL(FV[localKey]); } catch(e){} FV[localKey]=''; }
+    FV[fileKey] = f;
+    if(rmKey) FV[rmKey] = false;
+    paintAll();
+  };
+}
+
 function wireModal(){
-  var vBtn = document.getElementById('zy-do2-video-btn');
-  var vInp = document.getElementById('zy-do2-video-input');
-  if(vBtn && vInp){
-    vBtn.onclick = function(){ vInp.click(); };
-    vInp.onchange = function(){
-      var f = this.files && this.files[0];
-      if(!f) return;
-      if(f.size > 50*1024*1024){ toast('Video under 50 MB', 'error'); this.value=''; return; }
-      if(FV.videoLocalUrl){ try { URL.revokeObjectURL(FV.videoLocalUrl); } catch(e){} FV.videoLocalUrl=''; }
-      FV.videoFile = f;
-      FV.videoRemoveFlag = false;
-      paintVideoPreview();
-    };
-  }
+  pickImg('zy-do-avatar-btn', 'zy-do-avatar-input', 'avatar', 3, 'Avatar');
+  pickImg('zy-do-banner-btn', 'zy-do-banner-input', 'banner', 5, 'Banner');
+  pickImg('zy-do-video-btn', 'zy-do-video-input', 'video', 50, 'Video');
+  pickImg('zy-do-insproof-btn', 'zy-do-insproof-input', 'insProof', 3, 'Proof');
+
   PHOTO_KEYS.forEach(function(k){
-    var btn = document.querySelector('[data-do2-photo-btn="' + k + '"]');
-    var inp = document.querySelector('[data-do2-photo-input="' + k + '"]');
+    var btn = document.querySelector('[data-do-photo-btn="' + k + '"]');
+    var inp = document.querySelector('[data-do-photo-input="' + k + '"]');
     if(btn && inp){
       btn.onclick = function(){ inp.click(); };
       inp.onchange = function(){
@@ -12490,145 +12540,131 @@ function wireModal(){
         if(FV.photos[k] && FV.photos[k].localUrl){ try { URL.revokeObjectURL(FV.photos[k].localUrl); } catch(e){} }
         FV.photos[k] = { file: f, localUrl: '' };
         delete FV.photoRemoveFlags[k];
-        paintPhotoPreview(k);
+        paintAll();
       };
     }
   });
-  document.getElementById('zy-do2-cancel').onclick = function(){
+
+  document.getElementById('zy-do-cancel').onclick = function(){
     resetFV();
     var m = document.getElementById('zy-do-modal'); if(m) m.remove();
   };
-  document.getElementById('zy-do2-save').onclick = saveDriver;
+  document.getElementById('zy-do-save').onclick = saveDriver;
 }
 
 /* ============================================================
-   PAINT PREVIEWS
+   PREVIEWS
    ============================================================ */
-   function paintAvatarPreview(){
-  var host = document.getElementById('zy-do2-avatar-preview');
-  var btn = document.getElementById('zy-do2-avatar-btn');
+function paintAll(){
+  paintAvatar(); paintBanner(); paintVideo(); paintInsProof();
+  PHOTO_KEYS.forEach(paintPhoto);
+}
+
+function paintAvatar(){
+  var host = document.getElementById('zy-do-avatar-preview');
+  var btn = document.getElementById('zy-do-avatar-btn');
   if(!host) return;
   var S = getS(); var d = (S && S.driver) || {};
+  if(FV.avatarRemoveFlag){
+    host.innerHTML=''; if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Choose avatar'; return;
+  }
   if(FV.avatarFile){
     if(!FV.avatarLocalUrl){ try { FV.avatarLocalUrl = URL.createObjectURL(FV.avatarFile); } catch(e){} }
-    host.innerHTML = '<div style="position:relative;display:inline-block;"><img src="' + FV.avatarLocalUrl + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do2-avatar-rm" style="position:absolute;top:4px;right:4px;padding:3px 8px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">×</button></div>';
+    host.innerHTML = '<div style="position:relative;display:inline-block;"><img src="' + FV.avatarLocalUrl + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do-avatar-rm" style="position:absolute;top:4px;right:4px;padding:3px 8px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">×</button></div>';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Replace avatar';
-    var rm = document.getElementById('zy-do2-avatar-rm');
-    if(rm) rm.onclick = function(){
-      if(FV.avatarLocalUrl){ try { URL.revokeObjectURL(FV.avatarLocalUrl); } catch(e){} }
-      FV.avatarFile = null; FV.avatarLocalUrl = '';
-      paintAvatarPreview();
-    };
+    var rm = document.getElementById('zy-do-avatar-rm');
+    if(rm) rm.onclick = function(){ FV.avatarFile=null; FV.avatarLocalUrl=''; paintAvatar(); };
   } else if(d.avatar){
     host.innerHTML = '<img src="' + esc(d.avatar) + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:1px solid #1e293b;display:block;">';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Replace avatar';
   } else {
-    host.innerHTML = '';
-    if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Choose avatar';
+    host.innerHTML = ''; if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Choose avatar';
   }
 }
 
-function paintBannerPreview(){
-  var host = document.getElementById('zy-do2-banner-preview');
-  var btn = document.getElementById('zy-do2-banner-btn');
+function paintBanner(){
+  var host = document.getElementById('zy-do-banner-preview');
+  var btn = document.getElementById('zy-do-banner-btn');
   if(!host) return;
   var S = getS(); var d = (S && S.driver) || {};
+  if(FV.bannerRemoveFlag){ host.innerHTML=''; if(btn) btn.innerHTML='<i class="fa-solid fa-image"></i> Choose banner'; return; }
   if(FV.bannerFile){
     if(!FV.bannerLocalUrl){ try { FV.bannerLocalUrl = URL.createObjectURL(FV.bannerFile); } catch(e){} }
-    host.innerHTML = '<div style="position:relative;"><img src="' + FV.bannerLocalUrl + '" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do2-banner-rm" style="position:absolute;top:6px;right:6px;padding:4px 10px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button></div>';
+    host.innerHTML = '<div style="position:relative;"><img src="' + FV.bannerLocalUrl + '" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do-banner-rm" style="position:absolute;top:6px;right:6px;padding:4px 10px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button></div>';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Replace banner';
-    var rm = document.getElementById('zy-do2-banner-rm');
-    if(rm) rm.onclick = function(){
-      if(FV.bannerLocalUrl){ try { URL.revokeObjectURL(FV.bannerLocalUrl); } catch(e){} }
-      FV.bannerFile = null; FV.bannerLocalUrl = '';
-      paintBannerPreview();
-    };
+    var rm = document.getElementById('zy-do-banner-rm');
+    if(rm) rm.onclick = function(){ FV.bannerFile=null; FV.bannerLocalUrl=''; paintBanner(); };
   } else if(d.banner_url){
     host.innerHTML = '<img src="' + esc(d.banner_url) + '" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid #1e293b;display:block;">';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Replace banner';
   } else {
-    host.innerHTML = '';
-    if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Choose banner';
+    host.innerHTML = ''; if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Choose banner';
   }
 }
-function paintVideoPreview(){
-  var host = document.getElementById('zy-do2-video-preview');
-  var btn = document.getElementById('zy-do2-video-btn');
+
+function paintVideo(){
+  var host = document.getElementById('zy-do-video-preview');
+  var btn = document.getElementById('zy-do-video-btn');
   if(!host) return;
   var S = getS(); var d = (S && S.driver) || {};
-  var existing = d.car_video_url;
-
-  if(FV.videoRemoveFlag){
-    host.innerHTML = '';
-    if(btn) btn.innerHTML = '<i class="fa-solid fa-video"></i> Choose video';
-    return;
-  }
+  if(FV.videoRemoveFlag){ host.innerHTML=''; if(btn) btn.innerHTML='<i class="fa-solid fa-video"></i> Choose video'; return; }
   if(FV.videoFile){
     if(!FV.videoLocalUrl){ try { FV.videoLocalUrl = URL.createObjectURL(FV.videoFile); } catch(e){} }
-    host.innerHTML = '<div style="position:relative;border-radius:8px;overflow:hidden;background:#000;">'
-      + '<video src="' + FV.videoLocalUrl + '" controls playsinline preload="metadata" style="width:100%;max-height:180px;display:block;background:#000;"></video>'
-      + '<button type="button" id="zy-do2-video-rm" style="position:absolute;top:6px;right:6px;padding:5px 10px;border-radius:14px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button>'
-      + '</div>';
+    host.innerHTML = '<div style="position:relative;border-radius:8px;overflow:hidden;background:#000;"><video src="' + FV.videoLocalUrl + '" controls playsinline preload="metadata" style="width:100%;max-height:180px;display:block;background:#000;"></video><button type="button" id="zy-do-video-rm" style="position:absolute;top:6px;right:6px;padding:5px 10px;border-radius:14px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button></div>';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-video"></i> Replace video';
-    var rm = document.getElementById('zy-do2-video-rm');
-    if(rm) rm.onclick = function(){
-      if(FV.videoLocalUrl){ try { URL.revokeObjectURL(FV.videoLocalUrl); } catch(e){} FV.videoLocalUrl=''; }
-      FV.videoFile = null;
-      paintVideoPreview();
-    };
-  } else if(existing){
-    host.innerHTML = '<div style="position:relative;border-radius:8px;overflow:hidden;background:#000;">'
-      + '<video src="' + esc(existing) + '" controls playsinline preload="metadata" style="width:100%;max-height:180px;display:block;background:#000;"></video>'
-      + '<button type="button" id="zy-do2-video-rm" style="position:absolute;top:6px;right:6px;padding:5px 10px;border-radius:14px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button>'
-      + '</div>';
+    var rm = document.getElementById('zy-do-video-rm');
+    if(rm) rm.onclick = function(){ FV.videoFile=null; FV.videoLocalUrl=''; paintVideo(); };
+  } else if(d.car_video_url){
+    host.innerHTML = '<div style="position:relative;border-radius:8px;overflow:hidden;background:#000;"><video src="' + esc(d.car_video_url) + '" controls playsinline preload="metadata" style="width:100%;max-height:180px;display:block;background:#000;"></video><button type="button" id="zy-do-video-rm" style="position:absolute;top:6px;right:6px;padding:5px 10px;border-radius:14px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button></div>';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-video"></i> Replace video';
-    var rm2 = document.getElementById('zy-do2-video-rm');
-    if(rm2) rm2.onclick = function(){
-      FV.videoRemoveFlag = true;
-      paintVideoPreview();
-    };
+    var rm2 = document.getElementById('zy-do-video-rm');
+    if(rm2) rm2.onclick = function(){ FV.videoRemoveFlag = true; paintVideo(); };
   } else {
-    host.innerHTML = '';
-    if(btn) btn.innerHTML = '<i class="fa-solid fa-video"></i> Choose video';
+    host.innerHTML = ''; if(btn) btn.innerHTML = '<i class="fa-solid fa-video"></i> Choose video';
   }
 }
 
-function paintPhotoPreview(k){
-  var host = document.getElementById('zy-do2-photo-preview-' + k);
-  var btn = document.querySelector('[data-do2-photo-btn="' + k + '"]');
+function paintInsProof(){
+  var host = document.getElementById('zy-do-insproof-preview');
+  var btn = document.getElementById('zy-do-insproof-btn');
+  if(!host) return;
+  var S = getS(); var d = (S && S.driver) || {};
+  if(FV.insProofRemoveFlag){ host.innerHTML=''; if(btn) btn.innerHTML='<i class="fa-solid fa-file-image"></i> Choose proof'; return; }
+  if(FV.insProofFile){
+    if(!FV.insProofLocalUrl){ try { FV.insProofLocalUrl = URL.createObjectURL(FV.insProofFile); } catch(e){} }
+    host.innerHTML = '<div style="position:relative;display:inline-block;"><img src="' + FV.insProofLocalUrl + '" style="width:120px;height:90px;object-fit:cover;border-radius:8px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do-insproof-rm" style="position:absolute;top:4px;right:4px;padding:3px 8px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">×</button></div>';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-file-image"></i> Replace proof';
+    var rm = document.getElementById('zy-do-insproof-rm');
+    if(rm) rm.onclick = function(){ FV.insProofFile=null; FV.insProofLocalUrl=''; paintInsProof(); };
+  } else if(d.insurance_proof_url){
+    host.innerHTML = '<img src="' + esc(d.insurance_proof_url) + '" style="width:120px;height:90px;object-fit:cover;border-radius:8px;border:1px solid #1e293b;display:block;">';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-file-image"></i> Replace proof';
+  } else {
+    host.innerHTML = ''; if(btn) btn.innerHTML = '<i class="fa-solid fa-file-image"></i> Choose proof';
+  }
+}
+
+function paintPhoto(k){
+  var host = document.getElementById('zy-do-photo-preview-' + k);
+  var btn = document.querySelector('[data-do-photo-btn="' + k + '"]');
   if(!host) return;
   var S = getS(); var d = (S && S.driver) || {};
   var existing = (d.car_photos || {})[k];
-
-  if(FV.photoRemoveFlags[k]){
-    host.innerHTML = '';
-    if(btn) btn.innerHTML = '<i class="fa-solid fa-camera"></i> Choose';
-    return;
-  }
+  if(FV.photoRemoveFlags[k]){ host.innerHTML=''; if(btn) btn.innerHTML='<i class="fa-solid fa-camera"></i> Choose'; return; }
   var entry = FV.photos[k];
   if(entry && entry.file){
     if(!entry.localUrl){ try { entry.localUrl = URL.createObjectURL(entry.file); } catch(e){} }
-    host.innerHTML = '<img src="' + entry.localUrl + '" style="width:60px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #1e293b;">'
-      + '<button type="button" data-do2-photo-rm="' + k + '" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(161,98,98,.35);background:rgba(161,98,98,.1);color:#a16262;font-size:11px;font-weight:700;cursor:pointer;">×</button>';
+    host.innerHTML = '<img src="' + entry.localUrl + '" style="width:60px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #1e293b;"><button type="button" data-do-photo-rm="' + k + '" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(161,98,98,.35);background:rgba(161,98,98,.1);color:#a16262;font-size:11px;font-weight:700;cursor:pointer;">×</button>';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-camera"></i> Replace';
-    var rm = host.querySelector('[data-do2-photo-rm]');
-    if(rm) rm.onclick = function(){
-      if(entry.localUrl){ try { URL.revokeObjectURL(entry.localUrl); } catch(e){} }
-      delete FV.photos[k];
-      paintPhotoPreview(k);
-    };
+    var rm = host.querySelector('[data-do-photo-rm]');
+    if(rm) rm.onclick = function(){ delete FV.photos[k]; paintPhoto(k); };
   } else if(existing){
-    host.innerHTML = '<img src="' + esc(existing) + '" style="width:60px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #1e293b;">'
-      + '<button type="button" data-do2-photo-rm="' + k + '" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(161,98,98,.35);background:rgba(161,98,98,.1);color:#a16262;font-size:11px;font-weight:700;cursor:pointer;">×</button>';
+    host.innerHTML = '<img src="' + esc(existing) + '" style="width:60px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #1e293b;"><button type="button" data-do-photo-rm="' + k + '" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(161,98,98,.35);background:rgba(161,98,98,.1);color:#a16262;font-size:11px;font-weight:700;cursor:pointer;">×</button>';
     if(btn) btn.innerHTML = '<i class="fa-solid fa-camera"></i> Replace';
-    var rm2 = host.querySelector('[data-do2-photo-rm]');
-    if(rm2) rm2.onclick = function(){
-      FV.photoRemoveFlags[k] = true;
-      paintPhotoPreview(k);
-    };
+    var rm2 = host.querySelector('[data-do-photo-rm]');
+    if(rm2) rm2.onclick = function(){ FV.photoRemoveFlags[k] = true; paintPhoto(k); };
   } else {
-    host.innerHTML = '';
-    if(btn) btn.innerHTML = '<i class="fa-solid fa-camera"></i> Choose';
+    host.innerHTML = ''; if(btn) btn.innerHTML = '<i class="fa-solid fa-camera"></i> Choose';
   }
 }
 
@@ -12641,17 +12677,21 @@ async function saveDriver(){
   var S = getS(); if(!S){ toast('State unavailable'); return; }
   var d = S.driver || {};
 
-  var btn = document.getElementById('zy-do2-save');
-  btn.disabled = true;
-  btn.textContent = 'Saving…';
+  var btn = document.getElementById('zy-do-save');
+  btn.disabled = true; btn.textContent = 'Saving…';
 
   try {
+    var avatarUrl = FV.avatarRemoveFlag ? null : (d.avatar || null);
+    if(FV.avatarFile){ btn.textContent = 'Uploading avatar…'; avatarUrl = await Z.storeMedia(FV.avatarFile); if(!avatarUrl) throw new Error('Avatar upload failed'); }
+
+    var bannerUrl = FV.bannerRemoveFlag ? null : (d.banner_url || null);
+    if(FV.bannerFile){ btn.textContent = 'Uploading banner…'; bannerUrl = await Z.storeMedia(FV.bannerFile); if(!bannerUrl) throw new Error('Banner upload failed'); }
+
     var videoUrl = FV.videoRemoveFlag ? null : (d.car_video_url || null);
-    if(FV.videoFile){
-      btn.textContent = 'Uploading video…';
-      videoUrl = await Z.storeMedia(FV.videoFile);
-      if(!videoUrl) throw new Error('Video upload failed');
-    }
+    if(FV.videoFile){ btn.textContent = 'Uploading video…'; videoUrl = await Z.storeMedia(FV.videoFile); if(!videoUrl) throw new Error('Video upload failed'); }
+
+    var insProofUrl = FV.insProofRemoveFlag ? null : (d.insurance_proof_url || null);
+    if(FV.insProofFile){ btn.textContent = 'Uploading proof…'; insProofUrl = await Z.storeMedia(FV.insProofFile); if(!insProofUrl) throw new Error('Proof upload failed'); }
 
     var photos = Object.assign({}, d.car_photos || {});
     Object.keys(FV.photoRemoveFlags).forEach(function(k){ if(FV.photoRemoveFlags[k]) delete photos[k]; });
@@ -12666,22 +12706,27 @@ async function saveDriver(){
 
     var payload = {
       user_id: u.id,
-      vehicle_make: (document.getElementById('zy-do2-make').value || '').trim(),
-      vehicle_model: (document.getElementById('zy-do2-model').value || '').trim(),
-      vehicle_color: (document.getElementById('zy-do2-color').value || '').trim(),
-      vehicle_plate: (document.getElementById('zy-do2-plate').value || '').trim(),
-      vehicle_year: parseInt(document.getElementById('zy-do2-year').value) || null,
-      vehicle_type: document.getElementById('zy-do2-type').value,
-      vehicle_ownership: document.getElementById('zy-do2-own').value,
-      seats_available: parseInt(document.getElementById('zy-do2-seats').value) || 4,
-      is_women_only: document.getElementById('zy-do2-women').checked,
-      audio_recording_enabled: document.getElementById('zy-do2-audio').checked,
+      avatar: avatarUrl,
+      banner_url: bannerUrl,
+      vehicle_make: (document.getElementById('zy-do-make').value || '').trim(),
+      vehicle_model: (document.getElementById('zy-do-model').value || '').trim(),
+      vehicle_color: (document.getElementById('zy-do-color').value || '').trim(),
+      vehicle_plate: (document.getElementById('zy-do-plate').value || '').trim(),
+      vehicle_year: parseInt(document.getElementById('zy-do-year').value) || null,
+      vehicle_type: document.getElementById('zy-do-type').value,
+      vehicle_ownership: document.getElementById('zy-do-own').value,
+      seats_available: parseInt(document.getElementById('zy-do-seats').value) || 4,
+      is_women_only: document.getElementById('zy-do-women').checked,
+      audio_recording_enabled: document.getElementById('zy-do-audio').checked,
       currency: cur(),
       car_video_url: videoUrl,
       car_photos: photos,
-      last_tyre_change: document.getElementById('zy-do2-tyre').value || null,
-      last_safety_check: document.getElementById('zy-do2-safety').value || null,
-      insurance_expiry: document.getElementById('zy-do2-ins').value || null
+      insurance_proof_url: insProofUrl,
+      engine_work_notes: (document.getElementById('zy-do-engine-notes').value || '').trim() || null,
+      engine_work_date: document.getElementById('zy-do-engine-date').value || null,
+      last_tyre_change: document.getElementById('zy-do-tyre').value || null,
+      last_safety_check: document.getElementById('zy-do-safety').value || null,
+      insurance_expiry: document.getElementById('zy-do-ins').value || null
     };
     if(!d.user_id) payload.commission_waived_until = new Date(Date.now() + 180*24*60*60*1000).toISOString();
 
@@ -12697,25 +12742,24 @@ async function saveDriver(){
     var m = document.getElementById('zy-do-modal'); if(m) m.remove();
     toast(d.user_id ? 'Driver profile updated' : 'Welcome, ZYNIX Driver!');
 
-    // Re-render current tab if it's the Drive profile
     setTimeout(function(){
-      var profileBtn = document.querySelector('[data-tab="profile"]');
-      if(profileBtn && Z.State.currentView === 'drive') profileBtn.click();
-    }, 150);
+      if(Z.State.currentView === 'drive-profile'){ Z.showView('drive-profile', u.id); }
+      else if(Z.State.currentView === 'drive'){
+        var pb = document.querySelector('[data-tab="profile"]');
+        if(pb) pb.click();
+      }
+    }, 200);
   } catch(e){
-    btn.disabled = false;
-    btn.textContent = 'Save';
+    btn.disabled = false; btn.textContent = 'Save';
     toast('Save failed: ' + (e.message || 'unknown error'), 'error');
   }
 }
 
 /* ============================================================
-   INTERCEPT old modal triggers
-   Capture-phase listener stops the old handler from opening
-   the broken modal, and opens our clean one instead.
+   INTERCEPT triggers
    ============================================================ */
-if(!Z.__driverModalIntercept){
-  Z.__driverModalIntercept = true;
+if(!Z.__driverModalIntercept2){
+  Z.__driverModalIntercept2 = true;
   document.addEventListener('click', function(e){
     var btn = e.target.closest('#zy-become-driver, #zy-pp-edit-driver, #zy-pp-become-driver, #zy-bd-onboard');
     if(!btn) return;
@@ -12726,12 +12770,74 @@ if(!Z.__driverModalIntercept){
   }, true);
 }
 
-/* Public entry for anyone calling directly */
 Z.openDriverModalV2 = function(){ resetFV(); renderModal(); };
 
-console.log('[ZYNIX Driver Modal v2] clean modal ready');
+/* ============================================================
+   AVATAR + BANNER CLICK HANDLER on Drive Profile
+   Watch DOM; attach clicks when #zy-dp2-root exists.
+   ============================================================ */
+function wireProfileClicks(){
+  var root = document.getElementById('zy-dp2-root');
+  if(!root) return;
+  if(root.dataset.clicksWired === '1') return;
+  root.dataset.clicksWired = '1';
+
+  // Find avatar image inside the hero tile (first img inside the 110x110 tile)
+  var heroDivs = root.querySelectorAll('div');
+  var avatarImg = null, bannerDiv = null;
+  for(var i=0;i<heroDivs.length;i++){
+    var el = heroDivs[i];
+    if(el.querySelector && el.querySelector('img') && !avatarImg){
+      var st = el.getAttribute('style')||'';
+      if(st.indexOf('width:110px') !== -1 || st.indexOf('width: 110px') !== -1){
+        avatarImg = el.querySelector('img');
+      }
+    }
+  }
+
+  if(avatarImg){
+    avatarImg.style.cursor = 'zoom-in';
+    avatarImg.addEventListener('click', function(){
+      var src = this.getAttribute('src');
+      if(!src) return;
+      var lb = document.createElement('div');
+      lb.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;';
+      lb.innerHTML = '<img src="' + esc(src) + '" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">';
+      lb.onclick = function(){ lb.remove(); };
+      document.body.appendChild(lb);
+    });
+  }
+
+  // Banner: find the flex:1 tile (second hero sibling)
+  var bannerCandidate = null;
+  for(var j=0;j<heroDivs.length;j++){
+    var el2 = heroDivs[j];
+    var st2 = el2.getAttribute('style')||'';
+    if(st2.indexOf('flex:1') !== -1 && st2.indexOf('border-radius:14px') !== -1 && el2.querySelector && !el2.querySelector('img[src*="ui-avatars"]')){
+      // skip the avatar tile
+      if(st2.indexOf('width:110px') === -1){ bannerCandidate = el2; break; }
+    }
+  }
+  if(bannerCandidate){
+    var bgMatch = (bannerCandidate.getAttribute('style')||'').match(/background-image:url\(([^)]+)\)/);
+    if(bgMatch && bgMatch[1]){
+      bannerCandidate.style.cursor = 'zoom-in';
+      bannerCandidate.addEventListener('click', function(){
+        var url = bgMatch[1].replace(/^['"]|['"]$/g,'');
+        var lb = document.createElement('div');
+        lb.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;';
+        lb.innerHTML = '<img src="' + esc(url) + '" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">';
+        lb.onclick = function(){ lb.remove(); };
+        document.body.appendChild(lb);
+      });
+    }
+  }
+}
+setInterval(wireProfileClicks, 500);
+
+console.log('[ZYNIX Driver Modal v3] avatar + banner + proof + engine wired');
 })();
-</script>                                
+</script>                
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
