@@ -12043,31 +12043,26 @@ Z.drvOpenRiderAnalytics = async function(){
 console.log('[ZYNIX Drive v9c] ready — notifications · ledger · analytics');
 })();
 </script>
-   <!-- ============================================================ -->
-<!-- SECTION 18 — BUSINESS MODEL                                  -->
-<!-- Tiers · Points · Contribution Score · Referrals · Peer Support-->
-<!-- Works with localStorage; SQL upgrade optional for next session -->
+<!-- ============================================================ -->
+<!-- SECTION 18 v2.0 — Business Model (complete rewrite)          -->
+<!-- Fixes: dead buttons · navigation · X button · rating ·       -->
+<!-- Active Users · view-stack re-render                          -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__ZynixBiz) return; Z.__ZynixBiz = true;
+if(Z.__ZynixBizV2) return; Z.__ZynixBizV2 = true; Z.__ZynixBiz = true;
 
-/* ============================================================
-   CONSTANTS — TIERS
-   ============================================================ */
+/* ===================== CONSTANTS ===================== */
 var TIERS = [
-  { id:'free',     name:'Free',     price:0,    faqFree:0,   refCap:5,     disc:0,  color:'#64748b', badge:'', desc:'Browse ZYNIX. Buy FAQs individually. No referral earnings.' },
-  { id:'member',   name:'Member',   price:9,    faqFree:10,  refCap:25,    disc:10, color:'#3b82f6', badge:'M', desc:'Basic creator access. 10 free FAQs a month. Earn from referrals.' },
-  { id:'pro',      name:'Pro',      price:25,   faqFree:50,  refCap:150,   disc:20, color:'#10b981', badge:'P', desc:'Full creator tools. 50 free FAQs. Higher referral caps. Full access.' },
-  { id:'elite',    name:'Elite',    price:59,   faqFree:200, refCap:1000,  disc:25, color:'#fbbf24', badge:'E', desc:'Priority everywhere. 200 free FAQs. Highest referral earning cap.' },
-  { id:'business', name:'Business', price:349,  faqFree:9999,refCap:5000,  disc:30, color:'#a78bfa', badge:'B', desc:'Team accounts, API access, dedicated manager. Up to 10 seats.' }
+  { id:'free',     name:'Free',     price:0,    faqFree:0,    refCap:5,    disc:0,  color:'#64748b', badge:'', desc:'Browse ZYNIX. Buy FAQs individually. No referral earnings.' },
+  { id:'member',   name:'Member',   price:9,    faqFree:10,   refCap:25,   disc:10, color:'#3b82f6', badge:'M', desc:'Basic creator access. 10 free FAQs a month. Earn from referrals.' },
+  { id:'pro',      name:'Pro',      price:25,   faqFree:50,   refCap:150,  disc:20, color:'#10b981', badge:'P', desc:'Full creator tools. 50 free FAQs. Higher referral caps.' },
+  { id:'elite',    name:'Elite',    price:59,   faqFree:200,  refCap:1000, disc:25, color:'#fbbf24', badge:'E', desc:'Priority everywhere. 200 free FAQs. Highest referral cap.' },
+  { id:'business', name:'Business', price:349,  faqFree:9999, refCap:5000, disc:30, color:'#a78bfa', badge:'B', desc:'Team accounts, API access, dedicated manager.' }
 ];
 
-/* ============================================================
-   CONTRIBUTION SCORE — Actions & points
-   ============================================================ */
 var SCORE_ACTIONS = {
   faq_helpful:       { pts: 10, label:'FAQ answer marked helpful' },
   faq_upvoted:       { pts: 5,  label:'FAQ answer got 3+ upvotes' },
@@ -12083,17 +12078,14 @@ var SCORE_ACTIONS = {
 };
 
 var SCORE_LEVELS = [
-  { min: 0,     max: 99,      name:'Newcomer',    mult: 1.0,  color:'#64748b' },
-  { min: 100,   max: 499,     name:'Member',      mult: 1.25, color:'#3b82f6' },
-  { min: 500,   max: 1999,    name:'Contributor', mult: 1.5,  color:'#10b981' },
-  { min: 2000,  max: 9999,    name:'Pro',         mult: 2.0,  color:'#fbbf24' },
-  { min: 10000, max: 49999,   name:'Expert',      mult: 3.0,  color:'#f59e0b' },
-  { min: 50000, max: 999999999, name:'Partner',   mult: 5.0,  color:'#a78bfa' }
+  { min: 0,     max: 99,        name:'Newcomer',    mult: 1.0,  color:'#64748b' },
+  { min: 100,   max: 499,       name:'Member',      mult: 1.25, color:'#3b82f6' },
+  { min: 500,   max: 1999,      name:'Contributor', mult: 1.5,  color:'#10b981' },
+  { min: 2000,  max: 9999,      name:'Pro',         mult: 2.0,  color:'#fbbf24' },
+  { min: 10000, max: 49999,     name:'Expert',      mult: 3.0,  color:'#f59e0b' },
+  { min: 50000, max: 999999999, name:'Partner',     mult: 5.0,  color:'#a78bfa' }
 ];
 
-/* ============================================================
-   CAPS — Passive (referral + bounty + ads) vs Active (work)
-   ============================================================ */
 var CAPS = {
   free:     { passive: 5,    active: 20 },
   member:   { passive: 25,   active: 100 },
@@ -12102,36 +12094,29 @@ var CAPS = {
   business: { passive: 5000, active: 10000 }
 };
 
-/* ============================================================
-   PEER SUPPORT — categories and pricing
-   ============================================================ */
 var FAQ_CATEGORIES = [
-  { id:'ride_help',   name:'Ride Help',        icon:'fa-solid fa-car',    minPay:0.05, maxPay:0.25 },
-  { id:'payment',     name:'Payments & Wallet',icon:'fa-solid fa-wallet', minPay:0.05, maxPay:0.50 },
-  { id:'tech',        name:'Tech & App',       icon:'fa-solid fa-mobile-screen', minPay:0.01, maxPay:0.25 },
-  { id:'account',     name:'Account Issues',   icon:'fa-solid fa-user-shield', minPay:0.01, maxPay:0.25 },
-  { id:'safety',      name:'Safety & Trust',   icon:'fa-solid fa-shield-halved', minPay:0.25, maxPay:1.00 },
-  { id:'creators',    name:'Creators & Spaces',icon:'fa-solid fa-palette', minPay:0.10, maxPay:0.50 },
-  { id:'business',    name:'Business & API',   icon:'fa-solid fa-briefcase', minPay:0.50, maxPay:1.00 },
-  { id:'other',       name:'Other',            icon:'fa-solid fa-circle-question', minPay:0.01, maxPay:0.50 }
+  { id:'ride_help', name:'Ride Help',         icon:'fa-solid fa-car' },
+  { id:'payment',   name:'Payments & Wallet', icon:'fa-solid fa-wallet' },
+  { id:'tech',      name:'Tech & App',        icon:'fa-solid fa-mobile-screen' },
+  { id:'account',   name:'Account Issues',    icon:'fa-solid fa-user-shield' },
+  { id:'safety',    name:'Safety & Trust',    icon:'fa-solid fa-shield-halved' },
+  { id:'creators',  name:'Creators & Spaces', icon:'fa-solid fa-palette' },
+  { id:'business',  name:'Business & API',    icon:'fa-solid fa-briefcase' },
+  { id:'other',     name:'Other',             icon:'fa-solid fa-circle-question' }
 ];
 
-/* ============================================================
-   LOCAL STATE — persists until SQL is added
-   ============================================================ */
+/* ===================== STATE ===================== */
 var BS = {
-  score: 0,
-  points: 0,
-  tier: 'free',
-  passiveThisMonth: 0,
-  activeThisMonth: 0,
+  score: 0, points: 0, tier: 'free',
+  passiveThisMonth: 0, activeThisMonth: 0,
   referrals: [],
-  questions: [],   // my questions
-  answers: [],     // my answers
-  allQuestions: [],// local cache of public questions
+  activityLog: [],
+  monthlyActions: {},
+  peerVotes: {},
   lastMonthReset: null
 };
 
+/* ===================== HELPERS ===================== */
 function me(){ return (Z.State && Z.State.currentUser) || null; }
 function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
 function toast(m,t){ if(Z.toast) Z.toast(m,t); else console.log('[Biz]',m); }
@@ -12139,9 +12124,6 @@ function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,func
 function money(n,c){ var sym = c === 'PKR' ? '₨' : c === 'USD' ? '$' : '£'; return sym + (Number(n)||0).toFixed(2); }
 function ago(ts){ if(!ts) return ''; var s=Math.floor((Date.now()-new Date(ts).getTime())/1000); if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
 
-/* ============================================================
-   STORAGE — localStorage, keyed by user id
-   ============================================================ */
 function bKey(){ var u = me(); return u ? ('zynix_biz_'+u.id) : null; }
 function loadBiz(){
   var k = bKey(); if(!k) return;
@@ -12149,102 +12131,133 @@ function loadBiz(){
     var raw = localStorage.getItem(k);
     if(!raw) return;
     var p = JSON.parse(raw);
-    if(p && typeof p === 'object'){
-      // Reset monthly counters if new month
-      var now = new Date();
-      var mk = now.getFullYear()+'-'+now.getMonth();
-      if(p.lastMonthReset !== mk){
-        p.passiveThisMonth = 0;
-        p.activeThisMonth = 0;
-        p.lastMonthReset = mk;
-      }
-      BS = Object.assign(BS, p);
+    if(!p || typeof p !== 'object') return;
+    var now = new Date(); var mk = now.getFullYear()+'-'+now.getMonth();
+    if(p.lastMonthReset !== mk){
+      p.passiveThisMonth = 0; p.activeThisMonth = 0;
+      p.monthlyActions = {};
+      p.lastMonthReset = mk;
     }
+    BS = Object.assign(BS, p);
   } catch(e){}
 }
 function saveBiz(){
   var k = bKey(); if(!k) return;
   try {
-    var now = new Date();
-    BS.lastMonthReset = now.getFullYear()+'-'+now.getMonth();
+    var now = new Date(); BS.lastMonthReset = now.getFullYear()+'-'+now.getMonth();
     localStorage.setItem(k, JSON.stringify(BS));
   } catch(e){}
 }
 
-/* ============================================================
-   LOGIC — tier, score, caps, earnings
-   ============================================================ */
 function getTier(){ return TIERS.find(function(t){ return t.id === BS.tier; }) || TIERS[0]; }
 function getScoreLevel(){
-  for(var i = SCORE_LEVELS.length - 1; i >= 0; i--){
-    if(BS.score >= SCORE_LEVELS[i].min) return SCORE_LEVELS[i];
-  }
+  for(var i = SCORE_LEVELS.length - 1; i >= 0; i--) if(BS.score >= SCORE_LEVELS[i].min) return SCORE_LEVELS[i];
   return SCORE_LEVELS[0];
+}
+function getNextLevel(){
+  for(var i = 0; i < SCORE_LEVELS.length - 1; i++) if(BS.score < SCORE_LEVELS[i+1].min) return SCORE_LEVELS[i+1];
+  return null;
 }
 function getCaps(){
   var base = CAPS[BS.tier] || CAPS.free;
   var mult = getScoreLevel().mult;
-  return {
-    passive: base.passive * mult,
-    active: base.active * mult,
-    mult: mult
-  };
+  return { passive: base.passive * mult, active: base.active * mult, mult: mult };
 }
 function getUsage(){
-  return {
-    passive: BS.passiveThisMonth,
-    active: BS.activeThisMonth,
-    passiveRemaining: Math.max(0, getCaps().passive - BS.passiveThisMonth),
-    activeRemaining: Math.max(0, getCaps().active - BS.activeThisMonth)
-  };
+  var c = getCaps();
+  return { passive: BS.passiveThisMonth, active: BS.activeThisMonth, passiveRemaining: Math.max(0, c.passive - BS.passiveThisMonth), activeRemaining: Math.max(0, c.active - BS.activeThisMonth) };
 }
 function addScore(action, amount){
-  var def = SCORE_ACTIONS[action];
-  if(!def) return;
+  var def = SCORE_ACTIONS[action]; if(!def) return;
   var delta = amount != null ? amount : def.pts;
   BS.score = Math.max(0, BS.score + delta);
   BS.points += Math.max(0, delta);
+  BS.activityLog = BS.activityLog || [];
+  BS.activityLog.unshift({ action: action, pts: delta, at: Date.now() });
+  if(BS.activityLog.length > 60) BS.activityLog = BS.activityLog.slice(0, 60);
+  BS.monthlyActions = BS.monthlyActions || {};
+  BS.monthlyActions[action] = (BS.monthlyActions[action] || 0) + 1;
   saveBiz();
 }
 function addEarning(kind, amount){
-  // kind: 'passive' | 'active'
   var caps = getCaps();
   if(kind === 'passive'){
-    var remaining = Math.max(0, caps.passive - BS.passiveThisMonth);
-    var actual = Math.min(remaining, amount);
-    BS.passiveThisMonth += actual;
-    return actual;
-  } else {
-    var remaining2 = Math.max(0, caps.active - BS.activeThisMonth);
-    var actual2 = Math.min(remaining2, amount);
-    BS.activeThisMonth += actual2;
-    return actual2;
+    var rem = Math.max(0, caps.passive - BS.passiveThisMonth);
+    var actual = Math.min(rem, amount); BS.passiveThisMonth += actual; return actual;
   }
+  var rem2 = Math.max(0, caps.active - BS.activeThisMonth);
+  var actual2 = Math.min(rem2, amount); BS.activeThisMonth += actual2; return actual2;
 }
 
-/* ============================================================
-   ROUTER — add new views via showView patch
-   ============================================================ */
-var _origShowView = Z.showView;
-Z.showView = function(view, param){
-  if(view === 'how-it-works') return Z.openHowItWorks();
-  if(view === 'earnings')     return Z.openEarnings();
-  if(view === 'peer-support') return Z.openPeerSupport();
-  if(view === 'tiers')        return Z.openTiers();
-  return _origShowView.apply(this, arguments);
+/* ===================== VIEW STACK ===================== */
+var BIZ_STACK = [];
+var BIZ_ROOT = { view: 'lounge', param: null };
+var BIZ_VIEWS = ['how-it-works','how-it-works-hub','earnings','peer-support','tiers','earning-hub','referrals','explainer','active-users','ledger'];
+
+var BIZ_OPENERS = {
+  'how-it-works':      function(){ return Z.openHowItWorks(); },
+  'how-it-works-hub':  function(){ return Z.openHowItWorksHub(); },
+  'earnings':          function(){ return Z.openEarnings(); },
+  'peer-support':      function(){ return Z.openPeerSupport(); },
+  'tiers':             function(){ return Z.openTiers(); },
+  'earning-hub':       function(){ return Z.openEarningHub(); },
+  'referrals':         function(){ return Z.openReferralsPage(); },
+  'explainer':         function(key){ return Z.openExplainer(key); },
+  'active-users':      function(){ return Z.openActiveUsers(); },
+  'ledger':            function(){ return Z.openLedger(); }
 };
 
-/* ============================================================
-   PAGE HELPER — wraps content in themed container
-   ============================================================ */
-function pageShell(title, icon, contentHTML){
-  var app = document.getElementById('app-container');
-  if(!app) return;
+Z.bizOpen = function(view, param){
+  var opener = BIZ_OPENERS[view]; if(!opener){ toast('Page not found'); return; }
+  if(BIZ_STACK.length === 0){
+    var cur = Z.State.currentView || 'home';
+    if(BIZ_VIEWS.indexOf(cur) === -1){
+      BIZ_ROOT = { view: cur, param: Z.State.currentParam || null };
+    }
+  }
+  var last = BIZ_STACK[BIZ_STACK.length - 1];
+  if(!last || last.view !== view || last.param !== (param || null)){
+    BIZ_STACK.push({ view: view, param: param || null });
+  }
+  opener(param);
+};
+
+Z.bizBack = function(){
+  if(BIZ_STACK.length > 1){
+    BIZ_STACK.pop();
+    var prev = BIZ_STACK[BIZ_STACK.length - 1];
+    var opener = BIZ_OPENERS[prev.view];
+    if(opener) opener(prev.param);
+    return;
+  }
+  BIZ_STACK = [];
+  Z.bizClose();
+};
+
+Z.bizClose = function(){
+  BIZ_STACK = [];
+  var r = BIZ_ROOT || { view: 'lounge', param: null };
+  if(!r.view) r.view = 'lounge';
+  Z.showView(r.view, r.param);
+};
+
+/* ===================== PAGE SHELL ===================== */
+function pageShell(title, icon, contentHTML, view, param){
+  var app = document.getElementById('app-container'); if(!app) return;
+  Z.State.currentView = view || 'biz-page';
+  Z.State.currentParam = param || null;
+  var canBack = BIZ_STACK.length > 1;
   app.innerHTML =
     '<div style="display:flex;flex-direction:column;gap:14px;">' +
-      '<div class="view-header">' +
-        '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
-        '<h2 class="view-title" style="margin-left:6px;"><i class="'+icon+'" style="color:#10b981;margin-right:8px;"></i>'+esc(title)+'</h2>' +
+      '<div class="view-header" style="justify-content:space-between;align-items:center;display:flex;">' +
+        '<div style="display:flex;align-items:center;gap:6px;min-width:0;">' +
+          (canBack ? '<button class="colored-back-btn" data-zact="back"><i class="fa-solid fa-arrow-left"></i> Back</button>' : '') +
+          '<h2 class="view-title" style="margin-left:6px;display:flex;align-items:center;gap:6px;min-width:0;">' +
+            '<i class="'+icon+'" style="color:#10b981;"></i>' +
+            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(title)+'</span>' +
+          '</h2>' +
+        '</div>' +
+        '<button data-zact="close" title="Close" style="background:rgba(30,41,59,.7);border:1px solid #1e293b;color:#cbd5e1;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-xmark"></i></button>' +
       '</div>' +
       contentHTML +
     '</div>';
@@ -12252,45 +12265,201 @@ function pageShell(title, icon, contentHTML){
   window.scrollTo(0,0);
 }
 
-/* ============================================================
-   PAGE 1 — HOW IT WORKS
-   ============================================================ */
+/* ===================== DELEGATED CLICKS ===================== */
+if(!Z.__bizDelegated){
+  Z.__bizDelegated = true;
+  document.body.addEventListener('click', function(e){
+    var el = e.target.closest('[data-zact]'); if(!el) return;
+    var act = el.getAttribute('data-zact');
+    var arg = el.getAttribute('data-zarg');
+    e.preventDefault(); e.stopPropagation();
+    try {
+      if(act === 'back') return Z.bizBack();
+      if(act === 'close') return Z.bizClose();
+      if(act === 'open') return Z.bizOpen(arg);
+      if(act === 'explainer') return Z.bizOpen('explainer', arg);
+      if(act === 'peer-tab'){ Z.State._peerTab = arg; return Z.openPeerSupport(); }
+      if(act === 'peer-answer') return Z.peerAnswerModal(arg);
+      if(act === 'peer-view-answers') return Z.peerViewAnswers(arg);
+      if(act === 'peer-accept'){ var p = (arg||'').split('|'); return Z.peerAcceptAnswer(p[0], p[1]); }
+      if(act === 'peer-vote'){ var p2 = (arg||'').split('|'); return Z.peerVote(p2[0], parseInt(p2[1],10)); }
+      if(act === 'tier-set') return Z.bizSetTier(arg);
+      if(act === 'copy'){ try { navigator.clipboard.writeText(arg || ''); toast('Copied'); } catch(e){} return; }
+      if(act === 'share'){
+        var txt = el.getAttribute('data-ztext') || 'Earn on ZYNIX';
+        if(navigator.share){ navigator.share({ title:'ZYNIX', text:txt, url:arg }).catch(function(){}); }
+        else { try { navigator.clipboard.writeText(arg || ''); toast('Link copied'); } catch(e){} }
+        return;
+      }
+      if(act === 'payout') return Z.bizRequestPayout();
+      if(act === 'expense-open') return Z.bizOpenExpenseForm();
+      if(act === 'expense-save') return Z.bizSaveExpense();
+      if(act === 'publish-question') return Z.peerPublishQuestion(Z.State._pendingBudget || 0.10);
+      if(act === 'submit-answer') return Z.peerSubmitAnswer(arg);
+      if(act === 'cancel-modal'){ var m = document.getElementById(el.getAttribute('data-ztarget')); if(m) m.remove(); return; }
+    } catch(err){ console.error('[biz click]', err); }
+  }, true);
+}
+
+/* ===================== EARNING HUB ===================== */
+Z.openEarningHub = function(){
+  var lvl = getScoreLevel();
+  var items = [
+    { key:'how-it-works-hub', icon:'fa-solid fa-book-open',    color:'#3b82f6', title:'All Guides',        sub:'Every feature, explained' },
+    { key:'active-users',     icon:'fa-solid fa-user-check',  color:'#10b981', title:'Active Users',      sub:'Your score & activity log' },
+    { key:'earnings',         icon:'fa-solid fa-coins',       color:'#fbbf24', title:'My Earnings',       sub:'Balance, caps, and payout' },
+    { key:'peer-support',     icon:'fa-solid fa-comments',    color:'#f59e0b', title:'Peer Support',      sub:'Ask. Answer. Earn.' },
+    { key:'tiers',            icon:'fa-solid fa-layer-group', color:'#a78bfa', title:'Tiers & Pricing',   sub:'Unlock higher caps' },
+    { key:'referrals',        icon:'fa-solid fa-user-group',  color:'#ec4899', title:'Referrals',         sub:'$3/month per active referral' },
+    { key:'ledger',           icon:'fa-solid fa-book',        color:'#22c55e', title:'My Ledger',         sub:'Income · Tips · Expenses' }
+  ];
+  var html = '';
+  html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">EARNING HUB</div>' +
+    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;">Earn from your first second</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">Every tap, like, share, answer — ZYNIX pays you from the moment you join.</div>' +
+    '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,0.25);display:flex;justify-content:space-between;align-items:center;">' +
+      '<div><div style="font-size:10px;color:#94a3b8;font-weight:900;">YOUR SCORE</div><div style="font-size:18px;font-weight:900;color:'+lvl.color+';margin-top:2px;">'+BS.score+'</div></div>' +
+      '<div style="text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">LEVEL</div><div style="font-size:13px;font-weight:900;color:'+lvl.color+';margin-top:2px;">'+esc(lvl.name)+'</div><div style="font-size:10px;color:#64748b;">'+lvl.mult+'x</div></div>' +
+    '</div>' +
+  '</div>';
+  items.forEach(function(it){
+    html += '<button data-zact="open" data-zarg="'+it.key+'" style="width:100%;padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;">' +
+      '<div style="width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+it.icon+'" style="color:'+it.color+';font-size:17px;"></i></div>' +
+      '<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:800;color:#fff;">'+it.title+'</div><div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+it.sub+'</div></div>' +
+      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
+    '</button>';
+  });
+  pageShell('Earning Hub', 'fa-solid fa-coins', html, 'earning-hub');
+};
+
+/* ===================== EXPLAINERS ===================== */
+var EXPLAINERS = {
+  'ride': { title:'How ZYNIX Ride Works', icon:'fa-solid fa-car-side', sections:[
+    { h:'The idea', p:'You name your price. Nearby drivers see your offer and either accept or counter. You pick the best deal. No surge, no hidden fees.' },
+    { h:'How money flows', p:'Fare is held in escrow the moment a driver accepts. Released only when the ride completes. Cancel = full refund.' },
+    { h:'Multi-currency', p:'60+ currencies. Switch any time without losing history.' },
+    { h:'Safety', p:'Panic button, live share, chat, voice notes, phone reveal during active rides. Rated 1-10.' },
+    { h:'Earning', p:'Early drivers keep 100% for 6 months. After that, 0% on Pro, small commission on Free.' }
+  ]},
+  'share_ride': { title:'How Share Ride Works', icon:'fa-solid fa-route', sections:[
+    { h:'The idea', p:'Drivers post journeys with start, stops, end, time, fare. Riders request seats. Everyone saves.' },
+    { h:'Safety', p:'Phone and email never shared. Communication stays inside ZYNIX.' },
+    { h:'For drivers', p:'Set route, stops, seats, fare. You control the journey.' },
+    { h:'For riders', p:'Search, filter by date/price, request seat. Pay only on acceptance.' }
+  ]},
+  'peer_support': { title:'How Peer Support Works', icon:'fa-solid fa-comments', sections:[
+    { h:'The idea', p:'Any user asks a question. Any user answers. The asker pays the answerer directly. ZYNIX keeps a cut.' },
+    { h:'Costs', p:'Budgets $0.01–$5.00. Premium tiers get free questions monthly.' },
+    { h:'What you earn', p:'Accepted answers earn 80%. Other users can upvote answers as "helpful" — those votes feed the weekly bonus pool.' },
+    { h:'Weekly quality pool', p:'5% of subscriptions funds a bonus pool paid proportionally to helpful marks.' },
+    { h:'Rules', p:'50-char minimum. No spam, plagiarism, or abuse.' }
+  ]},
+  'referrals': { title:'How Referrals Work', icon:'fa-solid fa-user-group', sections:[
+    { h:'The idea', p:'Refer a friend. When they subscribe, you earn every month they stay subscribed.' },
+    { h:'What you earn', p:'$3/month for the first 6 months, then $1/month ongoing.' },
+    { h:'Rules', p:'Single level. Referred user must have active paid subscription. Self-referral blocked.' },
+    { h:'Caps', p:'Tier × Contribution Score. Free cap $5/mo. Elite cap $1,000/mo × up to 5x multiplier.' },
+    { h:'Payouts', p:'Monthly on the 5th, once $20 minimum reached.' }
+  ]},
+  'creators': { title:'How Creator Spaces Work', icon:'fa-solid fa-palette', sections:[
+    { h:'The idea', p:'Create a Space. Charge $0–$5 joining fee. Keep 80%.' },
+    { h:'Quality gates', p:'Space must maintain 8/10 quality to withdraw. Below 5 = delisted + refunds.' },
+    { h:'Long-form video', p:'3-min+ requires Pro tier. Reviewed before publishing.' },
+    { h:'Earnings', p:'Joining fees + bounty pool + promos + collaboration + premium assets.' }
+  ]},
+  'bounty': { title:'How the Bounty Pool Works', icon:'fa-solid fa-gift', sections:[
+    { h:'What it is', p:'A shared pool funded by 40% of every subscription. Rewards creators with real engagement.' },
+    { h:'Company commitment', p:'The 40% is a floor. ZYNIX never reduces below it, may add more on strong months, may reallocate across sub-heads.' },
+    { h:'How it pays', p:'Weekly snapshot. Pool divided proportional to points earned. No grand prize.' },
+    { h:'Anti-abuse', p:'Reported content loses points. Repeat offenders banned.' }
+  ]},
+  'platform': { title:'How ZYNIX Works', icon:'fa-solid fa-circle-info', sections:[
+    { h:'One platform', p:'Social, rides, earnings. Every interaction pays the creator.' },
+    { h:'Earning paths', p:'Referrals, peer support, creator bounty, ads, ride-hailing, share ride. All into one wallet.' },
+    { h:'Bounty pool', p:'40% of subscription revenue is the floor. Never reduced, can grow.' },
+    { h:'Fairness', p:'Contribution Score, single-level referrals, monthly caps, realtime moderation.' }
+  ]}
+};
+
+Z.openExplainer = function(key){
+  var e = EXPLAINERS[key]; if(!e){ toast('Not found'); return; }
+  var html = '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">ZYNIX GUIDE</div>' +
+    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;line-height:1.25;"><i class="'+e.icon+'" style="color:#10b981;margin-right:8px;"></i>'+esc(e.title)+'</div>' +
+  '</div>';
+  e.sections.forEach(function(s){
+    html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
+      '<div style="font-size:12px;font-weight:900;color:#10b981;margin-bottom:6px;">'+esc(s.h)+'</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">'+esc(s.p)+'</div>' +
+    '</div>';
+  });
+  if(key === 'bounty' || key === 'peer_support') html += disclosureBlock();
+  html += '<button data-zact="open" data-zarg="how-it-works-hub" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-list"></i> All guides</button>';
+  pageShell(e.title, e.icon, html, 'explainer', key);
+};
+
+Z.openHowItWorksHub = function(){
+  var html = '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">GUIDES</div>' +
+    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;">How ZYNIX Works</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">Pick a feature to learn how it works, how it pays, what keeps it fair.</div>' +
+  '</div>';
+  Object.keys(EXPLAINERS).forEach(function(k){
+    var e = EXPLAINERS[k];
+    html += '<button data-zact="explainer" data-zarg="'+k+'" style="width:100%;padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;">' +
+      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(16,185,129,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+e.icon+'" style="color:#10b981;font-size:15px;"></i></div>' +
+      '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">'+esc(e.title)+'</div><div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+e.sections.length+' sections</div></div>' +
+      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
+    '</button>';
+  });
+  html += disclosureBlock();
+  pageShell('Guides', 'fa-solid fa-book-open', html, 'how-it-works-hub');
+};
+
+function disclosureBlock(){
+  return '<div style="padding:12px 14px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);margin-top:12px;">' +
+    '<div style="font-size:10px;font-weight:900;color:#60a5fa;letter-spacing:.5px;margin-bottom:6px;"><i class="fa-solid fa-shield-halved"></i> BOUNTY POOL COMMITMENT</div>' +
+    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;"><b style="color:#fff;">40%</b> of subscription revenue flows into the bounty pool — a floor, never reduced. ZYNIX may:</div>' +
+    '<ul style="margin:6px 0 0 16px;padding:0;font-size:11px;color:#cbd5e1;line-height:1.7;">' +
+      '<li>Allocate across sub-heads (creator · peer · safety)</li>' +
+      '<li>Add more above the 40% minimum</li>' +
+      '<li>Adjust sub-head distribution monthly</li>' +
+    '</ul>' +
+  '</div>';
+}
+
+/* ===================== HOW IT WORKS ===================== */
 Z.openHowItWorks = function(){
   var lvl = getScoreLevel();
-  var tier = getTier();
   var caps = getCaps();
   var html = '';
-
   html += '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
-    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">WELCOME TO ZYNIX</div>' +
-    '<div style="font-size:24px;font-weight:900;color:#fff;margin-top:6px;line-height:1.2;">Get paid for what Facebook gives away free.</div>' +
-    '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.6;">Every like, every share, every comment, every helpful answer — ZYNIX pays you for it. Watch ads, run a Space, refer friends, help users. There are six ways to earn.</div>' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">WELCOME</div>' +
+    '<div style="font-size:22px;font-weight:900;color:#fff;margin-top:6px;line-height:1.25;">Earn from your very first moment.</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.6;">Every like, share, comment, helpful answer, referral, and ad view pays you. Six ways to earn.</div>' +
   '</div>';
+  html += '<button data-zact="open" data-zarg="how-it-works-hub" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-book-open"></i> All Guides</button>';
+  html += '<button data-zact="open" data-zarg="active-users" style="width:100%;padding:14px;border-radius:12px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);color:#10b981;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-user-check"></i> Active Users</button>';
 
-  /* Ways to earn */
   var ways = [
-    { icon:'fa-solid fa-thumbs-up', color:'#10b981', title:'Reactions & Content',      desc:'Post content, get reactions. Each like earns you a small bounty. Cap depends on your tier.', link:'home' },
-    { icon:'fa-solid fa-share-nodes', color:'#3b82f6', title:'Shares',                 desc:'When someone shares your post, both of you earn. Share bounties compound across the network.', link:'home' },
-    { icon:'fa-solid fa-user-group', color:'#a78bfa', title:'Referrals',               desc:'Refer a friend who subscribes. Earn $3/month for the first 6 months, then $1/month forever.', link:'referrals' },
-    { icon:'fa-solid fa-comments',  color:'#fbbf24', title:'Peer Support',              desc:'Answer questions users pay to ask. Earn $0.01–$0.10 per helpful answer plus weekly quality pool.', link:'peer-support' },
-    { icon:'fa-solid fa-tv',        color:'#ec4899', title:'Watch & Earn',              desc:'Watch brand ads and earn instantly. Launching in Phase 3 when we activate ad campaigns.', link:null },
-    { icon:'fa-solid fa-palette',   color:'#f59e0b', title:'Creator Spaces',            desc:'Charge $0–$5 for joining your Space. Keep 80%. Bonus if your Space stays above 8/10 quality.', link:null }
+    { icon:'fa-solid fa-thumbs-up',   color:'#10b981', title:'Reactions & Content', desc:'Post content. Each like earns a small bounty.' },
+    { icon:'fa-solid fa-share-nodes', color:'#3b82f6', title:'Shares',              desc:'Shares pay both parties. Compounds across the network.' },
+    { icon:'fa-solid fa-user-group',  color:'#a78bfa', title:'Referrals',           desc:'$3/month for 6 months, then $1/month.' },
+    { icon:'fa-solid fa-comments',    color:'#fbbf24', title:'Peer Support',        desc:'$0.01–$0.10 per helpful answer. Weekly quality pool.' },
+    { icon:'fa-solid fa-tv',          color:'#ec4899', title:'Watch & Earn',        desc:'Watch brand ads. Launching in Phase 3.' },
+    { icon:'fa-solid fa-palette',     color:'#f59e0b', title:'Creator Spaces',      desc:'Charge $0–$5 to join. Keep 80%.' }
   ];
   html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">WAYS TO EARN</div>';
   ways.forEach(function(w){
     html += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:flex-start;">' +
       '<div style="width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+w.icon+'" style="color:'+w.color+';font-size:16px;"></i></div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:13px;font-weight:800;color:#fff;">'+esc(w.title)+'</div>' +
-        '<div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5;">'+esc(w.desc)+'</div>' +
-        (w.link ? '<button onclick="Z.showView(\''+w.link+'\')" style="margin-top:8px;background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:700;cursor:pointer;padding:0;">Open ›</button>' : '') +
-      '</div></div>';
+      '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">'+esc(w.title)+'</div><div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5;">'+esc(w.desc)+'</div></div></div>';
   });
 
-  /* Contribution Score */
   html += '<div style="padding:16px;border-radius:14px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
     '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-chart-line" style="color:#3b82f6;margin-right:6px;"></i>CONTRIBUTION SCORE</div>' +
-    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">Your score multiplies every cap in the system. Higher score = you can earn more per month. Score is earned by helping, not just by paying.</div>' +
+    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">Multiplies every earning cap. Earned by helping, not paying.</div>' +
     '<div style="margin-top:12px;padding:12px;border-radius:10px;background:rgba(0,0,0,0.25);">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;">' +
         '<div style="font-size:11px;color:#94a3b8;">Your score</div>' +
@@ -12298,60 +12467,109 @@ Z.openHowItWorks = function(){
       '</div>' +
       '<div style="font-size:11px;color:'+lvl.color+';font-weight:800;margin-top:4px;">'+esc(lvl.name)+' · '+lvl.mult+'x multiplier</div>' +
     '</div>' +
-    '<div style="font-size:10px;color:#64748b;margin-top:10px;">+10 FAQ helpful · +15 referral converts · +50 bug reported · −20 post removed</div>' +
   '</div>';
 
-  /* Caps */
   html += '<div style="padding:16px;border-radius:14px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);">' +
-    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i>MONTHLY EARNING CAPS</div>' +
-    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">ZYNIX is a supplementary income source. Caps keep it fair and legal everywhere.</div>' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i>MONTHLY CAPS</div>' +
     '<div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">PASSIVE CAP</div><div style="font-size:18px;font-weight:900;color:#10b981;margin-top:2px;">'+money(caps.passive,'USD')+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">Referrals · Bounty · Ads</div></div>' +
-      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">ACTIVE CAP</div><div style="font-size:18px;font-weight:900;color:#fbbf24;margin-top:2px;">'+money(caps.active,'USD')+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">Peer support · Translation · Bugs</div></div>' +
+      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">PASSIVE</div><div style="font-size:18px;font-weight:900;color:#10b981;margin-top:2px;">'+money(caps.passive,'USD')+'</div><div style="font-size:9px;color:#64748b;">Referrals · Bounty · Ads</div></div>' +
+      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">ACTIVE</div><div style="font-size:18px;font-weight:900;color:#fbbf24;margin-top:2px;">'+money(caps.active,'USD')+'</div><div style="font-size:9px;color:#64748b;">Peer · Translation · Bugs</div></div>' +
     '</div>' +
-    '<div style="font-size:10px;color:#64748b;margin-top:10px;">Caps multiply with your Contribution Score. Partner level: 5x multiplier.</div>' +
   '</div>';
 
-  /* FAQ link */
-  html += '<button onclick="Z.showView(\'peer-support\')" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-comments"></i> Try Peer Support — ask or answer</button>';
-
-  html += '<button onclick="Z.showView(\'tiers\')" style="width:100%;padding:14px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-layer-group"></i> View all tiers</button>';
-
-  pageShell('How ZYNIX Works', 'fa-solid fa-circle-info', html);
+  html += disclosureBlock();
+  html += '<button data-zact="open" data-zarg="peer-support" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-comments"></i> Try Peer Support</button>';
+  pageShell('How ZYNIX Works', 'fa-solid fa-circle-info', html, 'how-it-works');
 };
 
-/* ============================================================
-   PAGE 2 — EARNINGS DASHBOARD
-   ============================================================ */
+/* ===================== ACTIVE USERS ===================== */
+Z.openActiveUsers = function(){
+  var lvl = getScoreLevel();
+  var next = getNextLevel();
+  var caps = getCaps();
+  var use = getUsage();
+  var monthActions = BS.monthlyActions || {};
+  var activityLog = BS.activityLog || [];
+
+  var html = '';
+
+  html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">ACTIVE USERS</div>' +
+    '<div style="font-size:22px;font-weight:900;color:#fff;margin-top:4px;">'+BS.score+' <span style="font-size:13px;color:#94a3b8;font-weight:700;">points</span></div>' +
+    '<div style="font-size:12px;color:'+lvl.color+';font-weight:900;margin-top:4px;">'+esc(lvl.name)+' · '+lvl.mult+'x earning multiplier</div>' +
+    (next ? '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,0.25);">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;">NEXT LEVEL: '+esc(next.name)+' ('+next.mult+'x)</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">' + (next.min - BS.score) + ' more points to unlock</div>' +
+      '<div style="height:6px;border-radius:3px;background:rgba(255,255,255,0.08);margin-top:8px;overflow:hidden;">' +
+        '<div style="height:100%;width:'+Math.min(100, Math.round((BS.score / next.min) * 100))+'%;background:linear-gradient(90deg,'+lvl.color+','+next.color+');"></div>' +
+      '</div>' +
+    '</div>' : '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(167,139,250,.12);font-size:11px;color:#a78bfa;font-weight:900;">🏆 Partner level — maximum multiplier</div>') +
+  '</div>';
+
+  html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:10px;"><i class="fa-solid fa-list-check" style="color:#10b981;margin-right:6px;"></i>HOW TO EARN POINTS</div>';
+  Object.keys(SCORE_ACTIONS).forEach(function(key){
+    var a = SCORE_ACTIONS[key];
+    var done = monthActions[key] || 0;
+    var color = a.pts >= 0 ? '#10b981' : '#ef4444';
+    var sign = a.pts >= 0 ? '+' : '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,0.2);margin-bottom:6px;">' +
+      '<div style="font-size:11px;color:#cbd5e1;flex:1;min-width:0;">'+esc(a.label)+(done > 0 ? ' <span style="color:#64748b;">· '+done+'x this month</span>' : '')+'</div>' +
+      '<div style="font-size:12px;font-weight:900;color:'+color+';white-space:nowrap;margin-left:8px;">'+sign+a.pts+'</div>' +
+    '</div>';
+  });
+  html += '</div>';
+
+  html += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:8px;"><i class="fa-solid fa-gauge-high" style="color:#3b82f6;margin-right:6px;"></i>EARNING CAPS THIS MONTH</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+      '<div style="padding:10px;border-radius:8px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">PASSIVE USED</div><div style="font-size:14px;font-weight:900;color:#10b981;margin-top:2px;">'+money(use.passive,'USD')+' / '+money(caps.passive,'USD')+'</div></div>' +
+      '<div style="padding:10px;border-radius:8px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">ACTIVE USED</div><div style="font-size:14px;font-weight:900;color:#fbbf24;margin-top:2px;">'+money(use.active,'USD')+' / '+money(caps.active,'USD')+'</div></div>' +
+    '</div>' +
+  '</div>';
+
+  if(activityLog.length){
+    html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
+      '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:8px;"><i class="fa-solid fa-clock-rotate-left" style="color:#94a3b8;margin-right:6px;"></i>RECENT ACTIVITY</div>';
+    activityLog.slice(0, 20).forEach(function(item){
+      var a = SCORE_ACTIONS[item.action] || { label: item.action };
+      var color = item.pts >= 0 ? '#10b981' : '#ef4444';
+      var sign = item.pts >= 0 ? '+' : '';
+      html += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+        '<div style="font-size:11px;color:#cbd5e1;">'+esc(a.label)+'</div>' +
+        '<div style="font-size:11px;font-weight:900;color:'+color+';white-space:nowrap;margin-left:8px;">'+sign+item.pts+' · '+ago(item.at)+'</div>' +
+      '</div>';
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="padding:20px;border-radius:12px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#64748b;font-size:12px;">No activity yet. Start by publishing a post or answering a question.</div>';
+  }
+
+  pageShell('Active Users', 'fa-solid fa-user-check', html, 'active-users');
+};
+
+/* ===================== EARNINGS ===================== */
 Z.openEarnings = function(){
   var tier = getTier();
   var lvl = getScoreLevel();
   var caps = getCaps();
   var use = getUsage();
-
   var html = '';
 
   html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
     '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">CURRENT TIER</div>' +
     '<div style="display:flex;align-items:center;gap:10px;margin-top:6px;">' +
       '<div style="width:44px;height:44px;border-radius:12px;background:'+tier.color+'22;border:1px solid '+tier.color+'55;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:'+tier.color+';">'+tier.badge+'</div>' +
-      '<div style="flex:1;">' +
-        '<div style="font-size:18px;font-weight:900;color:#fff;">'+esc(tier.name)+'</div>' +
-        '<div style="font-size:11px;color:#94a3b8;">$'+tier.price+'/month</div>' +
-      '</div>' +
-      '<button onclick="Z.showView(\'tiers\')" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);color:#10b981;font-weight:800;font-size:11px;cursor:pointer;">Change</button>' +
+      '<div style="flex:1;"><div style="font-size:18px;font-weight:900;color:#fff;">'+esc(tier.name)+'</div><div style="font-size:11px;color:#94a3b8;">$'+tier.price+'/month</div></div>' +
+      '<button data-zact="open" data-zarg="tiers" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);color:#10b981;font-weight:800;font-size:11px;cursor:pointer;">Change</button>' +
     '</div>' +
   '</div>';
 
-  /* Score */
-  html += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-      '<div><div style="font-size:10px;color:#94a3b8;font-weight:900;">CONTRIBUTION SCORE</div><div style="font-size:22px;font-weight:900;color:'+lvl.color+';margin-top:2px;">'+BS.score+'</div></div>' +
-      '<div style="text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">LEVEL</div><div style="font-size:14px;font-weight:900;color:'+lvl.color+';margin-top:2px;">'+esc(lvl.name)+'</div><div style="font-size:10px;color:#64748b;">'+lvl.mult+'x caps</div></div>' +
-    '</div>' +
-  '</div>';
+  html += '<button data-zact="open" data-zarg="active-users" style="width:100%;padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);display:flex;justify-content:space-between;align-items:center;cursor:pointer;text-align:left;">' +
+    '<div><div style="font-size:10px;color:#94a3b8;font-weight:900;">CONTRIBUTION SCORE</div><div style="font-size:22px;font-weight:900;color:'+lvl.color+';margin-top:2px;">'+BS.score+'</div></div>' +
+    '<div style="text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">LEVEL</div><div style="font-size:13px;font-weight:900;color:'+lvl.color+';margin-top:2px;">'+esc(lvl.name)+'</div><div style="font-size:10px;color:#64748b;">'+lvl.mult+'x caps</div></div>' +
+  '</button>';
 
-  /* Passive earnings */
   var pct = Math.min(100, Math.round((use.passive / caps.passive) * 100));
   html += '<div style="padding:14px;border-radius:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);">' +
     '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
@@ -12362,7 +12580,6 @@ Z.openEarnings = function(){
     '<div style="font-size:10px;color:#64748b;margin-top:8px;">Referrals · Content bounties · Ad views</div>' +
   '</div>';
 
-  /* Active earnings */
   var pctA = Math.min(100, Math.round((use.active / caps.active) * 100));
   html += '<div style="padding:14px;border-radius:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.28);">' +
     '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
@@ -12373,61 +12590,48 @@ Z.openEarnings = function(){
     '<div style="font-size:10px;color:#64748b;margin-top:8px;">Peer support · Translation · Bug reports</div>' +
   '</div>';
 
-  /* Referrals quick view */
   var activeRefs = (BS.referrals || []).filter(function(r){ return r.active; });
   var monthlyRef = activeRefs.reduce(function(s,r){ return s + (r.monthIndex < 6 ? 3 : 1); }, 0);
   html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-      '<div><div style="font-size:10px;color:#94a3b8;font-weight:900;">ACTIVE REFERRALS</div><div style="font-size:22px;font-weight:900;color:#fff;margin-top:2px;">'+activeRefs.length+'</div><div style="font-size:10px;color:#64748b;">paying ~'+money(monthlyRef,'USD')+'/month</div></div>' +
-      '<button onclick="Z.showView(\'referrals\')" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:800;font-size:11px;cursor:pointer;">Details</button>' +
+      '<div><div style="font-size:10px;color:#94a3b8;font-weight:900;">ACTIVE REFERRALS</div><div style="font-size:22px;font-weight:900;color:#fff;margin-top:2px;">'+activeRefs.length+'</div><div style="font-size:10px;color:#64748b;">~'+money(monthlyRef,'USD')+'/month</div></div>' +
+      '<button data-zact="open" data-zarg="referrals" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:800;font-size:11px;cursor:pointer;">Details</button>' +
     '</div>' +
   '</div>';
 
-  /* Payout */
   var total = use.passive + use.active;
   html += '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
     '<div style="font-size:10px;color:#94a3b8;font-weight:900;">TOTAL THIS MONTH</div>' +
     '<div style="font-size:28px;font-weight:900;color:#10b981;margin-top:2px;">'+money(total,'USD')+'</div>' +
-    '<div style="font-size:10px;color:#64748b;margin-top:4px;">Next payout: 5th of next month · Minimum $20</div>' +
-    '<button onclick="Z.bizRequestPayout()" style="width:100%;margin-top:12px;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-money-bill-transfer"></i> Request payout</button>' +
+    '<div style="font-size:10px;color:#64748b;margin-top:4px;">Next payout: 5th · Minimum $20</div>' +
+    '<button data-zact="payout" style="width:100%;margin-top:12px;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-money-bill-transfer"></i> Request payout</button>' +
   '</div>';
 
-  pageShell('My Earnings', 'fa-solid fa-coins', html);
+  pageShell('My Earnings', 'fa-solid fa-coins', html, 'earnings');
 };
 
 Z.bizRequestPayout = function(){
   var use = getUsage();
   var total = use.passive + use.active;
-  if(total < 20){
-    toast('Minimum payout is $20. You have ' + money(total,'USD') + '.', 'error');
-    return;
-  }
+  if(total < 20){ toast('Minimum payout is $20. You have ' + money(total,'USD'), 'error'); return; }
   toast('Payout request submitted. Payment on the 5th.');
-  BS.passiveThisMonth = 0;
-  BS.activeThisMonth = 0;
-  saveBiz();
-  setTimeout(Z.openEarnings, 600);
+  BS.passiveThisMonth = 0; BS.activeThisMonth = 0; saveBiz();
+  Z.openEarnings();
 };
 
-/* ============================================================
-   PAGE 3 — TIERS
-   ============================================================ */
+/* ===================== TIERS ===================== */
 Z.openTiers = function(){
   var current = BS.tier;
-  var html = '';
-  html += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
-    '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;">Higher tiers unlock higher earning caps, more free FAQs, bigger ride discounts, and full creator tools. Every tier keeps the same core features.</div>' +
+  var html = '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
+    '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;">Higher tiers unlock higher earning caps, more free FAQs, bigger ride discounts, full creator tools.</div>' +
   '</div>';
-
   TIERS.forEach(function(t){
     var isCurrent = t.id === current;
     var isUpgrade = TIERS.indexOf(t) > TIERS.findIndex(function(x){ return x.id === current; });
     html += '<div style="padding:16px;border-radius:14px;background:#111827;border:1px solid '+(isCurrent?t.color+'66':'#1e293b')+';position:relative;">';
     if(isCurrent) html += '<div style="position:absolute;top:10px;right:10px;background:'+t.color+'22;color:'+t.color+';font-size:9px;font-weight:900;padding:3px 8px;border-radius:6px;">CURRENT</div>';
-    html += '<div style="display:flex;align-items:center;gap:10px;">' +
-      '<div style="width:44px;height:44px;border-radius:12px;background:'+t.color+'22;border:1px solid '+t.color+'55;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:'+t.color+';">'+t.badge+'</div>' +
-      '<div style="flex:1;"><div style="font-size:17px;font-weight:900;color:#fff;">'+esc(t.name)+'</div><div style="font-size:11px;color:#94a3b8;">$'+t.price+'/month</div></div>' +
-    '</div>';
+    html += '<div style="display:flex;align-items:center;gap:10px;"><div style="width:44px;height:44px;border-radius:12px;background:'+t.color+'22;border:1px solid '+t.color+'55;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:'+t.color+';">'+t.badge+'</div>' +
+      '<div style="flex:1;"><div style="font-size:17px;font-weight:900;color:#fff;">'+esc(t.name)+'</div><div style="font-size:11px;color:#94a3b8;">$'+t.price+'/month</div></div></div>';
     html += '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.5;">'+esc(t.desc)+'</div>';
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">' +
       '<div style="padding:8px;border-radius:8px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">REFERRAL CAP</div><div style="font-size:14px;font-weight:900;color:#10b981;margin-top:2px;">$'+t.refCap+'/mo</div></div>' +
@@ -12436,138 +12640,100 @@ Z.openTiers = function(){
       '<div style="padding:8px;border-radius:8px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">CREATOR TOOLS</div><div style="font-size:14px;font-weight:900;color:#a78bfa;margin-top:2px;">'+((t.id==='free')?'View':'Full')+'</div></div>' +
     '</div>';
     if(!isCurrent){
-      html += '<button onclick="Z.bizSetTier(\''+t.id+'\')" style="width:100%;margin-top:12px;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">'+(isUpgrade?'Upgrade to ':'Switch to ')+esc(t.name)+'</button>';
+      html += '<button data-zact="tier-set" data-zarg="'+t.id+'" style="width:100%;margin-top:12px;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">'+(isUpgrade?'Upgrade to ':'Switch to ')+esc(t.name)+'</button>';
     }
     html += '</div>';
   });
-
-  html += '<button onclick="Z.showView(\'how-it-works\')" style="width:100%;padding:14px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-circle-info"></i> How does earning work?</button>';
-
-  pageShell('Tiers & Pricing', 'fa-solid fa-layer-group', html);
+  html += '<button data-zact="open" data-zarg="how-it-works" style="width:100%;padding:14px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-circle-info"></i> How does earning work?</button>';
+  pageShell('Tiers & Pricing', 'fa-solid fa-layer-group', html, 'tiers');
 };
 
 Z.bizSetTier = function(id){
-  BS.tier = id;
-  saveBiz();
-  toast('Tier set to ' + id.toUpperCase() + '. In production, this would open payment.');
+  BS.tier = id; saveBiz();
+  toast('Tier set to ' + id.toUpperCase() + '. (Payment integration pending.)');
   Z.openTiers();
 };
 
-/* ============================================================
-   PAGE 4 — REFERRALS (overrides existing renderReferrals)
-   ============================================================ */
-function referralLink(){
-  var u = me(); if(!u) return '';
-  var code = u.referral_code || u.username || u.id.slice(0,8);
-  return location.origin + location.pathname + '?ref=' + code;
-}
-
+/* ===================== REFERRALS ===================== */
 Z.openReferralsPage = function(){
-  var u = me();
-  if(!u){ toast('Login first'); return; }
-  var link = referralLink();
+  var u = me(); if(!u){ toast('Login first'); return; }
   var code = u.referral_code || u.username || u.id.slice(0,8);
+  var link = location.origin + location.pathname + '?ref=' + code;
   var active = (BS.referrals || []).filter(function(r){ return r.active; });
   var recent = (BS.referrals || []).slice(0, 10);
-  var tiers = getTier();
   var caps = getCaps();
 
   var html = '';
-
   html += '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
     '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">YOUR REFERRAL CODE</div>' +
     '<div style="font-size:26px;font-weight:900;color:#fff;margin-top:6px;letter-spacing:2px;">'+esc(code.toUpperCase())+'</div>' +
     '<div style="display:flex;gap:8px;margin-top:12px;">' +
-      '<button onclick="navigator.clipboard.writeText(\''+esc(code)+'\');Z.toast(\'Code copied\')" style="flex:1;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-copy"></i> Copy code</button>' +
-      '<button onclick="if(navigator.share){navigator.share({title:\'Join ZYNIX\',text:\'Earn on ZYNIX\',url:\''+esc(link)+'\'}).catch(function(){})}else{navigator.clipboard.writeText(\''+esc(link)+'\');Z.toast(\'Link copied\')}" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-share-nodes"></i> Share link</button>' +
+      '<button data-zact="copy" data-zarg="'+esc(code)+'" style="flex:1;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-copy"></i> Copy code</button>' +
+      '<button data-zact="share" data-zarg="'+esc(link)+'" data-ztext="Join me on ZYNIX — earn on every interaction" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-share-nodes"></i> Share link</button>' +
     '</div>' +
   '</div>';
 
   html += '<div style="padding:14px;border-radius:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);">' +
     '<div style="display:flex;justify-content:space-between;">' +
       '<div><div style="font-size:10px;color:#94a3b8;font-weight:900;">ACTIVE REFERRALS</div><div style="font-size:22px;font-weight:900;color:#10b981;margin-top:2px;">'+active.length+'</div></div>' +
-      '<div style="text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">EARNED THIS MONTH</div><div style="font-size:18px;font-weight:900;color:#fff;margin-top:2px;">'+money(BS.passiveThisMonth,'USD')+'</div><div style="font-size:10px;color:#64748b;">of '+money(caps.passive,'USD')+' cap</div></div>' +
+      '<div style="text-align:right;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">EARNED THIS MONTH</div><div style="font-size:18px;font-weight:900;color:#fff;margin-top:2px;">'+money(BS.passiveThisMonth,'USD')+'</div><div style="font-size:10px;color:#64748b;">of '+money(caps.passive,'USD')+'</div></div>' +
     '</div>' +
   '</div>';
 
   html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
     '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:8px;">HOW IT PAYS</div>' +
     '<div style="font-size:11px;color:#cbd5e1;line-height:1.7;">' +
-      '• <b style="color:#10b981;">$3/month</b> for the first 6 months of each active referral<br>' +
+      '• <b style="color:#10b981;">$3/month</b> for first 6 months of each active referral<br>' +
       '• <b style="color:#10b981;">$1/month</b> after that, for as long as they stay subscribed<br>' +
-      '• Referred user must have an <b>active subscription</b> — free users don\'t pay you<br>' +
-      '• Only <b>one level</b> — you don\'t earn from their referrals<br>' +
+      '• Referred user must have active subscription<br>' +
+      '• Single level only — no multi-level income<br>' +
       '• Monthly cap: <b>'+money(caps.passive,'USD')+'</b>' +
     '</div>' +
   '</div>';
 
   html += '<div style="padding:14px;border-radius:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.28);">' +
-    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:6px;">RULES TO KEEP IT LEGAL</div>' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:6px;">LEGAL SAFEGUARDS</div>' +
     '<div style="font-size:11px;color:#cbd5e1;line-height:1.7;">' +
-      '• No joining fee to become a referrer<br>' +
-      '• No multi-level income<br>' +
-      '• Self-referral is blocked<br>' +
+      '• No joining fee · no pay-to-play<br>' +
+      '• Self-referral blocked<br>' +
       '• Churn within 30 days subtracts Contribution Score<br>' +
-      '• Referral earnings are supplementary, not a job' +
+      '• Earnings are supplementary' +
     '</div>' +
   '</div>';
 
   if(recent.length){
-    html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">RECENT REFERRALS</div>';
+    html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">RECENT</div>';
     recent.forEach(function(r){
       html += '<div style="padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center;">' +
         '<div><div style="font-size:12px;font-weight:800;color:#fff;">'+esc(r.name || 'User')+'</div><div style="font-size:10px;color:#94a3b8;">'+ago(r.signedAt)+'</div></div>' +
-        '<div style="text-align:right;"><div style="font-size:13px;font-weight:900;color:'+(r.active?'#10b981':'#64748b')+';">'+(r.active?'$'+(r.monthIndex < 6 ? '3' : '1')+'/mo':'Inactive')+'</div></div>' +
+        '<div style="font-size:13px;font-weight:900;color:'+(r.active?'#10b981':'#64748b')+';">'+(r.active?'$'+(r.monthIndex < 6 ? '3' : '1')+'/mo':'Inactive')+'</div>' +
       '</div>';
     });
   } else {
-    html += Z.emptyState ? Z.emptyState({ icon:'fa-solid fa-user-plus', title:'No referrals yet. Share your link to start earning.' }) :
-      '<div style="text-align:center;padding:30px;color:#64748b;font-size:12px;">No referrals yet.</div>';
+    html += '<div style="text-align:center;padding:30px;color:#64748b;font-size:12px;border:1px dashed #1e293b;border-radius:12px;">No referrals yet. Share your link to start earning.</div>';
   }
 
-  html += '<button onclick="Z.showView(\'how-it-works\')" style="width:100%;padding:14px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-circle-info"></i> Learn more about earning</button>';
-
-  pageShell('Referrals', 'fa-solid fa-user-group', html);
+  pageShell('Referrals', 'fa-solid fa-user-group', html, 'referrals');
 };
 
-/* Override original referrals route */
-var _origReferrals = Z.renderReferrals;
-Z.renderReferrals = function(){
-  Z.openReferralsPage();
-  return '';
-};
-
-/* ============================================================
-   PAGE 5 — PEER SUPPORT
-   ============================================================ */
+/* ===================== PEER SUPPORT ===================== */
 Z.openPeerSupport = function(){
-  var u = me();
-  if(!u){ toast('Login first'); return; }
-
-  var tab = (Z.State._peerTab || 'browse');
+  var u = me(); if(!u){ toast('Login first'); return; }
+  var tab = Z.State._peerTab || 'browse';
   var html = '';
-
   html += '<div style="padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
     '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">PEER SUPPORT</div>' +
     '<div style="font-size:16px;font-weight:900;color:#fff;margin-top:4px;">Ask. Answer. Earn.</div>' +
-    '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.5;">Users pay to ask. Users earn to answer. ZYNIX keeps the platform safe and skims a fair cut.</div>' +
+    '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.5;">Users pay to ask. Users earn to answer.</div>' +
   '</div>';
-
   html += '<div style="display:flex;gap:6px;">';
   [['browse','Browse','fa-solid fa-magnifying-glass'],['ask','Ask','fa-solid fa-circle-question'],['mine','My Activity','fa-solid fa-user']].forEach(function(t){
     var a = tab === t[0];
-    html += '<button data-ptab="'+t[0]+'" style="flex:1;padding:10px 6px;border-radius:10px;border:1px solid '+(a?'rgba(16,185,129,.5)':'#1e293b')+';background:'+(a?'rgba(16,185,129,.12)':'rgba(255,255,255,0.03)')+';color:'+(a?'#10b981':'#94a3b8')+';font-weight:800;font-size:11px;cursor:pointer;"><i class="'+t[2]+'"></i> '+t[1]+'</button>';
+    html += '<button data-zact="peer-tab" data-zarg="'+t[0]+'" style="flex:1;padding:10px 6px;border-radius:10px;border:1px solid '+(a?'rgba(16,185,129,.5)':'#1e293b')+';background:'+(a?'rgba(16,185,129,.12)':'rgba(255,255,255,0.03)')+';color:'+(a?'#10b981':'#94a3b8')+';font-weight:800;font-size:11px;cursor:pointer;"><i class="'+t[2]+'"></i> '+t[1]+'</button>';
   });
   html += '</div>';
-
   html += '<div id="zy-peer-body"></div>';
-
-  pageShell('Peer Support', 'fa-solid fa-comments', html);
-
-  document.querySelectorAll('[data-ptab]').forEach(function(b){
-    b.addEventListener('click', function(){ Z.State._peerTab = this.getAttribute('data-ptab'); Z.openPeerSupport(); });
-  });
-
+  pageShell('Peer Support', 'fa-solid fa-comments', html, 'peer-support');
   var body = document.getElementById('zy-peer-body');
   if(tab === 'browse') renderPeerBrowse(body);
   else if(tab === 'ask') renderPeerAskForm(body);
@@ -12578,21 +12744,19 @@ function renderPeerBrowse(body){
   var allQ = getPeerQuestions();
   var open = allQ.filter(function(q){ return q.status === 'open'; });
   var html = '';
-
   html += '<div style="padding:12px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
     '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:6px;"><i class="fa-solid fa-gift" style="color:#fbbf24;margin-right:6px;"></i>WEEKLY QUALITY POOL</div>' +
-    '<div style="font-size:11px;color:#cbd5e1;line-height:1.5;">5% of every subscription goes into a weekly bonus pool. Top 100 answerers get paid based on helpful marks. Top of the leaderboard can make $50–$300 extra per week.</div>' +
+    '<div style="font-size:11px;color:#cbd5e1;line-height:1.5;">5% of every subscription. Top answerers by helpful marks get paid weekly. Top of leaderboard earns $50–$300 extra.</div>' +
   '</div>';
-
   if(!open.length){
-    html += Z.emptyState ? Z.emptyState({ icon:'fa-solid fa-comments', title:'No open questions right now. Be the first to ask.', cta:{ label:'Ask a question', onclick:"Z.State._peerTab='ask';Z.openPeerSupport()" } }) :
-      '<div style="text-align:center;padding:30px;color:#64748b;font-size:12px;">No questions yet.</div>';
-    body.innerHTML = html;
-    return;
+    html += '<div style="text-align:center;padding:40px 20px;color:#94a3b8;font-size:12px;">' +
+      '<i class="fa-solid fa-comments" style="font-size:40px;color:#334155;display:block;margin-bottom:12px;"></i>' +
+      'No open questions. Be the first.' +
+      '<button data-zact="peer-tab" data-zarg="ask" style="display:block;margin:14px auto 0;padding:10px 24px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Ask a question</button>' +
+    '</div>';
+    body.innerHTML = html; return;
   }
-
   html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:4px;">OPEN QUESTIONS ('+open.length+')</div>';
-
   open.forEach(function(q){
     var cat = FAQ_CATEGORIES.find(function(c){ return c.id === q.category; }) || FAQ_CATEGORIES[7];
     html += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">' +
@@ -12606,28 +12770,23 @@ function renderPeerBrowse(body){
           '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">'+esc((q.body||'').substring(0,180))+(q.body && q.body.length>180?'…':'')+'</div>' +
           '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">' +
             '<div style="font-size:10px;color:#64748b;">'+esc(cat.name)+' · '+ago(q.createdAt)+'</div>' +
-            '<button data-answer="'+esc(q.id)+'" style="padding:8px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;">Answer</button>' +
+            '<button data-zact="peer-answer" data-zarg="'+esc(q.id)+'" style="padding:8px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;">Answer</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
     '</div>';
   });
-
   body.innerHTML = html;
-  body.querySelectorAll('[data-answer]').forEach(function(b){
-    b.addEventListener('click', function(){ Z.peerAnswerModal(this.getAttribute('data-answer')); });
-  });
 }
 
 function renderPeerAskForm(body){
   var html = '<div style="padding:14px;border-radius:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.28);">' +
     '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:6px;">HOW ASKING WORKS</div>' +
-    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;">You set a budget. Users answer. You pick the best answer. Money is released to the answerer. If nobody answers in 24 hours, you get a full refund.</div>' +
+    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;">You set a budget. Users answer. You pick the best one. Money released to the answerer. Nobody answers in 24h = full refund.</div>' +
   '</div>';
-
   html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">';
   html += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">CATEGORY</label>';
-  html += '<select id="zy-ask-cat" class="form-select" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;margin:4px 0 12px 0;box-sizing:border-box;outline:none;">';
+  html += '<select id="zy-ask-cat" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;margin:4px 0 12px 0;box-sizing:border-box;outline:none;">';
   FAQ_CATEGORIES.forEach(function(c){ html += '<option value="'+c.id+'">'+esc(c.name)+'</option>'; });
   html += '</select>';
   html += '<label style="font-size:11px;color:#94a3b8;font-weight:800;">TITLE</label>';
@@ -12640,23 +12799,20 @@ function renderPeerAskForm(body){
     html += '<button data-budget="'+v+'" style="padding:8px 14px;border-radius:16px;border:1px solid '+(i===2?'rgba(16,185,129,.5)':'#1e293b')+';background:'+(i===2?'rgba(16,185,129,.12)':'#0f172a')+';color:'+(i===2?'#10b981':'#cbd5e1')+';font-weight:800;font-size:12px;cursor:pointer;">$'+v.toFixed(2)+'</button>';
   });
   html += '</div>';
-  html += '<div style="font-size:10px;color:#64748b;margin-bottom:12px;">ZYNIX keeps 20% as platform fee. Answerer receives 80%.</div>';
-  html += '<button id="zy-ask-submit" style="width:100%;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-paper-plane"></i> Publish question</button>';
+  html += '<div style="font-size:10px;color:#64748b;margin-bottom:12px;">ZYNIX keeps 20% platform fee. Answerer receives 80%.</div>';
+  html += '<button data-zact="publish-question" style="width:100%;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-paper-plane"></i> Publish question</button>';
   html += '</div>';
-
   body.innerHTML = html;
-
-  var selected = 0.10;
+  Z.State._pendingBudget = 0.10;
   body.querySelectorAll('[data-budget]').forEach(function(b){
     b.addEventListener('click', function(){
-      selected = parseFloat(this.getAttribute('data-budget'));
+      Z.State._pendingBudget = parseFloat(this.getAttribute('data-budget'));
       body.querySelectorAll('[data-budget]').forEach(function(x){
         x.style.borderColor = '#1e293b'; x.style.background = '#0f172a'; x.style.color = '#cbd5e1';
       });
       this.style.borderColor = 'rgba(16,185,129,.5)'; this.style.background = 'rgba(16,185,129,.12)'; this.style.color = '#10b981';
     });
   });
-  document.getElementById('zy-ask-submit').addEventListener('click', function(){ Z.peerPublishQuestion(selected); });
 }
 
 Z.peerPublishQuestion = async function(budget){
@@ -12675,17 +12831,17 @@ Z.peerPublishQuestion = async function(budget){
   if(cloud){ q.id = cloud.id; }
   var all = getPeerQuestions(); all.unshift(q); savePeerQuestions(all);
   addScore('daily_login');
-  toast(cloud ? 'Question published.' : 'Saved locally — will sync when online.');
+  toast('Question published.');
   Z.State._peerTab = 'mine';
   Z.openPeerSupport();
 };
+
 function renderPeerMine(body){
   var myQs = getPeerQuestions().filter(function(q){ return q.askerId === (me()||{}).id; });
   var myAs = [];
   getPeerQuestions().forEach(function(q){
     (q.answers||[]).forEach(function(a){ if(a.answererId === (me()||{}).id) myAs.push(Object.assign({}, a, { _q: q })); });
   });
-
   var html = '';
   html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:4px;">MY QUESTIONS ('+myQs.length+')</div>';
   if(!myQs.length){
@@ -12693,117 +12849,114 @@ function renderPeerMine(body){
   } else {
     myQs.forEach(function(q){
       var answered = (q.answers||[]).length;
+      var canAccept = answered > 0 && q.status !== 'answered';
       html += '<div style="padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
           '<div style="font-size:12px;font-weight:800;color:#fff;flex:1;">'+esc(q.title)+'</div>' +
           '<div style="font-size:12px;font-weight:900;color:'+(q.status==='answered'?'#10b981':'#fbbf24')+';flex-shrink:0;margin-left:8px;">'+(q.status==='answered'?'ANSWERED':answered+' answer'+(answered===1?'':'s'))+'</div>' +
         '</div>' +
-        '<div style="font-size:10px;color:#64748b;margin-top:6px;">'+ago(q.createdAt)+' · '+money(q.budget,'USD')+' budget</div>' +
-        ((q.answers||[]).length && q.status !== 'answered' ? '<button data-acc="'+esc(q.id)+'" style="margin-top:10px;width:100%;padding:9px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:800;font-size:11px;cursor:pointer;">View & accept answer</button>' : '') +
+        '<div style="font-size:10px;color:#64748b;margin-top:6px;">'+ago(q.createdAt)+' · '+money(q.budget,'USD')+'</div>' +
+        (canAccept ? '<button data-zact="peer-view-answers" data-zarg="'+esc(q.id)+'" style="margin-top:10px;width:100%;padding:9px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:800;font-size:11px;cursor:pointer;">View & accept answer</button>' : '') +
       '</div>';
     });
   }
-
   html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:4px;margin-top:10px;">MY ANSWERS ('+myAs.length+')</div>';
   if(!myAs.length){
     html += '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;border:1px dashed #1e293b;border-radius:12px;">No answers given yet.</div>';
   } else {
     myAs.forEach(function(a){
       var earned = a.accepted ? 0.8 * a._q.budget : 0;
+      var marks = a.helpful_marks || 0;
       html += '<div style="padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
         '<div style="font-size:12px;font-weight:800;color:#fff;">'+esc(a._q.title)+'</div>' +
         '<div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5;">'+esc((a.body||'').substring(0,140))+'</div>' +
         '<div style="display:flex;justify-content:space-between;margin-top:8px;">' +
-          '<div style="font-size:10px;color:#64748b;">'+ago(a.createdAt)+'</div>' +
+          '<div style="font-size:10px;color:#64748b;">'+ago(a.createdAt)+' · 👍 '+marks+' helpful</div>' +
           '<div style="font-size:11px;font-weight:900;color:'+(a.accepted?'#10b981':'#64748b')+';">'+(a.accepted?('+'+money(earned,'USD')):'Pending')+'</div>' +
         '</div>' +
       '</div>';
     });
   }
-
   body.innerHTML = html;
-
-  body.querySelectorAll('[data-acc]').forEach(function(b){
-    b.addEventListener('click', function(){ Z.peerViewAnswers(this.getAttribute('data-acc')); });
-  });
 }
 
 Z.peerAnswerModal = function(qid){
   var q = getPeerQuestions().find(function(x){ return x.id === qid; });
-  if(!q){ toast('Question not found'); return; }
+  if(!q){ toast('Not found'); return; }
   var html = '<div id="zy-peer-ans-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;">' +
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:480px;max-height:92vh;overflow-y:auto;">' +
-    '<h3 style="margin:0 0 8px 0;font-size:16px;color:#fff;">Answer this question</h3>' +
+    '<h3 style="margin:0 0 8px 0;font-size:16px;color:#fff;">Answer</h3>' +
     '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:12px;">' +
       '<div style="font-size:12px;font-weight:800;color:#fff;">'+esc(q.title)+'</div>' +
       '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">'+esc(q.body)+'</div>' +
       '<div style="font-size:11px;color:#10b981;font-weight:900;margin-top:8px;">Budget: '+money(q.budget,'USD')+' · You earn '+money(q.budget*0.8,'USD')+' if accepted</div>' +
     '</div>' +
     '<label style="font-size:11px;color:#94a3b8;font-weight:800;">YOUR ANSWER</label>' +
-    '<textarea id="zy-peer-ans" rows="5" placeholder="Give a clear, useful answer. Minimum 50 characters." style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;margin:4px 0 14px 0;box-sizing:border-box;outline:none;resize:vertical;font-family:inherit;"></textarea>' +
+    '<textarea id="zy-peer-ans" rows="5" placeholder="Minimum 50 characters" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;margin:4px 0 14px 0;box-sizing:border-box;outline:none;resize:vertical;font-family:inherit;"></textarea>' +
     '<div style="display:flex;gap:8px;">' +
-      '<button id="zy-peer-ans-x" style="flex:1;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">Cancel</button>' +
-      '<button id="zy-peer-ans-s" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;">Submit answer</button>' +
+      '<button data-zact="cancel-modal" data-ztarget="zy-peer-ans-modal" style="flex:1;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;cursor:pointer;">Cancel</button>' +
+      '<button data-zact="submit-answer" data-zarg="'+esc(q.id)+'" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;cursor:pointer;">Submit answer</button>' +
     '</div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
-  document.getElementById('zy-peer-ans-x').onclick = function(){ document.getElementById('zy-peer-ans-modal').remove(); };
-  document.getElementById('zy-peer-ans-s').onclick = async function(){
-    var bodyTxt = (document.getElementById('zy-peer-ans').value || '').trim();
-    if(bodyTxt.length < 50){ toast('Answer must be at least 50 characters', 'error'); return; }
-    var all = getPeerQuestions();
-    var q = all.find(function(x){ return x.id === qid; });
-    if(!q){ toast('Question missing'); return; }
-    q.answers = q.answers || [];
-    var newAns = {
-      id: 'a_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
-      answererId: (me()||{}).id, answererName: (me()||{}).name || 'User',
-      body: bodyTxt, createdAt: Date.now(), accepted: false
-    };
-    var cloud = await cloudPushAnswer(qid, newAns);
-    if(cloud){ newAns.id = cloud.id; }
-    q.answers.push(newAns);
-    savePeerQuestions(all);
-    document.getElementById('zy-peer-ans-modal').remove();
-    toast(cloud ? 'Answer submitted.' : 'Saved locally — will sync when online.');
-    Z.State._peerTab = 'mine';
-    Z.openPeerSupport();
-  };
 };
+
+Z.peerSubmitAnswer = async function(qid){
+  var ta = document.getElementById('zy-peer-ans'); if(!ta){ toast('Missing'); return; }
+  var bodyTxt = (ta.value || '').trim();
+  if(bodyTxt.length < 50){ toast('Answer at least 50 characters', 'error'); return; }
+  var all = getPeerQuestions();
+  var q = all.find(function(x){ return x.id === qid; });
+  if(!q){ toast('Question missing'); return; }
+  q.answers = q.answers || [];
+  var newAns = {
+    id: 'a_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    answererId: (me()||{}).id, answererName: (me()||{}).name || 'User',
+    body: bodyTxt, createdAt: Date.now(), accepted: false, helpful_marks: 0
+  };
+  var cloud = await cloudPushAnswer(qid, newAns);
+  if(cloud){ newAns.id = cloud.id; }
+  q.answers.push(newAns);
+  savePeerQuestions(all);
+  var m = document.getElementById('zy-peer-ans-modal'); if(m) m.remove();
+  toast('Answer submitted.');
+  Z.State._peerTab = 'mine';
+  Z.openPeerSupport();
+};
+
 Z.peerViewAnswers = function(qid){
   var q = getPeerQuestions().find(function(x){ return x.id === qid; });
-  if(!q || !(q.answers||[]).length){ toast('No answers yet'); return; }
+  if(!q || !(q.answers||[]).length){ toast('No answers'); return; }
+  var myId = (me()||{}).id;
   var html = '<div id="zy-peer-view-modal" style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;">' +
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:20px;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
-      '<h3 style="margin:0;font-size:16px;color:#fff;">Answers to your question</h3>' +
-      '<button id="zy-peer-view-x" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;">&times;</button>' +
+      '<h3 style="margin:0;font-size:16px;color:#fff;">Answers</h3>' +
+      '<button data-zact="cancel-modal" data-ztarget="zy-peer-view-modal" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;">&times;</button>' +
     '</div>' +
     '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:14px;">' +
       '<div style="font-size:12px;font-weight:800;color:#fff;">'+esc(q.title)+'</div>' +
       '<div style="font-size:11px;color:#94a3b8;margin-top:6px;">'+esc(q.body)+'</div>' +
     '</div>';
   q.answers.forEach(function(a){
+    var isOwner = a.answererId === myId;
+    var canVote = !isOwner;
+    var myVote = (BS.peerVotes && BS.peerVotes[a.id]) || 0;
     html += '<div style="padding:12px;border-radius:12px;background:rgba(0,0,0,0.25);margin-bottom:10px;border:1px solid '+(a.accepted?'rgba(16,185,129,.4)':'#1e293b')+';">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-        '<div style="font-size:12px;font-weight:800;color:#fff;">'+esc(a.answererName)+'</div>' +
+        '<div style="font-size:12px;font-weight:800;color:#fff;">'+esc(a.answererName || 'User')+'</div>' +
         '<div style="font-size:10px;color:#64748b;">'+ago(a.createdAt)+'</div>' +
       '</div>' +
       '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">'+esc(a.body)+'</div>' +
-      (!a.accepted && q.status !== 'answered' ? '<button data-acc="'+esc(a.id)+'" data-qid="'+esc(q.id)+'" style="margin-top:10px;width:100%;padding:9px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;">Accept this answer · Pay '+money(q.budget*0.8,'USD')+'</button>' : '') +
-      (a.accepted ? '<div style="margin-top:8px;font-size:11px;color:#10b981;font-weight:900;"><i class="fa-solid fa-check-circle"></i> Accepted</div>' : '') +
+      '<div style="display:flex;gap:8px;margin-top:10px;align-items:center;">' +
+        (canVote ? '<button data-zact="peer-vote" data-zarg="'+esc(a.id)+'|1" style="padding:6px 12px;border-radius:16px;border:1px solid '+(myVote===1?'rgba(16,185,129,.5)':'#1e293b')+';background:'+(myVote===1?'rgba(16,185,129,.12)':'transparent')+';color:'+(myVote===1?'#10b981':'#cbd5e1')+';font-weight:800;font-size:11px;cursor:pointer;">👍 Helpful'+(a.helpful_marks?' ('+a.helpful_marks+')':'')+'</button>' : '') +
+        (canVote ? '<button data-zact="peer-vote" data-zarg="'+esc(a.id)+'|-1" style="padding:6px 12px;border-radius:16px;border:1px solid '+(myVote===-1?'rgba(239,68,68,.5)':'#1e293b')+';background:'+(myVote===-1?'rgba(239,68,68,.12)':'transparent')+';color:'+(myVote===-1?'#fca5a5':'#cbd5e1')+';font-weight:800;font-size:11px;cursor:pointer;">👎</button>' : '') +
+        (!isOwner && !a.accepted && q.status !== 'answered' ? '<button data-zact="peer-accept" data-zarg="'+esc(q.id)+'|'+esc(a.id)+'" style="flex:1;padding:9px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;">Accept · Pay '+money(q.budget*0.8,'USD')+'</button>' : '') +
+        (a.accepted ? '<div style="font-size:11px;color:#10b981;font-weight:900;"><i class="fa-solid fa-check-circle"></i> Accepted</div>' : '') +
+      '</div>' +
     '</div>';
   });
   html += '</div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
-  document.getElementById('zy-peer-view-x').onclick = function(){ document.getElementById('zy-peer-view-modal').remove(); };
-  document.querySelectorAll('#zy-peer-view-modal [data-acc]').forEach(function(b){
-    b.addEventListener('click', function(){
-      var aid = this.getAttribute('data-acc');
-      var qid2 = this.getAttribute('data-qid');
-      Z.peerAcceptAnswer(qid2, aid);
-      document.getElementById('zy-peer-view-modal').remove();
-    });
-  });
 };
 
 Z.peerAcceptAnswer = async function(qid, aid){
@@ -12813,19 +12966,43 @@ Z.peerAcceptAnswer = async function(qid, aid){
   var cloud = await cloudAcceptAnswer(qid, aid);
   if(cloud && cloud.error){ toast('Could not accept: ' + cloud.error, 'error'); return; }
   (q.answers||[]).forEach(function(a){ a.accepted = (a.id === aid); });
-  q.status = 'answered';
-  q.acceptedAt = Date.now();
+  q.status = 'answered'; q.acceptedAt = Date.now();
   savePeerQuestions(all);
   addScore('faq_helpful');
-  toast('Answer accepted. ' + money(q.budget*0.8,'USD') + ' credited to answerer.');
-  saveBiz();
+  var m = document.getElementById('zy-peer-view-modal'); if(m) m.remove();
+  toast('Answer accepted. ' + money(q.budget*0.8,'USD') + ' credited.');
   Z.State._peerTab = 'mine';
   Z.openPeerSupport();
 };
 
-/* ============================================================
-   PEER SUPPORT — localStorage layer
-   ============================================================ */
+Z.peerVote = async function(aid, vote){
+  var u = me(); if(!u){ toast('Login first'); return; }
+  BS.peerVotes = BS.peerVotes || {};
+  var prev = BS.peerVotes[aid] || 0;
+  var next = prev === vote ? 0 : vote;
+  BS.peerVotes[aid] = next;
+  saveBiz();
+  // Update local answer helpful_marks
+  var all = getPeerQuestions();
+  var delta = next - prev;
+  all.forEach(function(q){
+    (q.answers||[]).forEach(function(a){
+      if(a.id === aid){ a.helpful_marks = Math.max(0, (a.helpful_marks || 0) + delta); }
+    });
+  });
+  savePeerQuestions(all);
+  var cloud = await cloudVoteAnswer(aid, vote);
+  if(cloud && cloud.delta != null){
+    // Cloud confirms; re-fetch to resync
+    cloudFetchQuestions();
+  }
+  toast(next === 1 ? 'Marked helpful' : next === -1 ? 'Marked not helpful' : 'Vote removed');
+  // Re-render current peer page
+  if(Z.State.currentView === 'peer-support') Z.openPeerSupport();
+  else Z.peerViewAnswers((getPeerQuestions().find(function(q){ return (q.answers||[]).some(function(a){ return a.id === aid; }); }) || {}).id);
+};
+
+/* ===================== LOCAL STORAGE PEER ===================== */
 function getPeerQuestions(){
   try {
     var raw = localStorage.getItem('zynix_peer_questions');
@@ -12838,13 +13015,10 @@ function savePeerQuestions(arr){
   try { localStorage.setItem('zynix_peer_questions', JSON.stringify(arr.slice(0, 500))); } catch(e){}
 }
 
-/* v18.1: cloud sync */
 async function cloudFetchQuestions(){
   var c = db(); if(!c) return;
   try {
-    var r = await c.from('peer_questions')
-      .select('id,asker_id,title,body,category,budget,status,accepted_answer_id,created_at,expires_at')
-      .eq('status','open').order('created_at',{ascending:false}).limit(200);
+    var r = await c.from('peer_questions').select('id,asker_id,title,body,category,budget,status,accepted_answer_id,created_at,expires_at').eq('status','open').order('created_at',{ascending:false}).limit(200);
     if(r.error) throw r.error;
     var qs = r.data || [];
     if(qs.length){
@@ -12853,471 +13027,99 @@ async function cloudFetchQuestions(){
       var byQ = {};
       (ra.data||[]).forEach(function(a){ if(!byQ[a.question_id]) byQ[a.question_id] = []; byQ[a.question_id].push({ id:a.id, answererId:a.answerer_id, body:a.body, accepted:a.accepted, helpful_marks:a.helpful_marks, createdAt:new Date(a.created_at).getTime() }); });
       var norm = qs.map(function(q){
-        return {
-          id:q.id, askerId:q.asker_id, askerName:'User',
-          title:q.title, body:q.body, category:q.category, budget:Number(q.budget),
-          status:q.status, acceptedAnswerId:q.accepted_answer_id,
-          createdAt: new Date(q.created_at).getTime(),
-          expiresAt: new Date(q.expires_at).getTime(),
-          answers: byQ[q.id] || []
-        };
+        return { id:q.id, askerId:q.asker_id, askerName:'User', title:q.title, body:q.body, category:q.category, budget:Number(q.budget), status:q.status, acceptedAnswerId:q.accepted_answer_id, createdAt: new Date(q.created_at).getTime(), expiresAt: new Date(q.expires_at).getTime(), answers: byQ[q.id] || [] };
       });
       savePeerQuestions(norm);
     }
-  } catch(e){ console.warn('[cloudFetchQuestions]', e); }
+  } catch(e){}
 }
 
 async function cloudPushQuestion(q){
   var c = db(); if(!c) return null;
-  try {
-    var r = await c.from('peer_questions').insert({
-      asker_id:q.askerId, title:q.title, body:q.body,
-      category:q.category, budget:q.budget, status:'open'
-    }).select().single();
-    if(r.error) throw r.error;
-    return r.data;
-  } catch(e){ console.warn('[cloudPushQuestion]', e); return null; }
+  try { var r = await c.from('peer_questions').insert({ asker_id:q.askerId, title:q.title, body:q.body, category:q.category, budget:q.budget, status:'open' }).select().single(); if(r.error) throw r.error; return r.data; } catch(e){ return null; }
 }
-
 async function cloudPushAnswer(qid, answer){
   var c = db(); if(!c) return null;
-  try {
-    var r = await c.from('peer_answers').insert({
-      question_id:qid, answerer_id:answer.answererId, body:answer.body
-    }).select().single();
-    if(r.error) throw r.error;
-    return r.data;
-  } catch(e){ console.warn('[cloudPushAnswer]', e); return null; }
+  try { var r = await c.from('peer_answers').insert({ question_id:qid, answerer_id:answer.answererId, body:answer.body }).select().single(); if(r.error) throw r.error; return r.data; } catch(e){ return null; }
 }
-
 async function cloudAcceptAnswer(qid, aid){
   var c = db(); if(!c) return null;
-  try {
-    var r = await c.rpc('peer_accept_answer', { p_question_id: qid, p_answer_id: aid });
-    if(r.error) throw r.error;
-    return r.data;
-  } catch(e){ console.warn('[cloudAcceptAnswer]', e); return null; }
+  try { var r = await c.rpc('peer_accept_answer', { p_question_id: qid, p_answer_id: aid }); if(r.error) throw r.error; return r.data; } catch(e){ return null; }
+}
+async function cloudVoteAnswer(aid, vote){
+  var c = db(); if(!c) return null;
+  try { var r = await c.rpc('peer_vote_answer', { p_answer_id: aid, p_vote: vote }); if(r.error) throw r.error; return r.data; } catch(e){ return null; }
 }
 
-/* ============================================================
-   BOOTSTRAP — load user's biz data on login
-   ============================================================ */
-function bootBiz(){
-  var u = me();
-  if(!u) return;
-  loadBiz();
-  cloudFetchQuestions().then(function(){
-    if(Z.State.currentView === 'drive' || Z.State._peerTab){ /* refresh if open */ }
-  });
-  // Seed a couple of sample questions on first visit so the page isn't empty
-  if(getPeerQuestions().length === 0){
-    var samples = [
-      { id:'q_sample1', title:'How do I change my ride currency?', body:'I switched from Karachi to London and my app still shows PKR. How do I change it?', category:'tech', budget:0.05, askerId:'system', askerName:'New User', status:'open', createdAt:Date.now()-3600000, answers:[] },
-      { id:'q_sample2', title:'Driver cancelled — will I be refunded?', body:'My driver cancelled 2 minutes after accepting. The money is still held in escrow. What happens?', category:'payment', budget:0.10, askerId:'system', askerName:'Frustrated Rider', status:'open', createdAt:Date.now()-7200000, answers:[] }
-    ];
-    savePeerQuestions(samples);
-  }
-}
+/* ===================== LEDGER ===================== */
+Z.openLedger = function(){
+  var html = '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.28);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;">WALLET LEDGER</div>' +
+    '<div style="font-size:22px;font-weight:900;color:#fff;margin-top:4px;">Syncing…</div>' +
+    '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Stripe payouts will show here.</div>' +
+  '</div>';
+  html += '<button data-zact="payout" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-money-bill-transfer"></i> Request payout</button>';
+  pageShell('Ledger', 'fa-solid fa-book', html, 'ledger');
+};
 
-/* Watch for login and re-init */
-var _lastUid = null;
-setInterval(function(){
-  var u = me();
-  var uid = u ? u.id : null;
-  if(uid && uid !== _lastUid){ _lastUid = uid; bootBiz(); }
-}, 2000);
-
-/* ============================================================
-   ENTRY POINTS — hook existing buttons
-   ============================================================ */
-/* Lounge: add a "Peer Support" and "Earnings" shortcut row */
+/* ===================== PATCHES ===================== */
 function patchLounge(){
-  if(!Array.isArray(Z.LOUNGE_AVAILABLE_ROWS)) return;
-  if(!Z.LOUNGE_AVAILABLE_ROWS.some(function(r){ return r.id === 'biz'; })){
+  if(Array.isArray(Z.LOUNGE_AVAILABLE_ROWS) && !Z.LOUNGE_AVAILABLE_ROWS.some(function(r){ return r.id === 'biz'; })){
     Z.LOUNGE_AVAILABLE_ROWS.push({ id:'biz', label:'Earning Hub', icon:'fa-solid fa-coins' });
   }
-  var _orig = Z._loadLoungeRow;
-  if(typeof _orig === 'function' && !Z.__bizLoungePatched){
-    Z.__bizLoungePatched = true;
-    Z._loadLoungeRow = async function(rowId){
-      if(rowId === 'biz'){
-        var body = document.getElementById('lounge-row-body-biz'); if(!body) return;
-        body.innerHTML =
-          '<div style="display:flex;flex-direction:column;gap:8px;">' +
-            '<button onclick="Z.showView(\'how-it-works\')" style="width:100%;text-align:left;padding:12px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);color:#fff;font-weight:800;cursor:pointer;"><i class="fa-solid fa-circle-info" style="color:#10b981;margin-right:8px;"></i>How ZYNIX Works</button>' +
-            '<button onclick="Z.showView(\'earnings\')" style="width:100%;text-align:left;padding:12px;border-radius:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.35);color:#fff;font-weight:800;cursor:pointer;"><i class="fa-solid fa-coins" style="color:#3b82f6;margin-right:8px;"></i>My Earnings</button>' +
-            '<button onclick="Z.showView(\'peer-support\')" style="width:100%;text-align:left;padding:12px;border-radius:12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.35);color:#fff;font-weight:800;cursor:pointer;"><i class="fa-solid fa-comments" style="color:#fbbf24;margin-right:8px;"></i>Peer Support</button>' +
-            '<button onclick="Z.showView(\'tiers\')" style="width:100%;text-align:left;padding:12px;border-radius:12px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.35);color:#fff;font-weight:800;cursor:pointer;"><i class="fa-solid fa-layer-group" style="color:#a78bfa;margin-right:8px;"></i>Tiers & Pricing</button>' +
-          '</div>';
-        return;
-      }
-      return _orig.apply(this, arguments);
-    };
-  }
-}
-
-/* Galleria hot row: add "Earn" and "Peer Help" cards */
-function patchHotRow(){
-  var _origRender = Z.renderGalleria;
-  if(typeof _origRender !== 'function' || Z.__bizHotPatched) return;
-  Z.__bizHotPatched = true;
-  Z.renderGalleria = function(){
-    var base = _origRender.apply(this, arguments) || '';
-    var extra = '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
-      '<button onclick="Z.showView(\'earnings\')" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;"><div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">EARN</div><div style="font-size:13px;font-weight:900;color:#10b981;margin-top:2px;">My Earnings</div></button>' +
-      '<button onclick="Z.showView(\'peer-support\')" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.1),rgba(59,130,246,.06));border:1px solid rgba(251,191,36,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;"><div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">HELP</div><div style="font-size:13px;font-weight:900;color:#fbbf24;margin-top:2px;">Peer Support</div></button>' +
-    '</div>';
-    var marker = '<div style="background:linear-gradient(135deg,#10b981,#3b82f6)';
-    var i = base.indexOf(marker);
-    if(i !== -1) return base.slice(0,i) + extra + base.slice(i);
-    return extra + base;
-  };
-}
-
-/* Profile: add "Earnings" and "How it works" links */
-function patchProfile(){
-  var _orig = Z.renderProfileTab;
-  if(typeof _orig !== 'function' || Z.__bizProfilePatched) return;
-  Z.__bizProfilePatched = true;
-  Z.renderProfileTab = function(c){
-    var result = _orig.call(this, c);
-    setTimeout(function(){
-      var container = c || document.getElementById('zy-content');
-      if(!container) return;
-      if(container.querySelector('#zy-biz-profile-links')) return;
-      var block = document.createElement('div');
-      block.id = 'zy-biz-profile-links';
-      block.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
-      block.innerHTML =
-        '<button onclick="Z.showView(\'earnings\')" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-coins" style="color:#10b981;margin-right:8px;"></i>My Earnings</button>' +
-        '<button onclick="Z.showView(\'how-it-works\')" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-circle-info" style="color:#3b82f6;margin-right:8px;"></i>How ZYNIX Works</button>';
-      container.appendChild(block);
-    }, 50);
-    return result;
-  };
-}
-
-setTimeout(function(){ patchLounge(); patchHotRow(); patchProfile(); }, 800);
-
-/* ============================================================
-   BOOTSTRAP SCRIPT DONE
-   ============================================================ */
-/* v18.1: realtime sync for peer questions and answers */
-function bizRealtime(){
-  var c = db(); if(!c) return; var u = me(); if(!u) return;
-  try {
-    c.channel('zynix-peer-q-' + u.id)
-      .on('postgres_changes', { event:'*', schema:'public', table:'peer_questions' }, function(){
-        cloudFetchQuestions().then(function(){
-          if(document.getElementById('zy-peer-body')) Z.openPeerSupport();
-        });
-      }).subscribe();
-    c.channel('zynix-peer-a-' + u.id)
-      .on('postgres_changes', { event:'INSERT', schema:'public', table:'peer_answers' }, function(){
-        cloudFetchQuestions().then(function(){
-          if(document.getElementById('zy-peer-body')) Z.openPeerSupport();
-        });
-      }).subscribe();
-  } catch(e){}
-}
-setTimeout(bizRealtime, 1200);
-/* ============================================================
-   SECTION 18 ADDENDUM — Config · Explainer Hub · Disclosure
-   ============================================================ */
-
-var EXPLAINERS = {
-  'ride': {
-    title:'How ZYNIX Ride Works', icon:'fa-solid fa-car-side',
-    sections:[
-      { h:'The idea',              p:'You name your price. Nearby drivers see your offer and either accept it or counter. You pick the best deal. No surge, no hidden fees.' },
-      { h:'How the money flows',   p:'Fare is held in escrow the moment a driver accepts. It is released to the driver only when the ride completes. If the driver cancels, you get a full refund.' },
-      { h:'Multi-currency',        p:'Choose from 60+ currencies. Every fare, tip, and offer uses your currency. Switch any time without losing history.' },
-      { h:'Safety',                p:'Every ride has a panic button, live location share, in-ride chat, voice notes, and a Call button that reveals your driver\'s phone only during active rides. Every ride is rated 1-10.' },
-      { h:'Earning as a driver',   p:'Early drivers keep 100% of fares for the first 6 months. After that, 0% on Pro tier, or a small commission on Free tier. You choose.' }
-    ]
-  },
-  'share_ride': {
-    title:'How Share Ride Works', icon:'fa-solid fa-route',
-    sections:[
-      { h:'The idea',       p:'Drivers post journeys — start, stops, end, time, fare. Riders request seats. Everyone saves money.' },
-      { h:'Safety first',   p:'Your phone number and email are never shared. All communication stays inside ZYNIX. Drivers are rated by every past passenger.' },
-      { h:'For drivers',    p:'Set your route, your stops, your seats, your fare. You control the journey. Riders book with one tap.' },
-      { h:'For riders',     p:'Search public journeys. Filter by date, price, and location. Request a seat. Pay only when the driver accepts.' }
-    ]
-  },
-  'peer_support': {
-    title:'How Peer Support Works', icon:'fa-solid fa-comments',
-    sections:[
-      { h:'The idea',           p:'Any user can ask a question. Any user can answer. The asker pays the answerer directly. ZYNIX keeps a small cut to run the platform.' },
-      { h:'What it costs',      p:'Budgets start at $0.01 and go up to $5.00 per question. You pick the budget. Premium tiers get free questions every month.' },
-      { h:'What you earn',      p:'If your answer is accepted, you receive 80% of the question budget. The other 20% funds moderation, safety, and support.' },
-      { h:'Weekly quality pool',p:'Every week, 5% of subscription revenue goes into a bonus pool. It is distributed to top answerers proportional to their helpful marks. Everyone who contributed gets something.' },
-      { h:'Rules',              p:'Answers must be at least 50 characters. Spam, plagiarism, and abuse get you banned from the pool. The asker chooses the accepted answer.' }
-    ]
-  },
-  'referrals': {
-    title:'How Referrals Work', icon:'fa-solid fa-user-group',
-    sections:[
-      { h:'The idea',       p:'Refer a friend. When they subscribe, you earn every month they stay subscribed. Simple, single-level, no pyramid.' },
-      { h:'What you earn',  p:'$3/month for the first 6 months of each active referral, then $1/month for as long as they stay subscribed.' },
-      { h:'Rules',          p:'Only one level deep — you don\'t earn from your referral\'s referrals. Referred user must have an active paid subscription. Self-referral and fake accounts are blocked.' },
-      { h:'Monthly cap',    p:'Caps depend on your tier and Contribution Score. Free users cap at $5/month, Pro at $150/month, Elite at $1,000/month. Multipliers up to 5x for high-contribution users.' },
-      { h:'Payouts',        p:'Monthly, on the 5th, once your balance hits $20. Paid via Stripe to your local bank or mobile wallet.' }
-    ]
-  },
-  'creators': {
-    title:'How Creator Spaces Work', icon:'fa-solid fa-palette',
-    sections:[
-      { h:'The idea',           p:'Create a Space — a channel or circle. Charge a joining fee from $0 to $5. Keep 80% of every joining fee.' },
-      { h:'Quality gates earning', p:'Your Space must maintain an 8/10 quality score to withdraw earnings. Below 8, earnings freeze until you recover. Below 5, the Space is delisted and users refunded.' },
-      { h:'Long-form video',    p:'Content over 3 minutes requires Pro tier or above. All long-form content is reviewed before publishing. Strict ethical rules apply.' },
-      { h:'Earnings',           p:'Joining fees + bounty pool share + ride promotion + collaboration revenue. Creators can also sell premium thumbnails, banners, and design assets.' }
-    ]
-  },
-  'bounty': {
-    title:'How the Bounty Pool Works', icon:'fa-solid fa-gift',
-    sections:[
-      { h:'What it is',           p:'A shared pool funded by 40% of every subscription. Rewards go to creators whose content generates real engagement.' },
-      { h:'Company commitment',   p:'The 40% is a floor, not a ceiling. ZYNIX will never reduce the rate below 40%. The company may add more on strong months, and may reallocate across sub-heads as the platform grows.' },
-      { h:'How it pays',          p:'Weekly snapshot of all engagement. Pool is divided proportionally to points earned. No grand prize — everyone who contributed earns.' },
-      { h:'Anti-abuse',           p:'Reported content loses points. Repeat offenders get banned from the pool. Fraud detection runs on every payout.' }
-    ]
-  }
-};
-
-var BIZ_CFG = {
-  company_rate: 0.40, min_guarantee: 0.40,
-  can_reallocate: true, can_add_above: true,
-  loaded: false
-};
-
-async function loadBizConfig(){
-  var c = db(); if(!c) return;
-  try {
-    var r = await c.rpc('zynix_get_config');
-    if(r.error || !r.data) return;
-    var cfg = r.data;
-    if(cfg['bounty_pool.company_rate'])      BIZ_CFG.company_rate = parseFloat(cfg['bounty_pool.company_rate']);
-    if(cfg['bounty_pool.minimum_guarantee']) BIZ_CFG.min_guarantee = parseFloat(cfg['bounty_pool.minimum_guarantee']);
-    BIZ_CFG.loaded = true;
-  } catch(e){}
-}
-
-function disclosureBlock(){
-  return '<div style="padding:12px 14px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);margin-top:12px;">' +
-    '<div style="font-size:10px;font-weight:900;color:#60a5fa;letter-spacing:.5px;margin-bottom:6px;"><i class="fa-solid fa-shield-halved"></i> BOUNTY POOL COMMITMENT</div>' +
-    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;"><b style="color:#fff;">40%</b> of subscription revenue flows into the bounty pool — a floor, never reduced. ZYNIX reserves the right to:</div>' +
-    '<ul style="margin:6px 0 0 16px;padding:0;font-size:11px;color:#cbd5e1;line-height:1.7;">' +
-      '<li>Allocate the pool across sub-heads (creator · peer support · safety)</li>' +
-      '<li>Add additional funds above the 40% minimum</li>' +
-      '<li>Adjust sub-head distribution monthly on surplus</li>' +
-    '</ul>' +
-    '<div style="font-size:10px;color:#64748b;margin-top:8px;">Full breakdown on the How It Works page.</div>' +
-  '</div>';
-}
-
-Z.openExplainer = function(key){
-  var e = EXPLAINERS[key];
-  if(!e){ toast('Explainer not found'); return; }
-  var html = '';
-  html += '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
-    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">ZYNIX GUIDE</div>' +
-    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;line-height:1.25;"><i class="'+e.icon+'" style="color:#10b981;margin-right:8px;"></i>'+esc(e.title)+'</div>' +
-  '</div>';
-  e.sections.forEach(function(s){
-    html += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">' +
-      '<div style="font-size:12px;font-weight:900;color:#10b981;margin-bottom:6px;">'+esc(s.h)+'</div>' +
-      '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">'+esc(s.p)+'</div>' +
-    '</div>';
-  });
-  if(key === 'bounty' || key === 'peer_support') html += disclosureBlock();
-  html += '<button onclick="Z.openHowItWorksHub()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-list"></i> All guides</button>';
-  pageShell(e.title, e.icon, html);
-};
-
-Z.openHowItWorksHub = function(){
-  var html = '';
-  html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
-    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">ZYNIX</div>' +
-    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;">How ZYNIX Works</div>' +
-    '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">Pick a feature to learn how it works, how it pays, and what rules keep it fair.</div>' +
-  '</div>';
-  Object.keys(EXPLAINERS).forEach(function(k){
-    var e = EXPLAINERS[k];
-    html += '<button onclick="Z.openExplainer(\''+k+'\')" style="width:100%;padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;">' +
-      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(16,185,129,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+e.icon+'" style="color:#10b981;font-size:15px;"></i></div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:13px;font-weight:800;color:#fff;">'+esc(e.title)+'</div>' +
-        '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+e.sections.length+' sections · tap to read</div>' +
-      '</div>' +
-      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
-    '</button>';
-  });
-  html += disclosureBlock();
-  pageShell('How ZYNIX Works', 'fa-solid fa-circle-info', html);
-};
-
-/* Patch existing How It Works page — add "All Guides" button under the header */
-var _origHIW = Z.openHowItWorks;
-if(typeof _origHIW === 'function'){
-  Z.openHowItWorks = function(){
-    setTimeout(function(){
-      var app = document.getElementById('app-container');
-      if(!app || app.querySelector('#zy-hiw-hub-link')) return;
-      var header = app.querySelector('.view-header');
-      if(!header) return;
-      var link = document.createElement('button');
-      link.id = 'zy-hiw-hub-link';
-      link.style.cssText = 'width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;margin-bottom:6px;';
-      link.innerHTML = '<i class="fa-solid fa-book-open"></i> All Guides';
-      link.onclick = Z.openHowItWorksHub;
-      header.parentNode.insertBefore(link, header.nextSibling);
-    }, 90);
-    return _origHIW.apply(this, arguments);
-  };
-}
-
-/* Auto-load config on login */
-setTimeout(loadBizConfig, 1500);
-var _cfgUid = null;
-setInterval(function(){
-  var u = me(); var uid = u ? u.id : null;
-  if(uid && uid !== _cfgUid){ _cfgUid = uid; loadBizConfig(); }
-}, 3000);
-
-/* ============================================================
-   NAV PATCH v2 — snapshot DOM, restore on back
-   ============================================================ */
-pageShell = function(title, icon, contentHTML, viewName, viewParam){
-  var app = document.getElementById('app-container'); if(!app) return;
-  var prevView = Z.State.currentView, prevParam = Z.State.currentParam;
-  var prevHTML = app.innerHTML;
-  var prevNav = null;
-  document.querySelectorAll('#bottom-nav button.active').forEach(function(b){ prevNav = b.id; });
-  Z.State.navStack = Z.State.navStack || [];
-  Z.State.navStack.push({ view: prevView, param: prevParam, html: prevHTML, nav: prevNav });
-  if(Z.State.navStack.length > 30) Z.State.navStack.shift();
-  Z.State.currentView = viewName || 'biz-page';
-  Z.State.currentParam = viewParam || null;
-  app.innerHTML =
-    '<div style="display:flex;flex-direction:column;gap:14px;">' +
-      '<div class="view-header">' +
-        '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
-        '<h2 class="view-title" style="margin-left:6px;"><i class="' + icon + '" style="color:#10b981;margin-right:8px;"></i>' + esc(title) + '</h2>' +
-      '</div>' +
-      contentHTML +
-    '</div>';
-  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
-  window.scrollTo(0,0);
-};
-
-var _origGoBackFn = Z.goBack;
-Z.goBack = function(){
-  var stack = Z.State.navStack || [];
-  if(stack.length){
-    var top = stack[stack.length - 1];
-    if(top && typeof top.html === 'string'){
-      stack.pop();
-      var app = document.getElementById('app-container');
-      if(app){
-        app.innerHTML = top.html;
-        Z.State.currentView = top.view || 'home';
-        Z.State.currentParam = top.param || null;
-        document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
-        if(top.nav){ var nb = document.getElementById(top.nav); if(nb) nb.classList.add('active'); }
-        else {
-          var navMap = {home:'nav-home', spark:'nav-spark', galleria:'nav-galleria', lounge:'nav-lounge'};
-          if(navMap[top.view]){ var nb2 = document.getElementById(navMap[top.view]); if(nb2) nb2.classList.add('active'); }
-        }
-        window.scrollTo(0,0);
-        if(top.view === 'lounge' && typeof Z.renderStatusRow === 'function'){ try { Z.renderStatusRow('lounge-status-host'); } catch(e){} }
-        if(top.view === 'home' && typeof Z.setupFeedVideoAutoplay === 'function'){ try { setTimeout(Z.setupFeedVideoAutoplay, 60); } catch(e){} }
-        return;
-      }
-    }
-  }
-  return _origGoBackFn.apply(this, arguments);
-};
-
-/* ============================================================
-   LOUNGE FIX — default rows include 'biz' + single entry
-   ============================================================ */
-(function fixLounge(){
-  if(!Z.__bizGetRowsPatched){
+  if(!Z.__bizGetRowsP2){
     var _origGet = Z._getLoungeRows;
     Z._getLoungeRows = function(){
       var rows = (_origGet ? _origGet.call(this) : null) || ['status', 'circles'];
       var key = Z._loungeKey && Z._loungeKey();
       var saved = null;
       if(key){ try { saved = localStorage.getItem(key); } catch(e){} }
-      if(!saved && rows.indexOf('biz') === -1){ rows = rows.concat(['biz']); }
+      if(!saved && rows.indexOf('biz') === -1) rows = rows.concat(['biz']);
       return rows;
     };
-    Z.__bizGetRowsPatched = true;
+    Z.__bizGetRowsP2 = true;
   }
-  if(Array.isArray(Z.LOUNGE_AVAILABLE_ROWS) && !Z.LOUNGE_AVAILABLE_ROWS.some(function(r){ return r.id === 'biz'; })){
-    Z.LOUNGE_AVAILABLE_ROWS.push({ id:'biz', label:'Earning Hub', icon:'fa-solid fa-coins' });
-  }
-  if(!Z.__bizLoungePatched2){
+  if(!Z.__bizLoadP2){
     var _origLoad = Z._loadLoungeRow;
     Z._loadLoungeRow = async function(rowId){
       if(rowId === 'biz'){
         var body = document.getElementById('lounge-row-body-biz'); if(!body) return;
-        body.innerHTML =
-          '<button onclick="Z.openEarningHub()" style="width:100%;display:flex;gap:12px;align-items:center;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);cursor:pointer;text-align:left;">' +
-            '<div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-coins" style="color:#000;font-size:22px;"></i></div>' +
-            '<div style="flex:1;min-width:0;">' +
-              '<div style="font-size:15px;font-weight:900;color:#fff;">Earning Hub</div>' +
-              '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Referrals · Peer Support · Tiers · Guides</div>' +
-            '</div>' +
-            '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:14px;"></i>' +
-          '</button>';
+        body.innerHTML = '<button data-zact="open" data-zarg="earning-hub" style="width:100%;display:flex;gap:12px;align-items:center;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);cursor:pointer;text-align:left;">' +
+          '<div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-coins" style="color:#000;font-size:22px;"></i></div>' +
+          '<div style="flex:1;min-width:0;"><div style="font-size:15px;font-weight:900;color:#fff;">Earning Hub</div><div style="font-size:11px;color:#94a3b8;margin-top:2px;">Referrals · Peer Support · Tiers · Guides</div></div>' +
+          '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:14px;"></i>' +
+        '</button>';
         return;
       }
       return _origLoad.apply(this, arguments);
     };
-    Z.__bizLoungePatched2 = true;
+    Z.__bizLoadP2 = true;
   }
-  Z.__bizLoungePatched = true;
-})();
+}
 
-/* ============================================================
-   GALLERIA FIX — immediate patch (idempotent)
-   ============================================================ */
-(function fixGalleria(){
-  if(Z.__bizHotPatched && Z.__bizHotOrig){ Z.renderGalleria = Z.__bizHotOrig; }
+function patchGalleria(){
+  if(Z.__bizGalP2) return;
+  Z.__bizGalP2 = true;
   var base = Z.renderGalleria;
   if(typeof base !== 'function') return;
-  Z.__bizHotOrig = base;
   Z.renderGalleria = function(){
     var out = base.apply(this, arguments) || '';
-    var extra =
-      '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
-        '<button onclick="Z.openEarningHub()" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;">' +
-          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">EARN</div>' +
-          '<div style="font-size:13px;font-weight:900;color:#10b981;margin-top:2px;">Earning Hub</div>' +
-        '</button>' +
-        '<button onclick="Z.showView(\'peer-support\')" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.1),rgba(59,130,246,.06));border:1px solid rgba(251,191,36,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;">' +
-          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">HELP</div>' +
-          '<div style="font-size:13px;font-weight:900;color:#fbbf24;margin-top:2px;">Peer Support</div>' +
-        '</button>' +
-      '</div>';
+    var extra = '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+      '<button data-zact="open" data-zarg="earning-hub" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">EARN</div><div style="font-size:13px;font-weight:900;color:#10b981;margin-top:2px;">Earning Hub</div></button>' +
+      '<button data-zact="open" data-zarg="peer-support" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.1),rgba(59,130,246,.06));border:1px solid rgba(251,191,36,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;"><div style="font-size:10px;color:#94a3b8;font-weight:900;">HELP</div><div style="font-size:13px;font-weight:900;color:#fbbf24;margin-top:2px;">Peer Support</div></button>' +
+    '</div>';
     var marker = '<div style="background:linear-gradient(135deg,#10b981,#3b82f6)';
     var i = out.indexOf(marker);
     if(i !== -1) return out.slice(0,i) + extra + out.slice(i);
     return extra + out;
   };
-  Z.__bizHotPatched = true;
-})();
+}
 
-/* ============================================================
-   PROFILE FIX — immediate patch (idempotent)
-   ============================================================ */
-(function fixProfile(){
-  if(Z.__bizProfilePatched && Z.__bizProfileOrig){ Z.renderProfileTab = Z.__bizProfileOrig; }
+function patchProfile(){
+  if(Z.__bizProfP2) return;
+  Z.__bizProfP2 = true;
   var base = Z.renderProfileTab;
   if(typeof base !== 'function') return;
-  Z.__bizProfileOrig = base;
   Z.renderProfileTab = function(c){
     var r = base.call(this, c);
     setTimeout(function(){
@@ -13327,169 +13129,71 @@ Z.goBack = function(){
       block.id = 'zy-biz-profile-links';
       block.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
       block.innerHTML =
-        '<button onclick="Z.openEarningHub()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-coins" style="color:#10b981;margin-right:8px;"></i>Earning Hub</button>' +
-        '<button onclick="Z.openHowItWorksHub()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-circle-info" style="color:#3b82f6;margin-right:8px;"></i>How ZYNIX Works</button>';
+        '<button data-zact="open" data-zarg="earning-hub" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-coins" style="color:#10b981;margin-right:8px;"></i>Earning Hub</button>' +
+        '<button data-zact="open" data-zarg="active-users" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-user-check" style="color:#3b82f6;margin-right:8px;"></i>Active Users</button>';
       cont.appendChild(block);
     }, 50);
     return r;
   };
-  Z.__bizProfilePatched = true;
-})();
-
-/* ============================================================
-   EARNING HUB — single entry from Lounge
-   ============================================================ */
-Z.openEarningHub = function(){
-  var html = '';
-  html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
-    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">EARNING HUB</div>' +
-    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;">Grow your earnings</div>' +
-    '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">Every tap, like, share, answer — ZYNIX pays you from your first second on the platform.</div>' +
-  '</div>';
-  var items = [
-    { key:'how-it-works', icon:'fa-solid fa-circle-info', color:'#3b82f6', title:'How ZYNIX Works', sub:'Six ways to earn' },
-    { key:'earnings',     icon:'fa-solid fa-coins',       color:'#10b981', title:'My Earnings',      sub:'Balance, caps, and payout' },
-    { key:'peer-support', icon:'fa-solid fa-comments',    color:'#fbbf24', title:'Peer Support',     sub:'Ask. Answer. Earn.' },
-    { key:'tiers',        icon:'fa-solid fa-layer-group', color:'#a78bfa', title:'Tiers & Pricing',  sub:'Unlock higher caps' }
-  ];
-  items.forEach(function(it){
-    html += '<button onclick="Z.showView(\''+it.key+'\')" style="width:100%;padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;">' +
-      '<div style="width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+it.icon+'" style="color:'+it.color+';font-size:17px;"></i></div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:14px;font-weight:800;color:#fff;">'+it.title+'</div>' +
-        '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+it.sub+'</div>' +
-      '</div>' +
-      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
-    '</button>';
-  });
-  pageShell('Earning Hub', 'fa-solid fa-coins', html, 'earning-hub');
-};
-
-/* ============================================================
-   EXPLAINER WIRING — delegated clicks survive DOM restore
-   ============================================================ */
-function wireExplainer(selector, key){
-  setTimeout(function(){
-    var el = document.querySelector(selector);
-    if(!el){
-      var vt = document.querySelector('#app-container .view-title');
-      if(vt && vt.parentNode) el = vt.parentNode;
-    }
-    if(!el) return;
-    if(el.querySelector('[data-explain-key]')) return;
-    var btn = document.createElement('button');
-    btn.setAttribute('data-explain-key', key);
-    btn.setAttribute('aria-label', 'How it works');
-    btn.style.cssText = 'background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#60a5fa;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;';
-    btn.innerHTML = '?';
-    el.appendChild(btn);
-  }, 100);
 }
 
-document.body.addEventListener('click', function(e){
-  var btn = e.target.closest('[data-explain-key]');
-  if(!btn) return;
-  e.preventDefault(); e.stopPropagation();
-  var key = btn.getAttribute('data-explain-key');
-  if(key && Z.openExplainer) Z.openExplainer(key);
-});
-
-var _origPeerOpen = Z.openPeerSupport;
-Z.openPeerSupport = function(){ var r = _origPeerOpen.apply(this, arguments); wireExplainer('.view-header', 'peer_support'); return r; };
-var _origEarnOpen = Z.openEarnings;
-Z.openEarnings = function(){ var r = _origEarnOpen.apply(this, arguments); wireExplainer('.view-header', 'bounty'); return r; };
-var _origRefOpen = Z.openReferralsPage;
-Z.openReferralsPage = function(){ var r = _origRefOpen.apply(this, arguments); wireExplainer('.view-header', 'referrals'); return r; };
-
-var _origDriveShowView = Z.showView;
+/* ===================== ROUTER OVERRIDE ===================== */
+var _origShowView = Z.showView;
 Z.showView = function(view, param){
-  var r = _origDriveShowView.apply(this, arguments);
-  if(view === 'drive'){ setTimeout(function(){ wireExplainer('#app-container .view-header', 'ride'); }, 200); }
-  if(view === 'lounge'){ setTimeout(function(){ wireExplainer('#app-container .view-header, #app-container .view-title', 'platform'); }, 200); }
+  if(BIZ_OPENERS[view]) return Z.bizOpen(view, param);
+  return _origShowView.apply(this, arguments);
+};
+
+/* Add ? button to how-it-works and lounge */
+var _origOpenHIW = Z.openHowItWorks;
+Z.openHowItWorks = function(){
+  var r = _origOpenHIW.apply(this, arguments);
   return r;
 };
 
-/* ============================================================
-   PLATFORM EXPLAINER (for Lounge ?)
-   ============================================================ */
-EXPLAINERS['platform'] = {
-  title:'How ZYNIX Works', icon:'fa-solid fa-circle-info',
-  sections:[
-    { h:'The idea', p:'One platform for social, rides, and earnings. Every interaction on ZYNIX pays the person who creates it — from your first second.' },
-    { h:'Earning paths', p:'Referrals, peer support, creator bounty, ad viewing, ride-hailing, and share ride. Six ways, all paying into the same wallet.' },
-    { h:'The bounty pool', p:'40% of subscription revenue funds the bounty pool. That is a floor — ZYNIX never reduces it, and can add more on strong months.' },
-    { h:'Fairness', p:'Contribution Score, single-level referrals, monthly caps, and real-time moderation keep the platform clean and legal everywhere.' }
-  ]
-};
+/* ===================== REALTIME ===================== */
+function bizRealtime(){
+  var c = db(); if(!c) return; var u = me(); if(!u) return;
+  try {
+    c.channel('zynix-peer-q-'+u.id).on('postgres_changes', { event:'*', schema:'public', table:'peer_questions' }, function(){
+      cloudFetchQuestions().then(function(){
+        if(Z.State.currentView === 'peer-support') Z.openPeerSupport();
+      });
+    }).subscribe();
+    c.channel('zynix-peer-a-'+u.id).on('postgres_changes', { event:'INSERT', schema:'public', table:'peer_answers' }, function(){
+      cloudFetchQuestions().then(function(){
+        if(Z.State.currentView === 'peer-support') Z.openPeerSupport();
+      });
+    }).subscribe();
+  } catch(e){}
+}
 
-/* ============================================================
-   HOW-IT-WORKS — redefined without competitor mentions
-   ============================================================ */
-Z.openHowItWorks = function(){
-  var lvl = getScoreLevel();
-  var tier = getTier();
-  var caps = getCaps();
-  var html = '';
+/* ===================== BOOT ===================== */
+function bootBiz(){
+  var u = me(); if(!u) return;
+  loadBiz();
+  cloudFetchQuestions();
+  if(getPeerQuestions().length === 0){
+    var samples = [
+      { id:'q_sample1', title:'How do I change my ride currency?', body:'I switched from Karachi to London and my app still shows PKR. How do I change it?', category:'tech', budget:0.05, askerId:'system', askerName:'New User', status:'open', createdAt:Date.now()-3600000, answers:[] },
+      { id:'q_sample2', title:'Driver cancelled — will I be refunded?', body:'My driver cancelled 2 minutes after accepting. The money is still held in escrow. What happens?', category:'payment', budget:0.10, askerId:'system', askerName:'Rider', status:'open', createdAt:Date.now()-7200000, answers:[] }
+    ];
+    savePeerQuestions(samples);
+  }
+}
 
-  html += '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
-    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">WELCOME TO ZYNIX</div>' +
-    '<div style="font-size:22px;font-weight:900;color:#fff;margin-top:6px;line-height:1.25;">Every interaction. Every moment. Earn from your first second.</div>' +
-    '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.6;">Likes, shares, comments, helpful answers, referrals, ad views — ZYNIX pays you from the very first moment you join.</div>' +
-  '</div>';
+var _lastUid = null;
+setInterval(function(){
+  var u = me(); var uid = u ? u.id : null;
+  if(uid && uid !== _lastUid){ _lastUid = uid; bootBiz(); }
+}, 2000);
 
-  html += '<button onclick="Z.openHowItWorksHub()" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;margin-bottom:6px;"><i class="fa-solid fa-book-open"></i> All Guides</button>';
+setTimeout(patchLounge, 200);
+setTimeout(patchGalleria, 200);
+setTimeout(patchProfile, 200);
+setTimeout(bizRealtime, 1200);
 
-  var ways = [
-    { icon:'fa-solid fa-thumbs-up',   color:'#10b981', title:'Reactions & Content', desc:'Post content, get reactions. Each like earns a small bounty. Cap depends on your tier.' },
-    { icon:'fa-solid fa-share-nodes', color:'#3b82f6', title:'Shares',              desc:'When someone shares your post, both of you earn. Share bounties compound across the network.' },
-    { icon:'fa-solid fa-user-group',  color:'#a78bfa', title:'Referrals',           desc:'Refer a friend who subscribes. Earn $3/month for the first 6 months, then $1/month forever.' },
-    { icon:'fa-solid fa-comments',    color:'#fbbf24', title:'Peer Support',        desc:'Answer questions users pay to ask. Earn $0.01–$0.10 per helpful answer plus weekly quality pool.' },
-    { icon:'fa-solid fa-tv',          color:'#ec4899', title:'Watch & Earn',        desc:'Watch brand ads and earn instantly. Launching in Phase 3 when we activate ad campaigns.' },
-    { icon:'fa-solid fa-palette',     color:'#f59e0b', title:'Creator Spaces',      desc:'Charge $0–$5 for joining your Space. Keep 80%. Bonus if your Space stays above 8/10 quality.' }
-  ];
-  html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;margin-top:8px;">WAYS TO EARN</div>';
-  ways.forEach(function(w){
-    html += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:flex-start;">' +
-      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+w.icon+'" style="color:'+w.color+';font-size:16px;"></i></div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:13px;font-weight:800;color:#fff;">'+esc(w.title)+'</div>' +
-        '<div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5;">'+esc(w.desc)+'</div>' +
-      '</div></div>';
-  });
-
-  html += '<div style="padding:16px;border-radius:14px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
-    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-chart-line" style="color:#3b82f6;margin-right:6px;"></i>CONTRIBUTION SCORE</div>' +
-    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">Your score multiplies every cap in the system. Higher score = higher monthly earning ceiling. Score is earned by helping, not paying.</div>' +
-    '<div style="margin-top:12px;padding:12px;border-radius:10px;background:rgba(0,0,0,0.25);">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-        '<div style="font-size:11px;color:#94a3b8;">Your score</div>' +
-        '<div style="font-size:18px;font-weight:900;color:'+lvl.color+';">'+BS.score+'</div>' +
-      '</div>' +
-      '<div style="font-size:11px;color:'+lvl.color+';font-weight:800;margin-top:4px;">'+esc(lvl.name)+' · '+lvl.mult+'x multiplier</div>' +
-    '</div>' +
-    '<div style="font-size:10px;color:#64748b;margin-top:10px;">+10 FAQ helpful · +15 referral converts · +50 bug reported · −20 post removed</div>' +
-  '</div>';
-
-  html += '<div style="padding:16px;border-radius:14px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);">' +
-    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i>MONTHLY EARNING CAPS</div>' +
-    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">ZYNIX is a supplementary income source. Caps keep it fair and legal everywhere.</div>' +
-    '<div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">PASSIVE CAP</div><div style="font-size:18px;font-weight:900;color:#10b981;margin-top:2px;">'+money(caps.passive,'USD')+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">Referrals · Bounty · Ads</div></div>' +
-      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">ACTIVE CAP</div><div style="font-size:18px;font-weight:900;color:#fbbf24;margin-top:2px;">'+money(caps.active,'USD')+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">Peer support · Translation · Bugs</div></div>' +
-    '</div>' +
-    '<div style="font-size:10px;color:#64748b;margin-top:10px;">Caps multiply with your Contribution Score. Partner level: 5x multiplier.</div>' +
-  '</div>';
-
-  html += disclosureBlock();
-
-  html += '<button onclick="Z.showView(\'peer-support\')" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-comments"></i> Try Peer Support</button>';
-  html += '<button onclick="Z.showView(\'tiers\')" style="width:100%;padding:14px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-layer-group"></i> View all tiers</button>';
-
-  pageShell('How ZYNIX Works', 'fa-solid fa-circle-info', html, 'how-it-works');
-};
-
-console.log('[ZYNIX Biz v1.4] ready — bugs fixed');
-console.log('[ZYNIX Biz v1.1] ready — Sections 18 + cloud');
+console.log('[ZYNIX Biz v2.0] ready');
 })();
 </script>
 </body>
