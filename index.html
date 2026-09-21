@@ -9968,11 +9968,30 @@ async function loadDriverBox(driverId){
 }
 
 /* ================== DRIVE PROFILE (new dedicated page) ================== */
+/* ================== DRIVE PROFILE (v2) ================== */
 async function renderDriveProfilePage(userId){
   var app = document.getElementById('app-container'); if(!app) return;
-  app.innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin" style="font-size:26px;color:#10b981;"></i></div>';
-  var c = db(); if(!c) return;
+  app.innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;">'
+    + '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:26px;color:#10b981;"></i>'
+    + '<div style="margin-top:10px;font-size:12px;">Loading profile…</div></div>';
+
+  var c = db(); if(!c){ app.innerHTML = '<div style="padding:20px;color:#a16262;">Not connected.</div>'; return; }
   var myId = (me()||{}).id;
+  var isMe = myId === userId;
+
+  function _d2FmtDate(ts){ try { return new Date(ts).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); } catch(e){ return ''; } }
+  function _d2ScoreColor(s){ s = Number(s)||0; if(s >= 8) return '#10b981'; if(s >= 4) return '#a18554'; return '#a16262'; }
+  function _d2ScoreBg(s){ s = Number(s)||0; if(s >= 8) return 'rgba(16,185,129,.12)'; if(s >= 4) return 'rgba(161,133,84,.14)'; return 'rgba(161,98,98,.14)'; }
+  function _d2BarRow(tier, label, count, total, color){
+    var pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    var h = '<button data-tier="' + tier + '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);cursor:pointer;text-align:left;width:100%;">';
+    h += '<div style="font-size:11px;color:#94a3b8;font-weight:800;min-width:52px;">' + label + '</div>';
+    h += '<div style="flex:1;height:8px;border-radius:4px;background:rgba(0,0,0,.35);overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width .4s ease;"></div></div>';
+    h += '<div style="font-size:12px;font-weight:900;color:' + color + ';min-width:22px;text-align:right;">' + count + '</div>';
+    h += '</button>';
+    return h;
+  }
+
   try {
     var [dr, rr] = await Promise.all([
       c.rpc('get_driver_public_profile', { p_user_id: userId }),
@@ -9980,157 +9999,229 @@ async function renderDriveProfilePage(userId){
     ]);
     var D = dr && dr.data ? dr.data : null;
     var R = rr && rr.data ? rr.data : null;
-
     var hasDriver = !!(D && D.has_driver_profile);
-    var hasRider  = !!(R && R.has_rider_profile);
-    var activeTab = hasDriver ? 'driver' : 'rider';
-    var isMe = myId === userId;
-    var displayName = (D && D.username) || (R && R.username) || 'User';
-    var avatar = (D && D.avatar) || (R && R.avatar) || '';
-    var bio = (D && D.bio) || (R && R.bio) || '';
-    var profession = (D && D.profession) || (R && R.profession) || '';
+    var hasRider = !!(R && R.has_rider_profile);
+    var activeTab = hasDriver ? 'driver' : (hasRider ? 'rider' : 'none');
 
-    var h = '<div style="padding-bottom:24px;">';
-    h += '<div class="view-header" style="margin-bottom:12px;"><button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;"><i class="fa-solid fa-id-card" style="color:#10b981;margin-right:8px;"></i>Drive Profile</h2></div>';
+    if(!hasDriver && !hasRider){
+      app.innerHTML = '<div class="view-header" style="margin-bottom:12px;"><button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;">Drive Profile</h2></div><div style="text-align:center;padding:60px 20px;color:#94a3b8;font-size:13px;">No profile yet.</div>';
+      return;
+    }
 
-    h += '<div style="padding:16px;border-radius:16px;background:linear-gradient(160deg,#111827,#0f172a);border:1px solid #1e293b;margin-bottom:12px;">'
-      + '<div style="display:flex;align-items:center;gap:14px;">'
-      + '<div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">'+(avatar?('<img src="'+esc(avatar)+'" style="width:100%;height:100%;object-fit:cover;">'):'<span style="font-size:24px;font-weight:900;color:#000;">'+((displayName[0]||'U').toUpperCase())+'</span>')+'</div>'
-      + '<div style="min-width:0;flex:1;"><div style="font-size:18px;font-weight:900;color:#fff;">'+esc(displayName)+'</div>'
-      + (profession ? '<div style="font-size:11px;color:#94a3b8;">'+esc(profession)+'</div>' : '')
-      + (bio ? '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;max-height:36px;overflow:hidden;">'+esc(bio.slice(0,140))+'</div>' : '')
-      + '</div></div>'
-      + '<button onclick="Z.showView(\'public-profile\',\''+esc(userId)+'\')" style="width:100%;margin-top:12px;padding:9px;border-radius:8px;border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.06);color:#10b981;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-user"></i> View Zynix Space</button>'
-      + '</div>';
+    var viewerRules = { showMedia: activeTab === 'driver', showVehicle: activeTab === 'driver', showTrust: activeTab === 'driver' };
+    if(activeTab === 'rider' && !isMe) viewerRules = { showMedia:false, showVehicle:false, showTrust:false };
 
-    if(hasDriver && hasRider && !isMe){
-      h += '<div style="display:flex;gap:6px;margin-bottom:12px;">';
-      h += '<button data-dptab="driver" style="flex:1;padding:10px;border-radius:10px;border:1px solid '+(activeTab==='driver'?'rgba(16,185,129,.5)':'#1e293b')+';background:'+(activeTab==='driver'?'rgba(16,185,129,.12)':'rgba(255,255,255,0.03)')+';color:'+(activeTab==='driver'?'#10b981':'#94a3b8')+';font-weight:800;font-size:12px;cursor:pointer;">As Driver</button>';
-      h += '<button data-dptab="rider" style="flex:1;padding:10px;border-radius:10px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#94a3b8;font-weight:800;font-size:12px;cursor:pointer;">As Rider</button>';
+    var data = activeTab === 'driver' ? D : R;
+    var displayName = data.username || 'User';
+    var avatarUrl = data.avatar || '';
+    var bannerUrl = data.banner_url || '';
+    var bio = data.bio || '';
+    var profession = data.profession || '';
+
+    var h = '<div id="zy-dp2-root" style="padding-bottom:24px;display:flex;flex-direction:column;gap:14px;">';
+
+    h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0;">';
+    h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;"><button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin:0 0 0 4px;font-size:16px;">Profile</h2></div>';
+    if(isMe){
+      h += '<button id="zy-dp2-edit" style="padding:7px 14px;border-radius:20px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);color:#10b981;font-weight:800;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;"><i class="fa-solid fa-pen"></i> Edit</button>';
+    }
+    h += '</div>';
+
+    var avatarSrc = avatarUrl || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(displayName) + '&background=111827&color=34d399&size=200');
+    var bannerStyle = bannerUrl
+      ? 'background-image:url(' + esc(bannerUrl) + ');background-size:cover;background-position:center;'
+      : 'background:radial-gradient(circle at 20% 30%, rgba(16,185,129,.45), transparent 55%),radial-gradient(circle at 85% 20%, rgba(59,130,246,.45), transparent 55%),radial-gradient(circle at 60% 95%, rgba(139,92,246,.35), transparent 55%),#0f172a;';
+
+    h += '<div style="display:flex;gap:10px;height:110px;">';
+    h += '<div style="position:relative;width:110px;flex-shrink:0;"><div style="position:absolute;inset:0;border-radius:14px;padding:2px;background:linear-gradient(135deg,#10b981,#3b82f6,#8b5cf6);"><div style="width:100%;height:100%;border-radius:12px;overflow:hidden;background:#0f172a;"><img src="' + esc(avatarSrc) + '" style="width:100%;height:100%;object-fit:cover;display:block;"></div></div>';
+    if(activeTab === 'driver' && data.has_driver_profile){
+      var online = false;
+      try { var SS = Z.driveState ? Z.driveState() : null; if(SS && SS.driver && SS.driver.user_id === userId) online = !!SS.driver.is_available; } catch(e){}
+      if(online) h += '<div style="position:absolute;bottom:6px;right:6px;width:14px;height:14px;border-radius:50%;background:#10b981;border:2.5px solid #111827;"></div>';
+    }
+    h += '</div>';
+
+    h += '<div style="flex:1;border-radius:14px;overflow:hidden;position:relative;' + bannerStyle + '">';
+    h += '<div style="position:absolute;inset:0;background:linear-gradient(120deg,rgba(0,0,0,.15),rgba(0,0,0,0) 40%);"></div>';
+    if(activeTab === 'driver'){
+      h += '<div style="position:absolute;bottom:8px;right:10px;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">';
+      if(data.is_women_only) h += '<span style="font-size:9px;padding:3px 8px;border-radius:12px;background:rgba(0,0,0,.55);color:#f472b6;font-weight:900;"><i class="fa-solid fa-shield-heart"></i> Women only</span>';
+      if(data.audio_recording_enabled !== false) h += '<span style="font-size:9px;padding:3px 8px;border-radius:12px;background:rgba(0,0,0,.55);color:#60a5fa;font-weight:900;"><i class="fa-solid fa-microphone"></i> Recorded</span>';
+      h += '</div>';
+    }
+    h += '</div></div>';
+
+    h += '<div style="padding:0 2px;">';
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><div style="font-size:20px;font-weight:900;color:#fff;letter-spacing:.2px;">' + esc(displayName) + '</div><i class="fa-solid fa-circle-check" style="color:#10b981;font-size:14px;"></i></div>';
+    var roleLine = activeTab === 'driver' ? 'Driver' : 'Rider';
+    if(profession) roleLine += ' · ' + profession;
+    if(activeTab === 'driver' && data.vehicle_make) roleLine += ' · ' + (data.vehicle_color||'') + ' ' + (data.vehicle_make||'') + ' ' + (data.vehicle_model||'');
+    h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;">' + esc(roleLine) + '</div>';
+    if(bio) h += '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.55;">' + esc(bio) + '</div>';
+    h += '</div>';
+
+    if(!isMe){
+      h += '<div style="display:flex;gap:8px;">';
+      h += '<button onclick="if(Z.sendConnectRequest)Z.sendConnectRequest(\'' + esc(userId) + '\')" style="flex:1;padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-handshake"></i> Connect</button>';
+      h += '<button onclick="if(Z.showView)Z.showView(\'public-profile\',\'' + esc(userId) + '\')" style="flex:1;padding:11px;border-radius:10px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-user"></i> SPACE</button>';
       h += '</div>';
     }
 
-    h += '<div id="zy-dp-body"></div>';
-    h += '</div>';
-    app.innerHTML = h;
+    var avg = Number(data.rating_avg)||5;
+    var cnt = Number(data.rating_count)||0;
+    var bucketLow = Number(data.bucket_low)||0;
+    var bucketMid = Number(data.bucket_mid)||0;
+    var bucketHigh = Number(data.bucket_high)||0;
+    var totalB = Math.max(1, bucketLow + bucketMid + bucketHigh);
 
-    var body = document.getElementById('zy-dp-body');
+    h += '<div style="padding:16px;border-radius:14px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.28);">';
+    h += '<div style="display:flex;align-items:baseline;gap:8px;"><div style="font-size:32px;font-weight:900;color:' + _d2ScoreColor(avg) + ';">' + avg.toFixed(1) + '</div><div style="font-size:14px;color:#94a3b8;font-weight:700;">/ 10</div><div style="margin-left:auto;text-align:right;"><div style="font-size:11px;color:#94a3b8;font-weight:800;">' + cnt + ' rating' + (cnt===1?'':'s') + '</div><div style="font-size:11px;color:#64748b;">' + (Number(data.total_rides)||0) + ' rides</div></div></div>';
+    h += '<div id="zy-dp2-bars" style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">';
+    h += _d2BarRow('high','8 – 10', bucketHigh, totalB, '#10b981');
+    h += _d2BarRow('mid','4 – 7', bucketMid, totalB, '#a18554');
+    h += _d2BarRow('low','1 – 3', bucketLow, totalB, '#a16262');
+    h += '</div></div>';
 
-    function paint(tab){
-      if(tab === 'driver' && !hasDriver){
-        body.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#94a3b8;font-size:12px;">No driver profile.</div>';
-        return;
-      }
-      if(tab === 'rider' && !hasRider){
-        body.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#94a3b8;font-size:12px;">No rider profile.</div>';
-        return;
-      }
-      var data = tab === 'driver' ? D : R;
-      var bh = '';
-
-      /* Rating card */
-      bh += '<div style="padding:16px;border-radius:14px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.3);margin-bottom:12px;text-align:center;">'
-        + '<div style="font-size:10px;color:#94a3b8;font-weight:800;">AVERAGE RATING</div>'
-        + '<div style="font-size:34px;font-weight:900;color:#fbbf24;margin-top:4px;"><span>★</span> '+(Number(data.rating_avg)||5).toFixed(1)+' / 10</div>'
-        + '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;">'+(data.rating_count||0)+' rating'+(data.rating_count===1?'':'s')+' · '+(data.total_rides||0)+' rides</div>'
-        + (isMe && tab === 'rider' ? '<div style="font-size:10px;color:#94a3b8;margin-top:8px;padding-top:8px;border-top:1px solid rgba(251,191,36,.15);"><i class="fa-solid fa-eye-slash"></i> Your rating is visible only to drivers</div>' : '')
-        + '</div>';
-
-      /* Buckets */
-      bh += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;">'
-        + '<button data-bucket="low" style="padding:14px 6px;border-radius:10px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.08);color:#ef4444;font-weight:800;font-size:12px;cursor:pointer;"><div style="font-size:22px;font-weight:900;">'+(data.bucket_low||0)+'</div><div style="font-size:10px;opacity:.85;margin-top:2px;">1–3</div></button>'
-        + '<button data-bucket="mid" style="padding:14px 6px;border-radius:10px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.08);color:#fbbf24;font-weight:800;font-size:12px;cursor:pointer;"><div style="font-size:22px;font-weight:900;">'+(data.bucket_mid||0)+'</div><div style="font-size:10px;opacity:.85;margin-top:2px;">4–7</div></button>'
-        + '<button data-bucket="high" style="padding:14px 6px;border-radius:10px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);color:#10b981;font-weight:800;font-size:12px;cursor:pointer;"><div style="font-size:22px;font-weight:900;">'+(data.bucket_high||0)+'</div><div style="font-size:10px;opacity:.85;margin-top:2px;">8–10</div></button>'
-        + '</div>';
-
-      /* History container */
-      bh += '<div id="zy-dp-hist" style="max-height:340px;overflow-y:auto;margin-bottom:14px;"><div style="text-align:center;padding:20px;color:#64748b;font-size:11px;">Tap a tier above to see rating history (dates + remarks only)</div></div>';
-
-      /* Driver-specific: vehicle */
-      if(tab === 'driver'){
-        bh += '<div style="padding:14px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;margin-bottom:12px;">'
-          + '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:8px;"><i class="fa-solid fa-car" style="color:#10b981;margin-right:6px;"></i>VEHICLE</div>'
-          + '<div style="font-size:14px;color:#fff;font-weight:800;">'+esc((D.vehicle_make||'')+' '+(D.vehicle_model||''))+'</div>'
-          + '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+esc(D.vehicle_color||'')+' · plate '+esc(D.vehicle_plate||'—')+' · '+(D.vehicle_year||'')+' · '+esc(D.vehicle_type||'')+'</div>'
-          + (D.is_women_only ? '<div style="margin-top:8px;"><span style="font-size:10px;padding:3px 8px;border-radius:14px;background:rgba(236,72,153,.18);color:#f472b6;font-weight:800;"><i class="fa-solid fa-shield-heart"></i> Women riders only</span></div>' : '')
-          + '</div>';
-
-        /* Car video + photos */
-        if(D.car_video_url || (D.car_photos && Object.keys(D.car_photos).length)){
-          bh += '<div style="padding:14px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;margin-bottom:12px;">'
-            + '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:10px;"><i class="fa-solid fa-video" style="color:#3b82f6;margin-right:6px;"></i>CAR MEDIA</div>';
-          if(D.car_video_url){
-            bh += '<div style="border-radius:10px;overflow:hidden;background:#000;margin-bottom:10px;"><video src="'+esc(D.car_video_url)+'" controls playsinline preload="metadata" style="width:100%;max-height:240px;display:block;background:#000;"></video></div>';
-          }
-          var photoKeys = ['front','back','left','right','int_front','int_back'];
-          var photoLabels = {front:'Front',back:'Back',left:'Left side',right:'Right side',int_front:'Interior · Front',int_back:'Interior · Rear'};
-          var have = photoKeys.filter(function(k){ return D.car_photos && D.car_photos[k]; });
-          if(have.length){
-            bh += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">';
-            have.forEach(function(k){
-              bh += '<div style="border-radius:8px;overflow:hidden;background:#000;position:relative;aspect-ratio:1;"><img src="'+esc(D.car_photos[k])+'" style="width:100%;height:100%;object-fit:cover;"><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,.85),transparent);padding:4px 6px;font-size:9px;color:#fff;font-weight:800;">'+esc(photoLabels[k]||k)+'</div></div>';
-            });
-            bh += '</div>';
-          }
-          bh += '</div>';
-        }
-
-        /* Trust badges */
-        var trust = [];
-        if(D.vehicle_ownership) trust.push({icon:D.vehicle_ownership==='rented'?'fa-solid fa-file-signature':'fa-solid fa-user-shield', label:D.vehicle_ownership==='rented'?'Rented vehicle':'Owner-driven', color:'#10b981'});
-        if(D.last_tyre_change){ var tyDate = new Date(D.last_tyre_change); var monthOld = (Date.now()-tyDate.getTime())/(30*24*60*60*1000); trust.push({icon:'fa-solid fa-circle-dot', label:'Tyres changed '+(monthOld<1?'this month':(Math.round(monthOld)+' months ago')), color: monthOld<6 ? '#10b981' : '#fbbf24'}); }
-        if(D.last_safety_check){ trust.push({icon:'fa-solid fa-clipboard-check', label:'Safety checked '+new Date(D.last_safety_check).toLocaleDateString(), color:'#10b981'}); }
-        if(D.insurance_expiry){ var insDate = new Date(D.insurance_expiry); var insOk = insDate > new Date(); trust.push({icon:'fa-solid fa-file-shield', label:insOk ? ('Insured till '+insDate.toLocaleDateString()) : 'Insurance expired', color: insOk ? '#10b981' : '#ef4444'}); }
-        if(trust.length){
-          bh += '<div style="padding:14px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;margin-bottom:12px;">'
-            + '<div style="font-size:11px;font-weight:900;color:#e2e8f0;margin-bottom:10px;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i>TRUST & SAFETY</div>';
-          trust.forEach(function(t){
-            bh += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><i class="'+t.icon+'" style="color:'+t.color+';width:16px;text-align:center;"></i><span style="font-size:12px;color:#cbd5e1;">'+esc(t.label)+'</span></div>';
-          });
-          bh += '</div>';
-        }
-      }
-
-      body.innerHTML = bh;
-
-      /* Bucket clicks */
-      body.querySelectorAll('[data-bucket]').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var k = this.getAttribute('data-bucket');
-          var arr = (data.ratings||[]).filter(function(rr){ var s = Number(rr.score)||0; return k === 'low' ? s <= 3 : k === 'mid' ? (s >= 4 && s <= 7) : s >= 8; });
-          var host = document.getElementById('zy-dp-hist');
-          if(!arr.length){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;font-size:11px;">No ratings in this tier.</div>'; return; }
-          host.innerHTML = arr.map(function(rr){
-            var score = Number(rr.score)||0;
-            var col = score >= 8 ? '#10b981' : score >= 4 ? '#fbbf24' : '#ef4444';
-            var issueKeys = rr.issues ? Object.keys(rr.issues).filter(function(x){ return rr.issues[x]; }) : [];
-            var issueLabels = issueKeys.map(function(x){ return x.replace(/_/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase();}); });
-            return '<div style="padding:10px;border-radius:8px;background:rgba(0,0,0,0.25);margin-bottom:6px;">'
-              + '<div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:14px;font-weight:900;color:'+col+';">★ '+score+' / 10</div><div style="font-size:10px;color:#64748b;">'+(rr.created_at ? new Date(rr.created_at).toLocaleDateString() : '')+'</div></div>'
-              + (issueLabels.length ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">'+issueLabels.map(function(l){ return '<span style="font-size:9px;padding:2px 6px;border-radius:10px;background:rgba(239,68,68,.15);color:#fca5a5;font-weight:700;">'+esc(l)+'</span>'; }).join('')+'</div>' : '')
-              + (rr.comment ? '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;font-style:italic;">"'+esc(rr.comment)+'"</div>' : '')
-              + '</div>';
-          }).join('');
+    if(viewerRules.showMedia && (data.car_video_url || (data.car_photos && Object.keys(data.car_photos).length))){
+      h += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+      h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;"><i class="fa-solid fa-images" style="color:#3b82f6;margin-right:6px;"></i>CAR MEDIA</div>';
+      if(data.car_video_url) h += '<div style="border-radius:10px;overflow:hidden;background:#000;margin-bottom:10px;"><video src="' + esc(data.car_video_url) + '" controls playsinline preload="metadata" style="width:100%;max-height:280px;display:block;background:#000;"></video></div>';
+      var photoKeys = ['front','back','left','right','int_front','int_back'];
+      var labels = { front:'Front', back:'Back', left:'Left', right:'Right', int_front:'Interior F', int_back:'Interior R' };
+      var have = photoKeys.filter(function(k){ return data.car_photos && data.car_photos[k]; });
+      if(have.length){
+        h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
+        have.forEach(function(k){
+          h += '<div data-dp2-photo="' + esc(data.car_photos[k]) + '" style="position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#000;cursor:zoom-in;"><img src="' + esc(data.car_photos[k]) + '" style="width:100%;height:100%;object-fit:cover;"><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,.9),transparent);padding:4px 6px;font-size:9px;color:#fff;font-weight:800;">' + esc(labels[k]||k) + '</div></div>';
         });
-      });
+        h += '</div>';
+      }
+      h += '</div>';
     }
 
-    paint(activeTab);
+    if(viewerRules.showVehicle){
+      h += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+      h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;"><i class="fa-solid fa-car" style="color:#10b981;margin-right:6px;"></i>VEHICLE</div>';
+      h += '<div style="font-size:16px;font-weight:900;color:#fff;">' + esc((data.vehicle_make||'') + ' ' + (data.vehicle_model||'')) + '</div>';
+      var vparts = [];
+      if(data.vehicle_color) vparts.push(data.vehicle_color);
+      if(data.vehicle_plate) vparts.push('plate ' + data.vehicle_plate);
+      if(data.vehicle_year) vparts.push(data.vehicle_year);
+      if(data.vehicle_type) vparts.push((data.vehicle_type||'').toUpperCase());
+      h += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;">' + esc(vparts.join(' · ')) + '</div>';
+      if(data.vehicle_ownership){
+        var ownLabel = data.vehicle_ownership === 'rented' ? 'Rented vehicle' : data.vehicle_ownership === 'leased' ? 'Leased' : 'Owner-driven';
+        h += '<div style="margin-top:10px;"><span style="font-size:10px;padding:4px 10px;border-radius:14px;background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.28);font-weight:800;">' + esc(ownLabel) + '</span></div>';
+      }
+      h += '</div>';
+    }
 
-    app.querySelectorAll('[data-dptab]').forEach(function(b){
-      b.addEventListener('click', function(){
-        var t = this.getAttribute('data-dptab');
-        app.querySelectorAll('[data-dptab]').forEach(function(x){
-          var isActive = x === b;
-          x.style.borderColor = isActive ? 'rgba(16,185,129,.5)' : '#1e293b';
-          x.style.background = isActive ? 'rgba(16,185,129,.12)' : 'rgba(255,255,255,0.03)';
-          x.style.color = isActive ? '#10b981' : '#94a3b8';
+    if(viewerRules.showTrust){
+      var trustItems = [];
+      if(data.insurance_expiry){
+        var insDate = new Date(data.insurance_expiry);
+        var insOk = insDate > new Date();
+        trustItems.push({ icon:'fa-solid fa-file-shield', color: insOk ? '#10b981' : '#a16262', label:'Insurance', value: insOk ? ('Valid till ' + _d2FmtDate(data.insurance_expiry)) : 'Expired ' + _d2FmtDate(data.insurance_expiry), proofUrl: data.insurance_proof_url });
+      }
+      if(data.last_tyre_change){
+        var tyDate = new Date(data.last_tyre_change);
+        var months = Math.round((Date.now() - tyDate.getTime())/(30*24*60*60*1000));
+        var tyColor = months < 6 ? '#10b981' : '#a18554';
+        var tyLabel = months < 1 ? 'this month' : (months + ' month' + (months===1?'':'s') + ' ago');
+        trustItems.push({ icon:'fa-solid fa-circle-dot', color: tyColor, label:'Tyres changed', value: tyLabel });
+      }
+      if(data.last_safety_check) trustItems.push({ icon:'fa-solid fa-clipboard-check', color:'#10b981', label:'Safety check', value: _d2FmtDate(data.last_safety_check) });
+      if(data.engine_work_notes) trustItems.push({ icon:'fa-solid fa-screwdriver-wrench', color:'#60a5fa', label:'Engine work', value: data.engine_work_notes + (data.engine_work_date ? ' · ' + _d2FmtDate(data.engine_work_date) : '') });
+
+      if(trustItems.length){
+        h += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+        h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:12px;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i>TRUST & SAFETY</div>';
+        trustItems.forEach(function(t){
+          h += '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">';
+          h += '<div style="width:32px;height:32px;border-radius:9px;background:rgba(255,255,255,.04);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="' + t.icon + '" style="color:' + t.color + ';font-size:13px;"></i></div>';
+          h += '<div style="flex:1;min-width:0;"><div style="font-size:11px;color:#94a3b8;font-weight:800;">' + esc(t.label) + '</div><div style="font-size:13px;color:#fff;margin-top:2px;line-height:1.4;">' + esc(t.value) + '</div>';
+          if(t.proofUrl) h += '<button data-dp2-photo="' + esc(t.proofUrl) + '" style="margin-top:6px;padding:4px 10px;border-radius:14px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-size:10px;font-weight:800;cursor:pointer;">View proof <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:8px;"></i></button>';
+          h += '</div></div>';
         });
-        paint(t);
-      });
+        h += '</div>';
+      }
+    }
+
+    h += '<div id="zy-dp2-reviews"></div>';
+    h += '</div>';
+
+    app.innerHTML = h;
+
+    var eb = document.getElementById('zy-dp2-edit');
+    if(eb) eb.onclick = function(){ if(Z.openDriverModalV2) Z.openDriverModalV2(); else toast('Editor unavailable'); };
+
+    var activeFilter = null;
+    var allRatings = Array.isArray(data.ratings) ? data.ratings : [];
+
+    function paintReviewList(list, tier, totalAll){
+      var host = document.getElementById('zy-dp2-reviews'); if(!host) return;
+      var h2 = '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+      h2 += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;"><i class="fa-solid fa-star" style="color:#a18554;margin-right:6px;"></i>REVIEWS (' + totalAll + ')</div>';
+      if(tier){ var tLabel = tier==='low'?'1 – 3':tier==='mid'?'4 – 7':'8 – 10'; h2 += '<button id="zy-dp2-clear" style="padding:5px 12px;border-radius:14px;border:1px solid #1e293b;background:transparent;color:#94a3b8;font-size:10px;font-weight:800;cursor:pointer;">Showing ' + tLabel + ' · Clear</button>'; }
+      h2 += '</div>';
+      if(!list.length){ h2 += '<div style="text-align:center;padding:30px 20px;color:#64748b;font-size:12px;">No reviews in this range.</div>'; }
+      else {
+        list.forEach(function(r){
+          var sc = Number(r.score)||0;
+          h2 += '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.05);">';
+          h2 += '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:12px;background:' + _d2ScoreBg(sc) + ';color:' + _d2ScoreColor(sc) + ';font-weight:900;font-size:13px;"><i class="fa-solid fa-star" style="font-size:10px;"></i> ' + sc + ' / 10</span><span style="font-size:10px;color:#64748b;font-weight:700;">' + ago(r.created_at) + '</span></div>';
+          if(r.comment) h2 += '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.55;font-style:italic;">"' + esc(r.comment) + '"</div>';
+          if(r.issues){
+            var keys = Object.keys(r.issues).filter(function(k){ return r.issues[k]; });
+            if(keys.length){
+              h2 += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px;">';
+              keys.forEach(function(k){ var lbl = k.replace(/_/g,' ').replace(/\b\w/g,function(m){ return m.toUpperCase(); }); h2 += '<span style="font-size:9px;padding:2px 8px;border-radius:10px;background:rgba(161,98,98,.14);color:#a16262;font-weight:800;">' + esc(lbl) + '</span>'; });
+              h2 += '</div>';
+            }
+          }
+          h2 += '</div>';
+        });
+      }
+      h2 += '<div style="margin-top:12px;font-size:10px;color:#64748b;line-height:1.5;text-align:center;">Ratings are anonymous.<br>Only the score and comment are shown.</div>';
+      h2 += '</div>';
+      host.innerHTML = h2;
+      var clr = document.getElementById('zy-dp2-clear');
+      if(clr) clr.onclick = function(){ activeFilter = null; document.querySelectorAll('#zy-dp2-bars [data-tier]').forEach(function(x){ x.style.background = 'rgba(255,255,255,0.03)'; x.style.borderColor = '#1e293b'; }); paintReviews(null); };
+    }
+    function paintReviews(tier){
+      var list = allRatings.slice();
+      if(tier === 'low')  list = list.filter(function(r){ return (Number(r.score)||0) <= 3; });
+      if(tier === 'mid')  list = list.filter(function(r){ var s=Number(r.score)||0; return s >= 4 && s <= 7; });
+      if(tier === 'high') list = list.filter(function(r){ return (Number(r.score)||0) >= 8; });
+      paintReviewList(list, tier, allRatings.length);
+    }
+
+    document.querySelectorAll('#zy-dp2-bars [data-tier]').forEach(function(bar){
+      bar.onclick = function(){
+        var t = this.getAttribute('data-tier');
+        activeFilter = (activeFilter === t) ? null : t;
+        document.querySelectorAll('#zy-dp2-bars [data-tier]').forEach(function(x){
+          if(x.getAttribute('data-tier') === activeFilter){ x.style.background = 'rgba(16,185,129,.08)'; x.style.borderColor = 'rgba(16,185,129,.4)'; }
+          else { x.style.background = 'rgba(255,255,255,0.03)'; x.style.borderColor = '#1e293b'; }
+        });
+        paintReviews(activeFilter);
+      };
+    });
+
+    paintReviews(null);
+
+    app.querySelectorAll('[data-dp2-photo]').forEach(function(el){
+      el.onclick = function(){
+        var url = this.getAttribute('data-dp2-photo'); if(!url) return;
+        var lb = document.createElement('div');
+        lb.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;';
+        lb.innerHTML = '<img src="' + esc(url) + '" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">';
+        lb.onclick = function(){ lb.remove(); };
+        document.body.appendChild(lb);
+      };
     });
   } catch(e){
-    app.innerHTML = '<div class="view-header" style="margin-bottom:12px;"><button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;">Drive Profile</h2></div><div style="text-align:center;padding:40px;color:#f87171;font-size:12px;">Failed: '+esc(e.message)+'</div>';
+    app.innerHTML = '<div class="view-header" style="margin-bottom:12px;"><button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;">Drive Profile</h2></div><div style="text-align:center;padding:40px;color:#a16262;font-size:12px;">Failed: ' + esc(e.message||'unknown') + '</div>';
   }
 }
 
@@ -12270,7 +12361,7 @@ function cur(){ return Z.driveCurrency ? Z.driveCurrency() : 'GBP'; }
 var PHOTO_KEYS = ['front','back','left','right','int_front','int_back'];
 var PHOTO_LABELS = { front:'Front', back:'Back', left:'Left side', right:'Right side', int_front:'Interior front', int_back:'Interior rear' };
 
-var FV = { videoFile:null, videoLocalUrl:'', videoRemoveFlag:false, photos:{}, photoRemoveFlags:{} };
+var FV = { videoFile:null, videoLocalUrl:'', videoRemoveFlag:false, photos:{}, photoRemoveFlags:{}, avatarFile:null, avatarLocalUrl:'', bannerFile:null, bannerLocalUrl:'' };
 function resetFV(){
   if(FV.videoLocalUrl){ try { URL.revokeObjectURL(FV.videoLocalUrl); } catch(e){} }
   Object.keys(FV.photos||{}).forEach(function(k){
@@ -12365,6 +12456,8 @@ function renderModal(){
   wireModal();
   paintVideoPreview();
   PHOTO_KEYS.forEach(paintPhotoPreview);
+   paintAvatarPreview();
+  paintBannerPreview();
 }
 
 /* ============================================================
@@ -12411,6 +12504,53 @@ function wireModal(){
 /* ============================================================
    PAINT PREVIEWS
    ============================================================ */
+   function paintAvatarPreview(){
+  var host = document.getElementById('zy-do2-avatar-preview');
+  var btn = document.getElementById('zy-do2-avatar-btn');
+  if(!host) return;
+  var S = getS(); var d = (S && S.driver) || {};
+  if(FV.avatarFile){
+    if(!FV.avatarLocalUrl){ try { FV.avatarLocalUrl = URL.createObjectURL(FV.avatarFile); } catch(e){} }
+    host.innerHTML = '<div style="position:relative;display:inline-block;"><img src="' + FV.avatarLocalUrl + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do2-avatar-rm" style="position:absolute;top:4px;right:4px;padding:3px 8px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">×</button></div>';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Replace avatar';
+    var rm = document.getElementById('zy-do2-avatar-rm');
+    if(rm) rm.onclick = function(){
+      if(FV.avatarLocalUrl){ try { URL.revokeObjectURL(FV.avatarLocalUrl); } catch(e){} }
+      FV.avatarFile = null; FV.avatarLocalUrl = '';
+      paintAvatarPreview();
+    };
+  } else if(d.avatar){
+    host.innerHTML = '<img src="' + esc(d.avatar) + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:1px solid #1e293b;display:block;">';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Replace avatar';
+  } else {
+    host.innerHTML = '';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-user-circle"></i> Choose avatar';
+  }
+}
+
+function paintBannerPreview(){
+  var host = document.getElementById('zy-do2-banner-preview');
+  var btn = document.getElementById('zy-do2-banner-btn');
+  if(!host) return;
+  var S = getS(); var d = (S && S.driver) || {};
+  if(FV.bannerFile){
+    if(!FV.bannerLocalUrl){ try { FV.bannerLocalUrl = URL.createObjectURL(FV.bannerFile); } catch(e){} }
+    host.innerHTML = '<div style="position:relative;"><img src="' + FV.bannerLocalUrl + '" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid #1e293b;display:block;"><button type="button" id="zy-do2-banner-rm" style="position:absolute;top:6px;right:6px;padding:4px 10px;border-radius:12px;border:none;background:rgba(161,98,98,.9);color:#fff;font-size:10px;font-weight:800;cursor:pointer;">Remove</button></div>';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Replace banner';
+    var rm = document.getElementById('zy-do2-banner-rm');
+    if(rm) rm.onclick = function(){
+      if(FV.bannerLocalUrl){ try { URL.revokeObjectURL(FV.bannerLocalUrl); } catch(e){} }
+      FV.bannerFile = null; FV.bannerLocalUrl = '';
+      paintBannerPreview();
+    };
+  } else if(d.banner_url){
+    host.innerHTML = '<img src="' + esc(d.banner_url) + '" style="width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid #1e293b;display:block;">';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Replace banner';
+  } else {
+    host.innerHTML = '';
+    if(btn) btn.innerHTML = '<i class="fa-solid fa-image"></i> Choose banner';
+  }
+}
 function paintVideoPreview(){
   var host = document.getElementById('zy-do2-video-preview');
   var btn = document.getElementById('zy-do2-video-btn');
