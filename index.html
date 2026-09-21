@@ -13186,18 +13186,16 @@ setInterval(function(){
 }, 3000);
 
 /* ============================================================
-   NAV PATCH — biz pages snapshot DOM, goBack restores it
+   NAV PATCH v2 — snapshot DOM, restore on back
    ============================================================ */
 pageShell = function(title, icon, contentHTML, viewName, viewParam){
-  var app = document.getElementById('app-container');
-  if(!app) return;
-  var prevView = Z.State.currentView;
-  var prevParam = Z.State.currentParam;
+  var app = document.getElementById('app-container'); if(!app) return;
+  var prevView = Z.State.currentView, prevParam = Z.State.currentParam;
   var prevHTML = app.innerHTML;
-  var prevNavActive = null;
-  document.querySelectorAll('#bottom-nav button.active').forEach(function(b){ prevNavActive = b.id; });
+  var prevNav = null;
+  document.querySelectorAll('#bottom-nav button.active').forEach(function(b){ prevNav = b.id; });
   Z.State.navStack = Z.State.navStack || [];
-  Z.State.navStack.push({ view: prevView, param: prevParam, html: prevHTML, nav: prevNavActive });
+  Z.State.navStack.push({ view: prevView, param: prevParam, html: prevHTML, nav: prevNav });
   if(Z.State.navStack.length > 30) Z.State.navStack.shift();
   Z.State.currentView = viewName || 'biz-page';
   Z.State.currentParam = viewParam || null;
@@ -13226,20 +13224,14 @@ Z.goBack = function(){
         Z.State.currentView = top.view || 'home';
         Z.State.currentParam = top.param || null;
         document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
-        if(top.nav){
-          var nb = document.getElementById(top.nav);
-          if(nb) nb.classList.add('active');
-        } else {
+        if(top.nav){ var nb = document.getElementById(top.nav); if(nb) nb.classList.add('active'); }
+        else {
           var navMap = {home:'nav-home', spark:'nav-spark', galleria:'nav-galleria', lounge:'nav-lounge'};
           if(navMap[top.view]){ var nb2 = document.getElementById(navMap[top.view]); if(nb2) nb2.classList.add('active'); }
         }
         window.scrollTo(0,0);
-        if(top.view === 'lounge' && typeof Z.renderStatusRow === 'function'){
-          try { Z.renderStatusRow('lounge-status-host'); } catch(e){}
-        }
-        if(top.view === 'home' && typeof Z.setupFeedVideoAutoplay === 'function'){
-          try { setTimeout(Z.setupFeedVideoAutoplay, 60); } catch(e){}
-        }
+        if(top.view === 'lounge' && typeof Z.renderStatusRow === 'function'){ try { Z.renderStatusRow('lounge-status-host'); } catch(e){} }
+        if(top.view === 'home' && typeof Z.setupFeedVideoAutoplay === 'function'){ try { setTimeout(Z.setupFeedVideoAutoplay, 60); } catch(e){} }
         return;
       }
     }
@@ -13248,65 +13240,256 @@ Z.goBack = function(){
 };
 
 /* ============================================================
-   EXPLAINER WIRING — every feature page gets a small "?" button
+   LOUNGE FIX — default rows include 'biz' + single entry
    ============================================================ */
-function wireExplainer(targetSelector, viewKey){
+(function fixLounge(){
+  if(!Z.__bizGetRowsPatched){
+    var _origGet = Z._getLoungeRows;
+    Z._getLoungeRows = function(){
+      var rows = (_origGet ? _origGet.call(this) : null) || ['status', 'circles'];
+      var key = Z._loungeKey && Z._loungeKey();
+      var saved = null;
+      if(key){ try { saved = localStorage.getItem(key); } catch(e){} }
+      if(!saved && rows.indexOf('biz') === -1){ rows = rows.concat(['biz']); }
+      return rows;
+    };
+    Z.__bizGetRowsPatched = true;
+  }
+  if(Array.isArray(Z.LOUNGE_AVAILABLE_ROWS) && !Z.LOUNGE_AVAILABLE_ROWS.some(function(r){ return r.id === 'biz'; })){
+    Z.LOUNGE_AVAILABLE_ROWS.push({ id:'biz', label:'Earning Hub', icon:'fa-solid fa-coins' });
+  }
+  if(!Z.__bizLoungePatched2){
+    var _origLoad = Z._loadLoungeRow;
+    Z._loadLoungeRow = async function(rowId){
+      if(rowId === 'biz'){
+        var body = document.getElementById('lounge-row-body-biz'); if(!body) return;
+        body.innerHTML =
+          '<button onclick="Z.openEarningHub()" style="width:100%;display:flex;gap:12px;align-items:center;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);cursor:pointer;text-align:left;">' +
+            '<div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-coins" style="color:#000;font-size:22px;"></i></div>' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:15px;font-weight:900;color:#fff;">Earning Hub</div>' +
+              '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Referrals · Peer Support · Tiers · Guides</div>' +
+            '</div>' +
+            '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:14px;"></i>' +
+          '</button>';
+        return;
+      }
+      return _origLoad.apply(this, arguments);
+    };
+    Z.__bizLoungePatched2 = true;
+  }
+  Z.__bizLoungePatched = true;
+})();
+
+/* ============================================================
+   GALLERIA FIX — immediate patch (idempotent)
+   ============================================================ */
+(function fixGalleria(){
+  if(Z.__bizHotPatched && Z.__bizHotOrig){ Z.renderGalleria = Z.__bizHotOrig; }
+  var base = Z.renderGalleria;
+  if(typeof base !== 'function') return;
+  Z.__bizHotOrig = base;
+  Z.renderGalleria = function(){
+    var out = base.apply(this, arguments) || '';
+    var extra =
+      '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+        '<button onclick="Z.openEarningHub()" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;">' +
+          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">EARN</div>' +
+          '<div style="font-size:13px;font-weight:900;color:#10b981;margin-top:2px;">Earning Hub</div>' +
+        '</button>' +
+        '<button onclick="Z.showView(\'peer-support\')" style="flex:1;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.1),rgba(59,130,246,.06));border:1px solid rgba(251,191,36,.35);color:#fff;font-weight:800;cursor:pointer;text-align:left;">' +
+          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">HELP</div>' +
+          '<div style="font-size:13px;font-weight:900;color:#fbbf24;margin-top:2px;">Peer Support</div>' +
+        '</button>' +
+      '</div>';
+    var marker = '<div style="background:linear-gradient(135deg,#10b981,#3b82f6)';
+    var i = out.indexOf(marker);
+    if(i !== -1) return out.slice(0,i) + extra + out.slice(i);
+    return extra + out;
+  };
+  Z.__bizHotPatched = true;
+})();
+
+/* ============================================================
+   PROFILE FIX — immediate patch (idempotent)
+   ============================================================ */
+(function fixProfile(){
+  if(Z.__bizProfilePatched && Z.__bizProfileOrig){ Z.renderProfileTab = Z.__bizProfileOrig; }
+  var base = Z.renderProfileTab;
+  if(typeof base !== 'function') return;
+  Z.__bizProfileOrig = base;
+  Z.renderProfileTab = function(c){
+    var r = base.call(this, c);
+    setTimeout(function(){
+      var cont = c || document.getElementById('zy-content');
+      if(!cont || cont.querySelector('#zy-biz-profile-links')) return;
+      var block = document.createElement('div');
+      block.id = 'zy-biz-profile-links';
+      block.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
+      block.innerHTML =
+        '<button onclick="Z.openEarningHub()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-coins" style="color:#10b981;margin-right:8px;"></i>Earning Hub</button>' +
+        '<button onclick="Z.openHowItWorksHub()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-circle-info" style="color:#3b82f6;margin-right:8px;"></i>How ZYNIX Works</button>';
+      cont.appendChild(block);
+    }, 50);
+    return r;
+  };
+  Z.__bizProfilePatched = true;
+})();
+
+/* ============================================================
+   EARNING HUB — single entry from Lounge
+   ============================================================ */
+Z.openEarningHub = function(){
+  var html = '';
+  html += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">EARNING HUB</div>' +
+    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:4px;">Grow your earnings</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.6;">Every tap, like, share, answer — ZYNIX pays you from your first second on the platform.</div>' +
+  '</div>';
+  var items = [
+    { key:'how-it-works', icon:'fa-solid fa-circle-info', color:'#3b82f6', title:'How ZYNIX Works', sub:'Six ways to earn' },
+    { key:'earnings',     icon:'fa-solid fa-coins',       color:'#10b981', title:'My Earnings',      sub:'Balance, caps, and payout' },
+    { key:'peer-support', icon:'fa-solid fa-comments',    color:'#fbbf24', title:'Peer Support',     sub:'Ask. Answer. Earn.' },
+    { key:'tiers',        icon:'fa-solid fa-layer-group', color:'#a78bfa', title:'Tiers & Pricing',  sub:'Unlock higher caps' }
+  ];
+  items.forEach(function(it){
+    html += '<button onclick="Z.showView(\''+it.key+'\')" style="width:100%;padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;">' +
+      '<div style="width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+it.icon+'" style="color:'+it.color+';font-size:17px;"></i></div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14px;font-weight:800;color:#fff;">'+it.title+'</div>' +
+        '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">'+it.sub+'</div>' +
+      '</div>' +
+      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
+    '</button>';
+  });
+  pageShell('Earning Hub', 'fa-solid fa-coins', html, 'earning-hub');
+};
+
+/* ============================================================
+   EXPLAINER WIRING — delegated clicks survive DOM restore
+   ============================================================ */
+function wireExplainer(selector, key){
   setTimeout(function(){
-    var el = document.querySelector(targetSelector);
+    var el = document.querySelector(selector);
+    if(!el){
+      var vt = document.querySelector('#app-container .view-title');
+      if(vt && vt.parentNode) el = vt.parentNode;
+    }
     if(!el) return;
-    if(el.querySelector('.zy-explain-btn')) return;
+    if(el.querySelector('[data-explain-key]')) return;
     var btn = document.createElement('button');
-    btn.className = 'zy-explain-btn';
-    btn.title = 'How it works';
+    btn.setAttribute('data-explain-key', key);
+    btn.setAttribute('aria-label', 'How it works');
     btn.style.cssText = 'background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#60a5fa;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;';
     btn.innerHTML = '?';
-    btn.onclick = function(){ Z.openExplainer(viewKey); };
     el.appendChild(btn);
   }, 100);
 }
 
+document.body.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-explain-key]');
+  if(!btn) return;
+  e.preventDefault(); e.stopPropagation();
+  var key = btn.getAttribute('data-explain-key');
+  if(key && Z.openExplainer) Z.openExplainer(key);
+});
+
 var _origPeerOpen = Z.openPeerSupport;
-Z.openPeerSupport = function(){
-  var r = _origPeerOpen.apply(this, arguments);
-  wireExplainer('.view-header', 'peer_support');
-  return r;
-};
-
+Z.openPeerSupport = function(){ var r = _origPeerOpen.apply(this, arguments); wireExplainer('.view-header', 'peer_support'); return r; };
 var _origEarnOpen = Z.openEarnings;
-Z.openEarnings = function(){
-  var r = _origEarnOpen.apply(this, arguments);
-  wireExplainer('.view-header', 'bounty');
-  return r;
-};
-
+Z.openEarnings = function(){ var r = _origEarnOpen.apply(this, arguments); wireExplainer('.view-header', 'bounty'); return r; };
 var _origRefOpen = Z.openReferralsPage;
-Z.openReferralsPage = function(){
-  var r = _origRefOpen.apply(this, arguments);
-  wireExplainer('.view-header', 'referrals');
-  return r;
-};
+Z.openReferralsPage = function(){ var r = _origRefOpen.apply(this, arguments); wireExplainer('.view-header', 'referrals'); return r; };
 
 var _origDriveShowView = Z.showView;
 Z.showView = function(view, param){
   var r = _origDriveShowView.apply(this, arguments);
-  if(view === 'drive'){
-    setTimeout(function(){
-      var header = document.querySelector('#app-container .view-header');
-      if(header && !header.querySelector('.zy-explain-btn')){
-        var btn = document.createElement('button');
-        btn.className = 'zy-explain-btn';
-        btn.style.cssText = 'background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#60a5fa;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;margin-left:auto;';
-        btn.innerHTML = '?';
-        btn.title = 'How ZYNIX Ride works';
-        btn.onclick = function(){ Z.openExplainer('ride'); };
-        header.appendChild(btn);
-      }
-    }, 200);
-  }
+  if(view === 'drive'){ setTimeout(function(){ wireExplainer('#app-container .view-header', 'ride'); }, 200); }
+  if(view === 'lounge'){ setTimeout(function(){ wireExplainer('#app-container .view-header, #app-container .view-title', 'platform'); }, 200); }
   return r;
 };
 
-console.log('[ZYNIX Biz v1.3] ready — config + explainer hub + nav fix');
+/* ============================================================
+   PLATFORM EXPLAINER (for Lounge ?)
+   ============================================================ */
+EXPLAINERS['platform'] = {
+  title:'How ZYNIX Works', icon:'fa-solid fa-circle-info',
+  sections:[
+    { h:'The idea', p:'One platform for social, rides, and earnings. Every interaction on ZYNIX pays the person who creates it — from your first second.' },
+    { h:'Earning paths', p:'Referrals, peer support, creator bounty, ad viewing, ride-hailing, and share ride. Six ways, all paying into the same wallet.' },
+    { h:'The bounty pool', p:'40% of subscription revenue funds the bounty pool. That is a floor — ZYNIX never reduces it, and can add more on strong months.' },
+    { h:'Fairness', p:'Contribution Score, single-level referrals, monthly caps, and real-time moderation keep the platform clean and legal everywhere.' }
+  ]
+};
+
+/* ============================================================
+   HOW-IT-WORKS — redefined without competitor mentions
+   ============================================================ */
+Z.openHowItWorks = function(){
+  var lvl = getScoreLevel();
+  var tier = getTier();
+  var caps = getCaps();
+  var html = '';
+
+  html += '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">WELCOME TO ZYNIX</div>' +
+    '<div style="font-size:22px;font-weight:900;color:#fff;margin-top:6px;line-height:1.25;">Every interaction. Every moment. Earn from your first second.</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;margin-top:10px;line-height:1.6;">Likes, shares, comments, helpful answers, referrals, ad views — ZYNIX pays you from the very first moment you join.</div>' +
+  '</div>';
+
+  html += '<button onclick="Z.openHowItWorksHub()" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;margin-bottom:6px;"><i class="fa-solid fa-book-open"></i> All Guides</button>';
+
+  var ways = [
+    { icon:'fa-solid fa-thumbs-up',   color:'#10b981', title:'Reactions & Content', desc:'Post content, get reactions. Each like earns a small bounty. Cap depends on your tier.' },
+    { icon:'fa-solid fa-share-nodes', color:'#3b82f6', title:'Shares',              desc:'When someone shares your post, both of you earn. Share bounties compound across the network.' },
+    { icon:'fa-solid fa-user-group',  color:'#a78bfa', title:'Referrals',           desc:'Refer a friend who subscribes. Earn $3/month for the first 6 months, then $1/month forever.' },
+    { icon:'fa-solid fa-comments',    color:'#fbbf24', title:'Peer Support',        desc:'Answer questions users pay to ask. Earn $0.01–$0.10 per helpful answer plus weekly quality pool.' },
+    { icon:'fa-solid fa-tv',          color:'#ec4899', title:'Watch & Earn',        desc:'Watch brand ads and earn instantly. Launching in Phase 3 when we activate ad campaigns.' },
+    { icon:'fa-solid fa-palette',     color:'#f59e0b', title:'Creator Spaces',      desc:'Charge $0–$5 for joining your Space. Keep 80%. Bonus if your Space stays above 8/10 quality.' }
+  ];
+  html += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;margin-top:8px;">WAYS TO EARN</div>';
+  ways.forEach(function(w){
+    html += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:flex-start;">' +
+      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="'+w.icon+'" style="color:'+w.color+';font-size:16px;"></i></div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:800;color:#fff;">'+esc(w.title)+'</div>' +
+        '<div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5;">'+esc(w.desc)+'</div>' +
+      '</div></div>';
+  });
+
+  html += '<div style="padding:16px;border-radius:14px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-chart-line" style="color:#3b82f6;margin-right:6px;"></i>CONTRIBUTION SCORE</div>' +
+    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">Your score multiplies every cap in the system. Higher score = higher monthly earning ceiling. Score is earned by helping, not paying.</div>' +
+    '<div style="margin-top:12px;padding:12px;border-radius:10px;background:rgba(0,0,0,0.25);">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<div style="font-size:11px;color:#94a3b8;">Your score</div>' +
+        '<div style="font-size:18px;font-weight:900;color:'+lvl.color+';">'+BS.score+'</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:'+lvl.color+';font-weight:800;margin-top:4px;">'+esc(lvl.name)+' · '+lvl.mult+'x multiplier</div>' +
+    '</div>' +
+    '<div style="font-size:10px;color:#64748b;margin-top:10px;">+10 FAQ helpful · +15 referral converts · +50 bug reported · −20 post removed</div>' +
+  '</div>';
+
+  html += '<div style="padding:16px;border-radius:14px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);">' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i>MONTHLY EARNING CAPS</div>' +
+    '<div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.5;">ZYNIX is a supplementary income source. Caps keep it fair and legal everywhere.</div>' +
+    '<div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">PASSIVE CAP</div><div style="font-size:18px;font-weight:900;color:#10b981;margin-top:2px;">'+money(caps.passive,'USD')+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">Referrals · Bounty · Ads</div></div>' +
+      '<div style="padding:10px;border-radius:10px;background:rgba(0,0,0,0.25);"><div style="font-size:9px;color:#94a3b8;font-weight:900;">ACTIVE CAP</div><div style="font-size:18px;font-weight:900;color:#fbbf24;margin-top:2px;">'+money(caps.active,'USD')+'</div><div style="font-size:9px;color:#64748b;margin-top:2px;">Peer support · Translation · Bugs</div></div>' +
+    '</div>' +
+    '<div style="font-size:10px;color:#64748b;margin-top:10px;">Caps multiply with your Contribution Score. Partner level: 5x multiplier.</div>' +
+  '</div>';
+
+  html += disclosureBlock();
+
+  html += '<button onclick="Z.showView(\'peer-support\')" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-comments"></i> Try Peer Support</button>';
+  html += '<button onclick="Z.showView(\'tiers\')" style="width:100%;padding:14px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-layer-group"></i> View all tiers</button>';
+
+  pageShell('How ZYNIX Works', 'fa-solid fa-circle-info', html, 'how-it-works');
+};
+
+console.log('[ZYNIX Biz v1.4] ready — bugs fixed');
+console.log('[ZYNIX Biz v1.1] ready — Sections 18 + cloud');
 })();
 </script>
 </body>
