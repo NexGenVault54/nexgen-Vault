@@ -12836,6 +12836,67 @@ function savePeerQuestions(arr){
   try { localStorage.setItem('zynix_peer_questions', JSON.stringify(arr.slice(0, 500))); } catch(e){}
 }
 
+/* v18.1: cloud sync */
+async function cloudFetchQuestions(){
+  var c = db(); if(!c) return;
+  try {
+    var r = await c.from('peer_questions')
+      .select('id,asker_id,title,body,category,budget,status,accepted_answer_id,created_at,expires_at')
+      .eq('status','open').order('created_at',{ascending:false}).limit(200);
+    if(r.error) throw r.error;
+    var qs = r.data || [];
+    if(qs.length){
+      var ids = qs.map(function(x){ return x.id; });
+      var ra = await c.from('peer_answers').select('*').in('question_id', ids).order('created_at',{ascending:true});
+      var byQ = {};
+      (ra.data||[]).forEach(function(a){ if(!byQ[a.question_id]) byQ[a.question_id] = []; byQ[a.question_id].push({ id:a.id, answererId:a.answerer_id, body:a.body, accepted:a.accepted, helpful_marks:a.helpful_marks, createdAt:new Date(a.created_at).getTime() }); });
+      var norm = qs.map(function(q){
+        return {
+          id:q.id, askerId:q.asker_id, askerName:'User',
+          title:q.title, body:q.body, category:q.category, budget:Number(q.budget),
+          status:q.status, acceptedAnswerId:q.accepted_answer_id,
+          createdAt: new Date(q.created_at).getTime(),
+          expiresAt: new Date(q.expires_at).getTime(),
+          answers: byQ[q.id] || []
+        };
+      });
+      savePeerQuestions(norm);
+    }
+  } catch(e){ console.warn('[cloudFetchQuestions]', e); }
+}
+
+async function cloudPushQuestion(q){
+  var c = db(); if(!c) return null;
+  try {
+    var r = await c.from('peer_questions').insert({
+      asker_id:q.askerId, title:q.title, body:q.body,
+      category:q.category, budget:q.budget, status:'open'
+    }).select().single();
+    if(r.error) throw r.error;
+    return r.data;
+  } catch(e){ console.warn('[cloudPushQuestion]', e); return null; }
+}
+
+async function cloudPushAnswer(qid, answer){
+  var c = db(); if(!c) return null;
+  try {
+    var r = await c.from('peer_answers').insert({
+      question_id:qid, answerer_id:answer.answererId, body:answer.body
+    }).select().single();
+    if(r.error) throw r.error;
+    return r.data;
+  } catch(e){ console.warn('[cloudPushAnswer]', e); return null; }
+}
+
+async function cloudAcceptAnswer(qid, aid){
+  var c = db(); if(!c) return null;
+  try {
+    var r = await c.rpc('peer_accept_answer', { p_question_id: qid, p_answer_id: aid });
+    if(r.error) throw r.error;
+    return r.data;
+  } catch(e){ console.warn('[cloudAcceptAnswer]', e); return null; }
+}
+
 /* ============================================================
    BOOTSTRAP — load user's biz data on login
    ============================================================ */
@@ -12843,6 +12904,9 @@ function bootBiz(){
   var u = me();
   if(!u) return;
   loadBiz();
+  cloudFetchQuestions().then(function(){
+    if(Z.State.currentView === 'drive' || Z.State._peerTab){ /* refresh if open */ }
+  });
   // Seed a couple of sample questions on first visit so the page isn't empty
   if(getPeerQuestions().length === 0){
     var samples = [
