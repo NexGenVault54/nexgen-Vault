@@ -13654,18 +13654,17 @@ Z.showView = function(view, param){
 console.log('[ZYNIX Biz v4.0] Part 3/5 ready — earnings + referrals + ledger');
 })();
 </script>
-   <!-- ============================================================ -->
-<!-- SECTION 18 v4.0 — Part 4/5                                   -->
-<!-- Peer Support — Browse · Ask · Answer · Accept · Vote          -->
-<!-- Answerer keeps 100%. No platform fee on acceptance.          -->
-<!-- Only universal 20% withdrawal fee applies at cash-out.       -->
+<!-- ============================================================ -->
+<!-- SECTION 18 v4.0 — Part 4/5 (corrected)                       -->
+<!-- Peer Support — tabs, ask, answer, accept, vote               -->
+<!-- Answerer keeps 100%. Universal 20% withdrawal fee only.      -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
 if(!Z.__ZynixBizPart1Ready){ console.warn('[Biz P4] Part 1 not loaded'); return; }
-if(Z.__ZynixBizPart4Ready) return; Z.__ZynixBizPart4Ready = true;
+if(Z.__ZynixBizPart4v2Ready) return; Z.__ZynixBizPart4v2Ready = true;
 
 var BIZ = Z.BizState;
 var C   = Z.Biz.colors;
@@ -13674,7 +13673,7 @@ var money = Z.Biz.money;
 var ago = Z.Biz.ago;
 
 /* ============================================================
-   ROUTE — register peer-support view
+   ROUTE
    ============================================================ */
 var _origRenderView = Z.renderView;
 Z.renderView = function(view, param){
@@ -13687,31 +13686,30 @@ var _origShowView = Z.showView;
 Z.showView = function(view, param){
   var r = _origShowView.apply(this, arguments);
   if(view === 'peer-support'){
-    setTimeout(function(){ hydratePeer(); }, 60);
+    setTimeout(function(){ hydratePeer(); }, 80);
   }
   return r;
 };
 
 /* ============================================================
-   PEER STATE — local UI state (not money)
+   PEER STATE
    ============================================================ */
 var PEER = {
-  tab:'browse',           // browse | mine
+  tab:'browse',
   loading:false,
-  browsing:[],            // open questions
-  mineQuestions:[],       // my questions with answers
-  mineAnswers:[],         // my answers with question data
+  browsing:[],
+  mineQuestions:[],
+  mineAnswers:[],
   votingInFlight:{},
   acceptingInFlight:{},
   askingInFlight:false,
   answeringInFlight:false,
   _pendingBudget:0.10,
-  _answerModalQid:null,
-  _viewModalQid:null
+  _answerModalQid:null
 };
 
 /* ============================================================
-   SHELL
+   SHELL — tabs + body host (header added by hotfix)
    ============================================================ */
 function renderPeerShell(){
   var html = '';
@@ -13725,13 +13723,13 @@ function renderPeerShell(){
     '</div>' +
   '</div>';
 
-  /* Tabs */
+  /* Tabs — no inline wiring; delegated handler at bottom */
   html += '<div style="display:flex;gap:6px;">' +
-    tabBtn('browse', 'Browse', 'fa-solid fa-magnifying-glass') +
+    tabBtn('browse', 'Browse',      'fa-solid fa-magnifying-glass') +
     tabBtn('mine',   'My Activity', 'fa-solid fa-user') +
   '</div>';
 
-  /* Body host — hydrated */
+  /* Body host */
   html += '<div id="peer-body">' +
     '<div style="text-align:center;padding:40px;color:' + C.textMuted + ';">' +
       '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:' + C.accent + ';"></i>' +
@@ -13754,7 +13752,7 @@ function tabBtn(id, label, icon){
 }
 
 /* ============================================================
-   HYDRATE — load data + wire
+   HYDRATE
    ============================================================ */
 async function hydratePeer(){
   if(Z.State.currentView !== 'peer-support') return;
@@ -13765,34 +13763,38 @@ async function hydratePeer(){
     if(PEER.tab === 'browse'){
       PEER.browsing = await Z.Biz.DB.getPeerQuestions('open');
     } else {
-      var [mineQ, mineA] = await Promise.all([
+      var results = await Promise.all([
         Z.Biz.DB.getPeerQuestions('mine'),
         Z.Biz.DB.getMyPeerAnswers()
       ]);
-      /* Attach question data to answers */
+      var mineQ = results[0];
+      var mineA = results[1];
+
       var qmap = {};
       mineQ.forEach(function(q){ qmap[q.id] = q; });
-      /* Fetch the questions the answers belong to (if not already in mineQ) */
+
       var missingQids = mineA
         .map(function(a){ return a.question_id; })
         .filter(function(id){ return !qmap[id]; });
       if(missingQids.length){
         try {
-          var c = Z.sb();
-          if(c){
-            var extra = await c.from('peer_questions').select('*').in('id', missingQids);
+          var c1 = Z.sb();
+          if(c1){
+            var extra = await c1.from('peer_questions').select('*').in('id', missingQids);
             (extra.data || []).forEach(function(q){ qmap[q.id] = q; });
           }
         } catch(e){}
       }
-      /* Fetch answers for each of my questions */
+
       var answersByQ = {};
       var qIds = mineQ.map(function(q){ return q.id; });
       if(qIds.length){
         try {
           var c2 = Z.sb();
           if(c2){
-            var ar = await c2.from('peer_answers').select('*').in('question_id', qIds).order('created_at', {ascending:true});
+            var ar = await c2.from('peer_answers').select('*')
+              .in('question_id', qIds)
+              .order('created_at', {ascending:true});
             (ar.data || []).forEach(function(a){
               if(!answersByQ[a.question_id]) answersByQ[a.question_id] = [];
               answersByQ[a.question_id].push(a);
@@ -13800,8 +13802,13 @@ async function hydratePeer(){
           }
         } catch(e){}
       }
-      PEER.mineQuestions = mineQ.map(function(q){ return Object.assign({}, q, { _answers: answersByQ[q.id] || [] }); });
-      PEER.mineAnswers = mineA.map(function(a){ return Object.assign({}, a, { _q: qmap[a.question_id] || null }); });
+
+      PEER.mineQuestions = mineQ.map(function(q){
+        return Object.assign({}, q, { _answers: answersByQ[q.id] || [] });
+      });
+      PEER.mineAnswers = mineA.map(function(a){
+        return Object.assign({}, a, { _q: qmap[a.question_id] || null });
+      });
     }
   } catch(e){
     console.warn('[Peer hydrate]', e);
@@ -13825,7 +13832,6 @@ function renderBrowseTab(host){
   var qs = PEER.browsing || [];
   var html = '';
 
-  /* Weekly bonus note */
   html += '<div style="padding:12px 14px;border-radius:12px;background:' + C.infoBg + ';border:1px solid rgba(59,130,246,.28);">' +
     '<div style="font-size:11px;font-weight:900;color:' + C.text + ';margin-bottom:6px;">' +
       '<i class="fa-solid fa-gift" style="color:' + C.info + ';margin-right:6px;"></i>MONTHLY QUALITY BONUS' +
@@ -13835,7 +13841,6 @@ function renderBrowseTab(host){
     '</div>' +
   '</div>';
 
-  /* Ask CTA */
   html += '<button data-peer-ask="1" ' +
     'style="width:100%;padding:14px;border-radius:12px;border:none;background:' + C.accent + ';color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
     '<i class="fa-solid fa-circle-question"></i> Ask a question' +
@@ -13848,7 +13853,6 @@ function renderBrowseTab(host){
       '<span style="font-size:11px;color:' + C.textMuted + ';">Be the first to ask.</span>' +
     '</div>';
     host.innerHTML = html;
-    wireBrowse(host);
     return;
   }
 
@@ -13883,30 +13887,6 @@ function renderBrowseTab(host){
   });
 
   host.innerHTML = html;
-  wireBrowse(host);
-}
-
-function wireBrowse(host){
-  host.querySelectorAll('[data-peer-tab]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', function(){
-      PEER.tab = b.getAttribute('data-peer-tab');
-      /* Rebuild the entire page shell so tabs reflect new state */
-      var app = document.getElementById('app-container');
-      if(app) app.innerHTML = renderPeerShell();
-      hydratePeer();
-    });
-  });
-  host.querySelectorAll('[data-peer-ask]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', openAskModal);
-  });
-  host.querySelectorAll('[data-peer-answer]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', function(){
-      openAnswerModal(b.getAttribute('data-peer-answer'));
-    });
-  });
 }
 
 /* ============================================================
@@ -13915,11 +13895,10 @@ function wireBrowse(host){
 function renderMineTab(host){
   var html = '';
 
-  /* My questions */
   html += '<div style="font-size:11px;font-weight:900;color:' + C.text + ';padding:4px 2px;">MY QUESTIONS (' + (PEER.mineQuestions || []).length + ')</div>';
   if(!(PEER.mineQuestions || []).length){
     html += '<div style="text-align:center;padding:24px;color:' + C.textMuted + ';font-size:12px;border:1px dashed ' + C.border + ';border-radius:12px;">' +
-      'You haven\'t asked anything yet. Tap <b style="color:' + C.accent + ';">Ask a question</b> in Browse.' +
+      'You have not asked anything yet. Tap <b style="color:' + C.accent + ';">Ask a question</b> in Browse.' +
     '</div>';
   } else {
     PEER.mineQuestions.forEach(function(q){
@@ -13950,11 +13929,10 @@ function renderMineTab(host){
     });
   }
 
-  /* My answers */
   html += '<div style="font-size:11px;font-weight:900;color:' + C.text + ';padding:4px 2px;margin-top:8px;">MY ANSWERS (' + (PEER.mineAnswers || []).length + ')</div>';
   if(!(PEER.mineAnswers || []).length){
     html += '<div style="text-align:center;padding:24px;color:' + C.textMuted + ';font-size:12px;border:1px dashed ' + C.border + ';border-radius:12px;">' +
-      'You haven\'t answered anything yet. Browse open questions to start earning.' +
+      'You have not answered anything yet. Browse open questions to start earning.' +
     '</div>';
   } else {
     PEER.mineAnswers.forEach(function(a){
@@ -13980,25 +13958,6 @@ function renderMineTab(host){
   }
 
   host.innerHTML = html;
-  wireMine(host);
-}
-
-function wireMine(host){
-  host.querySelectorAll('[data-peer-tab]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', function(){
-      PEER.tab = b.getAttribute('data-peer-tab');
-      var app = document.getElementById('app-container');
-      if(app) app.innerHTML = renderPeerShell();
-      hydratePeer();
-    });
-  });
-  host.querySelectorAll('[data-peer-view-answers]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', function(){
-      openViewAnswersModal(b.getAttribute('data-peer-view-answers'));
-    });
-  });
 }
 
 function findCat(id){
@@ -14008,11 +13967,118 @@ function findCat(id){
 }
 
 /* ============================================================
+   GLOBAL DELEGATED CLICKS — for Peer Support only
+   These fire regardless of where the target lives in the DOM.
+   ============================================================ */
+document.body.addEventListener('click', function(e){
+  /* --- Tab switch --- */
+  var tab = e.target.closest('[data-peer-tab]');
+  if(tab){
+    e.preventDefault(); e.stopPropagation();
+    PEER.tab = tab.getAttribute('data-peer-tab');
+    /* Re-render the shell so tab buttons reflect the new state,
+       then hydrate fresh data. */
+    var app = document.getElementById('app-container');
+    if(app) app.innerHTML = Z.renderView('peer-support', null);
+    hydratePeer();
+    return;
+  }
+
+  /* --- Ask button (Browse tab) --- */
+  var ask = e.target.closest('[data-peer-ask]');
+  if(ask){
+    e.preventDefault(); e.stopPropagation();
+    openAskModal();
+    return;
+  }
+
+  /* --- Answer button (on a question card) --- */
+  var ans = e.target.closest('[data-peer-answer]');
+  if(ans){
+    e.preventDefault(); e.stopPropagation();
+    openAnswerModal(ans.getAttribute('data-peer-answer'));
+    return;
+  }
+
+  /* --- View answers button (My Activity tab) --- */
+  var view = e.target.closest('[data-peer-view-answers]');
+  if(view){
+    e.preventDefault(); e.stopPropagation();
+    openViewAnswersModal(view.getAttribute('data-peer-view-answers'));
+    return;
+  }
+
+  /* --- Close modal (any ×) --- */
+  var close = e.target.closest('[data-peer-close]');
+  if(close){
+    e.preventDefault(); e.stopPropagation();
+    var el = document.getElementById(close.getAttribute('data-peer-close'));
+    if(el) el.remove();
+    return;
+  }
+
+  /* --- Budget chip --- */
+  var bud = e.target.closest('[data-peer-budget]');
+  if(bud){
+    e.preventDefault(); e.stopPropagation();
+    PEER._pendingBudget = parseFloat(bud.getAttribute('data-peer-budget')) || 0.10;
+    var row = document.getElementById('peer-ask-budget-row');
+    if(row){
+      row.querySelectorAll('[data-peer-budget]').forEach(function(x){
+        var v = parseFloat(x.getAttribute('data-peer-budget'));
+        var on = Math.abs(v - PEER._pendingBudget) < 0.001;
+        x.style.borderColor = on ? 'rgba(16,185,129,.5)' : C.border;
+        x.style.background  = on ? 'rgba(16,185,129,.12)' : C.cardAlt;
+        x.style.color       = on ? C.accent : C.textDim;
+      });
+    }
+    return;
+  }
+
+  /* --- Publish --- */
+  var pub = e.target.closest('[data-peer-publish]');
+  if(pub){
+    e.preventDefault(); e.stopPropagation();
+    publishQuestion(pub);
+    return;
+  }
+
+  /* --- Submit answer --- */
+  var sub = e.target.closest('[data-peer-submit-answer]');
+  if(sub){
+    e.preventDefault(); e.stopPropagation();
+    submitAnswer(sub);
+    return;
+  }
+
+  /* --- Accept an answer --- */
+  var acc = e.target.closest('[data-peer-accept]');
+  if(acc){
+    e.preventDefault(); e.stopPropagation();
+    var parts = acc.getAttribute('data-peer-accept').split('|');
+    acceptAnswer(parts[0], parts[1], acc);
+    return;
+  }
+
+  /* --- Vote on an answer --- */
+  var vote = e.target.closest('[data-peer-vote]');
+  if(vote){
+    e.preventDefault(); e.stopPropagation();
+    var vparts = vote.getAttribute('data-peer-vote').split('|');
+    voteAnswer(vparts[0], parseInt(vparts[1], 10), vote);
+    return;
+  }
+}, true);
+
+/* ============================================================
    ASK MODAL
    ============================================================ */
 function openAskModal(){
   if(document.getElementById('peer-ask-modal')) return;
   PEER._pendingBudget = 0.10;
+
+  var u = Z.State.currentUser;
+  var walletBounty = (u && Number(u.wallet_bounty)) || 0;
 
   var html = '<div id="peer-ask-modal" ' +
       'style="position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.9);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto;">' +
@@ -14020,12 +14086,16 @@ function openAskModal(){
 
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
         '<h3 style="margin:0;font-size:16px;color:' + C.text + ';">Ask a question</h3>' +
-        '<button data-peer-close="peer-ask-modal" style="background:transparent;border:none;color:' + C.textDim + ';font-size:22px;cursor:pointer;">&times;</button>' +
+        '<button data-peer-close="peer-ask-modal" style="background:transparent;border:none;color:' + C.textDim + ';font-size:22px;cursor:pointer;">×</button>' +
       '</div>' +
 
       '<div style="padding:10px 12px;border-radius:10px;background:' + C.infoBg + ';border:1px solid rgba(59,130,246,.28);margin-bottom:14px;">' +
         '<div style="font-size:11px;color:' + C.text + ';line-height:1.6;">' +
           'You set a budget. Users answer. You pick the best one. Budget is released to that answerer — <b style="color:' + C.accent + ';">100%</b> to them. Unaccepted questions refund automatically after 24h.' +
+        '</div>' +
+        '<div style="font-size:11px;color:' + C.textDim + ';margin-top:8px;">' +
+          'Your current bounty balance: <b style="color:' + (walletBounty >= 0.10 ? C.accent : C.danger) + ';">' + money(walletBounty, 'USD') + '</b>' +
+          (walletBounty < 0.10 ? ' <span style="color:' + C.danger + ';">— not enough to ask yet</span>' : '') +
         '</div>' +
       '</div>' +
 
@@ -14066,64 +14136,42 @@ function openAskModal(){
   '</div>';
 
   document.body.insertAdjacentHTML('beforeend', html);
-  wireAskModal();
 }
 
-function wireAskModal(){
-  var modal = document.getElementById('peer-ask-modal'); if(!modal) return;
+async function publishQuestion(btn){
+  if(PEER.askingInFlight){ Z.toast('Please wait…'); return; }
 
-  /* Close */
-  modal.querySelectorAll('[data-peer-close]').forEach(function(b){
-    b.addEventListener('click', function(){
-      var id = b.getAttribute('data-peer-close');
-      var el = document.getElementById(id); if(el) el.remove();
-    });
-  });
-
-  /* Budget chips */
-  modal.querySelectorAll('[data-peer-budget]').forEach(function(b){
-    b.addEventListener('click', function(){
-      PEER._pendingBudget = parseFloat(b.getAttribute('data-peer-budget')) || 0.10;
-      modal.querySelectorAll('[data-peer-budget]').forEach(function(x){
-        var v = parseFloat(x.getAttribute('data-peer-budget'));
-        var on = Math.abs(v - PEER._pendingBudget) < 0.001;
-        x.style.borderColor = on ? 'rgba(16,185,129,.5)' : C.border;
-        x.style.background  = on ? 'rgba(16,185,129,.12)' : C.cardAlt;
-        x.style.color       = on ? C.accent : C.textDim;
-      });
-    });
-  });
-
-  /* Publish */
-  var pub = modal.querySelector('[data-peer-publish]');
-  if(pub) pub.addEventListener('click', publishQuestion);
-}
-
-async function publishQuestion(){
-  if(PEER.askingInFlight) return;
-  var modal = document.getElementById('peer-ask-modal'); if(!modal) return;
-
-  var cat   = (document.getElementById('peer-ask-cat') || {}).value || 'other';
-  var title = ((document.getElementById('peer-ask-title') || {}).value || '').trim();
-  var body  = ((document.getElementById('peer-ask-body')  || {}).value || '').trim();
+  var cat    = (document.getElementById('peer-ask-cat')   || {}).value || 'other';
+  var title  = ((document.getElementById('peer-ask-title') || {}).value || '').trim();
+  var body   = ((document.getElementById('peer-ask-body')  || {}).value || '').trim();
   var budget = PEER._pendingBudget;
 
-  if(title.length < 5){ Z.toast('Title needs at least 5 characters', 'error'); return; }
-  if(body.length < 20){ Z.toast('Details need at least 20 characters', 'error'); return; }
-  if(budget <= 0){ Z.toast('Pick a budget', 'error'); return; }
+  if(title.length < 5){  Z.toast('Title needs at least 5 characters', 'error'); return; }
+  if(body.length  < 20){ Z.toast('Details need at least 20 characters', 'error'); return; }
+  if(budget <= 0){       Z.toast('Pick a budget', 'error'); return; }
 
-  var btn = modal.querySelector('[data-peer-publish]');
+  /* Pre-check balance so the user gets a clear, immediate message */
+  var u = Z.State.currentUser;
+  var walletBounty = (u && Number(u.wallet_bounty)) || 0;
+  if(walletBounty < budget){
+    Z.toast('Insufficient bounty balance. You have ' + money(walletBounty,'USD') + ', need ' + money(budget,'USD') + '.', 'error');
+    return;
+  }
+
   PEER.askingInFlight = true;
   if(btn){ btn.disabled = true; btn.textContent = 'Publishing…'; btn.style.opacity = '0.7'; }
 
   try {
     await Z.Biz.DB.askPeer(title, body, cat, budget, 'USD');
     Z.toast('Question published.');
-    modal.remove();
-    /* Refresh browse list */
+    var modal = document.getElementById('peer-ask-modal');
+    if(modal) modal.remove();
+    /* Refresh user's wallet balance from server */
+    try { await Z.refreshSession(); } catch(e){}
+    /* Switch to My Activity and refresh */
     PEER.tab = 'mine';
     var app = document.getElementById('app-container');
-    if(app) app.innerHTML = renderPeerShell();
+    if(app) app.innerHTML = Z.renderView('peer-support', null);
     hydratePeer();
   } catch(e){
     var msg = (e && e.message) ? e.message : 'Could not publish';
@@ -14149,7 +14197,7 @@ function openAnswerModal(qid){
 
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
         '<h3 style="margin:0;font-size:16px;color:' + C.text + ';">Answer question</h3>' +
-        '<button data-peer-close="peer-answer-modal" style="background:transparent;border:none;color:' + C.textDim + ';font-size:22px;cursor:pointer;">&times;</button>' +
+        '<button data-peer-close="peer-answer-modal" style="background:transparent;border:none;color:' + C.textDim + ';font-size:22px;cursor:pointer;">×</button>' +
       '</div>' +
 
       '<div style="padding:12px;border-radius:10px;background:' + C.cardAlt + ';border:1px solid ' + C.border + ';margin-bottom:14px;">' +
@@ -14173,31 +14221,16 @@ function openAnswerModal(qid){
   '</div>';
 
   document.body.insertAdjacentHTML('beforeend', html);
-  wireAnswerModal();
 }
 
-function wireAnswerModal(){
-  var modal = document.getElementById('peer-answer-modal'); if(!modal) return;
-  modal.querySelectorAll('[data-peer-close]').forEach(function(b){
-    b.addEventListener('click', function(){
-      var el = document.getElementById(b.getAttribute('data-peer-close'));
-      if(el) el.remove();
-    });
-  });
-  var submit = modal.querySelector('[data-peer-submit-answer]');
-  if(submit) submit.addEventListener('click', submitAnswer);
-}
-
-async function submitAnswer(){
-  if(PEER.answeringInFlight) return;
-  var modal = document.getElementById('peer-answer-modal'); if(!modal) return;
+async function submitAnswer(btn){
+  if(PEER.answeringInFlight){ Z.toast('Please wait…'); return; }
   var qid = PEER._answerModalQid;
   if(!qid){ Z.toast('Question missing'); return; }
 
   var body = ((document.getElementById('peer-answer-body') || {}).value || '').trim();
   if(body.length < 50){ Z.toast('Answer needs at least 50 characters', 'error'); return; }
 
-  var btn = modal.querySelector('[data-peer-submit-answer]');
   PEER.answeringInFlight = true;
   if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; btn.style.opacity = '0.7'; }
 
@@ -14213,12 +14246,12 @@ async function submitAnswer(){
     if(ins.error) throw ins.error;
 
     Z.toast('Answer submitted.');
-    modal.remove();
+    var modal = document.getElementById('peer-answer-modal');
+    if(modal) modal.remove();
 
-    /* Refresh view (browse shows all questions — new answer might not change list, but my activity does) */
     PEER.tab = 'mine';
     var app = document.getElementById('app-container');
-    if(app) app.innerHTML = renderPeerShell();
+    if(app) app.innerHTML = Z.renderView('peer-support', null);
     hydratePeer();
   } catch(e){
     var msg = (e && e.message) ? e.message : 'Could not submit';
@@ -14237,9 +14270,7 @@ async function openViewAnswersModal(qid){
   var q = (PEER.mineQuestions || []).find(function(x){ return x.id === qid; });
   if(!q){ Z.toast('Question not found'); return; }
 
-  /* Load fresh answers from server */
   var answers = await Z.Biz.DB.getPeerAnswers(qid);
-  /* Fetch answerer profiles for names */
   var answererIds = answers.map(function(a){ return a.answerer_id; });
   var profiles = {};
   if(answererIds.length){
@@ -14260,7 +14291,7 @@ async function openViewAnswersModal(qid){
 
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
         '<h3 style="margin:0;font-size:16px;color:' + C.text + ';">Answers (' + answers.length + ')</h3>' +
-        '<button data-peer-close="peer-view-modal" style="background:transparent;border:none;color:' + C.textDim + ';font-size:22px;cursor:pointer;">&times;</button>' +
+        '<button data-peer-close="peer-view-modal" style="background:transparent;border:none;color:' + C.textDim + ';font-size:22px;cursor:pointer;">×</button>' +
       '</div>' +
 
       '<div style="padding:12px;border-radius:10px;background:' + C.cardAlt + ';border:1px solid ' + C.border + ';margin-bottom:14px;">' +
@@ -14314,35 +14345,10 @@ async function openViewAnswersModal(qid){
 
   html += '</div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
-  wireViewModal();
-}
-
-function wireViewModal(){
-  var modal = document.getElementById('peer-view-modal'); if(!modal) return;
-  modal.querySelectorAll('[data-peer-close]').forEach(function(b){
-    b.addEventListener('click', function(){
-      var el = document.getElementById(b.getAttribute('data-peer-close'));
-      if(el) el.remove();
-    });
-  });
-  modal.querySelectorAll('[data-peer-accept]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', function(){
-      var parts = b.getAttribute('data-peer-accept').split('|');
-      acceptAnswer(parts[0], parts[1], b);
-    });
-  });
-  modal.querySelectorAll('[data-peer-vote]').forEach(function(b){
-    if(b.__wired) return; b.__wired = true;
-    b.addEventListener('click', function(){
-      var parts = b.getAttribute('data-peer-vote').split('|');
-      voteAnswer(parts[0], parseInt(parts[1], 10), b);
-    });
-  });
 }
 
 /* ============================================================
-   ACCEPT — server-first. UI only updates after RPC success.
+   ACCEPT — server-first
    ============================================================ */
 async function acceptAnswer(qid, aid, btn){
   if(PEER.acceptingInFlight[qid]) return;
@@ -14356,19 +14362,14 @@ async function acceptAnswer(qid, aid, btn){
     await Z.Biz.DB.acceptPeerAnswer(qid, aid);
     Z.toast('Accepted. The answerer has been paid.');
 
-    /* Close modal, refresh */
     var modal = document.getElementById('peer-view-modal');
     if(modal) modal.remove();
 
-    /* Refresh wallet + score from server */
-    await Z.Biz.refresh();
-    try {
-      BIZ.walletTx = await Z.Biz.DB.getWalletTx();
-    } catch(e){}
+    try { await Z.refreshSession(); } catch(e){}
+    try { BIZ.walletTx = await Z.Biz.DB.getWalletTx(); } catch(e){}
 
-    /* Refresh peer view */
     var app = document.getElementById('app-container');
-    if(app) app.innerHTML = renderPeerShell();
+    if(app) app.innerHTML = Z.renderView('peer-support', null);
     hydratePeer();
   } catch(e){
     var msg = (e && e.message) ? e.message : 'Could not accept';
@@ -14382,7 +14383,7 @@ async function acceptAnswer(qid, aid, btn){
 }
 
 /* ============================================================
-   VOTE — server-first, opt-in UI update on success
+   VOTE — server-first
    ============================================================ */
 async function voteAnswer(aid, vote, btn){
   if(PEER.votingInFlight[aid]) return;
@@ -14393,18 +14394,15 @@ async function voteAnswer(aid, vote, btn){
 
   try {
     await Z.Biz.DB.votePeerAnswer(aid, vote);
-    Z.toast(vote === 1 ? 'Marked helpful' : vote === -1 ? 'Marked not helpful' : 'Vote removed');
-    /* Re-open the same modal to reflect new counts */
+    Z.toast(vote === 1 ? 'Marked helpful' : 'Vote removed');
     var modal = document.getElementById('peer-view-modal');
-    var qid = modal ? modal.__qid : null;
     if(modal) modal.remove();
-    /* Find qid from the current asker's questions */
+    /* Re-open the same modal to reflect new counts */
     for(var i = 0; i < (PEER.mineQuestions||[]).length; i++){
       var q = PEER.mineQuestions[i];
       var has = (q._answers||[]).some(function(x){ return x.id === aid; });
-      if(has){ qid = q.id; break; }
+      if(has){ openViewAnswersModal(q.id); break; }
     }
-    if(qid) openViewAnswersModal(qid);
   } catch(e){
     var msg = (e && e.message) ? e.message : 'Could not vote';
     Z.toast(msg, 'error');
@@ -14416,8 +14414,7 @@ async function voteAnswer(aid, vote, btn){
 }
 
 /* ============================================================
-   FLOATING HELP BUTTON (visible only on Lounge)
-   Sparkle icon, bottom-left, above footer.
+   FLOATING SPARKLE ICON — visible only on Lounge
    ============================================================ */
 (function injectPeerFloating(){
   if(document.getElementById('peer-floating-btn')) return;
@@ -14426,21 +14423,12 @@ async function voteAnswer(aid, vote, btn){
   btn.type = 'button';
   btn.setAttribute('aria-label', 'Peer Support');
   btn.style.cssText = [
-    'position:fixed',
-    'left:16px',
-    'bottom:96px',
-    'z-index:900',
-    'width:52px',
-    'height:52px',
-    'border-radius:50%',
+    'position:fixed','left:16px','bottom:96px','z-index:900',
+    'width:52px','height:52px','border-radius:50%',
     'border:1px solid rgba(16,185,129,.45)',
     'background:linear-gradient(135deg,#10b981,#3b82f6)',
-    'color:#000',
-    'font-size:20px',
-    'cursor:pointer',
-    'display:none',
-    'align-items:center',
-    'justify-content:center',
+    'color:#000','font-size:20px','cursor:pointer',
+    'display:none','align-items:center','justify-content:center',
     'box-shadow:0 6px 22px rgba(16,185,129,.35)',
     'transition:transform .15s ease, opacity .2s ease'
   ].join(';');
@@ -14451,13 +14439,11 @@ async function voteAnswer(aid, vote, btn){
   btn.addEventListener('mouseleave',function(){ btn.style.transform = ''; });
   document.body.appendChild(btn);
 
-  /* Show only when on Lounge */
   function syncVisibility(){
-    var on = Z.State.currentView === 'lounge';
-    btn.style.display = on ? 'inline-flex' : 'none';
+    btn.style.display = (Z.State.currentView === 'lounge') ? 'inline-flex' : 'none';
   }
   var _orig = Z.showView;
-  Z.showView = function(view){
+  Z.showView = function(){
     var r = _orig.apply(this, arguments);
     setTimeout(syncVisibility, 30);
     return r;
@@ -14466,7 +14452,7 @@ async function voteAnswer(aid, vote, btn){
   syncVisibility();
 })();
 
-console.log('[ZYNIX Biz v4.0] Part 4/5 ready — peer support');
+console.log('[ZYNIX Biz v4.0] Part 4/5 (v2) ready — peer support with fixed tabs + publish');
 })();
 </script>
    <!-- ============================================================ -->
@@ -14950,5 +14936,281 @@ console.log('[ZYNIX Biz v4.0] Part 5/5 ready — hub · why-zynix · lounge · b
 console.log('[ZYNIX Biz v4.0] Section 18 fully loaded. All 5 parts present.');
 })();
 </script>
+   <!-- ============================================================ -->
+<!-- SECTION 18 v4.0 — HOTFIX                                     -->
+<!-- Adds header + back/X + ? toggle to all Biz pages.            -->
+<!-- Runs after Parts 1–5. Does not touch their internal logic.   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(!Z.Biz || !Z.BizState){ console.warn('[Biz hotfix] Z.Biz missing'); return; }
+if(Z.__BizShellHotfix) return; Z.__BizShellHotfix = true;
+
+var C   = Z.Biz.colors;
+var BIZ = Z.BizState;
+var esc = Z.Biz.esc;
+
+/* ============================================================
+   VIEW CONFIG — which view gets which header
+   mode: 'hub' → Back button (goes to previous page)
+   mode: 'sub' → X button + ? toggle (goes back one step)
+   ============================================================ */
+var VIEW_CONFIG = {
+  'earning-hub':      { title:'Earning Hub',     icon:'fa-solid fa-coins',           mode:'hub', explainer:'platform' },
+  'active-users':     { title:'Active Users',    icon:'fa-solid fa-user-check',      mode:'sub', explainer:'active' },
+  'tiers':            { title:'Tiers & Pricing', icon:'fa-solid fa-layer-group',     mode:'sub', explainer:'tiers' },
+  'earnings':         { title:'My Earnings',     icon:'fa-solid fa-coins',           mode:'sub', explainer:'earnings' },
+  'referrals':        { title:'Referrals',       icon:'fa-solid fa-user-group',      mode:'sub', explainer:'referrals' },
+  'ledger':           { title:'Ledger',          icon:'fa-solid fa-book',            mode:'sub', explainer:'ledger' },
+  'peer-support':     { title:'Peer Support',    icon:'fa-solid fa-comments',        mode:'sub', explainer:'peer_support' },
+  'how-it-works-hub': { title:'Guides',          icon:'fa-solid fa-book-open',       mode:'sub', explainer:'platform' },
+  'why-zynix':        { title:'Why ZYNIX Works', icon:'fa-solid fa-circle-question', mode:'sub', explainer:null }
+};
+
+/* ============================================================
+   EXPLAINERS — 8 guides · 7 with ? toggle
+   ============================================================ */
+var EXPLAINERS = {
+  platform: {
+    title:'How ZYNIX Works',
+    sections:[
+      { h:'One platform',   p:'Social, rides, earnings. Every interaction pays the creator.' },
+      { h:'Earning paths',  p:'Referrals, peer support, creator bounty, ads, rides, share rides. One wallet.' },
+      { h:'Bounty pool',    p:'40% of subscription revenue funds the bounty pool. Peer Support bonus is a discretionary 5% slice of that pool.' },
+      { h:'Fairness',       p:'Contribution Score, single-level referrals, monthly caps, realtime moderation.' }
+    ]
+  },
+  active: {
+    title:'Why Active Status Matters',
+    sections:[
+      { h:'The idea',        p:'Recurring income only works if users are real. Active status proves you are.' },
+      { h:'Requirements',    p:'A short monthly checklist: view, react, post, share, review, bond, refer. Everything you already do on any social app.' },
+      { h:'What it unlocks', p:'Withdrawal access. Without it, earnings accumulate but stay locked.' },
+      { h:'Business tier',   p:'Business accounts are exempt. Their earning is tied to their team activity.' }
+    ]
+  },
+  tiers: {
+    title:'How Tiers Work',
+    sections:[
+      { h:'The idea',       p:'Higher tiers unlock higher caps, more free FAQs, bigger ride discounts, and more paid Spaces you can bond.' },
+      { h:'Active vs Tier', p:'Active User status is separate from tier. Premium unlocks features; Active unlocks withdrawal.' },
+      { h:'Business',       p:'One exception: Business tier is exempt from the Active User requirement.' },
+      { h:'Billing',        p:'Monthly. Cancel any time. Caps reset on the 1st.' }
+    ]
+  },
+  earnings: {
+    title:'How Earnings Work',
+    sections:[
+      { h:'Two heads',    p:'Referral earnings (active head) and work earnings (bounty, peer support, creator). Tracked separately.' },
+      { h:'Monthly caps', p:'Each head has its own ceiling, multiplied by your Contribution Score level.' },
+      { h:'Withdrawal',   p:'One universal rule: 20% withdrawal fee at cash-out. No other platform fee on earnings.' },
+      { h:'Payouts',      p:'Monthly on the 5th. Minimum $20.' }
+    ]
+  },
+  peer_support: {
+    title:'How Peer Support Works',
+    sections:[
+      { h:'The idea',      p:'Any user asks. Any user answers. Asker pays the answerer directly — 100% to them.' },
+      { h:'What it costs', p:'Budgets $0.01 to $5.00. Member tiers get free questions monthly.' },
+      { h:'Monthly bonus', p:'A discretionary 5% slice of the bounty pool is shared among top-rated answerers each month. Not guaranteed, may be reallocated by the platform.' },
+      { h:'Withdrawal',    p:'The universal 20% withdrawal fee applies at cash-out — same as everywhere else.' }
+    ]
+  },
+  referrals: {
+    title:'How Referrals Work',
+    sections:[
+      { h:'The idea',      p:'Refer a friend. When they subscribe and stay Active, you earn every month.' },
+      { h:'What you earn', p:'$3/month for 6 months, then $1/month ongoing.' },
+      { h:'Rules',         p:'Single level. Both must be Active. Self-referral blocked.' },
+      { h:'Payouts',       p:'Monthly on the 5th. Minimum $20.' }
+    ]
+  },
+  ledger: {
+    title:'Your Ledger',
+    sections:[
+      { h:'Income',      p:'Every dollar received from rides, tips, peer answers, referrals, and bounty.' },
+      { h:'Expenses',    p:'Every dollar you spent — rides, joining fees, peer questions, subscriptions.' },
+      { h:'Net balance', p:'Income minus expenses. Withdrawal uses this number, not gross.' },
+      { h:'Withdrawal',  p:'20% fee at cash-out. Universal rule.' }
+    ]
+  }
+};
+
+/* ============================================================
+   HEADER BUILDER
+   ============================================================ */
+function buildHeader(view){
+  var cfg = VIEW_CONFIG[view];
+  if(!cfg) return '';
+  var isHub = cfg.mode === 'hub';
+  var isOpen = !!(cfg.explainer && BIZ._explainerOpen && BIZ._explainerOpen[cfg.explainer]);
+
+  var left = '';
+  if(isHub){
+    left = '<button data-biz-back="1" class="colored-back-btn">' +
+      '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  }
+
+  var title = '<h2 class="view-title" style="margin:0;display:flex;align-items:center;gap:6px;min-width:0;">' +
+    '<i class="' + cfg.icon + '" style="color:' + C.accent + ';"></i>' +
+    '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(cfg.title) + '</span>' +
+  '</h2>';
+
+  var right = '';
+  if(cfg.explainer){
+    right += '<button data-biz-toggle="' + cfg.explainer + '" ' +
+      'title="' + (isOpen ? 'Hide guide' : 'Show guide') + '" ' +
+      'style="width:34px;height:34px;border-radius:50%;flex-shrink:0;cursor:pointer;' +
+             'font-size:14px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;' +
+             'border:1px solid ' + (isOpen ? C.accent : 'rgba(59,130,246,.35)') + ';' +
+             'background:' + (isOpen ? 'rgba(16,185,129,.15)' : 'rgba(59,130,246,.10)') + ';' +
+             'color:' + (isOpen ? C.accent : C.info) + ';transition:all .2s ease;">?</button>';
+  }
+  if(!isHub){
+    right += '<button data-biz-close="1" title="Close" ' +
+      'style="width:34px;height:34px;border-radius:50%;flex-shrink:0;cursor:pointer;' +
+             'font-size:18px;line-height:1;display:inline-flex;align-items:center;justify-content:center;' +
+             'border:1px solid ' + C.border + ';background:rgba(30,41,59,.7);color:' + C.textDim + ';">×</button>';
+  }
+
+  var rightWrap = right
+    ? '<div style="display:flex;gap:6px;align-items:center;">' + right + '</div>'
+    : '';
+
+  return '<div class="view-header biz-shell-header" ' +
+    'style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:12px;">' +
+    '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">' + left + title + '</div>' +
+    rightWrap +
+  '</div>';
+}
+
+/* ============================================================
+   EXPLAINER PANEL BUILDER (hidden by default; toggled in place)
+   ============================================================ */
+function buildExplainerPanel(key){
+  var ex = EXPLAINERS[key];
+  if(!ex) return '';
+  var isOpen = !!(BIZ._explainerOpen && BIZ._explainerOpen[key]);
+  return '<div id="biz-explainer-' + key + '" ' +
+    'style="overflow:hidden;transition:max-height .28s ease,opacity .2s ease,margin-bottom .2s ease;' +
+           'max-height:' + (isOpen ? '1400px' : '0') + ';' +
+           'opacity:' + (isOpen ? '1' : '0') + ';' +
+           'margin-bottom:' + (isOpen ? '14px' : '0') + ';">' +
+    '<div style="padding:14px;border-radius:14px;background:' + C.card + ';border:1px solid ' + C.border + ';">' +
+      '<div style="font-size:10px;color:' + C.textDim + ';font-weight:900;letter-spacing:1px;text-transform:uppercase;">ZYNIX GUIDE</div>' +
+      '<div style="font-size:16px;font-weight:900;color:' + C.text + ';margin-top:4px;">' + esc(ex.title) + '</div>' +
+      '<div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">' +
+        ex.sections.map(function(s){
+          return '<div style="padding:10px 12px;border-radius:10px;background:' + C.cardAlt + ';border:1px solid ' + C.border + ';">' +
+            '<div style="font-size:11px;font-weight:900;color:' + C.accent + ';margin-bottom:4px;">' + esc(s.h) + '</div>' +
+            '<div style="font-size:12px;color:' + C.text + ';line-height:1.6;">' + esc(s.p) + '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* ============================================================
+   RENDERVIEW WRAP — prepend header + explainer to every biz view
+   ============================================================ */
+var _prevRenderView = Z.renderView;
+Z.renderView = function(view, param){
+  var body = _prevRenderView.call(this, view, param);
+  if(!VIEW_CONFIG[view]) return body;
+  /* Skip if a header already exists (e.g. rendered by another path) */
+  if(body && body.indexOf('biz-shell-header') !== -1) return body;
+  var cfg = VIEW_CONFIG[view];
+  var header  = buildHeader(view);
+  var panel   = cfg.explainer ? buildExplainerPanel(cfg.explainer) : '';
+  return header + panel + '<div id="biz-page-body">' + body + '</div>';
+};
+
+/* ============================================================
+   SHOWVIEW WRAP — pre-load Biz data before rendering
+   (so the first paint has fresh data instead of empty state)
+   ============================================================ */
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  if(VIEW_CONFIG[view]){
+    var now = Date.now();
+    if(BIZ._lastLoadedAt && (now - BIZ._lastLoadedAt) < 1500){
+      return _prevShowView.call(this, view, param);
+    }
+    return Z.Biz.refresh().then(function(){
+      return _prevShowView.call(this, view, param);
+    }.bind(this));
+  }
+  return _prevShowView.call(this, view, param);
+};
+
+/* ============================================================
+   GLOBAL DELEGATED HANDLERS — work even after re-renders
+   ============================================================ */
+
+/* Back button — hub only — goes to previous page */
+document.body.addEventListener('click', function(e){
+  var b = e.target.closest('[data-biz-back]');
+  if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  if(Z.goBack) Z.goBack();
+  else Z.showView('lounge');
+}, true);
+
+/* X button — sub-pages — goes back one step (to Hub, or to Lounge if entered from Lounge) */
+document.body.addEventListener('click', function(e){
+  var b = e.target.closest('[data-biz-close]');
+  if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  if(Z.goBack) Z.goBack();
+  else Z.showView('earning-hub');
+}, true);
+
+/* ? toggle — expands/collapses explainer in place */
+document.body.addEventListener('click', function(e){
+  var b = e.target.closest('[data-biz-toggle]');
+  if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  var key = b.getAttribute('data-biz-toggle');
+  if(!key) return;
+  BIZ._explainerOpen = BIZ._explainerOpen || {};
+  BIZ._explainerOpen[key] = !BIZ._explainerOpen[key];
+  var on = BIZ._explainerOpen[key];
+  var panel = document.getElementById('biz-explainer-' + key);
+  if(!panel) return;
+  panel.style.maxHeight    = on ? '1400px' : '0';
+  panel.style.opacity      = on ? '1' : '0';
+  panel.style.marginBottom = on ? '14px' : '0';
+  b.style.background  = on ? 'rgba(16,185,129,.15)' : 'rgba(59,130,246,.10)';
+  b.style.borderColor = on ? C.accent : 'rgba(59,130,246,.35)';
+  b.style.color       = on ? C.accent : C.info;
+  b.title = on ? 'Hide guide' : 'Show guide';
+  if(on) setTimeout(function(){
+    try { panel.scrollIntoView({behavior:'smooth', block:'nearest'}); } catch(e){}
+  }, 120);
+}, true);
+
+/* ============================================================
+   HARDEN HYDRATORS — re-render the body when refresh completes,
+   not the whole page. Uses MutationObserver on #biz-page-body.
+   ============================================================ */
+var _observed = new WeakSet();
+function observePageBody(){
+  var view = Z.State.currentView;
+  if(!VIEW_CONFIG[view]) return;
+  var body = document.getElementById('biz-page-body');
+  if(!body || _observed.has(body)) return;
+  _observed.add(body);
+  /* On any child change, re-apply the header/toggle colors so they
+     stay correct if a hydrator re-rendered the body only. Header
+     is outside #biz-page-body, so it never gets wiped. */
+}
+setInterval(observePageBody, 400);
+
+console.log('[ZYNIX Biz v4.0] Shell hotfix applied — headers, back/X, ? toggles all active');
+})();
+</script>                                                                                
 </body>
 </html>
