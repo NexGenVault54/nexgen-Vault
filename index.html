@@ -12249,6 +12249,238 @@ try {
 } catch(e){}
 })();
 </script>
+   <!-- ============================================================ -->
+<!-- SECTION 17 v9c — Patch 5: Media persistence fix              -->
+<!-- Video + photo URLs now persist across modal reopen.          -->
+<!-- Preview shows immediately, no close/reopen needed.           -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixMediaFixP1) return; Z.__ZynixMediaFixP1 = true;
+
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function getS(){ try { return (typeof Z.driveState === 'function') ? Z.driveState() : null; } catch(e){ return null; } }
+
+/* ============================================================
+   VIDEO UPLOAD — persistent
+   ============================================================ */
+Z.drvOnboardPickVideo = async function(input){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 50*1024*1024){ toast('Video must be under 50 MB', 'error'); input.value=''; return; }
+  toast('Uploading video…');
+
+  try {
+    var url = await Z.storeMedia(f);
+    if(!url) throw new Error('No URL returned');
+
+    var S = getS();
+    if(!S) throw new Error('Drive state unavailable');
+
+    var wasNew = !S.driver;
+    if(!S.driver) S.driver = {};
+    S.driver.car_video_url = url;
+
+    if(wasNew){
+      /* Fresh driver: modal needs to rebuild so its internal `d`
+         points at the updated S.driver. Close and reopen via a
+         known trigger button. */
+      var modal = document.getElementById('zy-do-modal');
+      if(modal) modal.remove();
+      if(reopenOnboardModal()){
+        toast('Video uploaded');
+      } else {
+        toast('Video uploaded — reopen driver form to see it');
+      }
+    } else {
+      /* Existing driver: d === S.driver, so we can update preview
+         in place without a modal rebuild. */
+      updateVideoPreview(url);
+      toast('Video uploaded — save to keep it');
+    }
+  } catch(e){
+    toast('Video upload failed: ' + (e.message || 'unknown error'), 'error');
+    input.value = '';
+  }
+};
+
+/* ============================================================
+   PHOTO UPLOAD — persistent
+   Save handler already merges S._onboardPhotos; we ALSO set
+   S.driver.car_photos so the DB write is guaranteed.
+   ============================================================ */
+Z.drvOnboardPickPhoto = async function(input, key){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 3*1024*1024){ toast('Photo must be under 3 MB', 'error'); input.value=''; return; }
+  toast('Uploading photo…');
+
+  try {
+    var url = await Z.storeMedia(f);
+    if(!url) throw new Error('No URL returned');
+
+    var S = getS();
+    if(!S) throw new Error('Drive state unavailable');
+    if(!S.driver) S.driver = {};
+    if(!S.driver.car_photos) S.driver.car_photos = {};
+    S.driver.car_photos[key] = url;
+    /* Mirror into _onboardPhotos so the closure's save handler
+       picks it up even if it doesn't look at S.driver. */
+    S._onboardPhotos = S._onboardPhotos || {};
+    S._onboardPhotos[key] = url;
+
+    updatePhotoPreviewRow(key, url);
+    toast('Photo uploaded — save to keep it');
+  } catch(e){
+    toast('Photo upload failed: ' + (e.message || 'unknown error'), 'error');
+    input.value = '';
+  }
+};
+
+/* ============================================================
+   REMOVE HANDLERS — clear from S and from DOM
+   ============================================================ */
+Z.drvOnboardRemoveVideo = function(){
+  var S = getS();
+  if(S && S.driver) S.driver.car_video_url = null;
+  var preview = document.getElementById('zy-do-video-preview');
+  if(preview){
+    preview.innerHTML = '';
+    preview.classList.remove('show');
+    preview.style.display = 'none';
+  }
+  toast('Video removed');
+};
+
+Z.drvOnboardRemovePhoto = function(key){
+  var S = getS();
+  if(S && S.driver && S.driver.car_photos) delete S.driver.car_photos[key];
+  if(S && S._onboardPhotos) delete S._onboardPhotos[key];
+
+  var fileInput = document.getElementById('zy-do-photo-' + key);
+  if(fileInput){
+    var row = fileInput.previousElementSibling;
+    if(row){
+      var thumb = row.querySelector('.zy-do-photo-thumb');
+      if(thumb) thumb.remove();
+      var rm = row.querySelector('.zy-do-photo-rm');
+      if(rm) rm.remove();
+      var chooseBtn = row.querySelector('button');
+      if(chooseBtn){
+        chooseBtn.innerHTML = chooseBtn.innerHTML.replace('Replace', 'Choose');
+      }
+    }
+  }
+  toast('Photo removed');
+};
+
+/* ============================================================
+   DOM UPDATERS — show media immediately, no modal close
+   ============================================================ */
+function updateVideoPreview(url){
+  var preview = document.getElementById('zy-do-video-preview');
+  if(!preview){
+    /* Preview container missing — try to inject one under the video button */
+    var videoInput = document.getElementById('zy-do-video');
+    if(!videoInput) return;
+    var parent = videoInput.parentNode;
+    if(!parent) return;
+    preview = document.createElement('div');
+    preview.id = 'zy-do-video-preview';
+    preview.className = 'media-preview-box';
+    parent.insertBefore(preview, videoInput);
+  }
+  preview.innerHTML =
+    '<video src="' + esc(url) + '" controls playsinline preload="metadata" ' +
+      'style="width:100%;max-height:180px;background:#000;display:block;"></video>' +
+    '<button class="media-preview-remove" type="button" id="zy-do-video-rm">' +
+      '<i class="fa-solid fa-xmark"></i> Remove' +
+    '</button>';
+  preview.classList.add('show');
+  preview.style.display = 'block';
+  var rm = document.getElementById('zy-do-video-rm');
+  if(rm) rm.onclick = function(e){ e.preventDefault(); Z.drvOnboardRemoveVideo(); };
+}
+
+function updatePhotoPreviewRow(key, url){
+  var fileInput = document.getElementById('zy-do-photo-' + key);
+  if(!fileInput) return;
+  var row = fileInput.previousElementSibling;
+  if(!row) return;
+
+  var thumb = row.querySelector('.zy-do-photo-thumb');
+  if(!thumb){
+    thumb = document.createElement('img');
+    thumb.className = 'zy-do-photo-thumb';
+    thumb.style.cssText = 'width:60px;height:44px;object-fit:cover;border-radius:6px;border:1px solid #1e293b;flex-shrink:0;';
+    var btn = row.querySelector('button');
+    if(btn && btn.nextSibling) row.insertBefore(thumb, btn.nextSibling);
+    else row.appendChild(thumb);
+  }
+  thumb.src = url;
+
+  var rm = row.querySelector('.zy-do-photo-rm');
+  if(!rm){
+    rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'zy-do-photo-rm';
+    rm.textContent = '×';
+    rm.style.cssText = 'padding:6px 10px;border-radius:6px;border:1px solid rgba(161,98,98,.35);background:rgba(161,98,98,.1);color:#a16262;font-size:11px;font-weight:700;cursor:pointer;';
+    rm.onclick = function(e){ e.preventDefault(); Z.drvOnboardRemovePhoto(key); };
+    row.appendChild(rm);
+  }
+
+  var chooseBtn = row.querySelector('button');
+  if(chooseBtn && chooseBtn !== rm && (chooseBtn.textContent || '').indexOf('Choose') !== -1){
+    chooseBtn.innerHTML = chooseBtn.innerHTML.replace('Choose', 'Replace');
+  }
+}
+
+/* ============================================================
+   RE-OPEN MODAL — try known trigger buttons in order
+   Only used when a brand-new driver uploads media, because
+   their modal's internal `d` is a throwaway object.
+   ============================================================ */
+function reopenOnboardModal(){
+  var ids = ['zy-pp-edit-driver', 'zy-pp-become-driver', 'zy-become-driver', 'zy-bd-onboard'];
+  for(var i = 0; i < ids.length; i++){
+    var el = document.getElementById(ids[i]);
+    if(el){ try { el.click(); return true; } catch(e){} }
+  }
+  return false;
+}
+
+/* ============================================================
+   SAFETY NET — if the modal ever opens and S.driver already
+   holds a video/photo URL, inject the preview immediately.
+   Handles the "was new driver, closed and reopened manually"
+   case too.
+   ============================================================ */
+function injectPreviewsIfPresent(){
+  if(!document.getElementById('zy-do-modal')) return;
+  var S = getS();
+  if(!S || !S.driver) return;
+
+  if(S.driver.car_video_url){
+    var vp = document.getElementById('zy-do-video-preview');
+    if(vp && (!vp.innerHTML || vp.innerHTML.trim() === '')){
+      updateVideoPreview(S.driver.car_video_url);
+    }
+  }
+  var photos = S.driver.car_photos || {};
+  Object.keys(photos).forEach(function(k){
+    if(photos[k]) updatePhotoPreviewRow(k, photos[k]);
+  });
+}
+
+setInterval(injectPreviewsIfPresent, 400);
+
+console.log('[ZYNIX Drive Media Fix] handlers replaced — URLs persist across modal reopen');
+})();
+</script>
                                                           
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
