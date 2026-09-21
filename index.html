@@ -10305,7 +10305,7 @@ function startVoiceRecording(autoFromBeep){
       await sendVoiceBlob(blob, secs, blobType);
     };
 
-    rec.start();
+    rec.start(1000);
     var btn2 = document.getElementById('zy-chat-voice');
     if(btn2){ btn2.style.background = 'linear-gradient(135deg,#ef4444,#f59e0b)'; btn2.innerHTML = '<i class="fa-solid fa-stop"></i> 0s'; }
     toast(autoFromBeep ? 'Recording — tap ⏹ to send, 30s max' : 'Recording — tap ⏹ to send, 30s max');
@@ -12041,6 +12041,45 @@ Z.drvOpenRiderAnalytics = async function(){
 };
 
 console.log('[ZYNIX Drive v9c] ready — notifications · ledger · analytics');
+})();
+</script>
+   <!-- ============================================================ -->
+<!-- SECTION 17 v9c — Patch 1                                     -->
+<!-- Route driveNotify through the drive_notify RPC               -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixDriveV9cP1) return; Z.__ZynixDriveV9cP1 = true;
+
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+
+/* Replace the direct-insert version with an RPC call.
+   The old version was blocked by RLS on the notifications table. */
+Z.driveNotify = async function(userId, message, kind){
+  if(!userId || !message) return null;
+  var c = db();
+  if(!c) return null;
+  try {
+    var r = await c.rpc('drive_notify', {
+      p_target_user_id: userId,
+      p_message: message,
+      p_kind: kind || 'drive'
+    });
+    if(r.error){
+      /* Silent in the console — RLS-blocked relationship returns
+         'no_relationship' which is expected when the users are not
+         yet connected via a ride/bid/booking. */
+      return null;
+    }
+    return r.data || null;
+  } catch(e){
+    return null;
+  }
+};
+
+console.log('[ZYNIX Drive v9c Patch 1] driveNotify routed through RPC');
 })();
 </script>
 <!-- ============================================================ -->
