@@ -13185,10 +13185,129 @@ setInterval(function(){
   if(uid && uid !== _cfgUid){ _cfgUid = uid; loadBizConfig(); }
 }, 3000);
 
-console.log('[ZYNIX Biz v1.2] ready — config + explainer hub');
-console.log('[ZYNIX Biz v1.1] ready — Sections 18 + cloud');
+/* ============================================================
+   NAV PATCH — biz pages snapshot DOM, goBack restores it
+   ============================================================ */
+pageShell = function(title, icon, contentHTML, viewName, viewParam){
+  var app = document.getElementById('app-container');
+  if(!app) return;
+  var prevView = Z.State.currentView;
+  var prevParam = Z.State.currentParam;
+  var prevHTML = app.innerHTML;
+  var prevNavActive = null;
+  document.querySelectorAll('#bottom-nav button.active').forEach(function(b){ prevNavActive = b.id; });
+  Z.State.navStack = Z.State.navStack || [];
+  Z.State.navStack.push({ view: prevView, param: prevParam, html: prevHTML, nav: prevNavActive });
+  if(Z.State.navStack.length > 30) Z.State.navStack.shift();
+  Z.State.currentView = viewName || 'biz-page';
+  Z.State.currentParam = viewParam || null;
+  app.innerHTML =
+    '<div style="display:flex;flex-direction:column;gap:14px;">' +
+      '<div class="view-header">' +
+        '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
+        '<h2 class="view-title" style="margin-left:6px;"><i class="' + icon + '" style="color:#10b981;margin-right:8px;"></i>' + esc(title) + '</h2>' +
+      '</div>' +
+      contentHTML +
+    '</div>';
+  document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
+  window.scrollTo(0,0);
+};
+
+var _origGoBackFn = Z.goBack;
+Z.goBack = function(){
+  var stack = Z.State.navStack || [];
+  if(stack.length){
+    var top = stack[stack.length - 1];
+    if(top && typeof top.html === 'string'){
+      stack.pop();
+      var app = document.getElementById('app-container');
+      if(app){
+        app.innerHTML = top.html;
+        Z.State.currentView = top.view || 'home';
+        Z.State.currentParam = top.param || null;
+        document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
+        if(top.nav){
+          var nb = document.getElementById(top.nav);
+          if(nb) nb.classList.add('active');
+        } else {
+          var navMap = {home:'nav-home', spark:'nav-spark', galleria:'nav-galleria', lounge:'nav-lounge'};
+          if(navMap[top.view]){ var nb2 = document.getElementById(navMap[top.view]); if(nb2) nb2.classList.add('active'); }
+        }
+        window.scrollTo(0,0);
+        if(top.view === 'lounge' && typeof Z.renderStatusRow === 'function'){
+          try { Z.renderStatusRow('lounge-status-host'); } catch(e){}
+        }
+        if(top.view === 'home' && typeof Z.setupFeedVideoAutoplay === 'function'){
+          try { setTimeout(Z.setupFeedVideoAutoplay, 60); } catch(e){}
+        }
+        return;
+      }
+    }
+  }
+  return _origGoBackFn.apply(this, arguments);
+};
+
+/* ============================================================
+   EXPLAINER WIRING — every feature page gets a small "?" button
+   ============================================================ */
+function wireExplainer(targetSelector, viewKey){
+  setTimeout(function(){
+    var el = document.querySelector(targetSelector);
+    if(!el) return;
+    if(el.querySelector('.zy-explain-btn')) return;
+    var btn = document.createElement('button');
+    btn.className = 'zy-explain-btn';
+    btn.title = 'How it works';
+    btn.style.cssText = 'background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#60a5fa;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;';
+    btn.innerHTML = '?';
+    btn.onclick = function(){ Z.openExplainer(viewKey); };
+    el.appendChild(btn);
+  }, 100);
+}
+
+var _origPeerOpen = Z.openPeerSupport;
+Z.openPeerSupport = function(){
+  var r = _origPeerOpen.apply(this, arguments);
+  wireExplainer('.view-header', 'peer_support');
+  return r;
+};
+
+var _origEarnOpen = Z.openEarnings;
+Z.openEarnings = function(){
+  var r = _origEarnOpen.apply(this, arguments);
+  wireExplainer('.view-header', 'bounty');
+  return r;
+};
+
+var _origRefOpen = Z.openReferralsPage;
+Z.openReferralsPage = function(){
+  var r = _origRefOpen.apply(this, arguments);
+  wireExplainer('.view-header', 'referrals');
+  return r;
+};
+
+var _origDriveShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _origDriveShowView.apply(this, arguments);
+  if(view === 'drive'){
+    setTimeout(function(){
+      var header = document.querySelector('#app-container .view-header');
+      if(header && !header.querySelector('.zy-explain-btn')){
+        var btn = document.createElement('button');
+        btn.className = 'zy-explain-btn';
+        btn.style.cssText = 'background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#60a5fa;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:12px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;margin-left:auto;';
+        btn.innerHTML = '?';
+        btn.title = 'How ZYNIX Ride works';
+        btn.onclick = function(){ Z.openExplainer('ride'); };
+        header.appendChild(btn);
+      }
+    }, 200);
+  }
+  return r;
+};
+
+console.log('[ZYNIX Biz v1.3] ready — config + explainer hub + nav fix');
 })();
 </script>
 </body>
 </html>
-
