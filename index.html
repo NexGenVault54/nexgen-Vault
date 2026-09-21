@@ -12659,7 +12659,7 @@ function renderPeerAskForm(body){
   document.getElementById('zy-ask-submit').addEventListener('click', function(){ Z.peerPublishQuestion(selected); });
 }
 
-Z.peerPublishQuestion = function(budget){
+Z.peerPublishQuestion = async function(budget){
   var cat = (document.getElementById('zy-ask-cat')||{}).value;
   var title = ((document.getElementById('zy-ask-title')||{}).value || '').trim();
   var bodyTxt = ((document.getElementById('zy-ask-body')||{}).value || '').trim();
@@ -12671,13 +12671,14 @@ Z.peerPublishQuestion = function(budget){
     askerId: (me()||{}).id, askerName: (me()||{}).name || 'You',
     status: 'open', createdAt: Date.now(), answers: []
   };
+  var cloud = await cloudPushQuestion(q);
+  if(cloud){ q.id = cloud.id; }
   var all = getPeerQuestions(); all.unshift(q); savePeerQuestions(all);
-  addScore('daily_login'); // small reward for engagement
-  toast('Question published. Awaiting answers.');
+  addScore('daily_login');
+  toast(cloud ? 'Question published.' : 'Saved locally — will sync when online.');
   Z.State._peerTab = 'mine';
   Z.openPeerSupport();
 };
-
 function renderPeerMine(body){
   var myQs = getPeerQuestions().filter(function(q){ return q.askerId === (me()||{}).id; });
   var myAs = [];
@@ -12746,26 +12747,28 @@ Z.peerAnswerModal = function(qid){
     '</div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
   document.getElementById('zy-peer-ans-x').onclick = function(){ document.getElementById('zy-peer-ans-modal').remove(); };
-  document.getElementById('zy-peer-ans-s').onclick = function(){
+  document.getElementById('zy-peer-ans-s').onclick = async function(){
     var bodyTxt = (document.getElementById('zy-peer-ans').value || '').trim();
     if(bodyTxt.length < 50){ toast('Answer must be at least 50 characters', 'error'); return; }
     var all = getPeerQuestions();
     var q = all.find(function(x){ return x.id === qid; });
     if(!q){ toast('Question missing'); return; }
     q.answers = q.answers || [];
-    q.answers.push({
+    var newAns = {
       id: 'a_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       answererId: (me()||{}).id, answererName: (me()||{}).name || 'User',
       body: bodyTxt, createdAt: Date.now(), accepted: false
-    });
+    };
+    var cloud = await cloudPushAnswer(qid, newAns);
+    if(cloud){ newAns.id = cloud.id; }
+    q.answers.push(newAns);
     savePeerQuestions(all);
     document.getElementById('zy-peer-ans-modal').remove();
-    toast('Answer submitted. Waiting for acceptance.');
+    toast(cloud ? 'Answer submitted.' : 'Saved locally — will sync when online.');
     Z.State._peerTab = 'mine';
     Z.openPeerSupport();
   };
 };
-
 Z.peerViewAnswers = function(qid){
   var q = getPeerQuestions().find(function(x){ return x.id === qid; });
   if(!q || !(q.answers||[]).length){ toast('No answers yet'); return; }
@@ -12803,20 +12806,19 @@ Z.peerViewAnswers = function(qid){
   });
 };
 
-Z.peerAcceptAnswer = function(qid, aid){
+Z.peerAcceptAnswer = async function(qid, aid){
   var all = getPeerQuestions();
   var q = all.find(function(x){ return x.id === qid; });
   if(!q){ toast('Question missing'); return; }
+  var cloud = await cloudAcceptAnswer(qid, aid);
+  if(cloud && cloud.error){ toast('Could not accept: ' + cloud.error, 'error'); return; }
   (q.answers||[]).forEach(function(a){ a.accepted = (a.id === aid); });
   q.status = 'answered';
   q.acceptedAt = Date.now();
   savePeerQuestions(all);
-
-  /* Award points and earnings to the answerer (locally simulated) */
   addScore('faq_helpful');
-  toast('Answer accepted. Paying the answerer ' + money(q.budget*0.8,'USD'));
+  toast('Answer accepted. ' + money(q.budget*0.8,'USD') + ' credited to answerer.');
   saveBiz();
-
   Z.State._peerTab = 'mine';
   Z.openPeerSupport();
 };
@@ -13000,7 +13002,27 @@ setTimeout(function(){ patchLounge(); patchHotRow(); patchProfile(); }, 800);
 /* ============================================================
    BOOTSTRAP SCRIPT DONE
    ============================================================ */
-console.log('[ZYNIX Biz v1] ready — Sections 18');
+/* v18.1: realtime sync for peer questions and answers */
+function bizRealtime(){
+  var c = db(); if(!c) return; var u = me(); if(!u) return;
+  try {
+    c.channel('zynix-peer-q-' + u.id)
+      .on('postgres_changes', { event:'*', schema:'public', table:'peer_questions' }, function(){
+        cloudFetchQuestions().then(function(){
+          if(document.getElementById('zy-peer-body')) Z.openPeerSupport();
+        });
+      }).subscribe();
+    c.channel('zynix-peer-a-' + u.id)
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'peer_answers' }, function(){
+        cloudFetchQuestions().then(function(){
+          if(document.getElementById('zy-peer-body')) Z.openPeerSupport();
+        });
+      }).subscribe();
+  } catch(e){}
+}
+setTimeout(bizRealtime, 1200);
+
+console.log('[ZYNIX Biz v1.1] ready — Sections 18 + cloud');
 })();
 </script>
 </body>
