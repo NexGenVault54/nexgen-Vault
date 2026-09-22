@@ -13046,14 +13046,14 @@ console.log('[Header Patch B] avatar dropdown · theme in Settings · report slo
 })();
 </script>
 <!-- ============================================================ -->
-<!-- Bounty display + heart animations                            -->
-<!-- Rate from bounty_pool · heart shows ~$X.XX · tap animation   -->
+<!-- Bounty display + heart animations (v2)                       -->
+<!-- Skip animation when reaction is frozen                       -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixBountyDisplay) return; Z.__zynixBountyDisplay = true;
+if(Z.__zynixBountyDisplayV2) return; Z.__zynixBountyDisplayV2 = true;
 
 /* 1. CSS keyframes */
 if(!document.getElementById('zynix-heart-css')){
@@ -13090,8 +13090,8 @@ Z.getBountyRate = async function(){
   return _rateCache.value;
 };
 
-/* 3. Sync reward values from rate. If rate is 0 (pool not
-   started), use $0.005/pt placeholder so heart shows ~$0.05 */
+/* 3. Sync reward values from rate. If rate is 0 (pool not started),
+   use $0.005/pt placeholder so heart shows ~$0.05 */
 Z.syncReactionRewards = function(rate){
   if(!rate || rate <= 0) rate = 0.005;
   Z.Reactions.love.reward   = 10 * rate;
@@ -13110,7 +13110,6 @@ function _playTapAnimation(btn, reactionType){
   var r = Z.Reactions[reactionType];
   if(!r) return;
 
-  /* Heart rises from button center */
   var heart = document.createElement('div');
   heart.className = 'zynix-heart-rise';
   heart.textContent = r.symbol;
@@ -13118,7 +13117,6 @@ function _playTapAnimation(btn, reactionType){
   heart.style.top = (cy - 20) + 'px';
   document.body.appendChild(heart);
 
-  /* Amount floats above */
   if(r.reward > 0){
     var amt = document.createElement('div');
     amt.className = 'zynix-heart-amount';
@@ -13130,14 +13128,12 @@ function _playTapAnimation(btn, reactionType){
     setTimeout(function(){ amt.remove(); }, 750);
   }
 
-  /* Ripple on button */
   btn.style.position = 'relative';
   var rip = document.createElement('div');
   rip.className = 'zynix-ripple';
   btn.appendChild(rip);
   setTimeout(function(){ rip.remove(); }, 520);
 
-  /* Counter bounce */
   var cnt = btn.querySelector('.count');
   if(cnt){
     cnt.classList.add('zynix-count-bounce');
@@ -13147,17 +13143,42 @@ function _playTapAnimation(btn, reactionType){
   setTimeout(function(){ heart.remove(); }, 750);
 }
 
-/* 5. Hook via delegation — post + spark + comment reactions */
+/* 5. Delegated listener — checks freeze state BEFORE animating */
 document.addEventListener('click', function(e){
   var btn = e.target.closest('.react-btn, .comment-react, .spark-reaction-icon');
   if(!btn) return;
+
   var onclick = btn.getAttribute('onclick') || '';
   var match = onclick.match(/'([a-z]+)'\)/);
   if(!match) return;
   var t = match[1];
   if(t === 'dislike') return;
-  /* skip if already active (no repeat animation) */
   if(btn.classList.contains('active')) return;
+
+  /* Determine freeze state for post/spark reactions.
+     Comments have no freeze — always animate. */
+  var postCard = btn.closest('.post-card');
+  var sparkSlide = btn.closest('.spark-slide');
+  var commentItem = btn.closest('.comment-item');
+
+  var contentId = null;
+  if(postCard) contentId = postCard.getAttribute('data-post-id');
+  else if(sparkSlide){
+    var v = sparkSlide.querySelector('video[data-spark-id]');
+    if(v) contentId = v.getAttribute('data-spark-id');
+  }
+
+  /* If a freeze-dot exists for this content and it's not unfrozen,
+     skip the animation entirely. Section 5 already blocks the
+     reaction itself; this blocks the visual. */
+  if(contentId && !commentItem){
+    if(!Z.isUnfrozen(contentId)){
+      /* Frozen — show the tooltip instead of the animation */
+      if(Z.showFreezeTooltip) Z.showFreezeTooltip(contentId);
+      return;
+    }
+  }
+
   _playTapAnimation(btn, t);
 }, true);
 
@@ -13171,14 +13192,13 @@ setInterval(function(){
   });
 }, 1200);
 
-/* 7. Bootstrap: placeholder rate so buttons show values on first paint */
+/* 7. Bootstrap placeholder rate so buttons show values on first paint */
 Z.syncReactionRewards(0.005);
 
 /* 8. Fetch real rate shortly after load, refresh every 90s */
 setTimeout(function(){
   Z.getBountyRate().then(function(rate){
     if(rate > 0){
-      /* Refresh any visible reaction rows with new values */
       document.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
         var pid = card.getAttribute('data-post-id');
         if(Z.updatePostReactionUI) Z.updatePostReactionUI(pid);
@@ -13188,9 +13208,9 @@ setTimeout(function(){
 }, 2000);
 setInterval(function(){ Z.getBountyRate(); }, 90000);
 
-console.log('[Bounty Display] rate sync + heart animations ready');
+console.log('[Bounty Display v2] rate sync + heart animations + freeze check ready');
 })();
-</script>   
+</script>
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
