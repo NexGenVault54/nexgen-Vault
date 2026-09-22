@@ -12883,6 +12883,130 @@ console.log('[ZYNIX Driver Modal v3] avatar + banner + proof + engine wired');
   st.textContent = '#zynix-biz-fab, #zynix-peer-fab { display: none !important; }';
   document.head.appendChild(st);
 })();
+</script>
+<!-- ============================================================ -->
+<!-- Header consolidation — Patch A                               -->
+<!-- 1. Kill earn pill (was injected by Lounge v2.1)              -->
+<!-- 2. Add "+$X.XX today" segment inside existing wallet pill    -->
+<!-- 3. Hide theme toggle from header (leave in Settings)         -->
+<!-- 4. Avatar tap → account sheet (My SPACE / Settings / Logout) -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixHeaderPatchA) return; Z.__zynixHeaderPatchA = true;
+
+function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+/* 1 + 3: CSS overrides */
+if(!document.getElementById('zynix-header-patchA-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-header-patchA-css';
+  st.textContent = [
+    '#zynix-earn-pill { display: none !important; }',
+    '.zynix-header .header-btn:has(#theme-icon) { display: none !important; }',
+    '#zynix-today-seg { font-size: 10px; font-weight: 800; color: #10b981; opacity: .85; white-space: nowrap; }'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* 2: inject "+$X.XX today" into wallet pill */
+function _injectTodaySegment(){
+  var pill = document.getElementById('wallet-pill');
+  if(!pill || document.getElementById('zynix-today-seg')) return;
+  var seg = document.createElement('span');
+  seg.id = 'zynix-today-seg';
+  seg.style.display = 'none';
+  seg.textContent = '+$0.00';
+  var badge = document.getElementById('wallet-badge');
+  if(badge) pill.insertBefore(seg, badge);
+  else pill.appendChild(seg);
+}
+
+function _updateTodaySegment(){
+  var seg = document.getElementById('zynix-today-seg');
+  if(!seg) return;
+  try {
+    var u = Z.State.currentUser;
+    if(!u){ seg.style.display = 'none'; return; }
+    var raw = localStorage.getItem('zynix_earn_today_' + u.id);
+    var today = raw ? Number(raw) || 0 : 0;
+    if(today > 0){
+      seg.textContent = '+$' + today.toFixed(2);
+      seg.style.display = 'inline';
+    } else {
+      seg.style.display = 'none';
+    }
+  } catch(e){ seg.style.display = 'none'; }
+}
+
+setInterval(function(){ _injectTodaySegment(); _updateTodaySegment(); }, 5000);
+setTimeout(function(){ _injectTodaySegment(); _updateTodaySegment(); }, 400);
+
+var _origUpdateHeader = Z.updateHeader;
+Z.updateHeader = function(){
+  var r = _origUpdateHeader.apply(this, arguments);
+  setTimeout(function(){ _injectTodaySegment(); _updateTodaySegment(); }, 20);
+  return r;
+};
+
+/* 4: account bottom sheet */
+Z.openAccountSheet = function(){
+  var u = Z.State.currentUser;
+  if(!u){ if(Z.openAuthModal) Z.openAuthModal('login'); return; }
+
+  var h = '<div class="modal-overlay" style="align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Account</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;padding:0 6px;line-height:1;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body">';
+
+  h += '<div style="display:flex;gap:12px;align-items:center;padding:4px 0 16px;border-bottom:1px solid #1e293b;margin-bottom:12px;">';
+  h += '<img src="' + esc(Z.displayAvatar(u)) + '" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid rgba(16,185,129,.4);">';
+  h += '<div style="min-width:0;flex:1;">';
+  h += '<div style="font-size:14px;font-weight:800;color:#fff;">' + esc(Z.displayName(u)) + '</div>';
+  h += '<div style="font-size:11px;color:#94a3b8;">@' + esc(u.username || 'user') + '</div>';
+  h += '</div></div>';
+
+  var opts = [
+    { label: 'My SPACE', icon: 'fa-solid fa-id-card',   action: 'Z.closeSheet();Z.goMySpace()',                danger: false },
+    { label: 'Settings', icon: 'fa-solid fa-gear',      action: 'Z.closeSheet();Z.showView(\'profile\')',       danger: false },
+    { label: 'Logout',   icon: 'fa-solid fa-power-off', action: 'Z.closeSheet();Z.logout()',                    danger: true }
+  ];
+  opts.forEach(function(o){
+    var col = o.danger ? '#a16262' : '#10b981';
+    var txt = o.danger ? '#a16262' : '#e2e8f0';
+    h += '<button onclick="' + o.action + '" style="width:100%;display:flex;align-items:center;gap:12px;padding:14px 6px;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.05);color:' + txt + ';font-weight:700;font-size:13px;cursor:pointer;text-align:left;border-radius:8px;">';
+    h += '<i class="' + o.icon + '" style="width:18px;text-align:center;color:' + col + ';"></i>';
+    h += esc(o.label);
+    h += '</button>';
+  });
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* Replace renderHeaderAuth — single avatar only */
+Z.renderHeaderAuth = function(){
+  var c = document.getElementById('header-auth-container');
+  if(!c) return;
+  var u = Z.State.currentUser;
+  if(u){
+    c.innerHTML =
+      '<button onclick="Z.openAccountSheet()" title="Account" style="background:transparent;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">' +
+        '<img src="' + esc(Z.displayAvatar(u)) + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(16,185,129,.5);">' +
+      '</button>';
+  } else {
+    c.innerHTML = '<button onclick="Z.openAuthModal(\'login\')" style="background:#10b981;border:none;color:#000;font-weight:700;font-size:11px;padding:6px 14px;border-radius:20px;cursor:pointer;">Login</button>';
+  }
+};
+
+setTimeout(function(){ try { Z.renderHeaderAuth(); } catch(e){} }, 300);
+
+console.log('[Header Patch A] earn pill off · today segment on · theme toggle hidden · account sheet ready');
+})();
 </script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
