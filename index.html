@@ -8806,57 +8806,231 @@ if(document.readyState === 'loading'){
 
 })();
 </script>
-   <!-- ============================================================
-     SECTION 15 — LOUNGE
-     Command centre. One horizontal-scroll row per section.
-     Default rows: Status, Circles. User adds more via Customize.
-     ============================================================ -->
+   <!-- ============================================================ -->
+<!-- SECTION 15 v2.1 — LOUNGE                                     -->
+<!-- No heading. Floating Customize button. 4-col grid.           -->
+<!-- Platform row (admin) · Status row · Daily check-in           -->
+<!-- 8 wallpapers + Premium teaser · Top-level tiles only         -->
+<!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
-var Z = window.Z;
-if(!Z) return;
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixLoungeV2) return; Z.__ZynixLoungeV2 = true;
 
-var LOUNGE_KEY_PREFIX = 'zynix_lounge_rows_';
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-lounge-v2-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-lounge-v2-css';
+  st.textContent = [
 
-Z._loungeKey = function(){
-  var me = Z.State.currentUser;
-  return me ? (LOUNGE_KEY_PREFIX + me.id) : '';
+    /* Hide old floating FABs ONLY on Lounge (uses :has) */
+    'body:has(.zynix-lounge-root) #zynix-biz-fab,',
+    'body:has(.zynix-lounge-root) #zynix-peer-fab { display: none !important; }',
+
+    /* Root — full-width wallpaper card */
+    '.zynix-lounge-root { position: relative; margin-left: -14px; margin-right: -14px; margin-bottom: -20px; padding: 14px; min-height: calc(100vh - 140px); overflow: hidden; border-radius: 18px; }',
+    '.zynix-lounge-inner { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 14px; }',
+
+    /* Platform row */
+    '.zynix-lounge-platform { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }',
+    '.zynix-lounge-platform-tile { position: relative; border-radius: 16px; padding: 14px; min-height: 92px; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; overflow: hidden; border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(12px); text-align: left; }',
+    '.zynix-lounge-platform-tile.earn { background: linear-gradient(135deg, rgba(16,185,129,.85), rgba(59,130,246,.75)); }',
+    '.zynix-lounge-platform-tile.trend { background: linear-gradient(135deg, rgba(139,92,246,.78), rgba(236,72,153,.65)); }',
+    '.zynix-lounge-platform-tile .tile-icon { width: 32px; height: 32px; border-radius: 10px; background: rgba(255,255,255,.22); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; }',
+    '.zynix-lounge-platform-tile .tile-title { font-size: 13px; font-weight: 900; color: #fff; margin-top: 8px; text-shadow: 0 1px 4px rgba(0,0,0,.3); }',
+    '.zynix-lounge-platform-tile .tile-sub { font-size: 10px; color: rgba(255,255,255,.9); margin-top: 2px; text-shadow: 0 1px 4px rgba(0,0,0,.3); }',
+
+    /* App grid — 4 columns */
+    '.zynix-lounge-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 8px; padding-bottom: 20px; }',
+    '.zynix-lounge-app { background: transparent; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px; position: relative; }',
+    '.zynix-lounge-app:active .app-icon { transform: scale(.94); }',
+    '.zynix-lounge-app .app-icon { width: 56px; height: 56px; border-radius: 16px; background: rgba(15,23,42,.72); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,.14); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #10b981; transition: transform .12s ease; position: relative; }',
+    '.zynix-lounge-app .app-label { font-size: 10px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.7); text-align: center; line-height: 1.2; max-width: 68px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.zynix-lounge-app .app-badge { position: absolute; top: -2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #10b981; color: #000; font-size: 9px; font-weight: 900; display: flex; align-items: center; justify-content: center; border: 2px solid #0f172a; }',
+    '.zynix-lounge-app .app-dot { position: absolute; top: 2px; right: 4px; width: 10px; height: 10px; border-radius: 50%; background: #10b981; border: 2px solid #0f172a; }',
+    '.zynix-lounge-app.add-tile .app-icon { background: rgba(15,23,42,.5); border: 1.5px dashed rgba(16,185,129,.65); color: #10b981; }',
+
+    /* Floating Customize button (only on Lounge) */
+    '.zynix-lounge-fab { position: fixed; bottom: 96px; right: 20px; z-index: 900; width: 48px; height: 48px; border-radius: 50%; background: rgba(15,23,42,.92); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,.18); color: #10b981; font-size: 17px; cursor: pointer; display: none; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,.45); transition: transform .12s ease; }',
+    '.zynix-lounge-fab:active { transform: scale(.92); }',
+
+    /* Sheet */
+    '.zynix-lounge-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10001; background: #111827; border-top-left-radius: 20px; border-top-right-radius: 20px; border-top: 1px solid #1e293b; max-height: 82vh; display: flex; flex-direction: column; animation: zynixLoungeUp .25s ease; }',
+    '@keyframes zynixLoungeUp { from { transform: translateY(100%);} to { transform: translateY(0);} }',
+
+    /* Wallpaper grid */
+    '.zynix-wall-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }',
+    '.zynix-wall-tile { position: relative; aspect-ratio: 9/16; border-radius: 14px; border: 2px solid transparent; cursor: pointer; overflow: hidden; }',
+    '.zynix-wall-tile.active { border-color: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,.3); }',
+    '.zynix-wall-tile .check { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; background: #10b981; color: #000; font-size: 11px; font-weight: 900; display: flex; align-items: center; justify-content: center; }',
+    '.zynix-wall-premium { position: relative; aspect-ratio: 9/16; border-radius: 14px; border: 2px dashed rgba(251,191,36,.55); background: linear-gradient(135deg, rgba(251,191,36,.12), rgba(139,92,246,.15)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; color: #fbbf24; padding: 8px; }',
+    '.zynix-wall-premium i { font-size: 22px; }',
+    '.zynix-wall-premium .label { color: #fbbf24; font-size: 10px; font-weight: 900; letter-spacing: .3px; }',
+    '.zynix-wall-premium .soon { font-size: 8px; color: #94a3b8; font-weight: 700; }'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   TOP-LEVEL TILE CATALOG
+   Only main segments. No sub-pages (referrals, bounty, packages
+   live inside Earning Hub / Profile).
+   ============================================================ */
+var TILE_CATALOG = {
+  home:          { label: 'Home',          icon: 'fa-solid fa-house',        action: function(){ Z.showView('home'); } },
+  spark:         { label: 'Sparks',        icon: 'fa-solid fa-bolt',         action: function(){ Z.showView('spark'); } },
+  status:        { label: 'Status',        icon: 'fa-solid fa-circle-notch', action: function(){ Z.showView('status-home'); } },
+  galleria:      { label: 'Galleria',      icon: 'fa-solid fa-store',        action: function(){ Z.showView('galleria'); } },
+  drive:         { label: 'Drive',         icon: 'fa-solid fa-car-side',     action: function(){ Z.showView('drive'); } },
+  'share-ride':  { label: 'Share Ride',    icon: 'fa-solid fa-route',        action: function(){ Z.showView('drive'); setTimeout(function(){ var b = document.querySelector('[data-tab="share-ride"]'); if(b) b.click(); }, 350); } },
+  peer:          { label: 'Peer Support',  icon: 'fa-solid fa-comments',     action: function(){ Z.showView('peer-support'); } },
+  wallet:        { label: 'Wallet',        icon: 'fa-solid fa-wallet',       action: function(){ Z.showView('wallet'); } },
+  circles:       { label: 'Circles',       icon: 'fa-solid fa-circle-nodes', action: function(){ Z.showView('circles'); } },
+  people:        { label: 'People',        icon: 'fa-solid fa-users',        action: function(){ Z.showView('people'); } },
+  notifications: { label: 'Notifications', icon: 'fa-solid fa-bell',         action: function(){ Z.showView('notifications'); } },
+  space:         { label: 'My SPACE',      icon: 'fa-solid fa-user',         action: function(){ if(Z.goMySpace) Z.goMySpace(); } },
+  earning:       { label: 'Earning Hub',   icon: 'fa-solid fa-coins',        action: function(){ Z.showView('earning-hub'); } },
+  public:        { label: 'Public Page',   icon: 'fa-solid fa-tv',           action: function(){ Z.showView('public-home'); } },
+  saved:         { label: 'Saved',         icon: 'fa-solid fa-bookmark',     action: function(){ Z.showView('home'); } }
 };
 
-Z._getLoungeRows = function(){
-  var key = Z._loungeKey();
-  if(!key) return ['status', 'circles'];
-  try {
-    var raw = localStorage.getItem(key);
-    if(!raw) return ['status', 'circles'];
-    var arr = JSON.parse(raw);
-    if(!Array.isArray(arr)) return ['status', 'circles'];
-    return arr;
-  } catch(e){ return ['status', 'circles']; }
-};
+var DEFAULT_TILES = ['home','spark','status','galleria','drive','share-ride','peer','wallet','circles','people','notifications','space'];
 
-Z._setLoungeRows = function(rows){
-  var key = Z._loungeKey();
-  if(!key) return;
-  try { localStorage.setItem(key, JSON.stringify(rows)); } catch(e){}
-};
-
-Z.LOUNGE_AVAILABLE_ROWS = [
-  { id: 'status',    label: 'Status',           icon: 'fa-solid fa-circle-notch' },
-  { id: 'circles',   label: 'Circles',          icon: 'fa-solid fa-circle-nodes' },
-  { id: 'tiles',     label: 'Quick Tiles',      icon: 'fa-solid fa-grip' },
-  { id: 'featured',  label: 'Featured Studio',  icon: 'fa-solid fa-star' },
-  { id: 'shops',     label: 'Shops',            icon: 'fa-solid fa-store' },
-  { id: 'people',    label: 'Discover People',  icon: 'fa-solid fa-users' },
-  { id: 'sparks',    label: 'Sparks',           icon: 'fa-solid fa-bolt' },
-  { id: 'wallet',    label: 'Wallet',           icon: 'fa-solid fa-wallet' },
-  { id: 'marketplace', label: 'Studio Market',  icon: 'fa-solid fa-palette' }
+/* ============================================================
+   WALLPAPERS
+   ============================================================ */
+var WALLPAPERS = [
+  { id: 'aurora',    label: 'Aurora',    css: 'radial-gradient(circle at 20% 30%, rgba(16,185,129,.55), transparent 55%), radial-gradient(circle at 85% 20%, rgba(59,130,246,.55), transparent 55%), radial-gradient(circle at 60% 95%, rgba(139,92,246,.45), transparent 60%), #0a0f1c' },
+  { id: 'navy',      label: 'Deep Navy', css: 'linear-gradient(160deg, #0a1628 0%, #0f2744 50%, #061020 100%)' },
+  { id: 'purple',    label: 'Midnight',  css: 'linear-gradient(160deg, #1a0b2e 0%, #2d1b4e 50%, #0f0820 100%)' },
+  { id: 'emerald',   label: 'Emerald',   css: 'linear-gradient(160deg, #041c14 0%, #064e3b 50%, #02120c 100%)' },
+  { id: 'slate',     label: 'Slate',     css: 'linear-gradient(160deg, #0f172a 0%, #334155 60%, #0a0f1c 100%)' },
+  { id: 'rosewood',  label: 'Rosewood',  css: 'linear-gradient(160deg, #2a0810 0%, #7f1d1d 55%, #1a0407 100%)' },
+  { id: 'sandstone', label: 'Sandstone', css: 'linear-gradient(160deg, #1c1408 0%, #78350f 60%, #0f0a05 100%)' },
+  { id: 'obsidian',  label: 'Obsidian',  css: '#000000' }
 ];
 
+/* ============================================================
+   STORAGE
+   ============================================================ */
+function _tilesKey(){ var u = Z.State.currentUser; return u ? ('zynix_lounge_tiles_' + u.id) : ''; }
+function _wallKey(){  var u = Z.State.currentUser; return u ? ('zynix_lounge_wall_'  + u.id) : ''; }
+
+function getTiles(){
+  var key = _tilesKey();
+  if(!key) return DEFAULT_TILES.slice();
+  try {
+    var raw = localStorage.getItem(key);
+    if(!raw) return DEFAULT_TILES.slice();
+    var arr = JSON.parse(raw);
+    if(!Array.isArray(arr)) return DEFAULT_TILES.slice();
+    return arr.filter(function(id){ return TILE_CATALOG[id]; });
+  } catch(e){ return DEFAULT_TILES.slice(); }
+}
+function setTiles(arr){ var key = _tilesKey(); if(!key) return; try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e){} }
+
+function getWallpaper(){
+  var key = _wallKey();
+  if(!key) return 'aurora';
+  try { var v = localStorage.getItem(key); return v && WALLPAPERS.some(function(w){ return w.id === v; }) ? v : 'aurora'; }
+  catch(e){ return 'aurora'; }
+}
+function setWallpaper(id){ var key = _wallKey(); if(!key) return; try { localStorage.setItem(key, id); } catch(e){} }
+
+/* ============================================================
+   CHECKLIST + BADGES
+   ============================================================ */
+function _isDailyDone(){
+  try {
+    if(typeof Z.bizGetChecklist !== 'function') return true;
+    var ck = Z.bizGetChecklist();
+    return !!(ck && ck.complete);
+  } catch(e){ return true; }
+}
+
+function _badgeFor(tileId){
+  var u = Z.State.currentUser; if(!u) return null;
+  try {
+    if(tileId === 'notifications'){
+      var unread = (Z.State.allNotifications||[]).filter(function(x){ return !x.read; }).length;
+      var pending = (Z.State.allConnections||[]).filter(function(c){ return c.recipient_id === u.id && c.status === 'pending'; }).length;
+      var total = unread + pending;
+      return total > 0 ? { type: 'count', value: total > 9 ? '9+' : total } : null;
+    }
+    if(tileId === 'wallet'){
+      var n = Z.State.walletBadgeCount || 0;
+      return n > 0 ? { type: 'count', value: n > 9 ? '9+' : n } : null;
+    }
+    if(tileId === 'share-ride'){
+      var S = (typeof Z.driveState === 'function') ? Z.driveState() : null;
+      var n2 = S && S.shareBadge ? S.shareBadge : 0;
+      return n2 > 0 ? { type: 'count', value: n2 > 9 ? '9+' : n2 } : null;
+    }
+    if(tileId === 'status'){
+      var last = Z.getLastVisit ? Z.getLastVisit('home') : 0;
+      var hasNew = (Z.State.allStatuses||[]).some(function(s){ return new Date(s.created_at).getTime() > last && s.author_id !== u.id; });
+      return hasNew ? { type: 'dot' } : null;
+    }
+  } catch(e){ return null; }
+  return null;
+}
+
+/* ============================================================
+   HEADER EARN PILL
+   ============================================================ */
+function _injectEarnPill(){
+  if(document.getElementById('zynix-earn-pill')) return;
+  var pill = document.querySelector('.zynix-header .wallet-pill');
+  if(!pill) return;
+  var earn = document.createElement('button');
+  earn.id = 'zynix-earn-pill';
+  earn.className = 'wallet-pill';
+  earn.title = 'Earning Hub';
+  earn.style.cssText = 'border-color:rgba(16,185,129,.4);';
+  earn.innerHTML = '<i class="fa-solid fa-coins" style="color:#10b981;"></i> <span style="color:#10b981;font-weight:700;" id="zynix-earn-today">$0.00</span>';
+  earn.addEventListener('click', function(){ if(Z.showView) Z.showView('earning-hub'); });
+  pill.parentNode.insertBefore(earn, pill);
+}
+function _updateEarnPill(){
+  var el = document.getElementById('zynix-earn-today');
+  if(!el) return;
+  try {
+    var raw = localStorage.getItem('zynix_earn_today_' + ((Z.State.currentUser||{}).id||''));
+    var today = raw ? Number(raw) || 0 : 0;
+    el.textContent = '$' + today.toFixed(2);
+  } catch(e){}
+}
+
+/* ============================================================
+   CUSTOMIZE FLOATING BUTTON
+   ============================================================ */
+function _ensureCustomizeFab(){
+  var fab = document.getElementById('zynix-lounge-fab');
+  if(!fab){
+    fab = document.createElement('button');
+    fab.id = 'zynix-lounge-fab';
+    fab.className = 'zynix-lounge-fab';
+    fab.title = 'Customize Lounge';
+    fab.innerHTML = '<i class="fa-solid fa-pen"></i>';
+    fab.addEventListener('click', function(){ Z.openLoungeCustomizeV2(); });
+    document.body.appendChild(fab);
+    /* Visibility checker */
+    setInterval(function(){
+      var on = !!document.querySelector('.zynix-lounge-root');
+      fab.style.display = on ? 'flex' : 'none';
+    }, 300);
+  }
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
 Z.renderLounge = function(){
-  var me = Z.State.currentUser;
-  if(!me){
+  var u = Z.State.currentUser;
+  if(!u){
     return Z.emptyState({
       icon: 'fa-solid fa-couch',
       title: 'Log in to see your Lounge.',
@@ -8864,363 +9038,222 @@ Z.renderLounge = function(){
     });
   }
 
-  var rows = Z._getLoungeRows();
+  var wallId = getWallpaper();
+  var wall = WALLPAPERS.find(function(w){ return w.id === wallId; }) || WALLPAPERS[0];
+  var tiles = getTiles();
+  var dailyDone = _isDailyDone();
 
-  var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+  var h = '<div class="zynix-lounge-root" style="background:' + wall.css + ';">';
+  h += '<div class="zynix-lounge-inner">';
 
-  html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 2px;">';
-  html += '<h2 class="view-title" style="font-size:20px;">';
-  html += '<i class="fa-solid fa-couch" style="color:#10b981;margin-right:8px;"></i>Lounge';
-  html += '</h2>';
-  html += '<button onclick="Z.openLoungeCustomize()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;font-weight:700;padding:6px 12px;border-radius:8px;font-size:11px;cursor:pointer;">';
-  html += '<i class="fa-solid fa-pen"></i> Customize';
-  html += '</button>';
-  html += '</div>';
+  /* Status row (top) */
+  h += '<div id="lounge-status-host"></div>';
 
-  if(rows.indexOf('status') !== -1){
-    html += '<div id="lounge-status-host"></div>';
+  /* Platform row — admin controlled */
+  h += '<div class="zynix-lounge-platform">';
+  h += '<button class="zynix-lounge-platform-tile earn" onclick="Z.showView(\'earning-hub\')">';
+  h += '<div class="tile-icon"><i class="fa-solid fa-coins"></i></div>';
+  h += '<div><div class="tile-title">Earning Hub</div><div class="tile-sub">Tiers · Referrals · Payouts</div></div>';
+  h += '</button>';
+  h += '<button class="zynix-lounge-platform-tile trend" onclick="Z.toast(\'Trending — coming soon\')">';
+  h += '<div class="tile-icon"><i class="fa-solid fa-fire"></i></div>';
+  h += '<div><div class="tile-title">Trending</div><div class="tile-sub">Hot today on ZYNIX</div></div>';
+  h += '</button>';
+  h += '</div>';
+
+  /* Daily check-in (only if incomplete) */
+  if(!dailyDone){
+    h += '<button onclick="Z.showView(\'active-users\')" style="background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(59,130,246,.12));border:1px solid rgba(16,185,129,.4);border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;text-align:left;backdrop-filter:blur(10px);">';
+    h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;">';
+    h += '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:15px;"></i>';
+    h += '<span style="position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:#10b981;border:2px solid #0f172a;"></span>';
+    h += '</div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:13px;font-weight:800;color:#fff;">Daily check-in pending</div>';
+    h += '<div style="font-size:11px;color:rgba(255,255,255,.75);margin-top:2px;">Complete the checklist to unlock this month\'s earnings</div>';
+    h += '</div>';
+    h += '<i class="fa-solid fa-chevron-right" style="color:rgba(255,255,255,.5);font-size:12px;"></i>';
+    h += '</button>';
   }
 
-  rows.forEach(function(rowId){
-    if(rowId === 'status') return;
-    html += Z._renderLoungeRow(rowId);
-  });
+  /* App grid */
+  h += '<div class="zynix-lounge-grid" id="zynix-lounge-grid">';
+  tiles.forEach(function(id){ h += _renderAppTile(id); });
+  h += '<button class="zynix-lounge-app add-tile" onclick="Z.openLoungeCustomizeV2()"><div class="app-icon"><i class="fa-solid fa-plus"></i></div><div class="app-label">Add</div></button>';
+  h += '</div>';
 
-  html += '</div>';
+  h += '</div></div>';
 
   setTimeout(function(){
-    if(rows.indexOf('status') !== -1 && typeof Z.renderStatusRow === 'function'){
-      try { Z.renderStatusRow('lounge-status-host'); } catch(e){}
-    }
-    Z._wireLoungeRows();
+    if(typeof Z.renderStatusRow === 'function'){ try { Z.renderStatusRow('lounge-status-host'); } catch(e){} }
+    _injectEarnPill();
+    _updateEarnPill();
+    _ensureCustomizeFab();
+    Z.updateScrollTopBtn();
   }, 60);
 
-  return html;
+  return h;
 };
 
-Z._renderLoungeRow = function(rowId){
-  var meta = Z.LOUNGE_AVAILABLE_ROWS.filter(function(r){ return r.id === rowId; })[0];
-  if(!meta) return '';
+function _renderAppTile(id){
+  var t = TILE_CATALOG[id];
+  if(!t) return '';
+  var badge = _badgeFor(id);
+  var h = '<button class="zynix-lounge-app" data-lounge-tile="' + Z.escape(id) + '">';
+  h += '<div class="app-icon"><i class="' + t.icon + '"></i>';
+  if(badge){
+    if(badge.type === 'count') h += '<span class="app-badge">' + Z.escape(badge.value) + '</span>';
+    else h += '<span class="app-dot"></span>';
+  }
+  h += '</div>';
+  h += '<div class="app-label">' + Z.escape(t.label) + '</div>';
+  h += '</button>';
+  return h;
+}
 
-  var html = '<div class="lounge-row" data-lounge-row="' + rowId + '">';
+/* Delegate tile clicks */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-lounge-tile]');
+  if(!btn) return;
+  var id = btn.getAttribute('data-lounge-tile');
+  var t = TILE_CATALOG[id];
+  if(!t) return;
+  try { t.action(); } catch(err){ console.warn('[lounge tile]', err); }
+});
 
-  html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;">';
-  html += '<div style="font-size:12px;font-weight:800;color:#e2e8f0;letter-spacing:.3px;text-transform:uppercase;">';
-  html += '<i class="' + meta.icon + '" style="color:#10b981;margin-right:6px;font-size:11px;"></i>' + Z.escape(meta.label);
-  html += '</div>';
-  html += '<button onclick="Z._loungeViewAll(\'' + rowId + '\')" style="background:transparent;border:none;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;padding:2px 6px;">View All ›</button>';
-  html += '</div>';
+/* ============================================================
+   CUSTOMIZE SHEET
+   ============================================================ */
+Z.openLoungeCustomizeV2 = function(){
+  var current = getTiles();
+  var currentWall = getWallpaper();
 
-  html += '<div id="lounge-row-body-' + rowId + '" class="lounge-row-body">';
-  html += '<div style="padding:8px;color:#475569;font-size:11px;">Loading…</div>';
-  html += '</div>';
+  var h = '<div class="zynix-lounge-sheet">';
+  h += '<div style="width:40px;height:4px;background:#334155;border-radius:2px;margin:8px auto 0;"></div>';
+  h += '<div style="padding:14px 16px;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">';
+  h += '<div style="font-weight:900;font-size:15px;color:#fff;">Customize Lounge</div>';
+  h += '<button onclick="Z.closeLoungeCustomizeV2()" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;padding:0 6px;line-height:1;">&times;</button>';
+  h += '</div>';
 
-  html += '</div>';
-  return html;
-};
+  h += '<div style="padding:14px 16px;overflow-y:auto;flex:1;">';
 
-Z._wireLoungeRows = function(){
-  var rows = Z._getLoungeRows();
-  rows.forEach(function(rowId){
-    if(rowId === 'status') return;
-    Z._loadLoungeRow(rowId);
+  /* Wallpaper section */
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;"><i class="fa-solid fa-image" style="color:#3b82f6;margin-right:6px;"></i>WALLPAPER</div>';
+  h += '<div class="zynix-wall-grid" style="margin-bottom:20px;">';
+  WALLPAPERS.forEach(function(w){
+    var active = w.id === currentWall;
+    h += '<div class="zynix-wall-tile' + (active ? ' active' : '') + '" data-wall="' + Z.escape(w.id) + '" style="background:' + w.css + ';">';
+    h += '<div style="position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.6);color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;backdrop-filter:blur(4px);">' + Z.escape(w.label) + '</div>';
+    if(active) h += '<div class="check">✓</div>';
+    h += '</div>';
   });
-};
+  h += '<div class="zynix-wall-premium" data-premium="1"><i class="fa-solid fa-crown"></i><div class="label">Premium</div><div class="soon">Coming soon</div></div>';
+  h += '</div>';
 
-Z._loadLoungeRow = async function(rowId){
-  var body = document.getElementById('lounge-row-body-' + rowId);
-  if(!body) return;
-
-  if(rowId === 'tiles'){
-    body.innerHTML = Z._renderQuickTiles();
-    return;
-  }
-  if(rowId === 'circles'){
-    body.innerHTML = await Z._renderLoungeCircles();
-    return;
-  }
-  if(rowId === 'people'){
-    body.innerHTML = await Z._renderLoungePeople();
-    return;
-  }
-  if(rowId === 'featured'){
-    body.innerHTML = Z._renderLoungeFeatured();
-    return;
-  }
-  if(rowId === 'shops'){
-    body.innerHTML = await Z._renderLoungeShops();
-    return;
-  }
-  if(rowId === 'sparks'){
-    body.innerHTML = Z._renderLoungeSparks();
-    return;
-  }
-  if(rowId === 'wallet'){
-    body.innerHTML = Z._renderLoungeWalletTile();
-    return;
-  }
-  if(rowId === 'marketplace'){
-    body.innerHTML = Z._renderLoungeMarketplace();
-    return;
-  }
-  body.innerHTML = '<div style="padding:8px;color:#475569;font-size:11px;">Coming soon.</div>';
-};
-
-Z._renderQuickTiles = function(){
-  var tiles = Z._getLoungeTiles();
-  var html = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">';
-  tiles.forEach(function(t){
-    html += '<button onclick="' + t.action + '" style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:12px 4px;text-align:center;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;">';
-    html += '<i class="' + t.icon + '" style="font-size:20px;color:#10b981;"></i>';
-    html += '<span style="font-size:10px;color:#cbd5e1;font-weight:600;">' + Z.escape(t.label) + '</span>';
-    html += '</button>';
+  /* App tiles */
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;"><i class="fa-solid fa-grip" style="color:#10b981;margin-right:6px;"></i>APPS ON YOUR LOUNGE</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px;padding-bottom:20px;">';
+  Object.keys(TILE_CATALOG).forEach(function(id){
+    var t = TILE_CATALOG[id];
+    var on = current.indexOf(id) !== -1;
+    h += '<button data-cust-tile="' + Z.escape(id) + '" style="display:flex;align-items:center;justify-content:space-between;background:' + (on ? 'rgba(16,185,129,.06)' : '#0f172a') + ';border:1px solid ' + (on ? 'rgba(16,185,129,.35)' : '#1e293b') + ';border-radius:10px;padding:10px 12px;cursor:pointer;text-align:left;">';
+    h += '<span style="display:flex;align-items:center;gap:10px;color:' + (on ? '#10b981' : '#cbd5e1') + ';font-weight:700;font-size:12px;">';
+    h += '<span style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;color:' + (on ? '#10b981' : '#64748b') + ';font-size:15px;"><i class="' + t.icon + '"></i></span>';
+    h += Z.escape(t.label);
+    h += '</span>';
+    h += '<i class="fa-solid ' + (on ? 'fa-check-circle' : 'fa-circle') + '" style="color:' + (on ? '#10b981' : '#334155') + ';font-size:14px;"></i>';
+    h += '</button>';
   });
-  html += '</div>';
-  return html;
+  h += '</div>';
+  h += '</div>';
+
+  h += '<div style="padding:12px 16px;border-top:1px solid #1e293b;flex-shrink:0;">';
+  h += '<button onclick="Z.closeLoungeCustomizeV2()" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Done</button>';
+  h += '</div>';
+  h += '</div>';
+
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    document.querySelectorAll('[data-wall]').forEach(function(el){
+      el.addEventListener('click', function(){
+        setWallpaper(this.getAttribute('data-wall'));
+        Z.closeLoungeCustomizeV2();
+        Z.showView('lounge');
+        Z.toast('Wallpaper updated.');
+      });
+    });
+    document.querySelectorAll('[data-premium]').forEach(function(el){
+      el.addEventListener('click', function(){ Z.openLoungePremiumWallpapers(); });
+    });
+    document.querySelectorAll('[data-cust-tile]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = this.getAttribute('data-cust-tile');
+        var arr = getTiles();
+        var i = arr.indexOf(id);
+        if(i === -1) arr.push(id);
+        else arr.splice(i, 1);
+        setTiles(arr);
+        Z.closeLoungeCustomizeV2();
+        Z.openLoungeCustomizeV2();
+      });
+    });
+  }, 60);
 };
 
-Z._getLoungeTiles = function(){
-  return [
-    { label: 'Wallet',        icon: 'fa-solid fa-wallet',        action: "Z.showView('wallet')" },
-    { label: 'Notifications', icon: 'fa-solid fa-bell',          action: "Z.showView('notifications')" },
-    { label: 'Bounties',      icon: 'fa-solid fa-coins',         action: "Z.showView('bounty')" },
-    { label: 'Packages',      icon: 'fa-solid fa-box',           action: "Z.showView('packages')" },
-    { label: 'Referrals',     icon: 'fa-solid fa-users-rays',    action: "Z.showView('referrals')" },
-    { label: 'Saved',         icon: 'fa-solid fa-bookmark',      action: "Z.showView('home')" },
-    { label: 'Settings',      icon: 'fa-solid fa-gear',          action: "Z.showView('profile')" },
-    { label: 'Studio',        icon: 'fa-solid fa-palette',       action: "Z.toast('Studio coming soon')" }
-  ];
+Z.closeLoungeCustomizeV2 = function(){ Z.closeSheet(); };
+
+/* ============================================================
+   PREMIUM WALLPAPERS
+   ============================================================ */
+Z.openLoungePremiumWallpapers = function(){
+  var h = '<div class="zynix-lounge-sheet" style="max-height:70vh;">';
+  h += '<div style="width:40px;height:4px;background:#334155;border-radius:2px;margin:8px auto 0;"></div>';
+  h += '<div style="padding:14px 16px;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">';
+  h += '<div style="font-weight:900;font-size:15px;color:#fff;">Premium Wallpaper</div>';
+  h += '<button onclick="Z.closeSheet();Z.openLoungeCustomizeV2()" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;padding:0 6px;line-height:1;">&times;</button>';
+  h += '</div>';
+  h += '<div style="padding:32px 24px 40px;text-align:center;">';
+  h += '<div style="width:80px;height:80px;border-radius:24px;background:linear-gradient(135deg,rgba(251,191,36,.22),rgba(139,92,246,.22));border:1px solid rgba(251,191,36,.4);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;">';
+  h += '<i class="fa-solid fa-crown" style="font-size:32px;color:#fbbf24;"></i>';
+  h += '</div>';
+  h += '<div style="font-size:20px;font-weight:900;color:#fff;margin-bottom:8px;">Premium Wallpaper</div>';
+  h += '<div style="font-size:13px;color:#cbd5e1;line-height:1.6;margin-bottom:22px;">Designed by ZYNIX artists. Exclusive to <b style="color:#fbbf24;">Pro</b> and above.</div>';
+  h += '<div style="padding:14px 16px;border-radius:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.28);font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:22px;">';
+  h += '<b style="color:#fbbf24;">Launching with Phase 4.</b><br>Hand-crafted backgrounds, animated gradients, and seasonal collections. Preview available at launch.';
+  h += '</div>';
+  h += '<button onclick="Z.closeSheet();Z.openLoungeCustomizeV2()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;">Back to Wallpapers</button>';
+  h += '</div>';
+  h += '</div>';
+  Z.openSheet(h);
 };
 
-Z._renderLoungeCircles = async function(){
-  var c = Z.sb();
-  if(!c) return '<div style="padding:8px;color:#475569;font-size:11px;">Not connected.</div>';
-  var data = [];
-  try {
-    var r = await c.from('circles').select('*').order('member_count', {ascending:false}).limit(12);
-    data = r.data || [];
-  } catch(e){ data = []; }
+/* ============================================================
+   COMPAT SHIM — old Section 15 references
+   ============================================================ */
+if(!Array.isArray(Z.LOUNGE_AVAILABLE_ROWS)) Z.LOUNGE_AVAILABLE_ROWS = [];
+Z._loadLoungeRow = async function(){ /* no-op */ };
+Z._getLoungeRows = function(){ return []; };
+Z._setLoungeRows = function(){ /* no-op */ };
+Z.openLoungeCustomize = Z.openLoungeCustomizeV2;
+Z._renderLoungeRow = function(){ return ''; };
 
-  if(!data.length){
-    data = (Z.DB.getCircles()||[]).slice(0, 12);
-  }
-
-  if(!data.length){
-    return '<div style="padding:12px;color:#475569;font-size:11px;">No circles yet. <button onclick="Z.openCreateCircleModal()" style="background:transparent;border:none;color:#10b981;font-weight:700;cursor:pointer;padding:0;font-size:11px;">Create one ›</button></div>';
-  }
-
-  var html = '<div class="lounge-scroll">';
-  data.forEach(function(cir){
-    var avatar = cir.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
-    html += '<button onclick="Z.showView(\'circles\')" style="flex:0 0 auto;width:88px;background:transparent;border:none;cursor:pointer;padding:0;text-align:center;">';
-    html += '<div style="width:76px;height:76px;border-radius:20px;overflow:hidden;border:2px solid #1e293b;margin:0 auto;background:#0f172a;">';
-    html += '<img src="' + Z.escape(avatar) + '" style="width:100%;height:100%;object-fit:cover;">';
-    html += '</div>';
-    html += '<div style="font-size:10px;color:#cbd5e1;font-weight:700;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(cir.name || 'Circle') + '</div>';
-    html += '<div style="font-size:9px;color:#64748b;">' + (cir.member_count || 0) + ' members</div>';
-    html += '</button>';
-  });
-  html += '<button onclick="Z.openCreateCircleModal()" style="flex:0 0 auto;width:88px;background:transparent;border:none;cursor:pointer;padding:0;text-align:center;">';
-  html += '<div style="width:76px;height:76px;border-radius:20px;border:2px dashed #10b981;margin:0 auto;display:flex;align-items:center;justify-content:center;background:rgba(16,185,129,.05);">';
-  html += '<i class="fa-solid fa-plus" style="color:#10b981;font-size:22px;"></i>';
-  html += '</div>';
-  html += '<div style="font-size:10px;color:#10b981;font-weight:700;margin-top:6px;">Create</div>';
-  html += '</button>';
-  html += '</div>';
-  return html;
+/* ============================================================
+   REFRESH HOOK
+   ============================================================ */
+Z.refreshLoungeTiles = function(){
+  if(Z.State.currentView !== 'lounge') return;
+  var grid = document.getElementById('zynix-lounge-grid');
+  if(!grid) return;
+  var tiles = getTiles();
+  var html = '';
+  tiles.forEach(function(id){ html += _renderAppTile(id); });
+  html += '<button class="zynix-lounge-app add-tile" onclick="Z.openLoungeCustomizeV2()"><div class="app-icon"><i class="fa-solid fa-plus"></i></div><div class="app-label">Add</div></button>';
+  grid.innerHTML = html;
+  _updateEarnPill();
 };
 
-Z._renderLoungePeople = async function(){
-  var me = Z.State.currentUser;
-  if(!me) return '';
-  var data = [];
-  try {
-    data = await Z.DB.getPeopleFeed(12, 0, Date.now());
-  } catch(e){ data = []; }
-  if(!data || !data.length){
-    data = (Z.State.allProfiles||[]).filter(function(u){ return u.id !== me.id; }).slice(0, 12);
-  }
-  if(!data.length){
-    return '<div style="padding:12px;color:#475569;font-size:11px;">No suggestions yet.</div>';
-  }
-
-  var html = '<div class="lounge-scroll">';
-  data.forEach(function(u){
-    html += '<div style="flex:0 0 auto;width:96px;text-align:center;">';
-    html += '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="background:transparent;border:none;cursor:pointer;padding:0;">';
-    html += '<div style="width:72px;height:72px;border-radius:50%;overflow:hidden;border:2px solid #1e293b;margin:0 auto;background:#0f172a;">';
-    html += '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:100%;height:100%;object-fit:cover;">';
-    html += '</div>';
-    html += '<div style="font-size:10px;color:#cbd5e1;font-weight:700;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(Z.displayName(u)) + '</div>';
-    html += '</button>';
-    html += '<div style="font-size:9px;color:#64748b;margin-top:2px;">@' + Z.escape(u.username||'user') + '</div>';
-    html += '</div>';
-  });
-  html += '</div>';
-  return html;
-};
-
-Z._renderLoungeFeatured = function(){
-  var html = '<div style="background:linear-gradient(135deg,#1e293b,#0f172a);border:1px solid #1e293b;border-radius:16px;padding:18px;position:relative;overflow:hidden;">';
-  html += '<div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(16,185,129,.15),transparent 70%);"></div>';
-  html += '<div style="position:relative;">';
-  html += '<div style="font-size:10px;font-weight:800;color:#10b981;letter-spacing:1.5px;text-transform:uppercase;">Featured Studio</div>';
-  html += '<div style="font-size:18px;font-weight:900;color:#fff;margin-top:6px;line-height:1.25;">Design. Rent. Earn.</div>';
-  html += '<div style="font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.5;">Creators list banner and wallpaper sets. Members rent them for $0.01/day. Every design shows the designer\'s name forever.</div>';
-  html += '<button onclick="Z.toast(\'Studio opens soon\')" style="margin-top:12px;background:#10b981;border:none;color:#000;font-weight:800;padding:8px 16px;border-radius:10px;font-size:12px;cursor:pointer;">Explore Studio</button>';
-  html += '</div>';
-  html += '</div>';
-  return html;
-};
-
-Z._renderLoungeShops = async function(){
-  var c = Z.sb();
-  if(!c) return '';
-  var data = [];
-  try {
-    var r = await c.from('circles').select('*').in('type', ['services','goods']).order('member_count', {ascending:false}).limit(12);
-    data = r.data || [];
-  } catch(e){ data = []; }
-  if(!data.length){
-    return '<div style="padding:12px;color:#475569;font-size:11px;">No shops yet. <button onclick="Z.showView(\'galleria\')" style="background:transparent;border:none;color:#10b981;font-weight:700;cursor:pointer;padding:0;font-size:11px;">Browse Galleria ›</button></div>';
-  }
-  var html = '<div class="lounge-scroll">';
-  data.forEach(function(s){
-    var avatar = s.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
-    html += '<button onclick="Z.showView(\'galleria\')" style="flex:0 0 auto;width:140px;background:#111827;border:1px solid #1e293b;border-radius:14px;padding:10px;cursor:pointer;text-align:left;">';
-    html += '<div style="width:100%;height:80px;border-radius:10px;overflow:hidden;background:#0f172a;margin-bottom:8px;">';
-    html += '<img src="' + Z.escape(avatar) + '" style="width:100%;height:100%;object-fit:cover;">';
-    html += '</div>';
-    html += '<div style="font-size:11px;color:#fff;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + Z.escape(s.name || 'Shop') + '</div>';
-    html += '<div style="font-size:9px;color:#64748b;margin-top:2px;">' + (s.member_count||0) + ' members</div>';
-    html += '</button>';
-  });
-  html += '</div>';
-  return html;
-};
-
-Z._renderLoungeSparks = function(){
-  var sparks = (Z.State.allSparks || []).slice(0, 12);
-  if(!sparks.length){
-    return '<div style="padding:12px;color:#475569;font-size:11px;">No sparks yet.</div>';
-  }
-  var html = '<div class="lounge-scroll">';
-  sparks.forEach(function(s){
-    html += '<button onclick="Z.showView(\'spark\')" style="flex:0 0 auto;width:100px;background:#000;border:1px solid #1e293b;border-radius:12px;overflow:hidden;cursor:pointer;padding:0;height:160px;position:relative;">';
-    html += '<video src="' + Z.escape(s.video_url) + '" preload="metadata" playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>';
-    html += '</button>';
-  });
-  html += '</div>';
-  return html;
-};
-
-Z._renderLoungeWalletTile = function(){
-  var me = Z.State.currentUser;
-  if(!me) return '';
-  var cash = Number(me.wallet_cash || 0).toFixed(2);
-  var bounty = Number(me.wallet_bounty || 0).toFixed(2);
-  var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
-  html += '<button onclick="Z.showView(\'wallet\')" style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;text-align:left;cursor:pointer;">';
-  html += '<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Cash</div>';
-  html += '<div style="font-size:22px;font-weight:900;color:#10b981;margin-top:4px;">$' + cash + '</div>';
-  html += '</button>';
-  html += '<button onclick="Z.showView(\'wallet\')" style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;text-align:left;cursor:pointer;">';
-  html += '<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Bounty</div>';
-  html += '<div style="font-size:22px;font-weight:900;color:#3b82f6;margin-top:4px;">$' + bounty + '</div>';
-  html += '</button>';
-  html += '</div>';
-  return html;
-};
-
-Z._renderLoungeMarketplace = function(){
-  var html = '<div class="lounge-scroll">';
-  var items = [
-    { icon:'fa-solid fa-image',    label:'Banners',       color:'#10b981' },
-    { icon:'fa-solid fa-desktop',  label:'Wallpapers',    color:'#3b82f6' },
-    { icon:'fa-solid fa-layer-group', label:'Post Templates', color:'#8b5cf6' },
-    { icon:'fa-solid fa-video',    label:'Video Editing', color:'#ec4899' },
-    { icon:'fa-solid fa-comments', label:'Consulting',    color:'#f59e0b' },
-    { icon:'fa-solid fa-microphone', label:'Voice / Audio', color:'#06b6d4' }
-  ];
-  items.forEach(function(it){
-    html += '<button onclick="Z.toast(\'' + Z.escape(it.label) + ' — Studio opens soon\')" style="flex:0 0 auto;width:110px;background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;">';
-    html += '<i class="' + it.icon + '" style="font-size:22px;color:' + it.color + ';display:block;margin-bottom:8px;"></i>';
-    html += '<div style="font-size:10px;color:#cbd5e1;font-weight:700;">' + Z.escape(it.label) + '</div>';
-    html += '</button>';
-  });
-  html += '</div>';
-  return html;
-};
-
-Z._loungeViewAll = function(rowId){
-  if(rowId === 'circles')  return Z.showView('circles');
-  if(rowId === 'people')   return Z.showView('people');
-  if(rowId === 'shops' || rowId === 'marketplace') return Z.showView('galleria');
-  if(rowId === 'sparks')   return Z.showView('spark');
-  if(rowId === 'wallet')   return Z.showView('wallet');
-  if(rowId === 'status')   return Z.showView('status-home');
-  if(rowId === 'tiles' || rowId === 'featured') return Z.toast('Nothing more to show.');
-};
-
-Z.openLoungeCustomize = function(){
-  var rows = Z._getLoungeRows();
-  var html = '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">';
-  html += '<div class="modal-box">';
-  html += '<div class="modal-header"><h3>Customize Lounge</h3>';
-  html += '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>';
-  html += '</div>';
-  html += '<div style="font-size:11px;color:#94a3b8;margin-bottom:12px;line-height:1.5;">Choose which rows appear in your Lounge. Each row scrolls left-to-right with a View All link.</div>';
-  html += '<div style="display:flex;flex-direction:column;gap:8px;">';
-  Z.LOUNGE_AVAILABLE_ROWS.forEach(function(r){
-    var on = rows.indexOf(r.id) !== -1;
-    html += '<button onclick="Z._toggleLoungeRow(\'' + r.id + '\', event)" style="display:flex;align-items:center;justify-content:space-between;background:' + (on ? 'rgba(16,185,129,.08)' : '#0f172a') + ';border:1px solid ' + (on ? 'rgba(16,185,129,.4)' : '#1e293b') + ';border-radius:10px;padding:12px 14px;cursor:pointer;text-align:left;">';
-    html += '<span style="display:flex;align-items:center;gap:10px;color:' + (on ? '#10b981' : '#cbd5e1') + ';font-weight:700;font-size:12px;">';
-    html += '<i class="' + r.icon + '" style="width:16px;text-align:center;"></i>' + Z.escape(r.label);
-    html += '</span>';
-    html += '<i class="fa-solid ' + (on ? 'fa-check-circle' : 'fa-circle') + '" style="color:' + (on ? '#10b981' : '#334155') + ';font-size:14px;"></i>';
-    html += '</button>';
-  });
-  html += '</div>';
-  html += '<button class="btn-primary" style="margin-top:16px;" onclick="Z.closeModal();Z.showView(\'lounge\')">Done</button>';
-  html += '</div>';
-  html += '</div>';
-  Z.openModal(html);
-};
-
-Z._toggleLoungeRow = function(rowId, ev){
-  if(ev) ev.stopPropagation();
-  var rows = Z._getLoungeRows();
-  var idx = rows.indexOf(rowId);
-  if(idx === -1) rows.push(rowId);
-  else rows.splice(idx, 1);
-  Z._setLoungeRows(rows);
-  Z.openLoungeCustomize();
-};
-
-(function(){
-  try {
-    if(document.getElementById('zynix-lounge-css')) return;
-    var st = document.createElement('style');
-    st.id = 'zynix-lounge-css';
-    st.textContent =
-      '.lounge-scroll{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:none;-ms-overflow-style:none;}' +
-      '.lounge-scroll::-webkit-scrollbar{display:none}' +
-      '.lounge-row{background:#0f172a;border:1px solid #1e293b;border-radius:16px;padding:14px 14px 8px;}';
-    document.head.appendChild(st);
-  } catch(e){}
-})();
-(function(){
-  if(window._zynixWheelHooked) return;
-  window._zynixWheelHooked = true;
-  document.addEventListener('wheel', function(e){
-    var el = e.target.closest('.lounge-scroll, .home-discover-scroll');
-    if(!el) return;
-    if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){
-      el.scrollLeft += e.deltaY;
-      e.preventDefault();
-    }
-  }, {passive:false});
-})();
+console.log('[ZYNIX Lounge v2.1] ready — no heading · floating customize · top-level tiles only');
 })();
 </script>
 <!-- ============================================================ -->
