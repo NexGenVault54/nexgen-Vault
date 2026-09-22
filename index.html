@@ -13046,6 +13046,152 @@ console.log('[Header Patch B] avatar dropdown · theme in Settings · report slo
 })();
 </script>
 <!-- ============================================================ -->
+<!-- Bounty display + heart animations                            -->
+<!-- Rate from bounty_pool · heart shows ~$X.XX · tap animation   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixBountyDisplay) return; Z.__zynixBountyDisplay = true;
+
+/* 1. CSS keyframes */
+if(!document.getElementById('zynix-heart-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-heart-css';
+  st.textContent = [
+    '@keyframes zynixHeartRise{0%{transform:translateY(0) scale(.6);opacity:0}15%{transform:translateY(-10px) scale(1.15);opacity:1}100%{transform:translateY(-220px) scale(.7);opacity:0}}',
+    '@keyframes zynixRipple{0%{transform:scale(1);opacity:.6}100%{transform:scale(2.2);opacity:0}}',
+    '@keyframes zynixCounterBounce{0%,100%{transform:scale(1)}40%{transform:scale(1.4)}}',
+    '.zynix-heart-rise{position:fixed;pointer-events:none;z-index:99999;font-size:40px;animation:zynixHeartRise 700ms cubic-bezier(.25,.46,.45,.94) forwards;filter:drop-shadow(0 0 12px rgba(16,185,129,.6))}',
+    '.zynix-heart-amount{position:fixed;pointer-events:none;font-size:12px;font-weight:900;color:#10b981;text-shadow:0 0 8px rgba(16,185,129,.85),0 2px 4px rgba(0,0,0,.95);animation:zynixHeartRise 700ms cubic-bezier(.25,.46,.45,.94) forwards;white-space:nowrap;z-index:99999}',
+    '.zynix-ripple{position:absolute;inset:-4px;border-radius:50%;border:2px solid #10b981;pointer-events:none;animation:zynixRipple 500ms ease-out forwards}',
+    '.zynix-count-bounce{animation:zynixCounterBounce 300ms ease-out}',
+    '@media(prefers-reduced-motion:reduce){.zynix-heart-rise,.zynix-heart-amount,.zynix-ripple,.zynix-count-bounce{animation:none !important}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* 2. Rate fetcher — cache 60s */
+var _rateCache = { value: 0, ts: 0 };
+Z.getBountyRate = async function(){
+  var now = Date.now();
+  if(now - _rateCache.ts < 60000) return _rateCache.value;
+  try {
+    var c = Z.sb(); if(!c) return _rateCache.value;
+    var r = await c.from('bounty_pool').select('current_weekly_rate').eq('id',1).maybeSingle();
+    if(r.data && r.data.current_weekly_rate != null){
+      var v = Number(r.data.current_weekly_rate) || 0;
+      _rateCache = { value: v, ts: now };
+      Z.syncReactionRewards(v);
+      return v;
+    }
+  } catch(e){}
+  return _rateCache.value;
+};
+
+/* 3. Sync reward values from rate. If rate is 0 (pool not
+   started), use $0.005/pt placeholder so heart shows ~$0.05 */
+Z.syncReactionRewards = function(rate){
+  if(!rate || rate <= 0) rate = 0.005;
+  Z.Reactions.love.reward   = 10 * rate;
+  Z.Reactions.flower.reward = 8  * rate;
+  Z.Reactions.spark.reward  = 6  * rate;
+  Z.Reactions.clap.reward   = 4  * rate;
+  Z.Reactions.star.reward   = 2  * rate;
+};
+
+/* 4. Tap animation */
+function _playTapAnimation(btn, reactionType){
+  if(!btn) return;
+  var rect = btn.getBoundingClientRect();
+  var cx = rect.left + rect.width / 2;
+  var cy = rect.top + rect.height / 2;
+  var r = Z.Reactions[reactionType];
+  if(!r) return;
+
+  /* Heart rises from button center */
+  var heart = document.createElement('div');
+  heart.className = 'zynix-heart-rise';
+  heart.textContent = r.symbol;
+  heart.style.left = (cx - 20) + 'px';
+  heart.style.top = (cy - 20) + 'px';
+  document.body.appendChild(heart);
+
+  /* Amount floats above */
+  if(r.reward > 0){
+    var amt = document.createElement('div');
+    amt.className = 'zynix-heart-amount';
+    amt.textContent = '+~$' + r.reward.toFixed(2);
+    amt.style.left = cx + 'px';
+    amt.style.top = (cy - 30) + 'px';
+    amt.style.transform = 'translateX(-50%)';
+    document.body.appendChild(amt);
+    setTimeout(function(){ amt.remove(); }, 750);
+  }
+
+  /* Ripple on button */
+  btn.style.position = 'relative';
+  var rip = document.createElement('div');
+  rip.className = 'zynix-ripple';
+  btn.appendChild(rip);
+  setTimeout(function(){ rip.remove(); }, 520);
+
+  /* Counter bounce */
+  var cnt = btn.querySelector('.count');
+  if(cnt){
+    cnt.classList.add('zynix-count-bounce');
+    setTimeout(function(){ cnt.classList.remove('zynix-count-bounce'); }, 320);
+  }
+
+  setTimeout(function(){ heart.remove(); }, 750);
+}
+
+/* 5. Hook via delegation — post + spark + comment reactions */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('.react-btn, .comment-react, .spark-reaction-icon');
+  if(!btn) return;
+  var onclick = btn.getAttribute('onclick') || '';
+  var match = onclick.match(/'([a-z]+)'\)/);
+  if(!match) return;
+  var t = match[1];
+  if(t === 'dislike') return;
+  /* skip if already active (no repeat animation) */
+  if(btn.classList.contains('active')) return;
+  _playTapAnimation(btn, t);
+}, true);
+
+/* 6. Prefix ~ to displayed rewards if not already there */
+setInterval(function(){
+  document.querySelectorAll('.react-btn .bounty, .comment-react .cb').forEach(function(el){
+    var txt = el.textContent || '';
+    if(txt.indexOf('$') !== -1 && txt.indexOf('~') === -1 && txt.indexOf('—') === -1){
+      el.textContent = '~' + txt;
+    }
+  });
+}, 1200);
+
+/* 7. Bootstrap: placeholder rate so buttons show values on first paint */
+Z.syncReactionRewards(0.005);
+
+/* 8. Fetch real rate shortly after load, refresh every 90s */
+setTimeout(function(){
+  Z.getBountyRate().then(function(rate){
+    if(rate > 0){
+      /* Refresh any visible reaction rows with new values */
+      document.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
+        var pid = card.getAttribute('data-post-id');
+        if(Z.updatePostReactionUI) Z.updatePostReactionUI(pid);
+      });
+    }
+  });
+}, 2000);
+setInterval(function(){ Z.getBountyRate(); }, 90000);
+
+console.log('[Bounty Display] rate sync + heart animations ready');
+})();
+</script>   
+<!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
 <!-- Server-authoritative. No localStorage for money.             -->
