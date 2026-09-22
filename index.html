@@ -13212,6 +13212,247 @@ console.log('[Bounty Display v2] rate sync + heart animations + freeze check rea
 })();
 </script>
 <!-- ============================================================ -->
+<!-- Wallet redesign — pool card · week card · lock · guide       -->
+<!-- Overrides renderWallet — no other function disturbed         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixWalletV2) return; Z.__zynixWalletV2 = true;
+
+function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+/* ---------- Week helper ---------- */
+function _currentWeekStart(){
+  var d = new Date();
+  var day = d.getUTCDay(); /* 0=Sun..6=Sat */
+  var diff = (day === 0 ? -6 : 1) - day; /* shift to Monday */
+  var mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + diff));
+  return mon.toISOString().slice(0,10);
+}
+
+/* ---------- State cache ---------- */
+var _walletCache = {
+  pool: { balance: 0, rate: 0 },
+  week: { points: 0, tier: 'free' },
+  loaded: false
+};
+
+async function _loadWalletData(){
+  var u = Z.State.currentUser; if(!u) return;
+  var c = Z.sb(); if(!c) return;
+  try {
+    var poolR = await c.from('bounty_pool').select('balance, current_weekly_rate').eq('id', 1).maybeSingle();
+    if(poolR.data){
+      _walletCache.pool.balance = Number(poolR.data.balance) || 0;
+      _walletCache.pool.rate = Number(poolR.data.current_weekly_rate) || 0;
+    }
+    var wk = _currentWeekStart();
+    var ptR = await c.from('bounty_weekly_points').select('points').eq('user_id', u.id).eq('week_start', wk).maybeSingle();
+    _walletCache.week.points = ptR.data ? (Number(ptR.data.points) || 0) : 0;
+    var tierR = await c.from('user_tiers').select('tier').eq('user_id', u.id).maybeSingle();
+    _walletCache.week.tier = tierR.data ? tierR.data.tier : 'free';
+    _walletCache.loaded = true;
+  } catch(e){}
+  /* Repaint the async zones */
+  _paintPoolCard();
+  _paintWeekCard();
+}
+
+/* ---------- Pool card ---------- */
+function _paintPoolCard(){
+  var host = document.getElementById('zynix-wallet-pool');
+  if(!host) return;
+  var bal = _walletCache.pool.balance;
+  var rate = _walletCache.pool.rate;
+  var rateDisplay = rate > 0 ? ('~$' + rate.toFixed(3) + ' / pt') : 'building';
+  host.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.6px;">COMMUNITY BOUNTY POOL</div>' +
+        '<div style="font-size:24px;font-weight:900;color:#10b981;margin-top:4px;">$' + bal.toFixed(2) + '</div>' +
+        '<div style="font-size:10px;color:#64748b;margin-top:4px;">This week\'s rate: <b style="color:#a18554;">' + rateDisplay + '</b></div>' +
+      '</div>' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+        '<i class="fa-solid fa-shield-heart" style="color:#10b981;font-size:15px;"></i>' +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:12px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;color:#cbd5e1;line-height:1.5;">' +
+      'Every Monday, the pool pays out to everyone who earned points this week. Bigger pool → higher rate for everyone.' +
+    '</div>';
+}
+
+/* ---------- Week card ---------- */
+function _paintWeekCard(){
+  var host = document.getElementById('zynix-wallet-week');
+  if(!host) return;
+  var pts = _walletCache.week.points;
+  var tier = _walletCache.week.tier;
+  var rate = _walletCache.pool.rate || 0.005;
+
+  /* tier multiplier — same levels as Section 18 */
+  var mult = 1;
+  var tierLabel = 'Newcomer';
+  var nextLabel = 'Member';
+  var nextThreshold = 100;
+  if(pts >= 50000){ mult = 5; tierLabel = 'Partner'; nextLabel = null; }
+  else if(pts >= 10000){ mult = 3; tierLabel = 'Expert'; nextLabel = 'Partner'; nextThreshold = 50000; }
+  else if(pts >= 2000){ mult = 2; tierLabel = 'Pro'; nextLabel = 'Expert'; nextThreshold = 10000; }
+  else if(pts >= 500){ mult = 1.5; tierLabel = 'Contributor'; nextLabel = 'Pro'; nextThreshold = 2000; }
+  else if(pts >= 100){ mult = 1.25; tierLabel = 'Member'; nextLabel = 'Contributor'; nextThreshold = 500; }
+
+  var estimate = pts * rate * mult;
+
+  var h = '';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.6px;">THIS WEEK</div>';
+  h += '<div style="display:flex;align-items:baseline;gap:8px;margin-top:6px;">';
+  h += '<div style="font-size:28px;font-weight:900;color:#fff;">' + pts + '</div>';
+  h += '<div style="font-size:12px;color:#94a3b8;font-weight:700;">points</div>';
+  h += '<div style="margin-left:auto;text-align:right;">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:800;">TIER</div>';
+  h += '<div style="font-size:13px;font-weight:900;color:#10b981;margin-top:2px;">' + esc(tierLabel) + ' · ' + mult + 'x</div>';
+  h += '</div></div>';
+
+  h += '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:800;">ESTIMATED PAYOUT</div>';
+  h += '<div style="font-size:18px;font-weight:900;color:#10b981;">~$' + estimate.toFixed(2) + '</div>';
+  h += '</div>';
+  h += '<div style="font-size:9.5px;color:#64748b;margin-top:6px;">Pays Monday. Final depends on community pool.</div>';
+  h += '</div>';
+
+  if(nextLabel){
+    var remaining = nextThreshold - pts;
+    var pct = Math.min(100, (pts / nextThreshold) * 100);
+    h += '<div style="margin-top:12px;">';
+    h += '<div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;font-weight:800;margin-bottom:4px;">';
+    h += '<span>Next: ' + esc(nextLabel) + '</span><span>' + remaining + ' pts to go</span>';
+    h += '</div>';
+    h += '<div style="height:6px;border-radius:3px;background:rgba(0,0,0,.35);overflow:hidden;">';
+    h += '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#10b981,#3b82f6);transition:width .4s ease;"></div>';
+    h += '</div></div>';
+  }
+
+  host.innerHTML = h;
+}
+
+/* ---------- Lock banner ---------- */
+function _renderLockBanner(u){
+  var locked = u.bounty_locked !== false;
+  if(!locked) return '';
+  var h = '';
+  h += '<div style="padding:14px;border-radius:14px;background:rgba(161,133,84,.1);border:1px solid rgba(161,133,84,.4);">';
+  h += '<div style="display:flex;align-items:flex-start;gap:10px;">';
+  h += '<div style="width:34px;height:34px;border-radius:10px;background:rgba(161,133,84,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;">';
+  h += '<i class="fa-solid fa-lock" style="color:#a18554;font-size:14px;"></i>';
+  h += '</div>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div style="font-size:12px;font-weight:800;color:#fff;">Bounty is earning, but locked for withdrawal</div>';
+  h += '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;line-height:1.5;">Upgrade to Member ($9/month) to withdraw your Bounty. You can still spend it inside ZYNIX today — on Peer Support, Circles, and more.</div>';
+  h += '<button onclick="Z.showView(\'tiers\')" style="margin-top:10px;padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;">View Tiers</button>';
+  h += '</div></div></div>';
+  return h;
+}
+
+/* ---------- Guide (toggle in place) ---------- */
+Z.toggleWalletGuide = function(){
+  var host = document.getElementById('zynix-wallet-guide');
+  if(!host) return;
+  var btn = document.getElementById('zynix-wallet-guide-btn');
+  var isOpen = host.style.display === 'block';
+  if(isOpen){
+    host.style.display = 'none';
+    if(btn){ btn.style.background = 'rgba(59,130,246,.1)'; btn.style.borderColor = 'rgba(59,130,246,.35)'; btn.style.color = '#3b82f6'; }
+  } else {
+    host.style.display = 'block';
+    if(btn){ btn.style.background = 'rgba(16,185,129,.15)'; btn.style.borderColor = '#10b981'; btn.style.color = '#10b981'; }
+  }
+};
+
+function _renderGuidePanel(){
+  function sec(h, p){
+    return '<div style="margin-bottom:14px;">' +
+      '<div style="font-size:12px;font-weight:900;color:#10b981;margin-bottom:6px;">' + h + '</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">' + p + '</div>' +
+    '</div>';
+  }
+  var h = '<div id="zynix-wallet-guide" style="display:none;padding:16px;border-radius:14px;background:#111827;border:1px solid #1e293b;margin-top:6px;">';
+  h += sec('Why two balances?', 'Cash is real money — you can withdraw it. Bounty is engagement money — you earn it from reactions, and spend it inside ZYNIX. Both grow over time. Nothing you earn is ever lost.');
+  h += sec('How Bounty works', 'Every reaction someone sends you earns points. Points convert to Bounty every Monday. The conversion rate depends on the community pool — a bigger pool means a higher rate for everyone.');
+  h += sec('The 40% pool', 'ZYNIX commits 40% of subscription revenue to a shared pool. That pool pays everyone who earned points that week. Nobody active is skipped. The pool never breaks — it only pays what it can afford.');
+  h += sec('How to earn more', 'Post content. Get reactions. The more hearts your content receives, the more points you earn. Higher tiers earn more per point — that\'s the reward for showing up consistently.');
+  h += sec('How to climb tiers', 'Your Contribution Score rises as you publish, react, help, and stay active. Every tier doubles or more your per-point payout. The next tier is always reachable — one goal at a time.');
+  h += sec('How to unlock withdrawal', 'Upgrade to Member ($9/month) or higher. Your Bounty stays in your wallet — it just becomes withdrawable. Free users can still spend Bounty inside the app.');
+  h += '<div style="padding:10px 12px;border-radius:8px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.22);font-size:11px;color:#cbd5e1;line-height:1.6;">';
+  h += '<b style="color:#60a5fa;">The short version:</b> React to earn points. Earn points to climb tiers. Climb tiers to earn more per point. Pool grows. Everyone wins together.';
+  h += '</div>';
+  h += '</div>';
+  return h;
+}
+
+/* ---------- Main render (overrides Section 10) ---------- */
+Z.renderWallet = function(){
+  var u = Z.State.currentUser;
+  if(!u) return Z.emptyState({ icon: 'fa-solid fa-wallet', title: 'Login first.' });
+  Z.clearWalletBadge();
+  var tx = u._walletTx || [];
+  var txHtml = tx.length
+    ? tx.map(function(t){ return Z.renderWalletNotification(t); }).join('')
+    : '<div style="text-align:center;padding:20px;color:#64748b;font-size:11px;">No transactions yet.</div>';
+
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;">';
+
+  /* Header with guide button */
+  h += '<div class="view-header" style="justify-content:space-between;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title"><i class="fa-solid fa-wallet" style="color:#10b981;margin-right:8px;"></i>Wallet</h2>';
+  h += '<div style="display:flex;gap:6px;align-items:center;">';
+  h += '<button id="zynix-wallet-guide-btn" onclick="Z.toggleWalletGuide()" title="Why two balances?" style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.35);color:#3b82f6;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:13px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;">?</button>';
+  h += '<button class="circle-x-btn" onclick="Z.goBack()" title="Close wallet"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div></div>';
+
+  /* Guide panel (hidden by default) */
+  h += _renderGuidePanel();
+
+  /* Lock banner (if locked) */
+  h += _renderLockBanner(u);
+
+  /* Two balances */
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
+  h += '<div class="stat-card"><div class="stat-label">Cash</div><div class="stat-value" style="color:#10b981;">$' + Number(u.wallet_cash||0).toFixed(2) + '</div><div style="font-size:9.5px;color:#64748b;margin-top:4px;">Withdrawable</div></div>';
+  h += '<div class="stat-card"><div class="stat-label">Bounty</div><div class="stat-value" style="color:#3b82f6;">$' + Number(u.wallet_bounty||0).toFixed(2) + '</div><div style="font-size:9.5px;color:#64748b;margin-top:4px;">' + (u.bounty_locked !== false ? 'Locked until upgrade' : 'In-app + withdraw') + '</div></div>';
+  h += '</div></div>';
+
+  /* Pool card */
+  h += '<div id="zynix-wallet-pool" style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  h += '<div style="font-size:11px;color:#64748b;">Loading pool…</div>';
+  h += '</div>';
+
+  /* Week card */
+  h += '<div id="zynix-wallet-week" style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  h += '<div style="font-size:11px;color:#64748b;">Loading week…</div>';
+  h += '</div>';
+
+  /* Activity */
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  h += '<div class="section-title" style="margin-top:0;">Activity</div>';
+  h += txHtml;
+  h += '</div>';
+
+  h += '</div>';
+
+  /* Kick off async load */
+  setTimeout(function(){ _loadWalletData(); }, 50);
+
+  return h;
+};
+
+console.log('[Wallet v2] pool card · week card · lock banner · guide toggle ready');
+})();
+</script>   
+<!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
 <!-- Server-authoritative. No localStorage for money.             -->
