@@ -5468,51 +5468,61 @@ Z.postSparkToWall = async function(sparkId){
   var s = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
   if(!s){ Z.toast('Not found.'); return; }
   if(s.author_id === me.id){ Z.toast('Cannot share your own Spark.'); return; }
-  var c = Z.sb();
-  if(!c) return;
+
+  var c = Z.sb(); if(!c) return;
 
   var srcAuthor = Z.getProfileById(s.author_id);
   var creditLine = '@' + ((srcAuthor && srcAuthor.username) || 'user');
   var baseText = s.caption || s.title || '';
   var newContent = baseText ? (baseText + '\n\n— spark from ' + creditLine) : ('Spark from ' + creditLine);
 
-  var payload = {
-    author_id: me.id,
-    content: newContent,
-    media_url: s.video_url || null,
-    media_type: 'video',
-    share_bounty: 0,
-    shared_from_id: s.id,
-    shared_from_type: 'spark'
-  };
-
-  var r = await c.from('posts').insert(payload).select().maybeSingle();
-  if(r.error || !r.data){ Z.toast('Share failed.', 'error'); return; }
-
-  var row = Object.assign({}, r.data, {reactions:{}, _myReactions:{}, _comments:[]});
-  Z.State.allPosts = [row].concat(Z.State.allPosts || []);
-
+  /* Section 6 shares go to the Wall (spark → post). Circle target arrives later. */
   try {
-    var amt = 0;
-    var ownerProf = Z.getProfileById(s.author_id);
-    if(ownerProf && ownerProf.bounty_settings && typeof ownerProf.bounty_settings.share === 'number'){
-      amt = ownerProf.bounty_settings.share;
+    var r = await c.rpc('create_share_target', {
+      p_original_post_id: sparkId,
+      p_target_type: 'wall',
+      p_target_circle_id: null,
+      p_content: newContent
+    });
+    if(r.error){
+      var msg = (r.error.message || '').toLowerCase();
+      if(msg.indexOf('duplicate_24h') !== -1)  Z.toast('You already shared this. Try again in 24 hours.', 'error');
+      else if(msg.indexOf('hour_cap') !== -1)  Z.toast('Hourly share limit reached. Try again later.', 'error');
+      else if(msg.indexOf('day_cap') !== -1)   Z.toast('Daily share limit reached. Come back tomorrow.', 'error');
+      else if(msg.indexOf('own_post') !== -1)  Z.toast('Cannot share your own Spark.', 'error');
+      else if(msg.indexOf('post_not_found') !== -1) Z.toast('Original Spark no longer exists.', 'error');
+      else Z.toast('Share failed: ' + (r.error.message || 'unknown'), 'error');
+      return;
     }
-    if(amt > 0){
-      Z.animateDollar(amt);
-      setTimeout(async function(){ await Z.refreshSession(); Z.updateHeader(); }, 500);
+    var repostId = r.data;
+    if(!repostId) throw new Error('No repost id');
+
+    /* Refresh local feed so the new post appears */
+    try { await Z.reloadData(); } catch(e){}
+    if(Z.State.currentView === 'home') Z.softRefresh();
+
+    /* Check whether a bounty was registered */
+    var pr = await c.from('share_pending')
+      .select('bounty_amount, status')
+      .eq('repost_post_id', repostId)
+      .maybeSingle();
+
+    Z.closeSheet();
+    if(pr.data && pr.data.status === 'pending'){
+      var amt = Number(pr.data.bounty_amount) || 0;
+      Z.toast('Spark shared to your wall. Bounty of $' + amt.toFixed(2) + ' settles in 24h.');
+    } else {
+      Z.toast('Spark shared to your wall.');
     }
-  } catch(e){}
+    Z.haptic(12);
 
-  Z.closeSheet();
-  Z.toast('Spark shared to your wall.');
-  Z.haptic(12);
-  if(Z.State.currentView === 'home') Z.softRefresh();
-
-  var refetch = Z._refetchSharesForContent;
-  if(refetch){
-    setTimeout(function(){ refetch('sparks', sparkId, 'spark'); }, 500);
-    setTimeout(function(){ refetch('sparks', sparkId, 'spark'); }, 1800);
+    var refetch = Z._refetchSharesForContent;
+    if(refetch){
+      setTimeout(function(){ refetch('sparks', sparkId, 'spark'); }, 500);
+      setTimeout(function(){ refetch('sparks', sparkId, 'spark'); }, 1800);
+    }
+  } catch(e){
+    Z.toast('Share failed: ' + (e.message || 'unknown'), 'error');
   }
 };
 
