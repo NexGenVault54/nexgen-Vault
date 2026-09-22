@@ -3400,7 +3400,6 @@ Z.postPostToWall = async function(postId, circleId){
 
   var target = circleId ? 'circle' : 'wall';
   Z.closeSheet();
-  Z.toast('Sharing...');
 
   var srcAuthor = Z.getProfileById(src.author_id);
   var creditLine = '@' + ((srcAuthor && srcAuthor.username) || 'user');
@@ -3414,17 +3413,26 @@ Z.postPostToWall = async function(postId, circleId){
       p_target_circle_id: circleId || null,
       p_content: newContent
     });
-    if(r.error) throw r.error;
+    if(r.error){
+      var msg = (r.error.message || '').toLowerCase();
+      if(msg.indexOf('duplicate_24h') !== -1)  Z.toast('You already shared this. Try again in 24 hours.', 'error');
+      else if(msg.indexOf('hour_cap') !== -1)  Z.toast('Hourly share limit reached. Try again later.', 'error');
+      else if(msg.indexOf('day_cap') !== -1)   Z.toast('Daily share limit reached. Come back tomorrow.', 'error');
+      else if(msg.indexOf('own_post') !== -1)  Z.toast('Cannot repost your own post.', 'error');
+      else if(msg.indexOf('post_not_found') !== -1) Z.toast('Original post no longer exists.', 'error');
+      else Z.toast('Repost failed: ' + (r.error.message || 'unknown'), 'error');
+      return;
+    }
     var repostId = r.data;
     if(!repostId) throw new Error('No repost id');
 
-    /* Refresh local feed so the repost appears */
+    /* Refresh local feed */
     try { await Z.reloadData(); } catch(e){}
     if(Z.State.currentView === 'home') Z.softRefresh();
 
-    /* Determine whether a bounty was registered */
+    /* Check whether a bounty was registered */
     var pr = await c.from('share_pending')
-      .select('bounty_amount, status, expires_at')
+      .select('bounty_amount, status')
       .eq('repost_post_id', repostId)
       .maybeSingle();
 
@@ -3432,22 +3440,7 @@ Z.postPostToWall = async function(postId, circleId){
       var amt = Number(pr.data.bounty_amount) || 0;
       Z.toast('Reposted. Bounty of $' + amt.toFixed(2) + ' settles in 24h.');
     } else {
-      /* Check log for reason */
-      var log = await c.from('share_attempts_log')
-        .select('result')
-        .eq('user_id', me.id)
-        .eq('post_id', postId)
-        .order('attempted_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      var reason = log.data ? log.data.result : 'unknown';
-      var msg = 'Reposted.';
-      if(reason === 'duplicate_24h')     msg = 'Reposted. You can earn from sharing this again in 24h.';
-      else if(reason === 'hour_cap')     msg = 'Reposted. Hourly share limit reached.';
-      else if(reason === 'day_cap')      msg = 'Reposted. Daily share limit reached.';
-      else if(reason === 'no_bounty_set') msg = 'Reposted. Author hasn\'t set a share bounty.';
-      else if(reason === 'own_post')     msg = 'Reposted.';
-      Z.toast(msg);
+      Z.toast('Reposted. Author hasn\'t set a share bounty.');
     }
     Z.haptic(12);
   } catch(e){
