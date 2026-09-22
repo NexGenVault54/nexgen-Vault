@@ -7121,50 +7121,91 @@ Z.renderCircles = function(){
 Z.refreshCirclesList = async function(){
   var container = document.getElementById('circles-list-container');
   if(!container) return;
-  var seed = Date.now();
+  var c = Z.sb(); if(!c) return;
+
   var data = [];
-  try { data = await Z.DB.getCirclesFeed(40, 0, seed); }
-  catch(e){ data = []; }
-  if(!data || !data.length){
-    data = (Z.DB.getCircles()||[]).map(function(c){
+  try {
+    var r = await c.from('circles').select('*').order('member_count', {ascending:false}).limit(60);
+    if(r.error) throw r.error;
+    data = r.data || [];
+  } catch(e){ data = []; }
+
+  /* Fetch creator bounty settings for all shown circles */
+  var creatorIds = [];
+  data.forEach(function(cir){
+    if(cir.creator_id && creatorIds.indexOf(cir.creator_id) === -1) creatorIds.push(cir.creator_id);
+  });
+  var bountyMap = {};
+  if(creatorIds.length){
+    try {
+      var pr = await c.from('profiles').select('id, bounty_settings').in('id', creatorIds);
+      (pr.data||[]).forEach(function(p){
+        var bs = p.bounty_settings || {};
+        bountyMap[p.id] = Number(bs.circleJoin) || 0;
+      });
+    } catch(e){}
+  }
+
+  /* If DB has no circles, show seed as preview only */
+  if(!data.length){
+    data = (Z.SeedData.circles||[]).map(function(cir){
       return {
-        id:c.id, name:c.name, description:c.description, type:c.type, avatar:c.avatar,
-        creator_id:c.creatorId || c.creator_id,
-        member_count:c.member_count || c.members || 0,
-        is_member:false, is_creator:false, friend_in_count:0
+        id: cir.id, name: cir.name, description: cir.description,
+        type: cir.type, avatar: cir.avatar, member_count: cir.member_count,
+        creator_id: null, _seed: true
       };
     });
   }
-  var q = (Z.State.circleSearch||'').toLowerCase();
+
+  var q = (Z.State.circleSearch || '').toLowerCase();
   if(q){
-    data = data.filter(function(c){
-      return String(c.name||'').toLowerCase().indexOf(q) !== -1 ||
-             String(c.description||'').toLowerCase().indexOf(q) !== -1;
+    data = data.filter(function(cir){
+      return String(cir.name||'').toLowerCase().indexOf(q) !== -1 ||
+             String(cir.description||'').toLowerCase().indexOf(q) !== -1;
     });
   }
+
+  var me = Z.State.currentUser;
   var html = '';
-  data.forEach(function(c){
+  data.forEach(function(cir){
     var labels = {social:'Social', services:'Services', goods:'Goods', office:'Office', education:'Education', events:'Events'};
-    var label = labels[c.type] || 'Social';
-    var cls = c.type==='services'?'type-services':c.type==='goods'?'type-goods':'type-social';
-    var isMember = c.is_member || false;
-    var avatarUrl = c.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
-    html += '<div class="circle-card">' +
-      '<div class="circle-head">' +
-        '<div class="circle-head-left">' +
-          '<img src="' + Z.escape(avatarUrl) + '">' +
-          '<div>' +
-            '<div class="circle-name">' + Z.escape(c.name) + '</div>' +
-            '<div class="circle-meta">' + (c.member_count||0) + ' · <span class="circle-type-badge ' + cls + '">' + label + '</span></div>' +
-          '</div>' +
-        '</div>' +
-        (isMember
-          ? '<button class="circle-join-btn" style="background:rgba(16,185,129,.15);color:#10b981;" onclick="Z.toast(\'Already a member\')">Joined</button>'
-          : '<button class="circle-join-btn" onclick="Z.joinCircle(\'' + Z.escape(c.id) + '\')">Join</button>') +
-      '</div>' +
-      '<div class="circle-desc">' + Z.escape(c.description||'') + '</div>' +
-    '</div>';
+    var label = labels[cir.type] || 'Social';
+    var cls = cir.type==='services'?'type-services':cir.type==='goods'?'type-goods':'type-social';
+    var isMember = false;
+    var isOwn = me && cir.creator_id === me.id;
+    var isSeed = !cir.creator_id || String(cir.id).indexOf('cir_') === 0;
+    var bounty = cir.creator_id ? (bountyMap[cir.creator_id] || 0) : 0;
+    var avatarUrl = cir.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
+
+    html += '<div class="circle-card">';
+    html += '<div class="circle-head">';
+    html += '<div class="circle-head-left">';
+    html += '<img src="' + Z.escape(avatarUrl) + '">';
+    html += '<div>';
+    html += '<div class="circle-name">' + Z.escape(cir.name || 'Circle') + '</div>';
+    html += '<div class="circle-meta">' + (cir.member_count||0) + ' · <span class="circle-type-badge ' + cls + '">' + label + '</span>';
+    if(isOwn) html += ' · <span style="color:#10b981;font-weight:900;">YOURS</span>';
+    if(isSeed) html += ' · <span style="color:#64748b;font-weight:900;">DEMO</span>';
+    html += '</div></div></div>';
+
+    /* Right-side action */
+    if(isSeed){
+      html += '<button class="circle-join-btn" disabled style="background:rgba(148,163,184,.12);color:#94a3b8;cursor:not-allowed;">Preview</button>';
+    } else if(isOwn){
+      html += '<button class="circle-join-btn" disabled style="background:rgba(16,185,129,.15);color:#10b981;cursor:default;">Owner</button>';
+    } else {
+      var btnLabel = bounty > 0 ? ('Join · $' + bounty.toFixed(2)) : 'Join';
+      var btnStyle = bounty > 0
+        ? 'background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;'
+        : '';
+      html += '<button class="circle-join-btn" data-circle-join="' + Z.escape(cir.id) + '" style="' + btnStyle + '">' + btnLabel + '</button>';
+    }
+
+    html += '</div>';
+    html += '<div class="circle-desc">' + Z.escape(cir.description||'') + '</div>';
+    html += '</div>';
   });
+
   if(!html){
     html = Z.emptyState({
       icon: 'fa-solid fa-circle-nodes',
@@ -7173,8 +7214,14 @@ Z.refreshCirclesList = async function(){
     });
   }
   container.innerHTML = html;
-};
 
+  /* Wire join buttons */
+  container.querySelectorAll('[data-circle-join]').forEach(function(b){
+    b.addEventListener('click', function(){
+      Z.joinCircle(this.getAttribute('data-circle-join'));
+    });
+  });
+};
 Z.joinCircle = async function(circleId){
   var me = Z.State.currentUser;
   if(!me){ Z.openAuthModal('login'); return; }
