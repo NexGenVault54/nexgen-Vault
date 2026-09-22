@@ -7178,9 +7178,30 @@ Z.refreshCirclesList = async function(){
 Z.joinCircle = async function(circleId){
   var me = Z.State.currentUser;
   if(!me){ Z.openAuthModal('login'); return; }
-  var ok = await Z.DB.joinCircle(circleId);
-  if(ok){ Z.toast('Joined!'); Z.haptic(12); Z.refreshCirclesList(); }
-  else { Z.toast('Already a member or failed.'); }
+  var c = Z.sb(); if(!c) return;
+  try {
+    var r = await c.rpc('join_circle_with_bounty', { p_circle_id: circleId });
+    if(r.error){
+      var msg = (r.error.message || '').toLowerCase();
+      if(msg.indexOf('already_member') !== -1) Z.toast('You are already a member.');
+      else if(msg.indexOf('circle_not_found') !== -1) Z.toast('Circle not found.', 'error');
+      else Z.toast('Could not join: ' + (r.error.message || 'unknown'), 'error');
+      Z.refreshCirclesList();
+      return;
+    }
+    var paid = Number(r.data) || 0;
+    if(paid > 0){
+      Z.toast('Joined! You earned $' + paid.toFixed(2) + ' bounty.');
+      if(Z.animateDollar) Z.animateDollar(paid);
+      setTimeout(async function(){ await Z.refreshSession(); Z.updateHeader(); }, 400);
+    } else {
+      Z.toast('Joined!');
+    }
+    Z.haptic(12);
+    Z.refreshCirclesList();
+  } catch(e){
+    Z.toast('Failed: ' + (e.message || 'unknown'), 'error');
+  }
 };
 
 Z.onCircleSearch = function(v){ Z.State.circleSearch = v; Z.refreshCirclesList(); };
