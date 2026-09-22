@@ -7852,7 +7852,74 @@ Z.refreshPeopleList = async function(){
   container.innerHTML = html;
 };
 Z.onPeopleSearch = function(v){ Z.State.peopleSearch = v; Z.refreshPeopleList(); };
+Z.openBindReferral = function(){
+  var me = Z.State.currentUser;
+  if(!me){ Z.openAuthModal('login'); return; }
+  if(me.referred_by){
+    Z.openModal(
+      '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+        '<div class="modal-box">' +
+          '<div class="modal-header"><h3>Referral Upline</h3>' +
+            '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+          '</div>' +
+          '<div style="padding:12px;border-radius:10px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">' +
+            'You are already linked to a referral upline. This cannot be changed.' +
+          '</div>' +
+          '<button class="btn-secondary" onclick="Z.closeModal()">Close</button>' +
+        '</div>' +
+      '</div>'
+    );
+    return;
+  }
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Add Referral Upline</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">' +
+          'If a friend invited you but you signed up direct, enter their referral code below. <b style="color:#fff;">This can be done once, forever.</b> Once linked, it cannot be changed.' +
+        '</div>' +
+        '<label class="form-label">Referral Code</label>' +
+        '<input type="text" id="bind-ref-input" class="form-input" placeholder="ZYNIX-XXXXXX" style="text-transform:uppercase;">' +
+        '<button class="btn-primary" id="bind-ref-btn" onclick="Z.submitBindReferral()">Link Referral</button>' +
+      '</div>' +
+    '</div>'
+  );
+};
 
+Z.submitBindReferral = async function(){
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var inp = document.getElementById('bind-ref-input');
+  var code = (inp && inp.value ? inp.value : '').trim().toUpperCase();
+  if(!code){ Z.toast('Enter a code.', 'error'); return; }
+  var c = Z.sb(); if(!c) return;
+  var btn = document.getElementById('bind-ref-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Linking...'; }
+  try {
+    var r = await c.rpc('bind_referral_code', { p_code: code });
+    if(r.error){
+      var msg = (r.error.message || '').toLowerCase();
+      if(msg.indexOf('code_not_found') !== -1) Z.toast('Code not found.', 'error');
+      else if(msg.indexOf('already_bound') !== -1) Z.toast('You already have a referrer.', 'error');
+      else if(msg.indexOf('cannot_refer_self') !== -1) Z.toast('You cannot refer yourself.', 'error');
+      else if(msg.indexOf('cycle_detected') !== -1) Z.toast('Invalid referral chain.', 'error');
+      else if(msg.indexOf('invalid_code') !== -1) Z.toast('Invalid code format.', 'error');
+      else Z.toast('Failed: ' + (r.error.message || 'unknown'), 'error');
+      if(btn){ btn.disabled = false; btn.textContent = 'Link Referral'; }
+      return;
+    }
+    var data = r.data || {};
+    Z.closeModal();
+    Z.toast('Linked to @' + (data.referrer_username || 'user') + '. Welcome!');
+    await Z.refreshSession();
+    Z.showView('profile');
+  } catch(e){
+    Z.toast('Failed: ' + (e.message || 'unknown'), 'error');
+    if(btn){ btn.disabled = false; btn.textContent = 'Link Referral'; }
+  }
+};
 })();
 </script>
 
