@@ -7122,7 +7122,9 @@ Z.refreshCirclesList = async function(){
   var container = document.getElementById('circles-list-container');
   if(!container) return;
   var c = Z.sb(); if(!c) return;
+  var me = Z.State.currentUser;
 
+  /* 1. Fetch real circles (no more dummy) */
   var data = [];
   try {
     var r = await c.from('circles').select('*').order('member_count', {ascending:false}).limit(60);
@@ -7130,33 +7132,33 @@ Z.refreshCirclesList = async function(){
     data = r.data || [];
   } catch(e){ data = []; }
 
-  /* Fetch creator bounty settings for all shown circles */
+  /* 2. Which circles am I already in? */
+  var myMemberships = {};
+  if(me && data.length){
+    try {
+      var ids = data.map(function(cir){ return cir.id; });
+      var mr = await c.from('circle_members').select('circle_id, role').eq('user_id', me.id).in('circle_id', ids);
+      (mr.data||[]).forEach(function(m){ myMemberships[m.circle_id] = m.role || 'member'; });
+    } catch(e){}
+  }
+
+  /* 3. Creator join fee for each circle */
+  var feeMap = {};
   var creatorIds = [];
   data.forEach(function(cir){
     if(cir.creator_id && creatorIds.indexOf(cir.creator_id) === -1) creatorIds.push(cir.creator_id);
   });
-  var bountyMap = {};
   if(creatorIds.length){
     try {
       var pr = await c.from('profiles').select('id, bounty_settings').in('id', creatorIds);
       (pr.data||[]).forEach(function(p){
         var bs = p.bounty_settings || {};
-        bountyMap[p.id] = Number(bs.circleJoin) || 0;
+        feeMap[p.id] = Number(bs.circleJoin) || 0;
       });
     } catch(e){}
   }
 
-  /* If DB has no circles, show seed as preview only */
-  if(!data.length){
-    data = (Z.SeedData.circles||[]).map(function(cir){
-      return {
-        id: cir.id, name: cir.name, description: cir.description,
-        type: cir.type, avatar: cir.avatar, member_count: cir.member_count,
-        creator_id: null, _seed: true
-      };
-    });
-  }
-
+  /* 4. Search filter */
   var q = (Z.State.circleSearch || '').toLowerCase();
   if(q){
     data = data.filter(function(cir){
@@ -7165,19 +7167,28 @@ Z.refreshCirclesList = async function(){
     });
   }
 
-  var me = Z.State.currentUser;
+  /* 5. Empty state */
+  if(!data.length){
+    container.innerHTML = Z.emptyState({
+      icon: 'fa-solid fa-circle-nodes',
+      title: q ? 'No circles match your search.' : 'No circles yet. Be the first to start one.',
+      cta: { label: 'Create Circle', onclick: "Z.openCreateCircleModal()" }
+    });
+    return;
+  }
+
+  /* 6. Render */
+  var labels = {social:'Social', services:'Services', goods:'Goods', office:'Office', education:'Education', events:'Events'};
   var html = '';
   data.forEach(function(cir){
-    var labels = {social:'Social', services:'Services', goods:'Goods', office:'Office', education:'Education', events:'Events'};
-    var label = labels[cir.type] || 'Social';
-    var cls = cir.type==='services'?'type-services':cir.type==='goods'?'type-goods':'type-social';
-    var isMember = false;
     var isOwn = me && cir.creator_id === me.id;
-    var isSeed = !cir.creator_id || String(cir.id).indexOf('cir_') === 0;
-    var bounty = cir.creator_id ? (bountyMap[cir.creator_id] || 0) : 0;
+    var isMember = !!myMemberships[cir.id] && !isOwn;
+    var fee = cir.creator_id ? (feeMap[cir.creator_id] || 0) : 0;
+    var label = labels[cir.type] || 'Social';
+    var cls = cir.type === 'services' ? 'type-services' : cir.type === 'goods' ? 'type-goods' : 'type-social';
     var avatarUrl = cir.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80';
 
-    html += '<div class="circle-card">';
+    html += '<div class="circle-card" data-circle-id="' + Z.escape(cir.id) + '" style="cursor:pointer;">';
     html += '<div class="circle-head">';
     html += '<div class="circle-head-left">';
     html += '<img src="' + Z.escape(avatarUrl) + '">';
@@ -7185,43 +7196,76 @@ Z.refreshCirclesList = async function(){
     html += '<div class="circle-name">' + Z.escape(cir.name || 'Circle') + '</div>';
     html += '<div class="circle-meta">' + (cir.member_count||0) + ' · <span class="circle-type-badge ' + cls + '">' + label + '</span>';
     if(isOwn) html += ' · <span style="color:#10b981;font-weight:900;">YOURS</span>';
-    if(isSeed) html += ' · <span style="color:#64748b;font-weight:900;">DEMO</span>';
     html += '</div></div></div>';
 
-    /* Right-side action */
-    if(isSeed){
-      html += '<button class="circle-join-btn" disabled style="background:rgba(148,163,184,.12);color:#94a3b8;cursor:not-allowed;">Preview</button>';
-    } else if(isOwn){
-      html += '<button class="circle-join-btn" disabled style="background:rgba(16,185,129,.15);color:#10b981;cursor:default;">Owner</button>';
+    if(isOwn){
+      html += '<button class="circle-join-btn" style="background:rgba(16,185,129,.15);color:#10b981;cursor:default;" onclick="event.stopPropagation()">Owner</button>';
+    } else if(isMember){
+      html += '<button class="circle-join-btn" style="background:rgba(59,130,246,.15);color:#3b82f6;cursor:default;" onclick="event.stopPropagation()"><i class="fa-solid fa-check"></i> Member</button>';
     } else {
-      var btnLabel = bounty > 0 ? ('Join · $' + bounty.toFixed(2)) : 'Join';
-      var btnStyle = bounty > 0
-        ? 'background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;'
-        : '';
-      html += '<button class="circle-join-btn" data-circle-join="' + Z.escape(cir.id) + '" style="' + btnStyle + '">' + btnLabel + '</button>';
+      var btnLabel = fee > 0 ? ('Join · $' + fee.toFixed(2)) : 'Join';
+      var btnStyle = fee > 0 ? 'background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;' : '';
+      html += '<button class="circle-join-btn" data-circle-join="' + Z.escape(cir.id) + '" style="' + btnStyle + '" onclick="event.stopPropagation()">' + btnLabel + '</button>';
     }
 
     html += '</div>';
     html += '<div class="circle-desc">' + Z.escape(cir.description||'') + '</div>';
     html += '</div>';
   });
-
-  if(!html){
-    html = Z.emptyState({
-      icon: 'fa-solid fa-circle-nodes',
-      title: q ? 'No circles match your search.' : 'No circles yet. Start one.',
-      cta: { label: 'Create Circle', onclick: "Z.openCreateCircleModal()" }
-    });
-  }
   container.innerHTML = html;
 
-  /* Wire join buttons */
+  /* Wire join */
   container.querySelectorAll('[data-circle-join]').forEach(function(b){
-    b.addEventListener('click', function(){
+    b.addEventListener('click', function(e){
+      e.stopPropagation();
       Z.joinCircle(this.getAttribute('data-circle-join'));
     });
   });
+
+  /* Wire card click */
+  container.querySelectorAll('[data-circle-id]').forEach(function(card){
+    card.addEventListener('click', function(){
+      Z.openCircleSheet(this.getAttribute('data-circle-id'));
+    });
+  });
 };
+Z.openCircleSheet = function(circleId){
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var c = Z.sb(); if(!c) return;
+  c.from('circles').select('*').eq('id', circleId).maybeSingle().then(function(r){
+    if(!r.data){ Z.toast('Circle not found.'); return; }
+    var cir = r.data;
+    var isOwn = cir.creator_id === me.id;
+
+    var h = '<div class="modal-overlay" style="align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+    h += '<div class="bottom-sheet" onclick="event.stopPropagation()">';
+    h += '<div class="sheet-handle"></div>';
+    h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">' + Z.escape(cir.name || 'Circle') + '</h3>';
+    h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+    h += '<div class="sheet-body" style="padding:16px;">';
+
+    h += '<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;">';
+    h += '<img src="' + Z.escape(cir.avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=150&q=80') + '" style="width:60px;height:60px;border-radius:16px;object-fit:cover;">';
+    h += '<div><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.6px;">' + Z.escape(cir.type || 'social') + '</div>';
+    h += '<div style="font-size:13px;color:#fff;font-weight:800;margin-top:2px;">' + (cir.member_count||0) + ' members</div></div>';
+    h += '</div>';
+
+    if(cir.description){
+      h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">' + Z.escape(cir.description) + '</div>';
+    }
+
+    if(isOwn){
+      h += '<button onclick="Z.closeSheet();Z.showView(\'profile\')" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.08);color:#10b981;font-weight:800;font-size:12px;cursor:pointer;">Manage Circle (Settings)</button>';
+    } else {
+      h += '<button onclick="Z.closeSheet()" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:rgba(255,255,255,.03);color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Close</button>';
+    }
+
+    h += '<div style="font-size:10px;color:#64748b;text-align:center;margin-top:12px;">Full circle management — Phase 4</div>';
+    h += '</div></div></div>';
+    Z.openSheet(h);
+  });
+};   
 Z.joinCircle = async function(circleId){
   var me = Z.State.currentUser;
   if(!me){ Z.openAuthModal('login'); return; }
