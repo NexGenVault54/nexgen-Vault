@@ -3390,55 +3390,70 @@ async function refetchSharesForContent(table, id, stateKey){
 }
 Z._refetchSharesForContent = refetchSharesForContent;
 
-Z.postPostToWall = async function(postId){
+Z.postPostToWall = async function(postId, circleId){
   var me = Z.State.currentUser;
   if(!me){ Z.openAuthModal('login'); return; }
-  var c = Z.sb();
-  if(!c) return;
+  var c = Z.sb(); if(!c) return;
   var src = (Z.State.allPosts || []).find(function(x){ return x.id === postId; });
   if(!src){ Z.toast('Post not found.', 'error'); return; }
   if(src.author_id === me.id){ Z.toast('Cannot repost your own post.'); return; }
+
+  var target = circleId ? 'circle' : 'wall';
   Z.closeSheet();
-  Z.toast('Reposting...');
+  Z.toast('Sharing...');
+
   var srcAuthor = Z.getProfileById(src.author_id);
   var creditLine = '@' + ((srcAuthor && srcAuthor.username) || 'user');
   var baseText = src.content ? src.content : '';
   var newContent = baseText ? (baseText + '\n\n— reposted from ' + creditLine) : ('Reposted from ' + creditLine);
-  var payload = {
-    author_id: me.id,
-    content: newContent,
-    media_url: src.media_url || null,
-    media_type: src.media_type || null,
-    share_bounty: 0,
-    shared_from_id: src.id,
-    shared_from_type: 'post'
-  };
-  var r = await c.from('posts').insert(payload).select().maybeSingle();
-  if(r.error || !r.data){
-    Z.toast('Repost failed.', 'error');
-    return;
-  }
-  var row = Object.assign({}, r.data, {reactions:{}, _myReactions:{}, _comments:[]});
-  Z.State.allPosts = [row].concat(Z.State.allPosts || []);
+
   try {
-    var amt = 0;
-    var ownerProf = Z.getProfileById(src.author_id);
-    if(ownerProf && ownerProf.bounty_settings && typeof ownerProf.bounty_settings.share === 'number'){
-      amt = ownerProf.bounty_settings.share;
-    }
-    if(amt > 0){
-      Z.animateDollar(amt);
-      setTimeout(async function(){ await Z.refreshSession(); Z.updateHeader(); }, 500);
-    }
-  } catch(e){}
-  if(Z.State.currentView === 'home') Z.softRefresh();
-  Z.toast('Reposted to your wall.');
-  Z.haptic(12);
+    var r = await c.rpc('create_share_target', {
+      p_original_post_id: postId,
+      p_target_type: target,
+      p_target_circle_id: circleId || null,
+      p_content: newContent
+    });
+    if(r.error) throw r.error;
+    var repostId = r.data;
+    if(!repostId) throw new Error('No repost id');
 
-  setTimeout(function(){ refetchSharesForContent('posts', postId, 'post'); }, 500);
-  setTimeout(function(){ refetchSharesForContent('posts', postId, 'post'); }, 1800);
+    /* Refresh local feed so the repost appears */
+    try { await Z.reloadData(); } catch(e){}
+    if(Z.State.currentView === 'home') Z.softRefresh();
+
+    /* Determine whether a bounty was registered */
+    var pr = await c.from('share_pending')
+      .select('bounty_amount, status, expires_at')
+      .eq('repost_post_id', repostId)
+      .maybeSingle();
+
+    if(pr.data && pr.data.status === 'pending'){
+      var amt = Number(pr.data.bounty_amount) || 0;
+      Z.toast('Reposted. Bounty of $' + amt.toFixed(2) + ' settles in 24h.');
+    } else {
+      /* Check log for reason */
+      var log = await c.from('share_attempts_log')
+        .select('result')
+        .eq('user_id', me.id)
+        .eq('post_id', postId)
+        .order('attempted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      var reason = log.data ? log.data.result : 'unknown';
+      var msg = 'Reposted.';
+      if(reason === 'duplicate_24h')     msg = 'Reposted. You can earn from sharing this again in 24h.';
+      else if(reason === 'hour_cap')     msg = 'Reposted. Hourly share limit reached.';
+      else if(reason === 'day_cap')      msg = 'Reposted. Daily share limit reached.';
+      else if(reason === 'no_bounty_set') msg = 'Reposted. Author hasn\'t set a share bounty.';
+      else if(reason === 'own_post')     msg = 'Reposted.';
+      Z.toast(msg);
+    }
+    Z.haptic(12);
+  } catch(e){
+    Z.toast('Repost failed: ' + (e.message || 'unknown'), 'error');
+  }
 };
-
 Z.recordPostView = function(postId){
   if(!postId) return;
   if(Z.State._viewedPostsThisSession[postId]) return;
