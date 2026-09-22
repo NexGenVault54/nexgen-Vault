@@ -12885,117 +12885,95 @@ console.log('[ZYNIX Driver Modal v3] avatar + banner + proof + engine wired');
 })();
 </script>
 <!-- ============================================================ -->
-<!-- Header consolidation — Patch A                               -->
-<!-- 1. Kill earn pill (was injected by Lounge v2.1)              -->
-<!-- 2. Add "+$X.XX today" segment inside existing wallet pill    -->
-<!-- 3. Hide theme toggle from header (leave in Settings)         -->
-<!-- 4. Avatar tap → account sheet (My SPACE / Settings / Logout) -->
+<!-- Header Patch B — avatar dropdown (replaces bottom sheet)     -->
+<!-- + Theme toggle moved into Settings page                      -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixHeaderPatchA) return; Z.__zynixHeaderPatchA = true;
+if(Z.__zynixHeaderPatchB) return; Z.__zynixHeaderPatchB = true;
 
 function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
-/* 1 + 3: CSS overrides */
-if(!document.getElementById('zynix-header-patchA-css')){
+/* CSS for the dropdown */
+if(!document.getElementById('zynix-dropdown-css')){
   var st = document.createElement('style');
-  st.id = 'zynix-header-patchA-css';
+  st.id = 'zynix-dropdown-css';
   st.textContent = [
-    '#zynix-earn-pill { display: none !important; }',
-    '.zynix-header .header-btn:has(#theme-icon) { display: none !important; }',
-    '#zynix-today-seg { font-size: 10px; font-weight: 800; color: #10b981; opacity: .85; white-space: nowrap; }'
+    '@keyframes zynixDropIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }',
+    '.zynix-dd-item { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: none; padding: 10px 12px; border-radius: 8px; font-size: 12px; cursor: pointer; text-align: left; font-weight: 700; }',
+    '.zynix-dd-item:hover { background: rgba(255,255,255,0.04); }'
   ].join('');
   document.head.appendChild(st);
 }
 
-/* 2: inject "+$X.XX today" into wallet pill */
-function _injectTodaySegment(){
-  var pill = document.getElementById('wallet-pill');
-  if(!pill || document.getElementById('zynix-today-seg')) return;
-  var seg = document.createElement('span');
-  seg.id = 'zynix-today-seg';
-  seg.style.display = 'none';
-  seg.textContent = '+$0.00';
-  var badge = document.getElementById('wallet-badge');
-  if(badge) pill.insertBefore(seg, badge);
-  else pill.appendChild(seg);
-}
-
-function _updateTodaySegment(){
-  var seg = document.getElementById('zynix-today-seg');
-  if(!seg) return;
-  try {
-    var u = Z.State.currentUser;
-    if(!u){ seg.style.display = 'none'; return; }
-    var raw = localStorage.getItem('zynix_earn_today_' + u.id);
-    var today = raw ? Number(raw) || 0 : 0;
-    if(today > 0){
-      seg.textContent = '+$' + today.toFixed(2);
-      seg.style.display = 'inline';
-    } else {
-      seg.style.display = 'none';
-    }
-  } catch(e){ seg.style.display = 'none'; }
-}
-
-setInterval(function(){ _injectTodaySegment(); _updateTodaySegment(); }, 5000);
-setTimeout(function(){ _injectTodaySegment(); _updateTodaySegment(); }, 400);
-
-var _origUpdateHeader = Z.updateHeader;
-Z.updateHeader = function(){
-  var r = _origUpdateHeader.apply(this, arguments);
-  setTimeout(function(){ _injectTodaySegment(); _updateTodaySegment(); }, 20);
-  return r;
+/* Close any open dropdown */
+Z.closeAccountDropdown = function(){
+  var el = document.getElementById('zynix-account-dropdown');
+  if(el) el.remove();
 };
 
-/* 4: account bottom sheet */
-Z.openAccountSheet = function(){
+/* Open dropdown anchored below the avatar */
+Z.openAccountDropdown = function(){
+  /* If already open → close (toggle behaviour) */
+  var existing = document.getElementById('zynix-account-dropdown');
+  if(existing){ existing.remove(); return; }
+
+  var btn = document.querySelector('#header-auth-container button');
+  if(!btn) return;
+  var rect = btn.getBoundingClientRect();
+  var menuW = 210;
+  var right = Math.max(8, window.innerWidth - rect.right);
+  var top = rect.bottom + 6;
+
   var u = Z.State.currentUser;
-  if(!u){ if(Z.openAuthModal) Z.openAuthModal('login'); return; }
 
-  var h = '<div class="modal-overlay" style="align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()">';
-  h += '<div class="sheet-handle"></div>';
-  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:700;">Account</h3>';
-  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;padding:0 6px;line-height:1;"><i class="fa-solid fa-xmark"></i></button></div>';
-  h += '<div class="sheet-body">';
+  var h = '<div id="zynix-account-dropdown" style="position:fixed;top:' + top + 'px;right:' + right + 'px;z-index:10002;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:6px;min-width:' + menuW + 'px;box-shadow:0 12px 40px rgba(0,0,0,.75);animation:zynixDropIn .15s ease;">';
 
-  h += '<div style="display:flex;gap:12px;align-items:center;padding:4px 0 16px;border-bottom:1px solid #1e293b;margin-bottom:12px;">';
-  h += '<img src="' + esc(Z.displayAvatar(u)) + '" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid rgba(16,185,129,.4);">';
-  h += '<div style="min-width:0;flex:1;">';
-  h += '<div style="font-size:14px;font-weight:800;color:#fff;">' + esc(Z.displayName(u)) + '</div>';
-  h += '<div style="font-size:11px;color:#94a3b8;">@' + esc(u.username || 'user') + '</div>';
-  h += '</div></div>';
+  /* User mini header */
+  if(u){
+    h += '<div style="display:flex;gap:10px;align-items:center;padding:10px 12px 12px;border-bottom:1px solid #1e293b;margin-bottom:6px;">';
+    h += '<img src="' + esc(Z.displayAvatar(u)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;border:1px solid rgba(16,185,129,.35);">';
+    h += '<div style="min-width:0;flex:1;">';
+    h += '<div style="font-size:12.5px;font-weight:800;color:#fff;">' + esc(Z.displayName(u)) + '</div>';
+    h += '<div style="font-size:10px;color:#94a3b8;">@' + esc(u.username || 'user') + '</div>';
+    h += '</div></div>';
+  }
 
-  var opts = [
-    { label: 'My SPACE', icon: 'fa-solid fa-id-card',   action: 'Z.closeSheet();Z.goMySpace()',                danger: false },
-    { label: 'Settings', icon: 'fa-solid fa-gear',      action: 'Z.closeSheet();Z.showView(\'profile\')',       danger: false },
-    { label: 'Logout',   icon: 'fa-solid fa-power-off', action: 'Z.closeSheet();Z.logout()',                    danger: true }
+  /* Menu items */
+  var items = [
+    { label: 'My SPACE', icon: 'fa-solid fa-id-card',   action: 'Z.closeAccountDropdown();Z.goMySpace()',              danger: false },
+    { label: 'Settings', icon: 'fa-solid fa-gear',      action: 'Z.closeAccountDropdown();Z.showView(\'profile\')',     danger: false },
+    { label: 'Report a problem', icon: 'fa-solid fa-flag', action: 'Z.closeAccountDropdown();Z.toast(\'Report — coming soon\')', muted: true, soon: true },
+    { label: 'Logout',   icon: 'fa-solid fa-power-off', action: 'Z.closeAccountDropdown();Z.logout()',                  danger: true }
   ];
-  opts.forEach(function(o){
-    var col = o.danger ? '#a16262' : '#10b981';
-    var txt = o.danger ? '#a16262' : '#e2e8f0';
-    h += '<button onclick="' + o.action + '" style="width:100%;display:flex;align-items:center;gap:12px;padding:14px 6px;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.05);color:' + txt + ';font-weight:700;font-size:13px;cursor:pointer;text-align:left;border-radius:8px;">';
-    h += '<i class="' + o.icon + '" style="width:18px;text-align:center;color:' + col + ';"></i>';
-    h += esc(o.label);
+  items.forEach(function(it){
+    var color = it.danger ? '#a16262' : (it.muted ? '#94a3b8' : '#e2e8f0');
+    var iconCol = it.danger ? '#a16262' : (it.muted ? '#64748b' : '#10b981');
+    h += '<button class="zynix-dd-item" onclick="' + it.action + '" style="color:' + color + ';">';
+    h += '<i class="' + it.icon + '" style="width:14px;text-align:center;color:' + iconCol + ';"></i>';
+    h += esc(it.label);
+    if(it.soon) h += '<span style="margin-left:auto;font-size:9px;background:rgba(148,163,184,.15);color:#94a3b8;padding:2px 6px;border-radius:6px;font-weight:800;">SOON</span>';
     h += '</button>';
   });
 
-  h += '</div></div></div>';
-  Z.openSheet(h);
+  h += '</div>';
+  document.body.insertAdjacentHTML('beforeend', h);
 };
 
-/* Replace renderHeaderAuth — single avatar only */
+/* Point the avatar button to the dropdown (overrides the sheet version) */
+Z.openAccountSheet = Z.openAccountDropdown;
+
+/* Rewire renderHeaderAuth — avatar uses dropdown */
+var _origRenderHeaderAuth = Z.renderHeaderAuth;
 Z.renderHeaderAuth = function(){
   var c = document.getElementById('header-auth-container');
   if(!c) return;
   var u = Z.State.currentUser;
   if(u){
     c.innerHTML =
-      '<button onclick="Z.openAccountSheet()" title="Account" style="background:transparent;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">' +
+      '<button onclick="Z.openAccountDropdown()" title="Account" style="background:transparent;border:none;cursor:pointer;padding:0;display:flex;align-items:center;">' +
         '<img src="' + esc(Z.displayAvatar(u)) + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(16,185,129,.5);">' +
       '</button>';
   } else {
@@ -13003,11 +12981,70 @@ Z.renderHeaderAuth = function(){
   }
 };
 
-setTimeout(function(){ try { Z.renderHeaderAuth(); } catch(e){} }, 300);
+/* Re-render header so the new wiring takes over */
+setTimeout(function(){ try { Z.renderHeaderAuth(); } catch(e){} }, 400);
 
-console.log('[Header Patch A] earn pill off · today segment on · theme toggle hidden · account sheet ready');
+/* Outside click closes it */
+document.addEventListener('click', function(e){
+  var dd = document.getElementById('zynix-account-dropdown');
+  if(!dd) return;
+  if(e.target.closest('#zynix-account-dropdown')) return;
+  if(e.target.closest('#header-auth-container')) return;
+  dd.remove();
+}, true);
+
+/* Escape closes it */
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape') Z.closeAccountDropdown();
+});
+
+/* Scroll closes it (feels wrong on mobile to have it float) */
+window.addEventListener('scroll', function(){
+  Z.closeAccountDropdown();
+}, {passive:true});
+
+/* ---------- Theme toggle → Settings ---------- */
+(function(){
+  var _origShowView = Z.showView;
+  Z.showView = function(view, param){
+    var r = _origShowView.call(this, view, param);
+    if(view === 'profile'){
+      setTimeout(function(){
+        var app = document.getElementById('app-container');
+        if(!app) return;
+        if(app.querySelector('#zynix-theme-toggle-row')) return;
+        var grid = app.querySelector('.media-grid-2');
+        if(!grid) return;
+        var btn = document.createElement('button');
+        btn.id = 'zynix-theme-toggle-row';
+        btn.style.cssText = 'background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;display:flex;align-items:center;gap:10px;';
+        btn.innerHTML = '<i class="fa-solid fa-moon" style="color:#3b82f6;font-size:14px;"></i>' +
+                        '<div style="font-weight:700;font-size:12px;color:#fff;">Theme</div>' +
+                        '<div id="zynix-theme-label" style="margin-left:auto;font-size:11px;color:#94a3b8;font-weight:800;">Dark</div>';
+        btn.onclick = function(){
+          Z.toggleTheme();
+          var lbl = document.getElementById('zynix-theme-label');
+          if(lbl){
+            var isDark = document.documentElement.classList.contains('dark');
+            lbl.textContent = isDark ? 'Dark' : 'Light';
+          }
+        };
+        grid.appendChild(btn);
+        /* Initialize label */
+        var lbl = document.getElementById('zynix-theme-label');
+        if(lbl){
+          var isDark = document.documentElement.classList.contains('dark');
+          lbl.textContent = isDark ? 'Dark' : 'Light';
+        }
+      }, 60);
+    }
+    return r;
+  };
 })();
-</script>   
+
+console.log('[Header Patch B] avatar dropdown · theme in Settings · report slot reserved');
+})();
+</script>
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
