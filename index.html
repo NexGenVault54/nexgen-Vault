@@ -3063,12 +3063,36 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var newClass = isNew ? ' zynix-new-item' : '';
 
   return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
-    '<div class="post-author">' +
+       '<div class="post-author">' +
       '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
       '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
         '<div class="pname">' + Z.escape(Z.displayName(a)) + '</div>' +
         '<div class="phandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(p.created_at).getTime()) + '</div>' +
       '</div>' +
+      (function(){
+        try {
+          if(!isMine) return '';
+          var _vis = p.visibility || ['public'];
+          if(typeof _vis === 'string') _vis = [_vis];
+          if(!Array.isArray(_vis)) _vis = ['public'];
+          var _isPublic = _vis.indexOf('public') !== -1;
+          var _hasConn = _vis.indexOf('connections') !== -1;
+          var _hasFam = _vis.indexOf('family') !== -1;
+          var _icon = 'fa-solid fa-globe';
+          var _color = '#64748b';
+          var _label = 'Public';
+          if(_isPublic){ _icon = 'fa-solid fa-globe'; _color = '#64748b'; _label = 'Public'; }
+          else if(_hasConn && _hasFam){ _icon = 'fa-solid fa-users'; _color = '#60a5fa'; _label = 'Connections + Family'; }
+          else if(_hasConn){ _icon = 'fa-solid fa-user-group'; _color = '#60a5fa'; _label = 'Connections only'; }
+          else if(_hasFam){ _icon = 'fa-solid fa-house-user'; _color = '#a78bfa'; _label = 'Family only'; }
+          else { _icon = 'fa-solid fa-lock'; _color = '#a18554'; _label = 'Private'; }
+          return '<button type="button" onclick="event.stopPropagation();Z.openVisibilityEditor(\'' + Z.escape(p.id) + '\')" ' +
+            'title="' + _label + ' · Tap to change" ' +
+            'style="background:transparent;border:none;cursor:pointer;padding:6px;color:' + _color + ';font-size:12px;display:inline-flex;align-items:center;justify-content:center;">' +
+            '<i class="' + _icon + '"></i>' +
+            '</button>';
+        } catch(e){ return ''; }
+      })() +
       menuBtn +
     '</div>' +
     captionHtml +
@@ -14944,6 +14968,126 @@ Z.sparkNeedsRepair = function(){
 };
 
 console.log('[Part 3 v3] spark media repair helper ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- PHASE C — Visibility editor modal                            -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixVisEditor) return; Z.__zynixVisEditor = true;
+
+Z.openVisibilityEditor = function(postId){
+  var post = null;
+  try {
+    post = (Z.State.allPosts || []).find(function(p){ return p.id === postId; });
+    if(!post && Z.State.spacePosts) post = Z.State.spacePosts.find(function(p){ return p.id === postId; });
+  } catch(e){}
+  if(!post){ Z.toast('Post not found.'); return; }
+
+  var vis = post.visibility || ['public'];
+  if(typeof vis === 'string') vis = [vis];
+  if(!Array.isArray(vis)) vis = ['public'];
+
+  var state = {
+    public: vis.indexOf('public') !== -1,
+    connections: vis.indexOf('connections') !== -1,
+    family: vis.indexOf('family') !== -1
+  };
+  if(!state.public && !state.connections && !state.family) state.public = true;
+
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Who can see this?</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:14px;">' +
+          'Change the audience for this post. New viewers will respect the new setting immediately.' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
+          '<button type="button" class="vis-edit-pill" data-vis="public"><i class="fa-solid fa-globe"></i> Public</button>' +
+          '<button type="button" class="vis-edit-pill" data-vis="connections"><i class="fa-solid fa-user-group"></i> Connections</button>' +
+          '<button type="button" class="vis-edit-pill" data-vis="family"><i class="fa-solid fa-house-user"></i> Family</button>' +
+        '</div>' +
+        '<div id="vis-edit-hint" style="font-size:10px;color:#64748b;margin-bottom:16px;"></div>' +
+        '<button class="btn-primary" onclick="Z.saveVisibilityEdit(\'' + Z.escape(postId) + '\')">Save</button>' +
+      '</div>' +
+    '</div>'
+  );
+
+  function paint(){
+    var p = document.querySelector('.vis-edit-pill[data-vis="public"]');
+    var c = document.querySelector('.vis-edit-pill[data-vis="connections"]');
+    var f = document.querySelector('.vis-edit-pill[data-vis="family"]');
+    if(!p || !c || !f) return;
+    var onStyle = 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;background:rgba(16,185,129,.15);border:1px solid #10b981;color:#10b981;';
+    var offStyle = 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.03);border:1px solid #1e293b;color:#94a3b8;';
+    var disStyle = 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:not-allowed;display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.02);border:1px solid #1e293b;color:#475569;opacity:.55;';
+    p.setAttribute('style', state.public ? onStyle : offStyle);
+    if(state.public){
+      c.setAttribute('style', disStyle); c.disabled = true;
+      f.setAttribute('style', disStyle); f.disabled = true;
+    } else {
+      c.setAttribute('style', state.connections ? onStyle : offStyle); c.disabled = false;
+      f.setAttribute('style', state.family ? onStyle : offStyle); f.disabled = false;
+    }
+    var hint = document.getElementById('vis-edit-hint');
+    if(hint){
+      if(state.public) hint.textContent = 'Anyone on ZYNIX';
+      else if(!state.connections && !state.family) hint.textContent = 'Only you can see this';
+      else hint.textContent = 'Selected audience only';
+    }
+  }
+
+  document.querySelectorAll('.vis-edit-pill').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var k = this.getAttribute('data-vis');
+      if(k === 'public'){ state.public = !state.public; if(state.public){ state.connections = false; state.family = false; } }
+      else { state.public = false; state[k] = !state[k]; }
+      paint();
+    });
+  });
+  paint();
+  Z._visEditState = { postId: postId, state: state };
+};
+
+Z.saveVisibilityEdit = async function(postId){
+  var st = Z._visEditState && Z._visEditState.state;
+  if(!st){ Z.closeModal(); return; }
+  var visArr;
+  if(st.public) visArr = ['public'];
+  else {
+    visArr = [];
+    if(st.connections) visArr.push('connections');
+    if(st.family) visArr.push('family');
+    if(!visArr.length) visArr = ['private'];
+  }
+  var c = Z.sb();
+  if(!c){ Z.toast('Not connected.'); return; }
+  try {
+    var r = await c.from('posts').update({ visibility: visArr }).eq('id', postId);
+    if(r.error) throw r.error;
+    try {
+      var p = (Z.State.allPosts || []).find(function(x){ return x.id === postId; });
+      if(p) p.visibility = visArr;
+      if(Z.State.spacePosts){
+        var p2 = Z.State.spacePosts.find(function(x){ return x.id === postId; });
+        if(p2) p2.visibility = visArr;
+      }
+    } catch(e){}
+    Z.closeModal();
+    Z.toast('Visibility updated.');
+    if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
+    else if(Z.State.currentView === 'space-posts-all'){ try { Z.softRefresh(); } catch(e){} }
+  } catch(e){
+    Z.toast('Could not update: ' + (e.message || 'unknown'), 'error');
+  }
+};
+
+console.log('[Phase C] visibility editor ready');
 })();
 </script>   
 <!-- ============================================================ -->
