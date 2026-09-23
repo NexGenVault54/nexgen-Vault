@@ -14377,6 +14377,89 @@ console.log('[Critical #4c v2] confirmation redirect + clean signup modal ready'
 })();
 </script>
 <!-- ============================================================ -->
+<!-- PART 2 Step 1 — Upload recovery queue (IndexedDB helper)     -->
+<!-- New code. Does nothing on its own. Used by Steps 2-4.        -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixUploadQueue) return; Z.__zynixUploadQueue = true;
+
+var DB_NAME = 'zynix_upload_queue_v1';
+var DB_VERSION = 1;
+var STORE = 'pending';
+
+var _dbPromise = null;
+function openDB(){
+  if(_dbPromise) return _dbPromise;
+  _dbPromise = new Promise(function(resolve, reject){
+    try {
+      var req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = function(e){
+        var db = e.target.result;
+        if(!db.objectStoreNames.contains(STORE)){
+          db.createObjectStore(STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = function(e){ resolve(e.target.result); };
+      req.onerror = function(e){ reject(e.target.error); };
+    } catch(e){ reject(e); }
+  });
+  return _dbPromise;
+}
+
+Z.uploadQueue = {
+  add: async function(item){
+    try {
+      var db = await openDB();
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(STORE, 'readwrite');
+        var req = tx.objectStore(STORE).put(item);
+        req.onsuccess = function(){ resolve(true); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    } catch(e){ return false; }
+  },
+  remove: async function(id){
+    try {
+      var db = await openDB();
+      return new Promise(function(resolve){
+        var tx = db.transaction(STORE, 'readwrite');
+        var req = tx.objectStore(STORE).delete(id);
+        req.onsuccess = function(){ resolve(true); };
+        req.onerror = function(){ resolve(false); };
+      });
+    } catch(e){ return false; }
+  },
+  list: async function(){
+    try {
+      var db = await openDB();
+      return new Promise(function(resolve){
+        var tx = db.transaction(STORE, 'readonly');
+        var req = tx.objectStore(STORE).getAll();
+        req.onsuccess = function(){ resolve(req.result || []); };
+        req.onerror = function(){ resolve([]); };
+      });
+    } catch(e){ return []; }
+  },
+  clear: async function(){
+    try {
+      var db = await openDB();
+      return new Promise(function(resolve){
+        var tx = db.transaction(STORE, 'readwrite');
+        var req = tx.objectStore(STORE).clear();
+        req.onsuccess = function(){ resolve(true); };
+        req.onerror = function(){ resolve(false); };
+      });
+    } catch(e){ return false; }
+  }
+};
+
+console.log('[Part 2 Step 1] upload queue helper ready');
+})();
+</script>   
+<!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
 <!-- Server-authoritative. No localStorage for money.             -->
