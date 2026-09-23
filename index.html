@@ -14106,7 +14106,213 @@ Z.submitResetPassword = async function(){
 console.log('[Critical #4a] Password reset flow ready');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- CRITICAL #4c — Signup + Login verify-email flow              -->
+<!-- Proper modals: "check your email" + "email not confirmed"    -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAuthVerifyV1) return; Z.__zynixAuthVerifyV1 = true;
 
+/* ---------- 1. Check-email modal (after signup) ---------- */
+Z.openCheckEmailModal = function(email){
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div style="text-align:center;padding:8px 0 4px;">' +
+          '<div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' +
+            '<i class="fa-solid fa-envelope-open-text" style="font-size:26px;color:#000;"></i>' +
+          '</div>' +
+          '<div style="font-size:20px;font-weight:900;color:#fff;margin-bottom:8px;">Check your email</div>' +
+          '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;padding:0 8px;">' +
+            'We sent a confirmation link to:<br>' +
+            '<b style="color:#10b981;word-break:break-all;">' + Z.escape(email || 'your email') + '</b>' +
+          '</div>' +
+          '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-top:16px;padding:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.22);border-radius:10px;text-align:left;">' +
+            '<b style="color:#60a5fa;display:block;margin-bottom:6px;">Didn\'t get the email?</b>' +
+            '1. Check your spam or junk folder<br>' +
+            '2. Make sure you typed the email correctly<br>' +
+            '3. Wait 30 seconds, then tap Resend below' +
+          '</div>' +
+        '</div>' +
+        '<button id="zynix-checkemail-resend" onclick="Z.resendSignupEmail(\'' + Z.escape(email) + '\')" style="width:100%;margin-top:16px;padding:12px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;">' +
+          '<i class="fa-solid fa-rotate-right"></i> Resend confirmation email' +
+        '</button>' +
+        '<button onclick="Z.closeModal();Z.openAuthModal(\'login\')" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+          'I\'ve confirmed — Go to Login' +
+        '</button>' +
+      '</div>' +
+    '</div>'
+  );
+};
+
+Z.resendSignupEmail = async function(email){
+  if(!email){ Z.toast('No email to resend to.'); return; }
+  var btn = document.getElementById('zynix-checkemail-resend');
+  var orig = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Sending...'; }
+  var c = Z.sb();
+  if(!c){ if(btn){ btn.disabled = false; btn.innerHTML = orig; } Z.toast('Not connected.'); return; }
+  try {
+    var r = await c.auth.resend({
+      type: 'signup',
+      email: email,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname }
+    });
+    if(r.error) throw r.error;
+    Z.toast('Confirmation email sent.');
+    if(btn){ btn.innerHTML = '<i class="fa-solid fa-check"></i> Sent'; btn.style.background = 'rgba(16,185,129,.15)'; btn.style.borderColor = '#10b981'; btn.style.color = '#10b981'; }
+  } catch(e){
+    Z.toast((e && e.message) ? e.message : 'Could not resend.', 'error');
+    if(btn){ btn.disabled = false; btn.innerHTML = orig; }
+  }
+};
+
+/* ---------- 2. Email-not-confirmed modal (login attempt) ---------- */
+Z.openNotConfirmedModal = function(email){
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div style="text-align:center;padding:8px 0 4px;">' +
+          '<div style="width:64px;height:64px;border-radius:50%;background:rgba(161,133,84,.15);border:1px solid rgba(161,133,84,.4);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' +
+            '<i class="fa-solid fa-envelope-circle-check" style="font-size:26px;color:#a18554;"></i>' +
+          '</div>' +
+          '<div style="font-size:19px;font-weight:900;color:#fff;margin-bottom:8px;">Email not confirmed</div>' +
+          '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;padding:0 8px;">' +
+            'Your account exists but the email hasn\'t been confirmed yet. Check your inbox for the confirmation link.' +
+          '</div>' +
+        '</div>' +
+        '<button id="zynix-notconfirmed-resend" onclick="Z.resendSignupEmail(\'' + Z.escape(email) + '\')" style="width:100%;margin-top:16px;padding:12px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;">' +
+          '<i class="fa-solid fa-rotate-right"></i> Resend confirmation email' +
+        '</button>' +
+        '<button onclick="Z.closeModal()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">' +
+          'Close' +
+        '</button>' +
+      '</div>' +
+    '</div>'
+  );
+};
+
+/* ---------- 3. Override Z.handleAuth ---------- */
+Z.handleAuth = async function(mode){
+  var email = ((document.getElementById('auth-email')||{}).value || '').trim();
+  var pass  = ((document.getElementById('auth-password')||{}).value || '');
+  if(!email || !pass){ Z.toast('Please enter email and password.'); return; }
+  var btn = document.getElementById('auth-submit');
+  if(btn){ btn.disabled = true; btn.textContent = 'Please wait...'; }
+  var c = Z.sb();
+  if(!c){
+    if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; }
+    Z.toast('Supabase not ready.');
+    return;
+  }
+
+  Z.State.manualAuthInProgress = true;
+  var authSucceeded = false;
+
+  try {
+    if(mode === 'login'){
+      var r = await c.auth.signInWithPassword({email: email, password: pass});
+      if(r.error){
+        var msg = (r.error.message || '').toLowerCase();
+        /* Catch the not-confirmed case and show friendly modal */
+        if(msg.indexOf('email not confirmed') !== -1 || msg.indexOf('not confirmed') !== -1){
+          Z.closeModal();
+          Z.openNotConfirmedModal(email);
+          Z.State.manualAuthInProgress = false;
+          if(btn){ btn.disabled = false; btn.textContent = 'Login'; }
+          return;
+        }
+        throw r.error;
+      }
+      Z.toast('Logged in!');
+    } else {
+      /* SIGNUP */
+      var name = ((document.getElementById('auth-name')||{}).value || 'New User').trim() || 'New User';
+      var ref = ((document.getElementById('auth-refcode')||{}).value || '').trim();
+      if(!ref && Z._consumePendingRef) ref = Z._consumePendingRef();
+
+      var sr = await c.auth.signUp({
+        email: email,
+        password: pass,
+        options:{
+          data:{ name: name },
+          emailRedirectTo: window.location.origin + window.location.pathname
+        }
+      });
+      if(sr.error) throw sr.error;
+
+      /* Bind referral if present */
+      if(ref){
+        try {
+          var bind = await c.rpc('bind_referral_code', { p_code: ref });
+          if(bind.error) console.warn('Referral bind failed:', bind.error.message);
+          else Z._clearPendingRef();
+        } catch(e){ console.warn('Referral bind error', e); }
+      }
+
+      /* Show the check-email modal — do NOT log in */
+      Z.closeModal();
+      Z.openCheckEmailModal(email);
+      Z.State.manualAuthInProgress = false;
+      Z.State._manualAuthCompletedAt = Date.now();
+      if(btn){ btn.disabled = false; btn.textContent = 'Sign Up'; }
+      return;
+    }
+
+    authSucceeded = true;
+
+    /* ---- Existing post-login handoff (unchanged) ---- */
+    Z.closeModal();
+    Z.State.navStack = [];
+    Z.showWelcome(Z.getWelcomeGreeting('login-load'));
+    var _welcomeToken = Date.now();
+    Z._latestLoginWelcomeToken = _welcomeToken;
+    var _welcomeFailsafe = setTimeout(function(){
+      if(Z._latestLoginWelcomeToken !== _welcomeToken) return;
+      try { Z.hideWelcome(); } catch(e){}
+    }, 8000);
+
+    await Z.refreshSession();
+
+    try {
+      await Promise.race([
+        Z.reloadData(),
+        new Promise(function(resolve){ setTimeout(resolve, 6000); })
+      ]);
+    } catch(e){ console.error('Post-login load', e); }
+
+    Z.showView('public-home');
+
+    setTimeout(function(){
+      clearTimeout(_welcomeFailsafe);
+      if(Z._latestLoginWelcomeToken !== _welcomeToken) return;
+      Z.hideWelcome();
+    }, 250);
+
+    setTimeout(function(){
+      try { Z.setupRealtime(); } catch(e){}
+    }, 100);
+  } catch(e){
+    Z.toast((e && e.message) ? e.message : 'Authentication failed.', 'error');
+  } finally {
+    Z.State.manualAuthInProgress = false;
+    Z.State._manualAuthCompletedAt = Date.now();
+    if(btn){ btn.disabled = false; btn.textContent = mode==='login'?'Login':'Sign Up'; }
+    if(!authSucceeded){
+      setTimeout(function(){
+        var w = document.getElementById('zynix-welcome');
+        if(w && !w.classList.contains('zynix-welcome-fadeout')) Z.hideWelcome();
+      }, 4000);
+    }
+  }
+};
+
+console.log('[Critical #4c] signup + login verify flow ready');
+})();
+</script>
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
