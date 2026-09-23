@@ -9049,9 +9049,9 @@ async function boot(){
         Z.showView(restored0.view || 'home', restored0.param);
         Z.hideWelcome();
         try { await Z.reloadData(); } catch(e){}
-        /* Refresh the DOM from the freshly loaded data. Without this
+             /* Refresh the DOM from the freshly loaded data. Without this
            the snapshot would stay on screen until the user navigates. */
-        if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
+        if(Z.State.currentView === 'home'){ try { Z.softRefreshIfChanged('home'); } catch(e){} }
         Z.setupRealtime();
       } catch(e){}
     })();
@@ -9125,10 +9125,10 @@ async function boot(){
     Z.migrateLocalCirclesOnce();
     try {
       await Z.reloadData();
-      /* Refresh the DOM from the freshly loaded data. Without this,
-         the snapshot (up to 24h old) would stay on screen until the
-         user navigates or pulls-to-refresh. */
-      if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
+           /* Refresh the DOM from the freshly loaded data. Without this,
+           the snapshot (up to 24h old) would stay on screen until the
+           user navigates or pulls-to-refresh. */
+        if(Z.State.currentView === 'home'){ try { Z.softRefreshIfChanged('home'); } catch(e){} }
       Z.setupRealtime();
     } catch(e){
       Z.setupRealtime();
@@ -14727,6 +14727,66 @@ Z.recoverPendingUploads = async function(){
 })();
 
 console.log('[Part 2 Step 4] boot recovery ready');
+})();
+</script>
+
+<!-- ============================================================ -->
+<!-- PART 3 — Smart softRefresh (skip DOM rebuild if no changes)  -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSmartRefreshV1) return; Z.__zynixSmartRefreshV1 = true;
+
+Z.softRefreshIfChanged = function(view){
+  if(Z.State.currentView !== view) return;
+  if(view !== 'home'){ Z.softRefresh(); return; }
+
+  /* Collect IDs currently in the DOM */
+  var currentIds = [];
+  try {
+    document.querySelectorAll('#app-container .post-card[data-post-id]').forEach(function(el){
+      var id = el.getAttribute('data-post-id');
+      if(id) currentIds.push(id);
+    });
+  } catch(e){ Z.softRefresh(); return; }
+
+  /* Collect IDs from state */
+  var newIds = [];
+  (Z.State.allPosts || []).forEach(function(p){
+    if(p && p.id) newIds.push(p.id);
+  });
+
+  /* Sort both so order differences don't trigger a rebuild */
+  currentIds.sort();
+  newIds.sort();
+
+  var same = (currentIds.length === newIds.length);
+  if(same){
+    for(var i = 0; i < currentIds.length; i++){
+      if(currentIds[i] !== newIds[i]){ same = false; break; }
+    }
+  }
+
+  if(same){
+    /* Structure identical — just refresh the reaction counts on visible cards.
+       No DOM rebuild → no image reload, no video restart, no scroll jump. */
+    try {
+      (Z.State.allPosts || []).forEach(function(p){
+        if(p && p.id && Z.updatePostReactionUI){ Z.updatePostReactionUI(p.id); }
+      });
+    } catch(e){}
+    try { Z.observeFreezeDots(); } catch(e){}
+    try { Z._tagMediaContainers(); } catch(e){}
+    return;
+  }
+
+  /* Something changed — do the full rebuild */
+  Z.softRefresh();
+};
+
+console.log('[Part 3] smart softRefresh ready');
 })();
 </script>   
 <!-- ============================================================ -->
