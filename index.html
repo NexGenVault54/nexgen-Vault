@@ -5734,16 +5734,37 @@ Z.submitSparkImpl = async function(forceNoCaption){
   var fileObj = cached && cached.blob ? cached.blob : (fi && fi.files && fi.files[0] ? fi.files[0] : null);
   if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Video under 100 MB.'); return; }
 
-  var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
-  var tempId = 'temp_' + Z.uuid();
+    var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
+  var sparkId = Z.uuid();
   var optimistic = {
-    id: tempId, author_id: me.id, caption: caption, video_url: localUrl,
+    id: sparkId, author_id: me.id, caption: caption, video_url: localUrl,
     tags: tags, type: 'spark', share_bounty: shareBounty,
     created_at: new Date().toISOString(), views: 0, shares: 0,
     _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
     _optimistic: true
   };
   Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
+
+  /* Save to recovery queue BEFORE user can refresh */
+  if(fileObj){
+    Z.uploadQueue.add({
+      id: sparkId,
+      kind: 'spark',
+      fileName: fileObj.name || 'spark.bin',
+      fileType: fileObj.type || 'application/octet-stream',
+      fileBlob: fileObj,
+      payload: {
+        id: sparkId,
+        author_id: me.id,
+        caption: caption,
+        tags: tags,
+        type: 'spark',
+        share_bounty: shareBounty
+      },
+      createdAt: Date.now()
+    }).catch(function(){});
+  }
+
   Z.closeModal();
   Z.toast('Spark published!');
   Z.haptic(12);
@@ -5754,33 +5775,36 @@ Z.submitSparkImpl = async function(forceNoCaption){
     try {
       if(fileObj) vu = await Z.storeMedia(fileObj);
       else if(url) vu = url;
-    } catch(err){
-      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== tempId; });
+       } catch(err){
+      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== sparkId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z.toast('Upload failed — Spark not published.', 'error');
       if(Z.State.currentView === 'spark') Z.showView('spark');
       return;
     }
     var sp = await Z.DB.createSpark({
+      id: sparkId,
       author_id: me.id, caption: caption, video_url: vu,
       tags: tags, type: 'spark', share_bounty: shareBounty
     });
     var arr = Z.State.allSparks || [];
     var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    for(var i=0;i<arr.length;i++){ if(arr[i].id === sparkId){ idx = i; break; } }
        if(sp){
       if(idx >= 0){
         var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0});
         if(localUrl && localUrl.indexOf('blob:') === 0){ real.video_url = localUrl; }
         arr[idx] = real;
       }
-           Z._mediaCache.spark = null;
+             Z._mediaCache.spark = null;
       try { Z.saveSnapshot(); } catch(e){}
+      /* Success: remove from recovery queue */
+      if(fileObj){ Z.uploadQueue.remove(sparkId).catch(function(){}); }
       /* Do NOT re-render. The optimistic spark is already on screen.
          Re-rendering destroys and recreates the <video> element,
          which restarts playback from the beginning. */
     } else {
-      Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
+      Z.State.allSparks = arr.filter(function(x){ return x.id !== sparkId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._cleanupOrphanUpload(vu);
       Z.toast('Publish failed. Try again.', 'error');
