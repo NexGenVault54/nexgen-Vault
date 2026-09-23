@@ -13957,7 +13957,155 @@ setTimeout(_inject, 400);
 console.log('[Header Referral Button] ready');
 })();
 </script>   
-   
+<!-- ============================================================ -->
+<!-- CRITICAL #4a — Password reset flow                           -->
+<!-- Adds: Forgot link · reset email · set-new-password modal     -->
+<!-- Boot handler for ?type=recovery link                         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixPasswordResetV1) return; Z.__zynixPasswordResetV1 = true;
+
+/* ---------- 1. Override openAuthModal to add Forgot link ---------- */
+Z.openAuthModal = function(mode){
+  var isLogin = mode === 'login';
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>' + (isLogin ? 'Login' : 'Create Account') + '</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        (!isLogin ? '<label class="form-label">Full Name</label><input type="text" id="auth-name" class="form-input" placeholder="Your name">' : '') +
+        '<label class="form-label">Email</label>' +
+        '<input type="email" id="auth-email" class="form-input" placeholder="email@example.com" autocomplete="email">' +
+        '<label class="form-label">Password</label>' +
+        '<input type="password" id="auth-password" class="form-input" placeholder="••••••••" autocomplete="' + (isLogin?'current-password':'new-password') + '">' +
+        (!isLogin ? '<label class="form-label">Referral Code (Optional)</label><input type="text" id="auth-refcode" class="form-input" placeholder="ZYNIX-XXXXXX" value="' + Z.escape(Z._consumePendingRef()) + '">' : '') +
+        '<button class="btn-primary" id="auth-submit" onclick="Z.handleAuth(\'' + mode + '\')">' + (isLogin?'Login':'Sign Up') + '</button>' +
+        (isLogin ? '<div style="text-align:center;margin-top:8px;"><button onclick="Z.openForgotPasswordModal()" style="background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:700;cursor:pointer;padding:4px;">Forgot password?</button></div>' : '') +
+        '<button class="btn-secondary" onclick="Z.openAuthModal(\'' + (isLogin?'signup':'login') + '\')">' + (isLogin?"Don't have account? Sign Up":"Have account? Login") + '</button>' +
+      '</div>' +
+    '</div>'
+  );
+};
+
+/* ---------- 2. Forgot password modal ---------- */
+Z.openForgotPasswordModal = function(){
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Reset Password</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:14px;">Enter your email. We\'ll send you a link to set a new password.</div>' +
+        '<label class="form-label">Email</label>' +
+        '<input type="email" id="forgot-email" class="form-input" placeholder="email@example.com" autocomplete="email">' +
+        '<button class="btn-primary" id="forgot-submit" onclick="Z.submitForgotPassword()">Send Reset Link</button>' +
+        '<button class="btn-secondary" onclick="Z.openAuthModal(\'login\')">Back to Login</button>' +
+      '</div>' +
+    '</div>'
+  );
+  setTimeout(function(){ var e = document.getElementById('forgot-email'); if(e) e.focus(); }, 100);
+};
+
+Z.submitForgotPassword = async function(){
+  var email = ((document.getElementById('forgot-email')||{}).value || '').trim();
+  if(!email){ Z.toast('Enter your email.'); return; }
+  var btn = document.getElementById('forgot-submit');
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending...'; }
+  var c = Z.sb();
+  if(!c){ if(btn){ btn.disabled = false; btn.textContent = 'Send Reset Link'; } Z.toast('Not connected.'); return; }
+  try {
+    var r = await c.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname + '?type=recovery'
+    });
+    if(r.error) throw r.error;
+    Z.closeModal();
+    Z.toast('Reset link sent. Check your email.');
+  } catch(e){
+    Z.toast((e && e.message) ? e.message : 'Could not send reset link.', 'error');
+    if(btn){ btn.disabled = false; btn.textContent = 'Send Reset Link'; }
+  }
+};
+
+/* ---------- 3. Set-new-password modal (from email link) ---------- */
+Z.openResetPasswordModal = function(){
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this){Z.closeModal();try{history.replaceState(null,\'\',window.location.pathname);}catch(e){}}">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Set New Password</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal();try{history.replaceState(null,\'\',window.location.pathname);}catch(e){}"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:14px;">Choose a new password for your account. Minimum 6 characters.</div>' +
+        '<label class="form-label">New Password</label>' +
+        '<input type="password" id="reset-pass1" class="form-input" placeholder="••••••••" autocomplete="new-password">' +
+        '<label class="form-label">Confirm Password</label>' +
+        '<input type="password" id="reset-pass2" class="form-input" placeholder="••••••••" autocomplete="new-password">' +
+        '<button class="btn-primary" id="reset-submit" onclick="Z.submitResetPassword()">Update Password</button>' +
+      '</div>' +
+    '</div>'
+  );
+  setTimeout(function(){ var e = document.getElementById('reset-pass1'); if(e) e.focus(); }, 100);
+};
+
+Z.submitResetPassword = async function(){
+  var p1 = ((document.getElementById('reset-pass1')||{}).value || '');
+  var p2 = ((document.getElementById('reset-pass2')||{}).value || '');
+  if(!p1 || p1.length < 6){ Z.toast('Password must be at least 6 characters.'); return; }
+  if(p1 !== p2){ Z.toast('Passwords do not match.'); return; }
+  var btn = document.getElementById('reset-submit');
+  if(btn){ btn.disabled = true; btn.textContent = 'Updating...'; }
+  var c = Z.sb();
+  if(!c){ if(btn){ btn.disabled = false; btn.textContent = 'Update Password'; } Z.toast('Not connected.'); return; }
+  try {
+    var r = await c.auth.updateUser({ password: p1 });
+    if(r.error) throw r.error;
+    Z.closeModal();
+    try { history.replaceState(null, '', window.location.pathname); } catch(e){}
+    Z.toast('Password updated. You are now logged in.');
+    await Z.refreshSession();
+    await Z.reloadData();
+    Z.showView('home');
+  } catch(e){
+    Z.toast((e && e.message) ? e.message : 'Could not update password.', 'error');
+    if(btn){ btn.disabled = false; btn.textContent = 'Update Password'; }
+  }
+};
+
+/* ---------- 4. Boot handler — detect recovery link ---------- */
+(function(){
+  function detectRecovery(){
+    try {
+      var hash = window.location.hash || '';
+      var search = window.location.search || '';
+      var isRecovery = hash.indexOf('type=recovery') !== -1 || search.indexOf('type=recovery') !== -1;
+      if(!isRecovery) return;
+      setTimeout(function(){ Z.openResetPasswordModal(); }, 600);
+    } catch(e){}
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', detectRecovery);
+  } else {
+    detectRecovery();
+  }
+  /* Also listen for Supabase PASSWORD_RECOVERY event */
+  try {
+    var c = Z.sb();
+    if(c && c.auth && c.auth.onAuthStateChange){
+      c.auth.onAuthStateChange(function(event){
+        if(event === 'PASSWORD_RECOVERY'){
+          setTimeout(function(){ Z.openResetPasswordModal(); }, 200);
+        }
+      });
+    }
+  } catch(e){}
+})();
+
+console.log('[Critical #4a] Password reset flow ready');
+})();
+</script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
