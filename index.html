@@ -14612,15 +14612,36 @@ Z.recoverPendingUploads = async function(){
       continue;
     }
 
+      /* Compute a SAFE extension — original name may be 'upload.bin' (blob had no name) */
+    var _extMap = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif',
+                   'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','video/3gpp':'3gp'};
+    var _ft = (item.fileType || '').split(';')[0].trim().toLowerCase();
+    var _ext = _extMap[_ft] || '';
+    if(!_ext && item.fileName && item.fileName.indexOf('.') > -1){
+      var _e = item.fileName.split('.').pop().toLowerCase();
+      if(Z._ALLOWED_MEDIA_EXT && Z._ALLOWED_MEDIA_EXT.indexOf(_e) !== -1) _ext = _e;
+    }
+    if(!_ext) _ext = 'bin';
+
+    var _safeName = 'recover_' + item.id + '.' + _ext;
+
     var url = '';
     try {
-      var file = new File([blob], item.fileName || 'recover.bin', {
+      var file = new File([blob], _safeName, {
         type: item.fileType || 'application/octet-stream'
       });
       url = await Z.storeMedia(file);
     } catch(e){
       console.warn('[recover] upload failed for', item.id, e);
-      continue; /* leave in queue for next boot */
+      /* Give up after 3 tries to stop toast spam */
+      item._attempts = (item._attempts || 0) + 1;
+      if(item._attempts >= 3){
+        try { await Z.uploadQueue.remove(item.id); } catch(e2){}
+        console.warn('[recover] gave up on', item.id);
+      } else {
+        try { await Z.uploadQueue.add(item); } catch(e2){}
+      }
+      continue;
     }
     if(!url) continue;
 
