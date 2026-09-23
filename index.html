@@ -14774,7 +14774,26 @@ Z.softRefreshIfChanged = function(view){
     if(statePosts[i] && statePosts[i].id === topDomId){ topStateIdx = i; break; }
   }
 
-  if(topStateIdx === -1){ Z.softRefresh(); return; }
+   if(topStateIdx === -1){ Z.softRefresh(); return; }
+
+  /* Media repair check — snapshot may have painted null media (blob filtered),
+     while state now has the real R2 URL from reloadData. If DOM is missing
+     media but state has it → rebuild. Otherwise first refresh shows blank media. */
+  var _needRepair = false;
+  try {
+    for(var _k = 0; _k <= topStateIdx; _k++){
+      var _p = statePosts[_k];
+      if(!_p || !_p.media_url) continue;
+      if(typeof _p.media_url !== 'string') continue;
+      if(_p.media_url.indexOf('blob:') === 0) continue;
+      if(_p.media_url.indexOf('http') !== 0) continue;
+      var _card = container.querySelector('.post-card[data-post-id="' + _p.id + '"]');
+      if(!_card) continue;
+      var _hasMedia = _card.querySelector('.post-media img, .post-media video');
+      if(!_hasMedia){ _needRepair = true; break; }
+    }
+  } catch(e){}
+  if(_needRepair){ Z.softRefresh(); return; }
 
   if(topStateIdx === 0){
     try {
@@ -14784,7 +14803,6 @@ Z.softRefreshIfChanged = function(view){
     } catch(e){}
     return;
   }
-
   var profiles = Z.State.allProfiles || [];
   var me = Z.State.currentUser;
   var fragment = document.createDocumentFragment();
