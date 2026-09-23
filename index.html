@@ -3156,6 +3156,54 @@ Z.expandComposer = function(){
   if(!c) return;
   if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
   if(c.innerHTML) return;
+
+  /* Multi-select visibility state */
+  Z._composerVis = { public: true, connections: false, family: false };
+
+  Z.toggleComposerVis = function(kind){
+    var v = Z._composerVis;
+    if(kind === 'public'){
+      v.public = !v.public;
+      if(v.public){ v.connections = false; v.family = false; }
+    } else {
+      v.public = false;
+      v[kind] = !v[kind];
+    }
+    paintComposerVis();
+  };
+
+  function paintComposerVis(){
+    var v = Z._composerVis;
+    var pub = document.querySelector('.composer-vis-btn[data-vis="public"]');
+    var con = document.querySelector('.composer-vis-btn[data-vis="connections"]');
+    var fam = document.querySelector('.composer-vis-btn[data-vis="family"]');
+    if(!pub || !con || !fam) return;
+
+    var onStyle = 'background:rgba(16,185,129,.15);border:1px solid #10b981;color:#10b981;';
+    var offStyle = 'background:rgba(255,255,255,.03);border:1px solid #1e293b;color:#94a3b8;';
+    var disStyle = 'background:rgba(255,255,255,.02);border:1px solid #1e293b;color:#475569;opacity:.55;';
+
+    pub.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;' + (v.public ? onStyle : offStyle));
+    if(v.public){
+      con.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:not-allowed;display:inline-flex;align-items:center;gap:5px;' + disStyle);
+      fam.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:not-allowed;display:inline-flex;align-items:center;gap:5px;' + disStyle);
+      con.disabled = true;
+      fam.disabled = true;
+    } else {
+      con.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;' + (v.connections ? onStyle : offStyle));
+      fam.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;' + (v.family ? onStyle : offStyle));
+      con.disabled = false;
+      fam.disabled = false;
+    }
+
+    var hint = document.getElementById('composer-vis-hint');
+    if(hint){
+      if(v.public) hint.textContent = 'Anyone on ZYNIX';
+      else if(!v.connections && !v.family) hint.textContent = 'Only you can see this';
+      else hint.textContent = 'Selected audience only';
+    }
+  }
+
   c.innerHTML =
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
       '<textarea id="composer-text" class="form-textarea" placeholder="What\'s on your mind?"></textarea>' +
@@ -3169,14 +3217,25 @@ Z.expandComposer = function(){
       '<div id="composer-remove-row" class="media-remove-row" style="display:none;">' +
         '<button type="button" onclick="Z.removeComposerFile()"><i class="fa-solid fa-trash"></i> Remove media</button>' +
       '</div>' +
-      '<label class="form-label" style="margin-top:10px;">Share Bounty (paid to whoever shares your post)</label>' +
+      '<label class="form-label" style="margin-top:10px;">Who can see this?</label>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
+        '<button type="button" class="composer-vis-btn" data-vis="public" onclick="Z.toggleComposerVis(\'public\')"><i class="fa-solid fa-globe"></i> Public</button>' +
+        '<button type="button" class="composer-vis-btn" data-vis="connections" onclick="Z.toggleComposerVis(\'connections\')"><i class="fa-solid fa-user-group"></i> Connections</button>' +
+        '<button type="button" class="composer-vis-btn" data-vis="family" onclick="Z.toggleComposerVis(\'family\')"><i class="fa-solid fa-house-user"></i> Family</button>' +
+      '</div>' +
+      '<div id="composer-vis-hint" style="font-size:10px;color:#64748b;margin-bottom:12px;">Anyone on ZYNIX</div>' +
+      '<label class="form-label">Share Bounty (paid to whoever shares your post)</label>' +
       '<select id="composer-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
       '<div style="display:flex;gap:8px;margin-top:6px;">' +
         '<button onclick="Z.submitComposer()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;font-size:12px;cursor:pointer;">Publish</button>' +
         '<button onclick="Z.cancelComposer()" style="background:transparent;border:none;color:#64748b;padding:8px 12px;font-size:12px;cursor:pointer;">Cancel</button>' +
       '</div>' +
     '</div>';
-  setTimeout(function(){ var e = document.getElementById('composer-text'); if(e) e.focus(); }, 50);
+  setTimeout(function(){
+    var e = document.getElementById('composer-text');
+    if(e) e.focus();
+    paintComposerVis();
+  }, 50);
 };
 
 Z._mediaCache = { composer:null, status:null, spark:null, fv:null };
@@ -3335,10 +3394,22 @@ Z.submitComposer = async function(forceNoCaption){
       if(Z.State.currentView === 'home') Z.softRefresh();
       return;
     }
-       var row = await Z.DB.createPost({
+          var _visArr;
+    try {
+      var _cv = Z._composerVis || { public:true, connections:false, family:false };
+      if(_cv.public){ _visArr = ['public']; }
+      else {
+        _visArr = [];
+        if(_cv.connections) _visArr.push('connections');
+        if(_cv.family) _visArr.push('family');
+        if(_visArr.length === 0) _visArr = ['private'];
+      }
+    } catch(e){ _visArr = ['public']; }
+    var row = await Z.DB.createPost({
       id: postId,
       author_id: me.id, content: text, media_url: mu||null,
-      media_type: mt||null, share_bounty: shareBounty
+      media_type: mt||null, share_bounty: shareBounty,
+      visibility: _visArr
     });
     var arr = Z.State.allPosts || [];
     var idx = -1;
