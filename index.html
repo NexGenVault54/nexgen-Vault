@@ -14107,16 +14107,84 @@ console.log('[Critical #4a] Password reset flow ready');
 })();
 </script>
 <!-- ============================================================ -->
-<!-- CRITICAL #4c — Signup + Login verify-email flow              -->
-<!-- Proper modals: "check your email" + "email not confirmed"    -->
+<!-- CRITICAL #4c v2 — Confirmation redirect + clean signup modal -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixAuthVerifyV1) return; Z.__zynixAuthVerifyV1 = true;
+if(Z.__zynixAuthVerifyV2) return; Z.__zynixAuthVerifyV2 = true;
 
-/* ---------- 1. Check-email modal (after signup) ---------- */
+/* ============================================================
+   1. Confirmation redirect handler (runs on every load)
+   ============================================================ */
+async function handleConfirmationRedirect(){
+  var hash = window.location.hash || '';
+  var hasAccessToken = hash.indexOf('access_token=') !== -1;
+  var hasError = hash.indexOf('error=') !== -1;
+  var isRecovery = hash.indexOf('type=recovery') !== -1;
+
+  if(isRecovery) return false;
+  if(!hasAccessToken && !hasError) return false;
+
+  var c = Z.sb();
+  if(!c) return false;
+
+  /* Give supabase-js a moment to process URL tokens */
+  await new Promise(function(r){ setTimeout(r, 900); });
+
+  /* Clean the URL bar */
+  try { history.replaceState(null, '', window.location.pathname); } catch(e){}
+
+  if(hasError){
+    /* Expired / invalid link — force sign out whoever is on device */
+    try { await c.auth.signOut(); } catch(e){}
+    Z.State.currentUser = null;
+    Z.State.allProfiles = [];
+    Z.State.allPosts = [];
+    Z.State.allSparks = [];
+    Z.State.allStatuses = [];
+    Z.State.allConnections = [];
+    Z.State.allNotifications = [];
+    try { Z.renderHeaderAuth(); } catch(e){}
+    try { Z.updateHeader(); } catch(e){}
+    Z.toast('This confirmation link is invalid or has expired. Please sign in again.', 'error');
+    setTimeout(function(){ if(Z.showView) Z.showView('public-home'); }, 300);
+    return true;
+  }
+
+  if(hasAccessToken){
+    try {
+      var s = await c.auth.getSession();
+      var sess = s && s.data ? s.data.session : null;
+      if(sess && sess.user){
+        /* Force full state reset — the confirmation replaces any prior user */
+        Z.State.currentUser = null;
+        await Z.refreshSession();
+        await Z.reloadData();
+        try { Z.setupRealtime(); } catch(e){}
+        Z.State.navStack = [];
+        Z.toast('Email confirmed! Welcome to ZYNIX.');
+        setTimeout(function(){ if(Z.showView) Z.showView('home'); }, 300);
+        return true;
+      }
+    } catch(e){}
+    Z.toast('Email confirmed. Please log in.', 'success');
+    setTimeout(function(){ if(Z.showView) Z.showView('public-home'); }, 300);
+    return true;
+  }
+  return false;
+}
+
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', function(){ handleConfirmationRedirect(); });
+} else {
+  handleConfirmationRedirect();
+}
+
+/* ============================================================
+   2. Check-email modal — no "Go to Login" button
+   ============================================================ */
 Z.openCheckEmailModal = function(email){
   Z.openModal(
     '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
@@ -14125,23 +14193,25 @@ Z.openCheckEmailModal = function(email){
           '<div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' +
             '<i class="fa-solid fa-envelope-open-text" style="font-size:26px;color:#000;"></i>' +
           '</div>' +
-          '<div style="font-size:20px;font-weight:900;color:#fff;margin-bottom:8px;">Check your email</div>' +
-          '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;padding:0 8px;">' +
+          '<div style="font-size:20px;font-weight:900;color:#fff;margin-bottom:10px;">Check your email</div>' +
+          '<div style="font-size:13px;color:#cbd5e1;line-height:1.7;padding:0 8px;">' +
             'We sent a confirmation link to:<br>' +
             '<b style="color:#10b981;word-break:break-all;">' + Z.escape(email || 'your email') + '</b>' +
+          '</div>' +
+          '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;margin-top:14px;padding:0 8px;">' +
+            'You must confirm your email before you can log in.' +
           '</div>' +
           '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-top:16px;padding:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.22);border-radius:10px;text-align:left;">' +
             '<b style="color:#60a5fa;display:block;margin-bottom:6px;">Didn\'t get the email?</b>' +
             '1. Check your spam or junk folder<br>' +
-            '2. Make sure you typed the email correctly<br>' +
-            '3. Wait 30 seconds, then tap Resend below' +
+            '2. Wait 30 seconds and tap Resend below' +
           '</div>' +
         '</div>' +
         '<button id="zynix-checkemail-resend" onclick="Z.resendSignupEmail(\'' + Z.escape(email) + '\')" style="width:100%;margin-top:16px;padding:12px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;">' +
           '<i class="fa-solid fa-rotate-right"></i> Resend confirmation email' +
         '</button>' +
-        '<button onclick="Z.closeModal();Z.openAuthModal(\'login\')" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
-          'I\'ve confirmed — Go to Login' +
+        '<button onclick="Z.closeModal()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">' +
+          'Close' +
         '</button>' +
       '</div>' +
     '</div>'
@@ -14150,7 +14220,7 @@ Z.openCheckEmailModal = function(email){
 
 Z.resendSignupEmail = async function(email){
   if(!email){ Z.toast('No email to resend to.'); return; }
-  var btn = document.getElementById('zynix-checkemail-resend');
+  var btn = document.getElementById('zynix-checkemail-resend') || document.getElementById('zynix-notconfirmed-resend');
   var orig = btn ? btn.innerHTML : '';
   if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Sending...'; }
   var c = Z.sb();
@@ -14170,7 +14240,9 @@ Z.resendSignupEmail = async function(email){
   }
 };
 
-/* ---------- 2. Email-not-confirmed modal (login attempt) ---------- */
+/* ============================================================
+   3. Email-not-confirmed modal (login attempt)
+   ============================================================ */
 Z.openNotConfirmedModal = function(email){
   Z.openModal(
     '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
@@ -14181,7 +14253,7 @@ Z.openNotConfirmedModal = function(email){
           '</div>' +
           '<div style="font-size:19px;font-weight:900;color:#fff;margin-bottom:8px;">Email not confirmed</div>' +
           '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;padding:0 8px;">' +
-            'Your account exists but the email hasn\'t been confirmed yet. Check your inbox for the confirmation link.' +
+            'Your account exists but the email hasn\'t been confirmed yet. Please check your inbox for the confirmation link.' +
           '</div>' +
         '</div>' +
         '<button id="zynix-notconfirmed-resend" onclick="Z.resendSignupEmail(\'' + Z.escape(email) + '\')" style="width:100%;margin-top:16px;padding:12px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;">' +
@@ -14195,7 +14267,9 @@ Z.openNotConfirmedModal = function(email){
   );
 };
 
-/* ---------- 3. Override Z.handleAuth ---------- */
+/* ============================================================
+   4. handleAuth override — signup shows check-email modal
+   ============================================================ */
 Z.handleAuth = async function(mode){
   var email = ((document.getElementById('auth-email')||{}).value || '').trim();
   var pass  = ((document.getElementById('auth-password')||{}).value || '');
@@ -14217,7 +14291,6 @@ Z.handleAuth = async function(mode){
       var r = await c.auth.signInWithPassword({email: email, password: pass});
       if(r.error){
         var msg = (r.error.message || '').toLowerCase();
-        /* Catch the not-confirmed case and show friendly modal */
         if(msg.indexOf('email not confirmed') !== -1 || msg.indexOf('not confirmed') !== -1){
           Z.closeModal();
           Z.openNotConfirmedModal(email);
@@ -14229,7 +14302,6 @@ Z.handleAuth = async function(mode){
       }
       Z.toast('Logged in!');
     } else {
-      /* SIGNUP */
       var name = ((document.getElementById('auth-name')||{}).value || 'New User').trim() || 'New User';
       var ref = ((document.getElementById('auth-refcode')||{}).value || '').trim();
       if(!ref && Z._consumePendingRef) ref = Z._consumePendingRef();
@@ -14244,7 +14316,6 @@ Z.handleAuth = async function(mode){
       });
       if(sr.error) throw sr.error;
 
-      /* Bind referral if present */
       if(ref){
         try {
           var bind = await c.rpc('bind_referral_code', { p_code: ref });
@@ -14253,7 +14324,6 @@ Z.handleAuth = async function(mode){
         } catch(e){ console.warn('Referral bind error', e); }
       }
 
-      /* Show the check-email modal — do NOT log in */
       Z.closeModal();
       Z.openCheckEmailModal(email);
       Z.State.manualAuthInProgress = false;
@@ -14263,8 +14333,6 @@ Z.handleAuth = async function(mode){
     }
 
     authSucceeded = true;
-
-    /* ---- Existing post-login handoff (unchanged) ---- */
     Z.closeModal();
     Z.State.navStack = [];
     Z.showWelcome(Z.getWelcomeGreeting('login-load'));
@@ -14276,7 +14344,6 @@ Z.handleAuth = async function(mode){
     }, 8000);
 
     await Z.refreshSession();
-
     try {
       await Promise.race([
         Z.reloadData(),
@@ -14285,16 +14352,12 @@ Z.handleAuth = async function(mode){
     } catch(e){ console.error('Post-login load', e); }
 
     Z.showView('public-home');
-
     setTimeout(function(){
       clearTimeout(_welcomeFailsafe);
       if(Z._latestLoginWelcomeToken !== _welcomeToken) return;
       Z.hideWelcome();
     }, 250);
-
-    setTimeout(function(){
-      try { Z.setupRealtime(); } catch(e){}
-    }, 100);
+    setTimeout(function(){ try { Z.setupRealtime(); } catch(e){} }, 100);
   } catch(e){
     Z.toast((e && e.message) ? e.message : 'Authentication failed.', 'error');
   } finally {
@@ -14310,7 +14373,7 @@ Z.handleAuth = async function(mode){
   }
 };
 
-console.log('[Critical #4c] signup + login verify flow ready');
+console.log('[Critical #4c v2] confirmation redirect + clean signup modal ready');
 })();
 </script>
 <!-- ============================================================ -->
