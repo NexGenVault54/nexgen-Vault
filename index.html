@@ -14554,6 +14554,159 @@ Z.uploadQueue = {
 
 console.log('[Part 2 Step 1] upload queue helper ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- PART 2 Step 4 — Boot recovery for pending uploads           -->
+<!-- Re-uploads anything left in the queue from a refresh         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixUploadRecovery) return; Z.__zynixUploadRecovery = true;
+
+Z.recoverPendingUploads = async function(){
+  var c = Z.sb(); if(!c) return;
+  var me = Z.State.currentUser; if(!me) return;
+
+  var pending = [];
+  try { pending = await Z.uploadQueue.list(); } catch(e){ return; }
+  if(!pending || !pending.length) return;
+
+  var recovered = 0;
+
+  for(var i = 0; i < pending.length; i++){
+    var item = pending[i];
+    if(!item || !item.id) continue;
+
+    /* Skip items that belong to a different user on this device */
+    if(item.payload && item.payload.author_id && item.payload.author_id !== me.id){
+      await Z.uploadQueue.remove(item.id);
+      continue;
+    }
+
+    /* Check if the DB row already exists (upload finished but queue wasn't cleared) */
+    var exists = false;
+    try {
+      if(item.kind === 'post'){
+        var r1 = await c.from('posts').select('id').eq('id', item.id).maybeSingle();
+        if(r1.data) exists = true;
+      } else if(item.kind === 'spark' || item.kind === 'full_video'){
+        var r2 = await c.from('sparks').select('id').eq('id', item.id).maybeSingle();
+        if(r2.data) exists = true;
+      } else if(item.kind === 'status'){
+        var r3 = await c.from('statuses').select('id').eq('id', item.id).maybeSingle();
+        if(r3.data) exists = true;
+      }
+    } catch(e){}
+
+    if(exists){
+      await Z.uploadQueue.remove(item.id);
+      continue;
+    }
+
+    /* Re-upload the file to R2 */
+    var blob = item.fileBlob;
+    if(!blob){
+      await Z.uploadQueue.remove(item.id);
+      continue;
+    }
+
+    var url = '';
+    try {
+      var file = new File([blob], item.fileName || 'recover.bin', {
+        type: item.fileType || 'application/octet-stream'
+      });
+      url = await Z.storeMedia(file);
+    } catch(e){
+      console.warn('[recover] upload failed for', item.id, e);
+      continue; /* leave in queue for next boot */
+    }
+    if(!url) continue;
+
+    /* Insert to the right table */
+    try {
+      if(item.kind === 'post'){
+        await c.from('posts').insert({
+          id: item.id,
+          author_id: item.payload.author_id,
+          content: item.payload.content || '',
+          media_url: url,
+          media_type: item.payload.media_type || null,
+          share_bounty: item.payload.share_bounty || 0
+        });
+      } else if(item.kind === 'spark'){
+        await c.from('sparks').insert({
+          id: item.id,
+          author_id: item.payload.author_id,
+          caption: item.payload.caption || '',
+          video_url: url,
+          tags: item.payload.tags || [],
+          type: 'spark',
+          share_bounty: item.payload.share_bounty || 0
+        });
+      } else if(item.kind === 'full_video'){
+        await c.from('sparks').insert({
+          id: item.id,
+          author_id: item.payload.author_id,
+          title: item.payload.title || '',
+          caption: item.payload.caption || '',
+          video_url: url,
+          tags: item.payload.tags || [],
+          type: 'long_video',
+          share_bounty: item.payload.share_bounty || 0
+        });
+      } else if(item.kind === 'status'){
+        await c.from('statuses').insert({
+          id: item.id,
+          author_id: item.payload.author_id,
+          content: item.payload.content || '',
+          media_url: url,
+          media_type: item.payload.media_type || null,
+          background: item.payload.background || 'status-bg-deep-blue',
+          expires_at: item.payload.expires_at
+        });
+      }
+
+      await Z.uploadQueue.remove(item.id);
+      recovered++;
+    } catch(e){
+      console.warn('[recover] insert failed for', item.id, e);
+      /* leave in queue for next boot */
+    }
+  }
+
+  if(recovered > 0){
+    try { Z.toast('Recovered ' + recovered + ' pending upload' + (recovered > 1 ? 's' : '') + ' from earlier.'); } catch(e){}
+    try { await Z.reloadData(); } catch(e){}
+    try {
+      if(Z.State.currentView === 'home') Z.softRefresh();
+      else if(Z.State.currentView === 'spark') Z.showView('spark');
+      else if(Z.State.currentView === 'status-home') Z.softRefresh();
+    } catch(e){}
+  }
+};
+
+/* ---------- Bootstrap: wait for user, then run once ---------- */
+(function(){
+  var tries = 0;
+  var timer = setInterval(function(){
+    tries++;
+    if(Z.State && Z.State.currentUser && Z.State.currentUser.id){
+      clearInterval(timer);
+      /* Small delay so boot has time to finish its own work */
+      setTimeout(function(){
+        Z.recoverPendingUploads().catch(function(){});
+      }, 2500);
+    } else if(tries >= 60){
+      /* give up after 30s — user is likely not logged in */
+      clearInterval(timer);
+    }
+  }, 500);
+})();
+
+console.log('[Part 2 Step 4] boot recovery ready');
+})();
 </script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
