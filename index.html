@@ -6051,8 +6051,8 @@ Z.submitStatus = async function(forceNoCaption){
     Z.confirmNoCaption('Z.submitStatus(true)');
     return;
   }
-  var bg = Z.State.statusBg || 'status-bg-deep-blue';
-  var tempId = 'temp_' + Z.uuid();
+   var bg = Z.State.statusBg || 'status-bg-deep-blue';
+  var statusId = Z.uuid();
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
   var mt = fileObj
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
@@ -6060,12 +6060,33 @@ Z.submitStatus = async function(forceNoCaption){
   var now = new Date();
   var exp = new Date(now.getTime() + 24*60*60*1000);
   var optimistic = {
-    id: tempId, author_id: me.id, content: text, media_url: localUrl,
+    id: statusId, author_id: me.id, content: text, media_url: localUrl,
     media_type: mt, background: bg,
     created_at: now.toISOString(), expires_at: exp.toISOString(),
     _optimistic: true
   };
   Z.State.allStatuses = [optimistic].concat(Z.State.allStatuses || []);
+
+  /* Save to recovery queue BEFORE user can refresh */
+  if(fileObj){
+    Z.uploadQueue.add({
+      id: statusId,
+      kind: 'status',
+      fileName: fileObj.name || 'status.bin',
+      fileType: fileObj.type || 'application/octet-stream',
+      fileBlob: fileObj,
+      payload: {
+        id: statusId,
+        author_id: me.id,
+        content: text,
+        media_type: mt,
+        background: bg,
+        expires_at: exp.toISOString()
+      },
+      createdAt: Date.now()
+    }).catch(function(){});
+  }
+
   Z.closeModal();
   Z.toast('Status published.');
   Z.haptic(12);
@@ -6076,22 +6097,23 @@ Z.submitStatus = async function(forceNoCaption){
     var mr = '';
     try {
       if(fileObj) mr = await Z.storeMedia(fileObj);
-    } catch(err){
-      Z.State.allStatuses = (Z.State.allStatuses || []).filter(function(x){ return x.id !== tempId; });
+      } catch(err){
+      Z.State.allStatuses = (Z.State.allStatuses || []).filter(function(x){ return x.id !== statusId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z.toast('Upload failed — Status not published.', 'error');
       if(Z.State.currentView === 'home'){ Z.renderStatusRow(); }
       return;
     }
     var row = await Z.DB.createStatus({
+      id: statusId,
       author_id: me.id, content: text, media_url: mr||null,
       media_type: mt||null, background: bg,
       expires_at: exp.toISOString()
     });
     var arr = Z.State.allStatuses || [];
     var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-        if(row){
+    for(var i=0;i<arr.length;i++){ if(arr[i].id === statusId){ idx = i; break; } }
+         if(row){
       if(idx >= 0){
         var realStatus = Object.assign({}, row);
         if(localUrl && localUrl.indexOf('blob:') === 0){ realStatus.media_url = localUrl; }
@@ -6099,8 +6121,10 @@ Z.submitStatus = async function(forceNoCaption){
       }
       Z._mediaCache.status = null;
       Z.saveSnapshot();
+      /* Success: remove from recovery queue */
+      if(fileObj){ Z.uploadQueue.remove(statusId).catch(function(){}); }
     } else {
-      Z.State.allStatuses = arr.filter(function(x){ return x.id !== tempId; });
+      Z.State.allStatuses = arr.filter(function(x){ return x.id !== statusId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._cleanupOrphanUpload(mr);
       Z.toast('Status publish failed.', 'error');
