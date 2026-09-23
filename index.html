@@ -14731,64 +14731,72 @@ console.log('[Part 2 Step 4] boot recovery ready');
 </script>
 
 <!-- ============================================================ -->
-<!-- PART 3 — Smart softRefresh (skip DOM rebuild if no changes)  -->
+<!-- PART 3 v2 — Smart softRefresh (prepend-only, no rebuild)     -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixSmartRefreshV1) return; Z.__zynixSmartRefreshV1 = true;
+if(Z.__zynixSmartRefreshV2) return; Z.__zynixSmartRefreshV2 = true;
 
 Z.softRefreshIfChanged = function(view){
   if(Z.State.currentView !== view) return;
   if(view !== 'home'){ Z.softRefresh(); return; }
 
-  /* Collect IDs currently in the DOM */
-  var currentIds = [];
-  try {
-    document.querySelectorAll('#app-container .post-card[data-post-id]').forEach(function(el){
-      var id = el.getAttribute('data-post-id');
-      if(id) currentIds.push(id);
-    });
-  } catch(e){ Z.softRefresh(); return; }
+  var container = document.getElementById('app-container');
+  if(!container) return;
 
-  /* Collect IDs from state */
-  var newIds = [];
-  (Z.State.allPosts || []).forEach(function(p){
-    if(p && p.id) newIds.push(p.id);
-  });
+  var firstDomCard = container.querySelector('.post-card[data-post-id]');
+  if(!firstDomCard){ Z.softRefresh(); return; }
 
-  /* Sort both so order differences don't trigger a rebuild */
-  currentIds.sort();
-  newIds.sort();
-
-  var same = (currentIds.length === newIds.length);
-  if(same){
-    for(var i = 0; i < currentIds.length; i++){
-      if(currentIds[i] !== newIds[i]){ same = false; break; }
-    }
+  var topDomId = firstDomCard.getAttribute('data-post-id');
+  var statePosts = Z.State.allPosts || [];
+  var topStateIdx = -1;
+  for(var i = 0; i < statePosts.length; i++){
+    if(statePosts[i] && statePosts[i].id === topDomId){ topStateIdx = i; break; }
   }
 
-  if(same){
-    /* Structure identical — just refresh the reaction counts on visible cards.
-       No DOM rebuild → no image reload, no video restart, no scroll jump. */
+  if(topStateIdx === -1){ Z.softRefresh(); return; }
+
+  if(topStateIdx === 0){
     try {
-      (Z.State.allPosts || []).forEach(function(p){
-        if(p && p.id && Z.updatePostReactionUI){ Z.updatePostReactionUI(p.id); }
+      statePosts.forEach(function(p){
+        if(p && p.id && Z.updatePostReactionUI) Z.updatePostReactionUI(p.id);
       });
     } catch(e){}
-    try { Z.observeFreezeDots(); } catch(e){}
-    try { Z._tagMediaContainers(); } catch(e){}
     return;
   }
 
-  /* Something changed — do the full rebuild */
-  Z.softRefresh();
+  var profiles = Z.State.allProfiles || [];
+  var me = Z.State.currentUser;
+  var fragment = document.createDocumentFragment();
+  for(var j = 0; j < topStateIdx; j++){
+    var p = statePosts[j];
+    if(!p || !p.id) continue;
+    try {
+      var html = Z.renderPostCard(p, profiles, me, false);
+      var tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      if(tmp.firstChild) fragment.appendChild(tmp.firstChild);
+    } catch(e){}
+  }
+  var parent = firstDomCard.parentNode;
+  if(parent && fragment.childNodes.length){
+    parent.insertBefore(fragment, firstDomCard);
+    try { Z._tagMediaContainers(); } catch(e){}
+    try { Z.observeFreezeDots(); } catch(e){}
+    try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+  }
+  try {
+    statePosts.forEach(function(p){
+      if(p && p.id && Z.updatePostReactionUI) Z.updatePostReactionUI(p.id);
+    });
+  } catch(e){}
 };
 
-console.log('[Part 3] smart softRefresh ready');
+console.log('[Part 3 v2] smart softRefresh (prepend-only) ready');
 })();
-</script>   
+</script>
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
