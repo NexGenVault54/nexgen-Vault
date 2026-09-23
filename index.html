@@ -3290,14 +3290,34 @@ Z.submitComposer = async function(forceNoCaption){
     ? ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name) ? 'video' : 'image')
     : null;
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
-  var tempId = 'temp_' + Z.uuid();
+    var postId = Z.uuid();
   var optimistic = {
-    id: tempId, author_id: me.id, content: text, media_url: localUrl,
+    id: postId, author_id: me.id, content: text, media_url: localUrl,
     media_type: mt, share_bounty: shareBounty,
     created_at: new Date().toISOString(), views: 0, shares: 0,
     reactions: {}, _myReactions: {}, _comments: [], _optimistic: true
   };
   Z.State.allPosts = [optimistic].concat(Z.State.allPosts || []);
+
+  /* Save to recovery queue FIRST — before user can refresh */
+  if(fileObj){
+    Z.uploadQueue.add({
+      id: postId,
+      kind: 'post',
+      fileName: fileObj.name || 'upload.bin',
+      fileType: fileObj.type || 'application/octet-stream',
+      fileBlob: fileObj,
+      payload: {
+        id: postId,
+        author_id: me.id,
+        content: text,
+        media_type: mt,
+        share_bounty: shareBounty
+      },
+      createdAt: Date.now()
+    }).catch(function(){});
+  }
+
   Z.cancelComposer();
   Z.toast('Post published!');
   Z.haptic(12);
@@ -3309,31 +3329,34 @@ Z.submitComposer = async function(forceNoCaption){
     try {
       if(fileObj) mu = await Z.storeMedia(fileObj);
     } catch(err){
-      Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== tempId; });
+      Z.State.allPosts = (Z.State.allPosts || []).filter(function(x){ return x.id !== postId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z.toast('Upload failed — post not published.', 'error');
       if(Z.State.currentView === 'home') Z.softRefresh();
       return;
     }
-    var row = await Z.DB.createPost({
+       var row = await Z.DB.createPost({
+      id: postId,
       author_id: me.id, content: text, media_url: mu||null,
       media_type: mt||null, share_bounty: shareBounty
     });
     var arr = Z.State.allPosts || [];
     var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
-       if(row){
+    for(var i=0;i<arr.length;i++){ if(arr[i].id === postId){ idx = i; break; } }
+    if(row){
       if(idx >= 0){
         var real = Object.assign({}, row, {reactions:{}, _myReactions:{}, _comments:[]});
         if(localUrl && localUrl.indexOf('blob:') === 0){ real.media_url = localUrl; }
         arr[idx] = real;
       }
       Z.saveSnapshot();
+      /* Success: remove from recovery queue */
+      if(fileObj){ Z.uploadQueue.remove(postId).catch(function(){}); }
     } else {
-      Z.State.allPosts = arr.filter(function(x){ return x.id !== tempId; });
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }             
-       Z._cleanupOrphanUpload(mu);
-       Z.toast('Publish failed. Try again.', 'error');
+      Z.State.allPosts = arr.filter(function(x){ return x.id !== postId; });
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z._cleanupOrphanUpload(mu);
+      Z.toast('Publish failed. Try again.', 'error');
       if(Z.State.currentView === 'home') Z.softRefresh();
     }
   })();
