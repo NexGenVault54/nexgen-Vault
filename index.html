@@ -5829,15 +5829,37 @@ Z.submitFullVideo = async function(){
   if(!fileObj && !url){ Z.toast('Provide video.'); return; }
 
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
-  var tempId = 'temp_' + Z.uuid();
+  var fvId = Z.uuid();
   var optimistic = {
-    id: tempId, author_id: me.id, title: title, caption: desc, video_url: localUrl,
+    id: fvId, author_id: me.id, title: title, caption: desc, video_url: localUrl,
     type: 'long_video', tags: [], share_bounty: sb_,
     created_at: new Date().toISOString(), views: 0, shares: 0,
     _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
     _optimistic: true
   };
   Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
+
+  /* Save to recovery queue BEFORE user can refresh */
+  if(fileObj){
+    Z.uploadQueue.add({
+      id: fvId,
+      kind: 'full_video',
+      fileName: fileObj.name || 'video.bin',
+      fileType: fileObj.type || 'application/octet-stream',
+      fileBlob: fileObj,
+      payload: {
+        id: fvId,
+        author_id: me.id,
+        title: title,
+        caption: desc,
+        type: 'long_video',
+        tags: [],
+        share_bounty: sb_
+      },
+      createdAt: Date.now()
+    }).catch(function(){});
+  }
+
   Z.closeModal();
   Z.toast('Uploading video...');
   Z.haptic(12);
@@ -5847,32 +5869,35 @@ Z.submitFullVideo = async function(){
     var vu = url;
     try {
       if(fileObj) vu = await Z.storeMedia(fileObj);
-    } catch(err){
-      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== tempId; });
+       } catch(err){
+      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== fvId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z.toast('Upload failed — video not uploaded.', 'error');
       if(Z.State.currentView === 'spark') Z.showView('spark');
       return;
     }
     var sp = await Z.DB.createSpark({
+      id: fvId,
       author_id: me.id, title: title, caption: desc, video_url: vu,
       type: 'long_video', tags: [], share_bounty: sb_
     });
     var arr = Z.State.allSparks || [];
     var idx = -1;
-    for(var i=0;i<arr.length;i++){ if(arr[i].id === tempId){ idx = i; break; } }
+    for(var i=0;i<arr.length;i++){ if(arr[i].id === fvId){ idx = i; break; } }
     if(sp){
       if(idx >= 0){
         var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0});
         arr[idx] = real;
       }
-      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
-           Z._mediaCache.fv = null;
+           if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z._mediaCache.fv = null;
       try { Z.saveSnapshot(); } catch(e){}
       Z.toast('Video uploaded!');
+      /* Success: remove from recovery queue */
+      if(fileObj){ Z.uploadQueue.remove(fvId).catch(function(){}); }
       /* No re-render — optimistic item is already on screen. */
     } else {
-      Z.State.allSparks = arr.filter(function(x){ return x.id !== tempId; });
+      Z.State.allSparks = arr.filter(function(x){ return x.id !== fvId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._cleanupOrphanUpload(vu);
       Z.toast('Save failed. Try again.', 'error');
