@@ -4978,6 +4978,24 @@ Z.setupSparkFeed = function(sparks){
   var slides = feed.querySelectorAll('.spark-slide');
   if(!slides.length) return;
 
+  /* Idempotency guard — skip if same slides were just set up.
+     Prevents double-setup on boot: renderSpark calls us at 100ms,
+     then showView calls us again at 150ms. Without this guard,
+     the second call disconnects + recreates the observer, which
+     briefly pauses the currently-playing video (visible as a
+     blank media flash). */
+  var _sig = '';
+  for(var _i = 0; _i < slides.length; _i++){
+    var _v = slides[_i].querySelector('video[data-spark-id]');
+    _sig += (_v ? _v.getAttribute('data-spark-id') : '') + '|';
+  }
+  var _now = Date.now();
+  if(Z._lastSparkSetupSig === _sig && (_now - (Z._lastSparkSetupAt || 0)) < 3000){
+    return;
+  }
+  Z._lastSparkSetupSig = _sig;
+  Z._lastSparkSetupAt = _now;
+
   if(!Z._sparkUnmuteHooked){
     Z._sparkUnmuteHooked = true;
     var unlockAudio = function(){
