@@ -473,6 +473,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
    ============================================================ */
 .post-content.post-caption{position:relative;margin-bottom:10px}
 .post-caption .pc-text{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;color:#e2e8f0;line-height:1.6}
+.post-caption.post-caption-tall .pc-text{-webkit-line-clamp:8}
 .post-caption .pc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(17,24,39,0), rgba(17,24,39,1) 40%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.6em;line-height:1.6em;border:none}
 .post-caption.has-overflow:not(.expanded) .pc-see-more{display:inline-block}
 .post-caption.expanded .pc-text{display:block;-webkit-line-clamp:unset;overflow:visible}
@@ -3020,11 +3021,12 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
 
-   var captionHtml = '';
+    var captionHtml = '';
   var _isBanner = false;
   try {
     _isBanner = !!(p.post_style && p.post_style.type === 'banner' && p.content);
   } catch(e){}
+  var _isTextOnly = !_isBanner && !p.media_url && !!p.content;
   if(_isBanner){
     var _bgMap = {
       'deep-blue': 'linear-gradient(135deg,#1e3a8a,#312e81)',
@@ -3047,9 +3049,10 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '<div style="background:' + _bg + ';border-radius:14px;padding:28px 22px;margin-bottom:10px;">' +
         '<div style="font-family:' + _fm.css + ';font-weight:' + _fm.weight + ';font-size:' + _fs + 'px;line-height:1.3;color:#fff;text-align:center;white-space:pre-wrap;word-break:break-word;">' + Z.escape(p.content) + '</div>' +
       '</div>';
-  } else if(p.content){
+   } else if(p.content){
+    var _captionClass = 'post-content post-caption' + (_isTextOnly ? ' post-caption-tall' : '');
     captionHtml =
-      '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)">' +
+      '<div class="' + _captionClass + '" onclick="Z.toggleCaptionEl(event, this)">' +
         '<div class="pc-text">' + Z.escape(p.content) + '</div>' +
         '<button class="pc-see-more" type="button" aria-label="Unfold caption" onclick="Z.toggleCaptionEl(event, this.parentElement)">' + Z.UNFOLD_LABEL + '</button>' +
       '</div>';
@@ -3503,10 +3506,27 @@ Z.submitComposer = async function(forceNoCaption){
     : null;
   var localUrl = fileObj ? URL.createObjectURL(fileObj) : null;
     var postId = Z.uuid();
-  var optimistic = {
+   var optimistic = {
     id: postId, author_id: me.id, content: text, media_url: localUrl,
     media_type: mt, share_bounty: shareBounty,
     created_at: new Date().toISOString(), views: 0, shares: 0,
+    visibility: (function(){
+      try {
+        var _cv = Z._composerVis || { public:true, connections:false, family:false };
+        if(_cv.public) return ['public'];
+        var arr = [];
+        if(_cv.connections) arr.push('connections');
+        if(_cv.family) arr.push('family');
+        return arr.length ? arr : ['private'];
+      } catch(e){ return ['public']; }
+    })(),
+    post_style: (function(){
+      try {
+        var _cb = Z._composerBanner;
+        if(_cb && _cb.active && text) return { type: 'banner', bg: _cb.bg || 'deep-blue', font: _cb.font || 'display' };
+      } catch(e){}
+      return null;
+    })(),
     reactions: {}, _myReactions: {}, _comments: [], _optimistic: true
   };
   Z.State.allPosts = [optimistic].concat(Z.State.allPosts || []);
