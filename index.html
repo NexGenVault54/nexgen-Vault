@@ -2592,7 +2592,8 @@ Z.renderView = function(view, param){
     'space-sparks-all':Z.renderSpaceSparksAll,
     'space-videos-all':Z.renderSpaceVideosAll,
     'status-home':     Z.renderStatusHome,
-    'public-home':     Z.renderPublicHome
+    'public-home':     Z.renderPublicHome,
+    'post-page':       Z.renderPostPage
   }[view];
   if(typeof fn === 'function'){
     try { return fn.call(Z, param); }
@@ -2726,7 +2727,8 @@ Z.showView = async function(view, param){
   if(view === 'people'){ setTimeout(function(){ if(typeof Z.refreshPeopleList === 'function') Z.refreshPeopleList(); }, 60); }
   if(view === 'circles'){ setTimeout(function(){ if(typeof Z.refreshCirclesList === 'function') Z.refreshCirclesList(); }, 60); }
   if(view === 'public-profile'){ setTimeout(function(){ Z.detectCaptionOverflow(); Z.resolveIdbRefs(container); Z._tagMediaContainers(); }, 150); }
-  if(view !== 'spark' && view !== 'home'){ setTimeout(function(){ Z.detectCaptionOverflow(); Z._tagMediaContainers(); }, 100); }
+  if(view === 'post-page'){ setTimeout(function(){ if(typeof Z.loadPostPage === 'function') Z.loadPostPage(param); }, 80); }
+   if(view !== 'spark' && view !== 'home'){ setTimeout(function(){ Z.detectCaptionOverflow(); Z._tagMediaContainers(); }, 100); }
 
   updateBellColor();
   updateWalletPillState();
@@ -4695,7 +4697,7 @@ Z.renderComment = function(cm, post, profiles, isReply){
     rr += '<button class="' + cls + '"' + onclick + ' title="' + r.label + '">' +
       '<span' + cssClass + '>' + r.symbol + '</span>' +
       (cnt > 0 ? '<span>' + cnt + '</span>' : '') +
-      '<span class="cb">' + (dis?'—':'$' + r.reward.toFixed(2)) + '</span>' +
+      
     '</button>';
   });
 
@@ -5017,7 +5019,7 @@ Z.updateCommentReactionUI = function(commentId){
     html += '<button class="' + cls + '"' + onclick + ' title="' + r.label + '">' +
       '<span' + cssClass + '>' + r.symbol + '</span>' +
       (cnt>0 ? '<span>' + cnt + '</span>' : '') +
-      '<span class="cb">' + (dis?'—':'$' + r.reward.toFixed(2)) + '</span>' +
+      
     '</button>';
   });
   row.innerHTML = html;
@@ -5514,7 +5516,7 @@ Z.renderSparkComment = function(cm, spark, isReply){
     rr += '<button class="' + cls + '"' + onclick + ' title="' + r.label + '">' +
       '<span' + cssClass + '>' + r.symbol + '</span>' +
       (cnt > 0 ? '<span>' + cnt + '</span>' : '') +
-      '<span class="cb">' + (dis?'—':'$' + r.reward.toFixed(2)) + '</span>' +
+      
     '</button>';
   });
 
@@ -15741,7 +15743,7 @@ function installRepostBadge(){
           '</div>' +
         '</div>' +
         connectBtn +
-        '<button onclick="event.stopPropagation();Z.openOriginalPost(\'' + Z.escape(p.shared_from_id) + '\')" style="background:transparent;border:none;color:#60a5fa;font-size:10px;font-weight:700;cursor:pointer;padding:4px 8px;text-decoration:underline;white-space:nowrap;">View original</button>' +
+       '<button onclick="event.stopPropagation();Z.openPostPage(\'' + Z.escape(p.shared_from_id) + '\')" style="background:transparent;border:none;color:#60a5fa;font-size:10px;font-weight:700;cursor:pointer;padding:4px 8px;text-decoration:underline;white-space:nowrap;">View original</button>' +
       '</div>';
 
     /* Insert badge right after the closing div of post-author */
@@ -15810,18 +15812,47 @@ function repairRepostBadges(){
     var wantsBadge = !!post.shared_from_id;
     var hasBadge = !!card.querySelector('[data-repost-badge="1"]');
 
-    if(wantsBadge && !hasBadge){
-      /* Force a full rebuild of just this card */
-      try {
-        var profiles = Z.State.allProfiles || [];
-        var me = Z.State.currentUser;
-        var html = Z.renderPostCard(post, profiles, me, false);
-        var tmp = document.createElement('div');
-        tmp.innerHTML = html;
-        if(tmp.firstChild){
-          card.parentNode.replaceChild(tmp.firstChild, card);
-        }
-      } catch(e){}
+       if(wantsBadge){
+      var needsRebuild = !hasBadge;
+      /* Also rebuild if connections state changed (bond button stale) */
+      if(hasBadge && !needsRebuild){
+        try {
+          var existingBtn = card.querySelector('[data-repost-badge="1"] button');
+          if(existingBtn){
+            var origPost = null;
+            try {
+              origPost = (Z.State.allPosts || []).find(function(x){ return x && x.id === post.shared_from_id; });
+              if(!origPost && Z.State.spacePosts){
+                origPost = Z.State.spacePosts.find(function(x){ return x && x.id === post.shared_from_id; });
+              }
+            } catch(e){}
+            if(origPost){
+              var cs = Z.getConnectionState(origPost.author_id);
+              /* Button says "Bond" but user is actually connected → rebuild */
+              if(existingBtn.textContent.indexOf('Bond') !== -1 && cs === 'connected'){
+                needsRebuild = true;
+              }
+              /* Button says "Bonded" but user is not connected → rebuild */
+              if(existingBtn.textContent.indexOf('Bonded') !== -1 && cs === 'none'){
+                needsRebuild = true;
+              }
+            }
+          }
+        } catch(e){}
+      }
+
+      if(needsRebuild){
+        try {
+          var profiles = Z.State.allProfiles || [];
+          var me = Z.State.currentUser;
+          var html = Z.renderPostCard(post, profiles, me, false);
+          var tmp = document.createElement('div');
+          tmp.innerHTML = html;
+          if(tmp.firstChild){
+            card.parentNode.replaceChild(tmp.firstChild, card);
+          }
+        } catch(e){}
+      }
     }
   });
 }
@@ -15840,7 +15871,126 @@ if(typeof _prevReload === 'function'){
 
 console.log('[RepostRepair] active');
 })();
-</script>   
+</script>
+<!-- ============================================================ -->
+<!-- FULL POST PAGE — click repost/view original → real page      -->
+<!-- Uses same renderPostCard so all buttons work                 -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixPostPage) return; Z.__zynixPostPage = true;
+
+Z.renderPostPage = function(postId){
+  return '<div style="display:flex;flex-direction:column;gap:12px;">' +
+    '<div class="view-header" style="justify-content:space-between;">' +
+      '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">' +
+        '<i class="fa-solid fa-arrow-left"></i> Back' +
+      '</button>' +
+      '<h2 class="view-title" style="margin:0;font-size:15px;">Post</h2>' +
+      '<div style="width:80px;"></div>' +
+    '</div>' +
+    '<div id="post-page-host">' +
+      '<div style="padding:40px;text-align:center;color:#64748b;">' +
+        '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:24px;color:#10b981;"></i>' +
+        '<div style="margin-top:10px;font-size:12px;">Loading post…</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+};
+
+Z.loadPostPage = async function(postId){
+  var c = Z.sb(); if(!c) return;
+  var host = document.getElementById('post-page-host');
+  if(!host) return;
+
+  try {
+    /* Fetch post from DB */
+    var r = await c.from('posts').select('*').eq('id', postId).maybeSingle();
+    if(r.error || !r.data){
+      host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Post not found.' });
+      return;
+    }
+    var post = r.data;
+
+    /* Fetch reactions */
+    var rx = await c.from('post_reactions').select('user_id, reaction').eq('post_id', postId);
+    var rxMap = {};
+    var myRx = {};
+    var me = Z.State.currentUser;
+    (rx.data || []).forEach(function(x){
+      rxMap[x.reaction] = (rxMap[x.reaction] || 0) + 1;
+      if(me && x.user_id === me.id) myRx[x.reaction] = true;
+    });
+    post.reactions = rxMap;
+    post._myReactions = myRx;
+
+    /* Fetch comments */
+    var cm = await c.from('comments').select('*').eq('post_id', postId).order('created_at', {ascending: true});
+    var comments = cm.data || [];
+    var cIds = comments.map(function(x){ return x.id; });
+    var crMap = {}, myCrMap = {};
+    if(cIds.length){
+      var cr = await c.from('comment_reactions').select('comment_id, reaction, user_id').in('comment_id', cIds);
+      (cr.data || []).forEach(function(x){
+        crMap[x.comment_id] = crMap[x.comment_id] || {};
+        crMap[x.comment_id][x.reaction] = (crMap[x.comment_id][x.reaction] || 0) + 1;
+        if(me && x.user_id === me.id){
+          myCrMap[x.comment_id] = myCrMap[x.comment_id] || {};
+          myCrMap[x.comment_id][x.reaction] = true;
+        }
+      });
+    }
+    comments.forEach(function(x){
+      x._reactionCounts = crMap[x.id] || {};
+      x._myReactions = myCrMap[x.id] || {};
+      x._replies = [];
+    });
+    var byId = {};
+    comments.forEach(function(x){ byId[x.id] = x; });
+    comments.forEach(function(x){
+      if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x);
+    });
+    post._comments = comments.filter(function(x){ return !x.parent_id; });
+
+    /* Make sure author profile is in state */
+    var profiles = Z.State.allProfiles || [];
+    if(!profiles.find(function(p){ return p.id === post.author_id; })){
+      var pr = await c.from('profiles').select('*').eq('id', post.author_id).maybeSingle();
+      if(pr.data){
+        profiles = profiles.concat([pr.data]);
+        Z.State.allProfiles = profiles;
+      }
+    }
+
+    /* Render using the SAME card function */
+    host.innerHTML = Z.renderPostCard(post, profiles, me, false);
+
+    /* Force the comments section open */
+    var cw = document.getElementById('comments-' + postId);
+    if(cw) cw.classList.add('open');
+
+    /* Re-attach interactions */
+    setTimeout(function(){
+      try { Z.observeFreezeDots(); } catch(e){}
+      try { Z._tagMediaContainers(); } catch(e){}
+      try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+    }, 100);
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load post.' });
+  }
+};
+
+/* Public navigator */
+Z.openPostPage = function(postId){
+  if(!postId) return;
+  Z.showView('post-page', postId);
+};
+
+console.log('[PostPage] ready');
+})();
+</script>     
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
