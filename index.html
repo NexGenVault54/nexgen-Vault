@@ -3006,9 +3006,11 @@ Z.renderDiscoverStrip = async function(){
     if(document.getElementById('zynix-home-discover-css')) return;
     var st = document.createElement('style');
     st.id = 'zynix-home-discover-css';
-    st.textContent =
-      '.home-discover-scroll{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:none;-ms-overflow-style:none;}' +
-      '.home-discover-scroll::-webkit-scrollbar{display:none}';
+       st.textContent =
+      '.home-discover-scroll{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:#334155 transparent;}' +
+      '.home-discover-scroll::-webkit-scrollbar{height:6px}' +
+      '.home-discover-scroll::-webkit-scrollbar-track{background:transparent}' +
+      '.home-discover-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}';
     document.head.appendChild(st);
   } catch(e){}
 })();
@@ -3129,10 +3131,9 @@ Z.renderPostCard = function(p, profiles, me, isNew){
     captionHtml +
     mHtml +
     '<div class="post-reactions">' + Z.renderReactionRowForPost(p) + '</div>' +
-     '<div class="post-actions">' +
+       '<div class="post-actions">' +
       '<button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')"><i class="fa-regular fa-comment"></i> Comment ' + Z.countAllComments(comments) + '</button>' +
-      '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + '</button>' +
-      '<button style="cursor:default;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button>' +
+      '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + (function(){ var sr = Number(p.share_bounty) || 0; return sr > 0 ? ' · $' + sr.toFixed(2) : ''; })() + '</button>' +
       (function(){
         try {
           var _cap = Number(p.share_budget_cap) || 0;
@@ -3140,11 +3141,10 @@ Z.renderPostCard = function(p, profiles, me, isNew){
           var _paid = Number(p.share_bounty_paid) || 0;
           var _rem = Math.max(0, _cap - _paid);
           var _col = _rem > 0 ? '#10b981' : '#a16262';
-          return '<span style="margin-left:auto;font-size:10px;font-weight:800;color:' + _col + ';background:rgba(255,255,255,.04);padding:3px 8px;border-radius:12px;">' +
-            'Budget $' + _rem.toFixed(2) + ' / $' + _cap.toFixed(2) +
-          '</span>';
+          return '<span style="font-size:10px;font-weight:800;color:' + _col + ';background:rgba(255,255,255,.04);padding:3px 8px;border-radius:12px;">$' + _rem.toFixed(2) + ' / $' + _cap.toFixed(2) + '</span>';
         } catch(e){ return ''; }
       })() +
+      '<button style="cursor:default;margin-left:auto;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button>' +
     '</div>' +
     '<div class="post-comments" id="comments-' + Z.escape(p.id) + '">' + cHtml + cp +
       '<div class="comment-input-wrap">' +
@@ -3783,8 +3783,13 @@ Z.postPostToWall = async function(postId, circleId){
       else Z.toast('Repost failed: ' + (r.error.message || 'unknown'), 'error');
       return;
     }
-    var repostId = r.data;
+       var repostId = r.data;
     if(!repostId) throw new Error('No repost id');
+
+    /* Preserve original banner style on the repost */
+    if(src.post_style && src.post_style.type === 'banner'){
+      try { await c.from('posts').update({ post_style: src.post_style }).eq('id', repostId); } catch(e){}
+    }
 
     /* Refresh local feed */
     try { await Z.reloadData(); } catch(e){}
@@ -9241,9 +9246,14 @@ Z.reloadData = async function(){
     await Promise.all(jobs);
   }
 
-  Z.loadWalletBadge();
+   Z.loadWalletBadge();
   Z.updateNotifBadge();
   Z.saveSnapshot();
+
+  /* Re-paint Discover People strip so connection state is fresh */
+  if(Z.State.currentView === 'home' && typeof Z.renderDiscoverStrip === 'function'){
+    setTimeout(function(){ try { Z.renderDiscoverStrip(); } catch(e){} }, 80);
+  }
 };
 
 })();
