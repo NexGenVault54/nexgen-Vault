@@ -16211,29 +16211,96 @@ Z.loadPostPage = async function(contentId){
         try { Z._tagMediaContainers(); } catch(e){}
         try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
       }, 100);
-    } else {
-      var author = Z.getProfileById(item.author_id) || { id: item.author_id, name: 'User' };
-      host.innerHTML =
-        '<div style="display:flex;flex-direction:column;gap:12px;">' +
-          '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;">' +
-            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
-              '<img src="' + Z.escape(Z.displayAvatar(author)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')" style="width:42px;height:42px;border-radius:50%;object-fit:cover;cursor:pointer;">' +
-              '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')">' +
-                '<div style="font-weight:800;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(author)) + '</div>' +
-                '<div style="font-size:10px;color:#64748b;">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(item.created_at).getTime()) + '</div>' +
-              '</div>' +
-            '</div>' +
-            '<div style="border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px;">' +
-              '<video src="' + Z.escape(item.media_url) + '" controls playsinline preload="metadata" style="width:100%;max-height:500px;display:block;background:#000;"></video>' +
-            '</div>' +
-            (item.content ? '<div style="font-size:13px;color:#e2e8f0;line-height:1.6;white-space:pre-wrap;word-break:break-word;">' + Z.escape(item.content) + '</div>' : '') +
-            '<div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1e293b;margin-top:12px;font-size:12px;color:#94a3b8;font-weight:700;">' +
-              '<span><i class="fa-regular fa-eye"></i> ' + (item.views || 0) + '</span>' +
-              '<span><i class="fa-solid fa-share-nodes"></i> ' + (item.shares || 0) + '</span>' +
-            '</div>' +
-          '</div>' +
-          '<button onclick="Z.showView(\'spark\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Open Spark Feed</button>' +
-        '</div>';
+         } else {
+      /* Spark source — render the full spark-shaped page */
+
+      /* Fetch spark reactions */
+      var _rxRes = await c.from('spark_reactions').select('user_id, reaction').eq('spark_id', contentId);
+      var _rxMap = {}, _myRx = {};
+      (_rxRes.data || []).forEach(function(x){
+        _rxMap[x.reaction] = (_rxMap[x.reaction] || 0) + 1;
+        if(me && x.user_id === me.id) _myRx[x.reaction] = true;
+      });
+
+      /* Fetch comments with reactions + replies */
+      var _cmRes = await c.from('comments').select('*').eq('spark_id', contentId).order('created_at', {ascending: true});
+      var _comments = _cmRes.data || [];
+      var _cIds = _comments.map(function(x){ return x.id; });
+      var _crMap = {}, _myCrMap = {};
+      if(_cIds.length){
+        var _crRes = await c.from('comment_reactions').select('comment_id, reaction, user_id').in('comment_id', _cIds);
+        (_crRes.data || []).forEach(function(x){
+          _crMap[x.comment_id] = _crMap[x.comment_id] || {};
+          _crMap[x.comment_id][x.reaction] = (_crMap[x.comment_id][x.reaction] || 0) + 1;
+          if(me && x.user_id === me.id){
+            _myCrMap[x.comment_id] = _myCrMap[x.comment_id] || {};
+            _myCrMap[x.comment_id][x.reaction] = true;
+          }
+        });
+      }
+      _comments.forEach(function(x){
+        x._reactionCounts = _crMap[x.id] || {};
+        x._myReactions = _myCrMap[x.id] || {};
+        x._replies = [];
+      });
+      var _byId = {};
+      _comments.forEach(function(x){ _byId[x.id] = x; });
+      _comments.forEach(function(x){
+        if(x.parent_id && _byId[x.parent_id]) _byId[x.parent_id]._replies.push(x);
+      });
+
+      /* Ensure author profile in state */
+      var _profiles = Z.State.allProfiles || [];
+      if(!_profiles.find(function(p){ return p.id === item.author_id; })){
+        var _pr = await c.from('profiles').select('*').eq('id', item.author_id).maybeSingle();
+        if(_pr.data){ _profiles = _profiles.concat([_pr.data]); Z.State.allProfiles = _profiles; }
+      }
+      var author = Z.getProfileById(item.author_id) || { id: item.author_id, name: 'User', username: 'user' };
+
+      /* Build spark-shaped object */
+      var _sparkForPage = {
+        id: item.id,
+        author_id: item.author_id,
+        caption: item.content || '',
+        title: '',
+        video_url: item.media_url,
+        tags: [],
+        type: 'spark',
+        created_at: item.created_at,
+        views: item.views || 0,
+        shares: item.shares || 0,
+        share_bounty: Number(item.share_bounty) || 0,
+        share_budget_cap: Number(item.share_budget_cap) || 0,
+        share_bounty_paid: Number(item.share_bounty_paid) || 0,
+        _reactions: _rxMap,
+        _myReactions: _myRx,
+        _comments: _comments.filter(function(x){ return !x.parent_id; }),
+        _commentsCount: _comments.length
+      };
+
+      /* Sync into state so all spark handlers resolve this spark */
+      var _existing = (Z.State.allSparks || []).find(function(x){ return x.id === item.id; });
+      if(_existing){
+        _existing._reactions = _rxMap;
+        _existing._myReactions = _myRx;
+        _existing._comments = _sparkForPage._comments;
+        _existing._commentsCount = _comments.length;
+      } else {
+        Z.State.allSparks = (Z.State.allSparks || []).concat([_sparkForPage]);
+      }
+
+      host.innerHTML = Z.renderSparkFullPage(_sparkForPage, author);
+
+      /* Force comments open */
+      var _cw = document.getElementById('comments-' + item.id);
+      if(_cw) _cw.classList.add('open');
+
+      setTimeout(function(){
+        try { Z.observeFreezeDots(); } catch(e){}
+        try { Z._tagMediaContainers(); } catch(e){}
+        try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+        try { Z.detectCaptionOverflow(); } catch(e){}
+      }, 100);
     }
   } catch(e){
     host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load content.' });
@@ -16784,6 +16851,289 @@ if(typeof _prevShowView === 'function'){
 }
 
 console.log('[Spark Display Fix v2] rate inside share button · budget as stacked rows');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- SPARK FULL PAGE — render a spark like a Home post             -->
+<!-- Reactions use sparkReact · comments use spark handlers        -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkFullPage) return; Z.__zynixSparkFullPage = true;
+
+/* ---------- Reaction row for the page (horizontal, post-like) ---------- */
+Z._renderSparkPageReactionRow = function(spark){
+  var me = Z.State.currentUser;
+  var counts = spark._reactions || {};
+  var myR = spark._myReactions || {};
+  var isMine = me && me.id === spark.author_id;
+  var unfrozen = Z.isUnfrozen(spark.id);
+  var hasBounty = Z.hasBountyReactionGiven(myR);
+  var hasDislike = !!myR['dislike'];
+  var html = '';
+  Z.ALL_REACTIONS.forEach(function(k){
+    var r = Z.Reactions[k];
+    var cnt = counts[k] || 0;
+    var act = !!myR[k];
+    var dis = (k === 'dislike');
+    var cssClass = r.cssClass ? ' class="' + r.cssClass + '"' : '';
+    var cls = Z._reactionClassFor('react-btn', {
+      active: act,
+      isDislike: dis,
+      hasBounty: hasBounty,
+      hasDislike: hasDislike,
+      isOwner: isMine,
+      frozenApplies: true,
+      unfrozen: unfrozen
+    });
+    var onclick = ' onclick="Z.sparkReact(\'' + Z.escape(spark.id) + '\',\'' + k + '\')"';
+    var bountyHtml = dis
+      ? '<span class="bounty" style="color:#64748b;">—</span>'
+      : '<span class="bounty">$' + r.reward.toFixed(2) + '</span>';
+    html +=
+      '<button class="' + cls + '"' + onclick + ' title="' + r.label + '">' +
+        '<span' + cssClass + '>' + r.symbol + '</span>' +
+        '<span class="count">' + cnt + '</span>' +
+        bountyHtml +
+      '</button>';
+  });
+  var tip = unfrozen ? 'Unfrozen' : 'Frozen';
+  html +=
+    '<button type="button" class="freeze-dot' + (unfrozen ? ' unfrozen' : '') +
+    '" data-freeze-id="' + Z.escape(spark.id) + '" data-tip="' + tip +
+    '" onclick="Z.toggleFreeze(\'' + Z.escape(spark.id) + '\', event)" title="Click to ' +
+    (unfrozen ? 'freeze' : 'unfreeze') + ' reactions"></button>';
+  return html;
+};
+
+/* ---------- Full page renderer ---------- */
+Z.renderSparkFullPage = function(spark, author){
+  if(!spark || !author) return '';
+  var me = Z.State.currentUser;
+  var isMine = me && me.id === spark.author_id;
+  var isSaved = (Z.State.savedSparks || []).indexOf(spark.id) !== -1;
+  var comments = spark._comments || [];
+  var totalCount = 0;
+  (function count(list){ list.forEach(function(c){ totalCount++; if(c._replies) count(c._replies); }); })(comments);
+
+  /* Caption */
+  var captionHtml = '';
+  if(spark.caption){
+    captionHtml =
+      '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)">' +
+        '<div class="pc-text">' + Z.escape(spark.caption) + '</div>' +
+        '<button class="pc-see-more" type="button" aria-label="Unfold caption" onclick="Z.toggleCaptionEl(event, this.parentElement)">' + Z.UNFOLD_LABEL + '</button>' +
+      '</div>';
+  }
+
+  /* Tags */
+  var tagsHtml = '';
+  if(spark.tags && spark.tags.length){
+    tagsHtml = '<div class="spark-info-tags" style="margin-bottom:10px;">' +
+      spark.tags.map(function(t){ return '<span style="color:#10b981;font-weight:600;font-size:10px;margin-right:6px;">#' + Z.escape(t) + '</span>'; }).join('') +
+    '</div>';
+  }
+
+  /* Menu (Save / Not Interested / Delete) */
+  var menuHtml =
+    '<div class="post-menu-wrap">' +
+      '<button class="post-menu-btn" onclick="Z.togglePostMenu(\'' + Z.escape(spark.id) + '\', event)" type="button">' +
+        '<i class="fa-solid fa-ellipsis-vertical"></i>' +
+      '</button>' +
+      '<div class="post-menu" id="post-menu-' + Z.escape(spark.id) + '" style="display:none;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:6px;min-width:210px;box-shadow:0 8px 32px rgba(0,0,0,.7);">' +
+        (isMine
+          ? '<button class="danger" onclick="Z.deleteSpark(\'' + Z.escape(spark.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#fca5a5;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-trash" style="width:14px;text-align:center;"></i> Delete</button><div style="height:1px;background:#1e293b;margin:4px 0;"></div>'
+          : '') +
+        '<button onclick="Z.toggleSaveSpark(\'' + Z.escape(spark.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-' + (isSaved?'solid':'regular') + ' fa-bookmark" style="width:14px;text-align:center;"></i> ' + (isSaved?'Unsave':'Save') + '</button>' +
+        '<button onclick="Z.markSparkNotInterested(\'' + Z.escape(spark.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-thumbs-down" style="width:14px;text-align:center;"></i> Not Interested</button>' +
+      '</div>' +
+    '</div>';
+
+  /* Comments body */
+  var commentsHtml = comments.length
+    ? comments.map(function(cm){ return Z.renderSparkComment(cm, spark, false); }).join('')
+    : '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
+
+  /* Color picker */
+  var cp =
+    '<div class="comment-color-picker">' +
+      ['light-green','light-blue','light-yellow','light-pink','light-purple'].map(function(c){
+        var short = c.replace('light-','');
+        return '<div class="comment-color-dot c-' + short + ' ' + (Z.State.commentColor===c?'selected':'') +
+               '" data-color="' + c + '" onclick="Z.setCommentColor(\'' + c + '\')"></div>';
+      }).join('') +
+    '</div>';
+
+  /* Input */
+  var inputHtml = me
+    ? '<div class="comment-input-wrap">' +
+        '<textarea id="spark-page-comment-input-' + Z.escape(spark.id) + '" rows="1" placeholder="Write a comment..." oninput="Z.autoGrow(this)"></textarea>' +
+        '<button onclick="Z.addSparkPageComment(\'' + Z.escape(spark.id) + '\')">Send</button>' +
+      '</div>'
+    : '<button onclick="Z.openAuthModal(\'login\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:10px;border-radius:8px;font-size:12px;cursor:pointer;">Login to comment</button>';
+
+  /* Rate + budget pills (same as home post-actions) */
+  var shareRate = Number(spark.share_bounty) || 0;
+  var budgetCap = Number(spark.share_budget_cap) || 0;
+  var budgetPaid = Number(spark.share_bounty_paid) || 0;
+  var budgetRem = Math.max(0, budgetCap - budgetPaid);
+  var rateText = shareRate > 0 ? '<span style="color:#10b981;font-weight:800;">· $' + shareRate.toFixed(2) + '</span>' : '';
+  var budgetHtml = '';
+  if(budgetCap > 0){
+    var bCol = budgetRem > 0 ? '#10b981' : '#a16262';
+    budgetHtml = '<span data-share-budget="1" style="white-space:nowrap;font-size:10px;font-weight:800;color:' + bCol + ';background:rgba(255,255,255,.04);padding:3px 8px;border-radius:12px;">$' + budgetRem.toFixed(2) + '/$' + budgetCap.toFixed(2) + '</span>';
+  }
+
+  return '<div class="post-card" data-post-id="' + Z.escape(spark.id) + '" data-spark-page="1">' +
+    '<div class="post-author">' +
+      '<img src="' + Z.escape(Z.displayAvatar(author)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')" style="cursor:pointer;">' +
+      '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')">' +
+        '<div class="pname">' + Z.escape(Z.displayName(author)) + '</div>' +
+        '<div class="phandle">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(spark.created_at).getTime()) + '</div>' +
+      '</div>' +
+      menuHtml +
+    '</div>' +
+    captionHtml +
+    '<div class="post-media has-video" data-post-media="' + Z.escape(spark.id) + '">' +
+      '<video src="' + Z.escape(spark.video_url) + '" controls playsinline preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '"></video>' +
+    '</div>' +
+    tagsHtml +
+    '<div class="post-reactions" data-spark-page-rx="' + Z.escape(spark.id) + '">' +
+      Z._renderSparkPageReactionRow(spark) +
+    '</div>' +
+    '<div class="post-actions" style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">' +
+      '<button onclick="Z.toggleSparkPageComments(\'' + Z.escape(spark.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-regular fa-comment"></i><span>' + totalCount + '</span></button>' +
+      '<button onclick="Z.openSparkShare(\'' + Z.escape(spark.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-share-nodes"></i><span>' + (spark.shares || 0) + '</span>' + rateText + '</button>' +
+      budgetHtml +
+      '<button style="background:transparent;border:none;color:#64748b;cursor:default;margin-left:auto;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-regular fa-eye"></i><span>' + (spark.views || 0) + '</span></button>' +
+    '</div>' +
+    '<div class="post-comments" id="comments-' + Z.escape(spark.id) + '">' +
+      commentsHtml + cp + inputHtml +
+    '</div>' +
+  '</div>';
+};
+
+/* ---------- Open/close comments ---------- */
+Z.toggleSparkPageComments = function(sparkId){
+  var el = document.getElementById('comments-' + sparkId);
+  if(el) el.classList.toggle('open');
+};
+
+/* ---------- Add comment from the page ---------- */
+Z.addSparkPageComment = async function(sparkId){
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var el = document.getElementById('spark-page-comment-input-' + sparkId);
+  var t = el ? el.value.trim() : '';
+  if(!t) return;
+  if(el) el.value = '';
+  var c = Z.sb(); if(!c) return;
+  var newId = Z.uuid();
+  var color = Z.State.commentColor || 'light-green';
+  var spark = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
+  var optimistic = { id:newId, spark_id:sparkId, author_id:me.id, text:t, color:color, _reactionCounts:{}, _myReactions:{}, _replies:[] };
+  if(spark){
+    if(!spark._comments) spark._comments = [];
+    spark._comments.push(optimistic);
+    spark._commentsCount = (spark._commentsCount || 0) + 1;
+  }
+  /* Optimistic paint into the page */
+  var cw = document.getElementById('comments-' + sparkId);
+  if(cw){
+    var cp = cw.querySelector('.comment-color-picker');
+    var inputWrap = cw.querySelector('.comment-input-wrap');
+    /* Remove the "No comments yet" placeholder if present */
+    cw.querySelectorAll(':scope > div').forEach(function(el2){
+      if(!el2.classList.contains('comment-color-picker') && !el2.classList.contains('comment-input-wrap')){
+        if(el2.getAttribute('data-spark-comment-id')) return;
+        if(el2.closest('[data-spark-comment-id]')) return;
+        if(el2.textContent.indexOf('No comments yet') !== -1) el2.remove();
+      }
+    });
+    var temp = document.createElement('div');
+    temp.innerHTML = Z.renderSparkComment(optimistic, spark, false);
+    var newEl = temp.firstChild;
+    var anchor = cp || inputWrap;
+    if(anchor) cw.insertBefore(newEl, anchor);
+    else cw.appendChild(newEl);
+    /* Update count */
+    var actionsBtn = document.querySelector('[data-spark-page="1"] .post-actions button');
+    if(actionsBtn){
+      var span = actionsBtn.querySelector('span');
+      if(span && spark) span.textContent = (spark._commentsCount || 0);
+    }
+  }
+  Z.haptic(8);
+  var r = await c.from('comments').insert({ id:newId, spark_id:sparkId, author_id:me.id, text:t, color:color });
+  if(r.error){
+    if(spark && spark._comments) spark._comments = spark._comments.filter(function(x){ return x.id !== newId; });
+    if(spark) spark._commentsCount = Math.max(0, (spark._commentsCount || 1) - 1);
+    var domEl = document.querySelector('[data-spark-comment-id="' + newId + '"]');
+    if(domEl && domEl.parentNode) domEl.parentNode.remove();
+    Z.toast('Failed.', 'error');
+  }
+};
+
+/* ---------- Make reaction updates reach the page ---------- */
+var _origUpdateSparkRx = Z.updateSparkReactionsUI;
+Z.updateSparkReactionsUI = function(sparkId){
+  if(typeof _origUpdateSparkRx === 'function'){
+    try { _origUpdateSparkRx.call(Z, sparkId); } catch(e){}
+  }
+  var pageRow = document.querySelector('[data-spark-page-rx="' + sparkId + '"]');
+  if(pageRow){
+    var spark = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
+    if(spark){
+      try { pageRow.innerHTML = Z._renderSparkPageReactionRow(spark); } catch(e){}
+      try { Z.observeFreezeDots(); } catch(e){}
+    }
+  }
+};
+
+/* ---------- Make comment list changes reach the page ---------- */
+var _origRerender = Z.rerenderSparkCommentsBody;
+Z.rerenderSparkCommentsBody = function(sparkId){
+  if(typeof _origRerender === 'function'){
+    try { _origRerender.call(Z, sparkId); } catch(e){}
+  }
+  var card = document.querySelector('[data-spark-page="1"][data-post-id="' + sparkId + '"]');
+  if(!card) return;
+  var host = document.getElementById('comments-' + sparkId);
+  if(!host) return;
+  var spark = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
+  if(!spark) return;
+  var roots = spark._comments || [];
+  var total = 0;
+  (function count(list){ list.forEach(function(c){ total++; if(c._replies) count(c._replies); }); })(roots);
+  var list = roots.length
+    ? roots.map(function(cm){ return Z.renderSparkComment(cm, spark, false); }).join('')
+    : '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
+  var cp = host.querySelector('.comment-color-picker');
+  var inputWrap = host.querySelector('.comment-input-wrap');
+  host.querySelectorAll(':scope > div').forEach(function(el){
+    if(el === cp || el === inputWrap) return;
+    if(el.classList && el.classList.contains('comment-color-picker')) return;
+    if(el.classList && el.classList.contains('comment-input-wrap')) return;
+    el.remove();
+  });
+  var temp = document.createElement('div');
+  temp.innerHTML = list;
+  var anchor = cp || inputWrap;
+  Array.prototype.slice.call(temp.children).forEach(function(node){
+    if(anchor) host.insertBefore(node, anchor);
+    else host.appendChild(node);
+  });
+  /* Update action button count */
+  var actionsBtn = card.querySelector('.post-actions button');
+  if(actionsBtn){
+    var span = actionsBtn.querySelector('span');
+    if(span) span.textContent = total;
+  }
+};
+
+console.log('[Spark Full Page] ready — reactions · freeze · comments · share · menu');
 })();
 </script>   
 <!-- ============================================================ -->
@@ -19374,7 +19724,1713 @@ if(!Z.__bizActiveWrappedForPoints){
 
 console.log('[ZYNIX Biz v4.0 Patch 2] Toast fix + richer guides + Points & Levels ready');
 })();
-</script>                                                                                   
+</script>
+<!-- ============================================================ -->
+<!-- SECTION 19 — ZYNIX TUTORING                                  -->
+<!-- Live classes: Noorani Qaida · Holy Quran · Any subject       -->
+<!-- Tutor hub model: tutor hears all · students hear tutor only  -->
+<!-- Group call toggle · Per-student mute · Synced page navigation -->
+<!-- ============================================================ -->
+<!--
+  SQL — paste this in Supabase SQL Editor BEFORE running the code:
+
+  create table if not exists tutor_rooms (
+    id uuid primary key default gen_random_uuid(),
+    host_id uuid not null references profiles(id) on delete cascade,
+    code text not null unique,
+    title text not null default 'Class',
+    subject text default 'general',
+    deck_type text default 'qaida',
+    current_page int default 1,
+    group_call_enabled boolean default false,
+    is_active boolean default true,
+    created_at timestamptz default now(),
+    updated_at timestamptz default now()
+  );
+
+  create table if not exists tutor_participants (
+    id uuid primary key default gen_random_uuid(),
+    room_id uuid not null references tutor_rooms(id) on delete cascade,
+    user_id uuid not null references profiles(id) on delete cascade,
+    role text not null default 'student',
+    muted boolean default true,
+    cam_on boolean default false,
+    hand boolean default false,
+    peer_id text,
+    joined_at timestamptz default now(),
+    last_seen timestamptz default now(),
+    unique(room_id, user_id)
+  );
+
+  create table if not exists tutor_messages (
+    id uuid primary key default gen_random_uuid(),
+    room_id uuid not null references tutor_rooms(id) on delete cascade,
+    sender_id uuid not null references profiles(id) on delete cascade,
+    text text not null,
+    kind text default 'text',
+    created_at timestamptz default now()
+  );
+
+  create index if not exists idx_tutor_participants_room on tutor_participants(room_id);
+  create index if not exists idx_tutor_messages_room on tutor_messages(room_id);
+
+  alter publication supabase_realtime add table tutor_rooms;
+  alter publication supabase_realtime add table tutor_participants;
+  alter publication supabase_realtime add table tutor_messages;
+
+  alter table tutor_rooms enable row level security;
+  alter table tutor_participants enable row level security;
+  alter table tutor_messages enable row level security;
+
+  drop policy if exists "tutor_rooms_all" on tutor_rooms;
+  drop policy if exists "tutor_participants_all" on tutor_participants;
+  drop policy if exists "tutor_messages_all" on tutor_messages;
+
+  create policy "tutor_rooms_all"        on tutor_rooms        for all to authenticated using (true) with check (true);
+  create policy "tutor_participants_all" on tutor_participants for all to authenticated using (true) with check (true);
+  create policy "tutor_messages_all"     on tutor_messages     for all to authenticated using (true) with check (true);
+-->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__ZynixTutor) return; Z.__ZynixTutor = true;
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-tutor-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-tutor-css';
+  st.textContent = [
+    '.tt-root{display:flex;flex-direction:column;gap:14px;}',
+    '.tt-tile{width:100%;padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;transition:border-color .2s;}',
+    '.tt-tile:hover{border-color:#334155;}',
+    '.tt-explain-btn{background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.35);color:#3b82f6;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:13px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}',
+    '.tt-guide{display:none;background:#111827;border:1px solid #1e293b;border-radius:14px;padding:16px;}',
+    '.tt-guide.open{display:block;}',
+    '.tt-guide h4{font-size:12px;font-weight:900;color:#10b981;margin:0 0 6px 0;}',
+    '.tt-guide p{font-size:12px;color:#cbd5e1;line-height:1.7;margin:0 0 12px 0;}',
+    '.tt-guide p:last-child{margin-bottom:0;}',
+    '.tt-video-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:thin;}',
+    '.tt-video-strip::-webkit-scrollbar{height:8px}',
+    '.tt-video-strip::-webkit-scrollbar-thumb{background:#334155;border-radius:4px}',
+    '.tt-tile-v{flex:0 0 auto;width:132px;height:104px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .2s,transform .15s;}',
+    '.tt-tile-v:hover{transform:translateY(-1px);}',
+    '.tt-tile-v.me{border-color:rgba(16,185,129,.5);}',
+    '.tt-tile-v.speaking{border-color:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.25);}',
+    '.tt-tile-v.muted::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,.65));pointer-events:none;}',
+    '.tt-tile-v video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;}',
+    '.tt-tile-v video.on{display:block;}',
+    '.tt-tile-v .tt-ph{font-size:30px;font-weight:900;color:#334155;font-family:"Noto Naskh Arabic",serif;}',
+    '.tt-tile-v .tt-tname{position:absolute;bottom:0;left:0;right:0;padding:16px 6px 5px;font-size:10.5px;font-weight:800;color:#fff;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:linear-gradient(transparent,rgba(0,0,0,.85));}',
+    '.tt-tile-v .tt-badges{position:absolute;top:5px;left:5px;display:flex;gap:3px;}',
+    '.tt-tile-v .tt-badges i{font-style:normal;font-size:10px;background:rgba(0,0,0,.65);border-radius:5px;padding:2px 5px;}',
+    '.tt-tile-v .tt-hosttag{position:absolute;top:5px;right:5px;background:rgba(16,185,129,.9);color:#000;font-size:9px;font-weight:900;padding:2px 6px;border-radius:6px;letter-spacing:.4px;}',
+    '.tt-tile-v .tt-ctl{position:absolute;top:5px;right:5px;display:flex;gap:3px;z-index:3;}',
+    '.tt-tile-v .tt-ctl button{background:rgba(0,0,0,.7);border:1px solid rgba(255,255,255,.15);color:#fff;width:22px;height:22px;border-radius:6px;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;}',
+    '.tt-tile-v .tt-ctl button.danger{background:rgba(161,98,98,.85);border-color:rgba(255,255,255,.25);}',
+    '.tt-slide{background:#fdfaf1;border-radius:14px;padding:24px;color:#111;min-height:340px;box-shadow:0 14px 40px rgba(0,0,0,.5);position:relative;overflow:hidden;font-family:"Noto Naskh Arabic",serif;}',
+    '.tt-slide-head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #e2dcc8;padding-bottom:10px;margin-bottom:16px;}',
+    '.tt-slide-title{font-size:15px;font-weight:800;color:#1d5c42;font-family:"Noto Nastaliq Urdu",serif;}',
+    '.tt-slide-num{font-size:11px;color:#8c7a4a;font-weight:700;font-family:system-ui,sans-serif;}',
+    '.tt-slide-body{font-size:clamp(20px,3vw,30px);line-height:2.4;text-align:center;color:#0f1f17;direction:rtl;letter-spacing:2px;}',
+    '.tt-slide-body.small{font-size:clamp(16px,2vw,22px);line-height:2.2;letter-spacing:1px;}',
+    '.tt-slide-row{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 12px;margin-bottom:14px;}',
+    '.tt-slide-row span{min-width:60px;padding:4px 10px;border-bottom:1px dashed #ded6bf;}',
+    '.tt-quran-page{text-align:right;direction:rtl;font-family:"Noto Naskh Arabic",serif;}',
+    '.tt-quran-verse{font-size:clamp(18px,2.4vw,26px);line-height:2.2;color:#0f1f17;letter-spacing:.5px;margin-bottom:10px;text-align:justify;}',
+    '.tt-quran-verse .verse-num{display:inline-block;font-size:.55em;background:#1d5c42;color:#fff;border-radius:50%;width:1.9em;height:1.9em;line-height:1.9em;text-align:center;margin:0 4px;font-family:system-ui,sans-serif;vertical-align:middle;}',
+    '.tt-page-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#111827;border:1px solid #1e293b;border-radius:12px;flex-wrap:wrap;}',
+    '.tt-page-bar button{background:#0f172a;border:1px solid #1e293b;color:#e2e8f0;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:800;display:inline-flex;align-items:center;gap:6px;transition:.15s;}',
+    '.tt-page-bar button:hover:not(:disabled){border-color:#10b981;color:#10b981;}',
+    '.tt-page-bar button:disabled{opacity:.35;cursor:not-allowed;}',
+    '.tt-page-bar input{width:70px;background:#0f172a;border:1px solid #1e293b;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;outline:none;text-align:center;font-family:system-ui,sans-serif;}',
+    '.tt-page-bar input:focus{border-color:#10b981;}',
+    '.tt-page-label{font-size:11px;color:#94a3b8;font-weight:800;font-family:system-ui,sans-serif;}',
+    '.tt-deck-tabs{display:flex;gap:6px;margin-bottom:4px;}',
+    '.tt-deck-tabs button{flex:1;padding:9px 6px;border-radius:10px;border:1px solid #1e293b;background:rgba(255,255,255,0.03);color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;transition:.15s;}',
+    '.tt-deck-tabs button.on{border-color:rgba(16,185,129,.5);background:rgba(16,185,129,.12);color:#10b981;}',
+    '.tt-ctrl{width:48px;height:48px;border-radius:50%;background:#0f172a;border:1.5px solid #1e293b;color:#e2e8f0;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:.15s;}',
+    '.tt-ctrl.on{background:#10b981;color:#000;border-color:#10b981;}',
+    '.tt-ctrl.off{background:rgba(161,98,98,.15);color:#a16262;border-color:rgba(161,98,98,.4);}',
+    '.tt-ctrl.danger{background:rgba(161,98,98,.15);color:#a16262;border-color:rgba(161,98,98,.4);}',
+    '.tt-ctrl:active{transform:scale(.94);}',
+    '.tt-ctrl:disabled{opacity:.35;cursor:not-allowed;}',
+    '.tt-bar{display:flex;gap:10px;justify-content:center;padding:10px;background:#111827;border:1px solid #1e293b;border-radius:14px;flex-wrap:wrap;}',
+    '.tt-tab{flex:1;padding:12px;border-radius:12px;border:1px solid #1e293b;background:rgba(255,255,255,0.02);color:#94a3b8;font-weight:800;font-size:12px;cursor:pointer;transition:.15s;position:relative;}',
+    '.tt-tab.on{background:rgba(16,185,129,.10);border-color:#10b981;color:#10b981;}',
+    '.tt-tab .badge{position:absolute;top:6px;right:8px;background:#a16262;color:#fff;font-size:9px;font-weight:900;min-width:16px;height:16px;border-radius:8px;padding:0 4px;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;}',
+    '.tt-pane{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;}',
+    '.tt-chat-log{max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px;}',
+    '.tt-chat-log::-webkit-scrollbar{width:6px}',
+    '.tt-chat-log::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}',
+    '.tt-msg{padding:9px 12px;border-radius:12px;background:rgba(255,255,255,0.04);font-size:12.5px;line-height:1.6;color:#e2e8f0;max-width:85%;word-break:break-word;}',
+    '.tt-msg.mine{background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;align-self:flex-end;font-weight:700;}',
+    '.tt-msg .tt-who{font-size:10px;font-weight:900;color:#10b981;margin-bottom:2px;display:block;font-family:system-ui,sans-serif;}',
+    '.tt-msg.mine .tt-who{color:#0a3324;}',
+    '.tt-msg .tt-sys{font-size:10px;color:#94a3b8;font-style:italic;text-align:center;}',
+    '.tt-chat-form{display:flex;gap:6px;margin-top:10px;}',
+    '.tt-chat-form input{flex:1;background:#0f172a;border:1px solid #1e293b;color:#fff;padding:10px 12px;border-radius:10px;font-size:12px;outline:none;font-family:inherit;}',
+    '.tt-chat-form input:focus{border-color:#10b981;}',
+    '.tt-chat-form button{background:#10b981;border:none;color:#000;font-weight:900;padding:0 16px;border-radius:10px;cursor:pointer;font-size:13px;}',
+    '.tt-person-row{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid #1e293b;margin-bottom:6px;}',
+    '.tt-person-row .nm{font-size:12.5px;font-weight:800;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.tt-person-row .rl{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;padding:2px 6px;border-radius:5px;font-family:system-ui,sans-serif;}',
+    '.tt-person-row .rl.host{background:rgba(16,185,129,.15);color:#10b981;}',
+    '.tt-person-row .rl.student{background:rgba(59,130,246,.12);color:#60a5fa;}',
+    '.tt-person-row .mi{width:28px;height:28px;border-radius:8px;background:#0f172a;border:1px solid #1e293b;color:#94a3b8;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0;transition:.15s;}',
+    '.tt-person-row .mi:hover{border-color:#10b981;color:#10b981;}',
+    '.tt-person-row .mi.muted{background:rgba(161,98,98,.15);color:#a16262;border-color:rgba(161,98,98,.35);}',
+    '.tt-hand-raised{display:inline-block;font-size:13px;animation:ttWave 1.2s ease-in-out infinite;}',
+    '@keyframes ttWave{0%,100%{transform:rotate(0)}25%{transform:rotate(-15deg)}75%{transform:rotate(15deg)}}',
+    '.tt-toast{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);background:#111827;border:1px solid #1e293b;color:#e2e8f0;padding:11px 20px;border-radius:12px;font-size:12.5px;font-weight:700;z-index:2147483646;box-shadow:0 12px 32px rgba(0,0,0,.7);opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;max-width:90vw;text-align:center;}',
+    '.tt-toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}',
+    '.tt-toast.success{border-color:rgba(16,185,129,.5);color:#10b981;}',
+    '.tt-toast.warn{border-color:rgba(161,133,84,.5);color:#a18554;}',
+    '.tt-toast.error{border-color:rgba(161,98,98,.5);color:#a16262;}',
+    '.tt-empty{padding:40px 20px;text-align:center;color:#94a3b8;font-size:12px;line-height:1.8;}',
+    '.tt-empty i{font-size:36px;color:#334155;display:block;margin-bottom:12px;}',
+    '.tt-loading{padding:36px;text-align:center;color:#64748b;font-size:12px;}',
+    '.tt-loading i{font-size:22px;color:#10b981;animation:ttSpin 1s linear infinite;display:inline-block;}',
+    '@keyframes ttSpin{to{transform:rotate(360deg)}}',
+    '.tt-skel{background:linear-gradient(90deg,#111827 25%,#1a2233 50%,#111827 75%);background-size:200% 100%;animation:ttSkel 1.4s linear infinite;border-radius:10px;}',
+    '@keyframes ttSkel{0%{background-position:200% 0}100%{background-position:-200% 0}}',
+    '.tt-join-input{width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:14px 16px;font-size:18px;font-weight:900;color:#fff;letter-spacing:4px;text-align:center;outline:none;text-transform:uppercase;font-family:system-ui,sans-serif;}',
+    '.tt-join-input:focus{border-color:#10b981;}',
+    '.tt-primary{width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13.5px;cursor:pointer;transition:.15s;}',
+    '.tt-primary:active{transform:scale(.99);}',
+    '.tt-primary:disabled{opacity:.5;cursor:not-allowed;}',
+    '.tt-secondary{width:100%;padding:12px;border-radius:12px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12.5px;cursor:pointer;transition:.15s;}',
+    '.tt-secondary:hover{border-color:#334155;}',
+    '.tt-inp{width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px 14px;font-size:13px;color:#fff;outline:none;font-family:inherit;box-sizing:border-box;}',
+    '.tt-inp:focus{border-color:#10b981;}',
+    '.tt-lbl{display:block;font-size:11px;font-weight:800;color:#94a3b8;margin:10px 0 6px;letter-spacing:.4px;text-transform:uppercase;}',
+    '.tt-fab{position:fixed;bottom:96px;left:16px;z-index:900;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#3b82f6);color:#fff;border:none;cursor:pointer;font-size:20px;display:none;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(139,92,246,.5);transition:transform .15s;}',
+    '.tt-fab:active{transform:scale(.94);}',
+    '@media(max-width:640px){.tt-slide{padding:14px;min-height:240px;} .tt-tile-v{width:108px;height:88px;}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function $(s, r){ return (r||document).querySelector(s); }
+function $$(s, r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
+function me(){ return (Z.State && Z.State.currentUser) || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function ttToast(msg, kind){
+  var t = document.getElementById('tt-toast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'tt-toast';
+    t.className = 'tt-toast';
+    document.body.appendChild(t);
+  }
+  t.className = 'tt-toast ' + (kind||'') + ' show';
+  t.textContent = msg;
+  clearTimeout(t._h);
+  t._h = setTimeout(function(){ t.classList.remove('show'); }, 2800);
+}
+
+function nowUtc(){ return new Date().toISOString(); }
+function randCode(len){
+  var alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  var out = '';
+  for(var i = 0; i < (len||6); i++) out += alpha[Math.floor(Math.random()*alpha.length)];
+  return out;
+}
+function shortId(){
+  return Math.random().toString(36).slice(2, 9);
+}
+
+/* ============================================================
+   STATE
+   ============================================================ */
+var TS = {
+  room: null,            // { id, code, title, host_id, deck_type, current_page, group_call_enabled, ... }
+  participants: [],      // [ {user_id, role, muted, hand, cam_on, peer_id, ... } ]
+  messages: [],
+  isHost: false,
+
+  // Media
+  localStream: null,
+  realMic: false, realCam: false,
+
+  // PeerJS
+  peer: null,
+  myPeerId: '',
+  calls: {},             // peerId -> MediaConnection (outgoing or incoming)
+  streams: {},           // peerId -> remote MediaStream
+  groupCalls: {},        // peerId -> MediaConnection (student-to-student, group mode)
+
+  // UI
+  tab: 'people',         // people | chat
+  slideIndex: 0,
+  deck: 'qaida',
+  quranCache: {},        // page -> verses array
+  unread: 0,
+
+  // Realtime
+  rt: [],
+  speakingTimer: null,
+  heartbeatTimer: null,
+  presenceTimer: null,
+  audioCtx: null,
+  audioAnalysers: {},    // peerId -> { analyser, source }
+  speakingState: {},     // peerId -> bool
+  handAudio: null,
+
+  // Group mode
+  groupEnabled: false,
+
+  // Custom pages (uploads)
+  customPages: []
+};
+
+/* ============================================================
+   NOORANI QAIDA DECK
+   ============================================================ */
+var AR = {
+  letters: ['ا','ب','ت','ث','ج','ح','خ','د','ذ','ر','ز','س','ش','ص','ض','ط','ظ','ع','غ','ف','ق','ك','ل','م','ن','و','ه','ي'],
+  fatha:  ['بَ','تَ','ثَ','جَ','حَ','خَ','دَ','ذَ','رَ','زَ','سَ','شَ','صَ','ضَ','طَ','ظَ','عَ','غَ','فَ','قَ','كَ','لَ','مَ','نَ','وَ','هَ','يَ'],
+  kasra:  ['بِ','تِ','ثِ','جِ','حِ','خِ','دِ','ذِ','رِ','زِ','سِ','شِ','صِ','ضِ','طِ','ظِ','عِ','غِ','فِ','قِ','كِ','لِ','مِ','نِ','وِ','هِ','يِ'],
+  damma:  ['بُ','تُ','ثُ','جُ','حُ','خُ','دُ','ذُ','رُ','زُ','سُ','شُ','صُ','ضُ','طُ','ظُ','عُ','غُ','فُ','قُ','كُ','لُ','مُ','نُ','وُ','هُ','يُ'],
+  tanween_fatha: ['بًا','تًا','ثًا','جًا','حًا','خًا','دًا','ذًا','رًا','زًا','سًا','شًا','صًا','ضًا','طًا','ظًا','عًا','غًا','فًا','قًا','كًا','لًا','مًا','نًا','وًا','هًا','يًا'],
+  tanween_kasra: ['بٍ','تٍ','ثٍ','جٍ','حٍ','خٍ','دٍ','ذٍ','رٍ','زٍ','سٍ','شٍ','صٍ','ضٍ','طٍ','ظٍ','عٍ','غٍ','فٍ','قٍ','كٍ','لٍ','مٍ','نٍ','وٍ','هٍ','يٍ'],
+  tanween_damma: ['بٌ','تٌ','ثٌ','جٌ','حٌ','خٌ','دٌ','ذٌ','رٌ','زٌ','سٌ','شٌ','صٌ','ضٌ','طٌ','ظٌ','عٌ','غٌ','فٌ','قٌ','كٌ','لٌ','مٌ','نٌ','وٌ','هٌ','يٌ'],
+  madd:   ['با','تا','ثا','جا','حا','خا','دا','ذا','را','زا','سا','شا','صا','ضا','طا','ظا','عا','غا','فا','قا','كا','لا','ما','نا','وا','ها','يا'],
+  sukoon: ['أبْ','أتْ','أثْ','أجْ','أحْ','أخْ','أدْ','أذْ','أرْ','أزْ','أسْ','أشْ','أصْ','أضْ','أطْ','أظْ','أعْ','أغْ','أفْ','أقْ','أكْ','ألْ','أمْ','أنْ','أوْ','أهْ','أيْ'],
+  shadda: ['بّ','تّ','ثّ','جّ','حّ','خّ','دّ','ذّ','رّ','زّ','سّ','شّ','صّ','ضّ','طّ','ظّ','عّ','غّ','فّ','قّ','كّ','لّ','مّ','نّ','وّ','هّ','يّ'],
+  harakat_short: [
+    { title:'فَتْحَة · Zabar (a)', letters:['اَ','بَ','تَ','ثَ','جَ','حَ','خَ','دَ','ذَ','رَ','زَ','سَ'] },
+    { title:'كَسْرَة · Zer (i)', letters:['اِ','بِ','تِ','ثِ','جِ','حِ','خِ','دِ','ذِ','رِ','زِ','سِ'] },
+    { title:'ضَمَّة · Pesh (u)', letters:['اُ','بُ','تُ','ثُ','جُ','حُ','خُ','دُ','ذُ','رُ','زُ','سُ'] }
+  ]
+};
+
+var QAIDA_PAGES = [
+  { id:'q01', title:'حروفِ مفردات — Single Letters',       rows:[AR.letters], style:'big' },
+  { id:'q02', title:'حروفِ مرکبہ — Joined Letters',        rows:[AR.letters.map(function(l){ return 'ب'+l; }), AR.letters.map(function(l){ return l+'ب'; })], style:'big' },
+  { id:'q03', title:'حروفِ مقطعات — Muqatta\'at',           rows:[['ا ل م','ا ل م ص','ک ہ ی ع ص','ط ہ','ط س م','ی س','ص','ح م','ع س ق','ن','ق']], style:'big' },
+  { id:'q04', title:'فَتْحَة · Zabar',                       rows:[AR.fatha], style:'big' },
+  { id:'q05', title:'كَسْرَة · Zer',                         rows:[AR.kasra], style:'big' },
+  { id:'q06', title:'ضَمَّة · Pesh',                         rows:[AR.damma], style:'big' },
+  { id:'q07', title:'تنوین — Tanween Fatha',                rows:[AR.tanween_fatha], style:'big' },
+  { id:'q08', title:'تنوین — Tanween Kasra',                rows:[AR.tanween_kasra], style:'big' },
+  { id:'q09', title:'تنوین — Tanween Damma',                rows:[AR.tanween_damma], style:'big' },
+  { id:'q10', title:'مدّ — Madd (Elongation)',              rows:[AR.madd], style:'big' },
+  { id:'q11', title:'سکون — Sukoon',                        rows:[AR.sukoon], style:'big' },
+  { id:'q12', title:'شدّہ — Shadda',                         rows:[AR.shadda], style:'big' },
+  { id:'q13', title:'کھڑی حرکت — Vertical Harakat',         rows:[['بٰ','تٰ','ثٰ','جٰ','حٰ','خٰ','دٰ','ذٰ','رٰ','زٰ'],['بٖ','تٖ','ثٖ','جٖ','حٖ','خٖ','دٖ','ذٖ','رٖ','زٖ'],['بٗ','تٗ','ثٗ','جٗ','حٗ','خٗ','دٗ','ذٗ','رٗ','زٗ']], style:'big' },
+  { id:'q14', title:'مشترکہ الفاظ — Combined Words',        rows:[['بِسْمِ','اَللّٰهُ','رَحْمٰنُ','رَحِيْمُ','مٰلِكِ','يَوْمِ','اِيَّاكَ','نَعْبُدُ','اِهْدِنَا','صِرَاطَ']], style:'small' },
+  { id:'q15', title:'مشق و دہرائی — Practice',              rows:[['ا ب ت ث ج ح خ د ذ ر ز س ش ص ض ط ظ ع غ ف ق ک ل م ن و ہ ء ی'],['الْحَمْدُ لِلّٰهِ رَبِّ الْعٰلَمِيْنَ'],['الرَّحْمٰنِ الرَّحِيْمِ'],['مٰلِكِ يَوْمِ الدِّيْنِ']], style:'small' }
+];
+
+/* ============================================================
+   QURAN — fetch verses by page from api.quran.com
+   ============================================================ */
+async function fetchQuranPage(pageNum){
+  if(TS.quranCache[pageNum]) return TS.quranCache[pageNum];
+  try {
+    var url = 'https://api.quran.com/api/v4/verses/by_page/' + pageNum +
+              '?fields=text_uthmani&per_page=50&page=' + pageNum;
+    var r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    var verses = (data && data.verses) || [];
+    TS.quranCache[pageNum] = verses;
+    return verses;
+  } catch(e){
+    console.warn('[tutor] quran fetch', e);
+    return [];
+  }
+}
+
+/* ============================================================
+   RENDER — LOBBY VIEW
+   ============================================================ */
+function renderLobby(){
+  var u = me();
+  if(!u){
+    return '<div class="tt-empty"><i class="fa-solid fa-chalkboard-user"></i>' +
+      'Please log in to start or join a class.' +
+      '<div style="margin-top:14px;"><button class="tt-primary" style="max-width:200px;margin:0 auto;display:block;" onclick="Z.openAuthModal(\'login\')">Login</button></div>' +
+    '</div>';
+  }
+  var body = '';
+  body += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(139,92,246,.15),rgba(59,130,246,.08));border:1px solid rgba(139,92,246,.35);">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">ZYNIX TUTORING</div>' +
+    '<div style="font-size:20px;font-weight:900;color:#fff;margin-top:6px;">Teach anything. Learn together.</div>' +
+    '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-top:8px;">Noorani Qaida · Holy Quran · Any subject. Tutor controls the room. Students see what the tutor sees.</div>' +
+  '</div>';
+
+  body += '<div class="tt-tile" onclick="window.__tt_openCreate()">' +
+    '<div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-plus" style="color:#000;font-size:18px;"></i></div>' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-size:14px;font-weight:900;color:#fff;">Create a class</div>' +
+      '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">You become the host. Get a share code.</div>' +
+    '</div>' +
+    '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
+  '</div>';
+
+  body += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">' +
+    '<label class="tt-lbl" style="margin-top:0;">Join with code</label>' +
+    '<input id="tt-join-code" class="tt-join-input" placeholder="ABC123" maxlength="8" autocomplete="off">' +
+    '<button class="tt-primary" style="margin-top:12px;" onclick="window.__tt_join()">Join class</button>' +
+  '</div>';
+
+  body += '<div id="tt-recent">' + renderRecentClasses() + '</div>';
+
+  body += '<div class="tt-guide" id="tt-guide-lobby">' +
+    '<h4>How Tutoring works</h4><p>The tutor creates a class and shares the code. Students join with the code. The tutor controls the slide — every student sees the same page. Tutor hears every student at once and can mute anyone instantly. Students only hear the tutor unless the tutor turns on group call.</p>' +
+    '<h4>Noorani Qaida & Quran</h4><p>Built-in. Tutor flips pages, students follow. Quran pages load from a live API — every page of the mushaf.</p>' +
+    '<h4>Any subject</h4><p>Upload custom slides at any time. Same sync, same controls.</p>' +
+  '</div>';
+
+  return '<div class="tt-root">' +
+    '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">' +
+      '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">' +
+        '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
+        '<h2 class="view-title" style="margin:0;display:flex;align-items:center;gap:6px;min-width:0;">' +
+          '<i class="fa-solid fa-chalkboard-user" style="color:#10b981;"></i>' +
+          '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Tutoring</span>' +
+        '</h2>' +
+      '</div>' +
+      '<button class="tt-explain-btn" title="How it works" onclick="var g=document.getElementById(\'tt-guide-lobby\');if(g)g.classList.toggle(\'open\')">?</button>' +
+    '</div>' +
+    body +
+  '</div>';
+}
+
+function renderRecentClasses(){
+  /* Previously hosted/joined rooms — stored in localStorage for quick re-join */
+  var key = 'zynix_tutor_recent_' + ((me()||{}).id || 'guest');
+  var list = [];
+  try { list = JSON.parse(localStorage.getItem(key) || '[]'); } catch(e){}
+  if(!list.length) return '';
+  var h = '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:4px 4px 8px;">RECENT</div>';
+  list.slice(0, 5).forEach(function(it){
+    var role = it.role === 'host' ? 'Hosted' : 'Joined';
+    h += '<div class="tt-tile" onclick="window.__tt_rejoin(\'' + esc(it.code) + '\')" style="margin-bottom:6px;">' +
+      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(139,92,246,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-chalkboard" style="color:#8b5cf6;font-size:15px;"></i></div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.title || 'Class') + '</div>' +
+        '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">' + esc(role) + ' · ' + esc(it.code) + '</div>' +
+      '</div>' +
+      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:13px;"></i>' +
+    '</div>';
+  });
+  return h;
+}
+
+function pushRecent(entry){
+  var key = 'zynix_tutor_recent_' + ((me()||{}).id || 'guest');
+  var list = [];
+  try { list = JSON.parse(localStorage.getItem(key) || '[]'); } catch(e){}
+  list = list.filter(function(x){ return x.code !== entry.code; });
+  list.unshift(entry);
+  try { localStorage.setItem(key, JSON.stringify(list.slice(0, 8))); } catch(e){}
+}
+
+/* ============================================================
+   CREATE CLASS MODAL
+   ============================================================ */
+window.__tt_openCreate = function(){
+  var u = me(); if(!u) return;
+  Z.openModal(
+    '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+      '<div class="modal-box">' +
+        '<div class="modal-header"><h3>Create a class</h3>' +
+          '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+        '<label class="tt-lbl" style="margin-top:0;">Class title</label>' +
+        '<input id="tt-create-title" class="tt-inp" placeholder="e.g. Noorani Qaida — Beginners" maxlength="60">' +
+        '<label class="tt-lbl">Deck</label>' +
+        '<select id="tt-create-deck" class="tt-inp" style="padding-right:14px;">' +
+          '<option value="qaida">Noorani Qaida (built-in)</option>' +
+          '<option value="quran">Holy Quran (by page number)</option>' +
+          '<option value="custom">Custom — I will upload slides</option>' +
+        '</select>' +
+        '<button class="tt-primary" style="margin-top:16px;" onclick="window.__tt_doCreate()">Start class</button>' +
+      '</div>' +
+    '</div>'
+  );
+  setTimeout(function(){ var el = document.getElementById('tt-create-title'); if(el) el.focus(); }, 80);
+};
+
+window.__tt_doCreate = async function(){
+  var u = me(); if(!u) return;
+  var title = (($('#tt-create-title')||{}).value || '').trim() || 'Class';
+  var deck = ($('#tt-create-deck')||{}).value || 'qaida';
+  var c = db(); if(!c){ ttToast('Not connected', 'error'); return; }
+
+  var code = randCode(6);
+  for(var tries = 0; tries < 5; tries++){
+    var check = await c.from('tutor_rooms').select('id').eq('code', code).maybeSingle();
+    if(!check.data) break;
+    code = randCode(6);
+  }
+
+  var payload = {
+    host_id: u.id,
+    code: code,
+    title: title,
+    deck_type: deck,
+    current_page: 1,
+    group_call_enabled: false,
+    is_active: true
+  };
+  var r = await c.from('tutor_rooms').insert(payload).select().maybeSingle();
+  if(r.error || !r.data){ ttToast('Could not create room', 'error'); return; }
+  Z.closeModal();
+  pushRecent({ code: code, title: title, role: 'host' });
+  Z.showView('tutor-room', r.data.id);
+};
+
+window.__tt_join = async function(){
+  var u = me(); if(!u) return;
+  var code = (($('#tt-join-code')||{}).value || '').trim().toUpperCase();
+  if(!code){ ttToast('Enter a code', 'warn'); return; }
+  var c = db(); if(!c) return;
+  var r = await c.from('tutor_rooms').select('*').eq('code', code).eq('is_active', true).maybeSingle();
+  if(r.error || !r.data){ ttToast('Class not found or ended', 'error'); return; }
+  pushRecent({ code: r.data.code, title: r.data.title, role: 'student' });
+  Z.showView('tutor-room', r.data.id);
+};
+
+window.__tt_rejoin = function(code){
+  if($('#tt-join-code')) $('#tt-join-code').value = code;
+  window.__tt_join();
+};
+
+/* ============================================================
+   ROOM VIEW
+   ============================================================ */
+function renderRoomPlaceholder(){
+  return '<div class="tt-root">' +
+    '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">' +
+      '<button class="colored-back-btn" onclick="window.__tt_leave()" style="display:inline-flex;align-items:center;gap:6px;">' +
+        '<i class="fa-solid fa-arrow-left"></i> Leave</button>' +
+      '<h2 class="view-title" style="margin:0;"><i class="fa-solid fa-chalkboard-user" style="color:#10b981;"></i> <span id="tt-room-title">Class</span></h2>' +
+      '<div style="width:60px;"></div>' +
+    '</div>' +
+    '<div id="tt-room-body"><div class="tt-loading"><i class="fa-solid fa-circle-notch"></i><div style="margin-top:10px;">Joining class…</div></div></div>' +
+  '</div>';
+}
+
+/* ============================================================
+   MAIN ROOM LOGIC
+   ============================================================ */
+async function enterRoom(roomId){
+  var u = me(); if(!u){ Z.goBack(); return; }
+  var c = db(); if(!c) return;
+  var r = await c.from('tutor_rooms').select('*').eq('id', roomId).maybeSingle();
+  if(r.error || !r.data){ ttToast('Room not found', 'error'); Z.goBack(); return; }
+  TS.room = r.data;
+  TS.isHost = r.data.host_id === u.id;
+  TS.groupEnabled = !!r.data.group_call_enabled;
+  TS.deck = r.data.deck_type || 'qaida';
+  TS.slideIndex = Math.max(0, (Number(r.data.current_page) || 1) - 1);
+
+  /* Get media (best effort) */
+  await acquireMedia();
+
+  /* Join participants table */
+  var myPeerId = 'zynix-tutor-' + TS.room.code + '-' + (TS.isHost ? 'HOST' : shortId());
+  TS.myPeerId = myPeerId;
+  await upsertParticipant({
+    room_id: roomId,
+    user_id: u.id,
+    role: TS.isHost ? 'host' : 'student',
+    muted: true,
+    cam_on: false,
+    hand: false,
+    peer_id: myPeerId,
+    last_seen: nowUtc()
+  });
+
+  /* Load state */
+  await loadParticipants();
+  await loadMessages();
+
+  /* PeerJS */
+  setupPeer();
+
+  /* Realtime */
+  setupRealtime();
+
+  /* Heartbeat */
+  startHeartbeat();
+
+  /* Render */
+  paintRoom();
+
+  /* Greeting */
+  ttToast('Welcome to ' + (TS.room.title || 'class'), 'success');
+}
+
+async function acquireMedia(){
+  try {
+    var stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 480 }, height: { ideal: 360 }, facingMode: 'user' },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    TS.localStream = stream;
+    TS.realMic = stream.getAudioTracks().length > 0;
+    TS.realCam = stream.getVideoTracks().length > 0;
+    stream.getAudioTracks().forEach(function(t){ t.enabled = false; }); // start muted
+    stream.getVideoTracks().forEach(function(t){ t.enabled = false; }); // start camera off
+    return;
+  } catch(e1){
+    try {
+      var audio = await navigator.mediaDevices.getUserMedia({ audio: true });
+      TS.localStream = audio;
+      TS.realMic = audio.getAudioTracks().length > 0;
+      TS.realCam = false;
+      audio.getAudioTracks().forEach(function(t){ t.enabled = false; });
+      return;
+    } catch(e2){
+      try {
+        var video = await navigator.mediaDevices.getUserMedia({ video: true });
+        TS.localStream = video;
+        TS.realMic = false;
+        TS.realCam = true;
+        video.getVideoTracks().forEach(function(t){ t.enabled = false; });
+        return;
+      } catch(e3){
+        /* Fallback: canvas placeholder + silent audio */
+        TS.localStream = buildPlaceholderStream();
+        TS.realMic = false; TS.realCam = false;
+      }
+    }
+  }
+}
+
+function buildPlaceholderStream(){
+  var st = new MediaStream();
+  try {
+    var c = document.createElement('canvas');
+    c.width = 320; c.height = 240;
+    var ctx = c.getContext('2d');
+    function draw(){
+      var g = ctx.createLinearGradient(0, 0, 320, 240);
+      g.addColorStop(0, '#0f172a'); g.addColorStop(1, '#111827');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 320, 240);
+      ctx.fillStyle = 'rgba(16,185,129,.85)';
+      ctx.beginPath(); ctx.arc(160, 100, 40, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#06231a';
+      ctx.font = 'bold 42px system-ui';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      var initial = ((me() && (me().name || me().username || 'U')) || 'U').charAt(0).toUpperCase();
+      ctx.fillText(initial, 160, 104);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px system-ui';
+      ctx.fillText('Camera off', 160, 180);
+    }
+    draw();
+    var t = c.captureStream(2).getVideoTracks()[0];
+    if(t) st.addTrack(t);
+  } catch(e){}
+  return st;
+}
+
+async function upsertParticipant(p){
+  var c = db(); if(!c) return;
+  try {
+    await c.from('tutor_participants').upsert(p, { onConflict: 'room_id,user_id' });
+  } catch(e){ console.warn('[tutor] upsert participant', e); }
+}
+
+async function loadParticipants(){
+  var c = db(); if(!c) return;
+  var r = await c.from('tutor_participants').select('*').eq('room_id', TS.room.id);
+  TS.participants = r.data || [];
+}
+
+async function loadMessages(){
+  var c = db(); if(!c) return;
+  var r = await c.from('tutor_messages').select('*').eq('room_id', TS.room.id).order('created_at', {ascending: true}).limit(100);
+  TS.messages = r.data || [];
+}
+
+async function sendMessage(text){
+  var u = me(); if(!u || !text || !text.trim()) return;
+  var c = db(); if(!c) return;
+  await c.from('tutor_messages').insert({
+    room_id: TS.room.id,
+    sender_id: u.id,
+    text: text.trim(),
+    kind: 'text'
+  });
+}
+
+/* ============================================================
+   PEERJS
+   ============================================================ */
+function setupPeer(){
+  if(TS.peer) { try { TS.peer.destroy(); } catch(e){} }
+  try {
+    TS.peer = new Peer(TS.myPeerId, { debug: 0 });
+  } catch(e){ console.warn('[tutor] peer init', e); return; }
+
+  TS.peer.on('open', function(){
+    if(TS.isHost){
+      /* Tutor listens for student calls (they initiate) */
+    } else {
+      /* Student calls the host */
+      connectToHost();
+    }
+    /* If group mode is already ON when we join, wait for peer list update via realtime */
+  });
+
+  TS.peer.on('error', function(err){
+    console.warn('[tutor] peer error', err.type, err.message);
+    if(err.type === 'unavailable-id'){
+      ttToast('Session conflict. Please leave and rejoin.', 'error');
+    }
+  });
+
+  TS.peer.on('call', function(call){
+    /* Incoming call */
+    var callerPeer = call.peer;
+    var meta = call.metadata || {};
+    if(meta.kind === 'group'){
+      /* Student-to-student group call */
+      call.answer(TS.localStream || undefined);
+      TS.groupCalls[callerPeer] = call;
+    } else {
+      /* Student → Tutor (or Tutor → Student answered by callee) */
+      call.answer(TS.localStream || undefined);
+      TS.calls[callerPeer] = call;
+    }
+    call.on('stream', function(remote){
+      TS.streams[callerPeer] = remote;
+      attachRemoteStream(callerPeer, remote);
+    });
+    call.on('close', function(){
+      delete TS.calls[callerPeer];
+      delete TS.groupCalls[callerPeer];
+      detachRemoteStream(callerPeer);
+    });
+    call.on('error', function(){});
+  });
+}
+
+function connectToHost(){
+  if(TS.isHost) return;
+  var hostPeerId = 'zynix-tutor-' + TS.room.code + '-HOST';
+  if(TS.calls[hostPeerId]) return;
+  var call = TS.peer.call(hostPeerId, TS.localStream || undefined, {
+    metadata: { kind: 'student_to_host', userId: me().id }
+  });
+  if(!call) return;
+  TS.calls[hostPeerId] = call;
+  call.on('stream', function(remote){
+    TS.streams[hostPeerId] = remote;
+    attachRemoteStream(hostPeerId, remote);
+  });
+  call.on('close', function(){
+    delete TS.calls[hostPeerId];
+    detachRemoteStream(hostPeerId);
+  });
+}
+
+function connectTutorToStudent(peerId){
+  if(!TS.isHost) return;
+  if(TS.calls[peerId]) return;
+  var call = TS.peer.call(peerId, TS.localStream || undefined, {
+    metadata: { kind: 'host_to_student' }
+  });
+  if(!call) return;
+  TS.calls[peerId] = call;
+  call.on('stream', function(remote){
+    TS.streams[peerId] = remote;
+    attachRemoteStream(peerId, remote);
+  });
+  call.on('close', function(){
+    delete TS.calls[peerId];
+    detachRemoteStream(peerId);
+  });
+}
+
+function ensureHostConnections(){
+  if(!TS.isHost || !TS.peer) return;
+  TS.participants.forEach(function(p){
+    if(!p.peer_id || p.user_id === me().id) return;
+    if(!TS.calls[p.peer_id]){
+      connectTutorToStudent(p.peer_id);
+    }
+  });
+}
+
+/* ============================================================
+   GROUP CALL (student-to-student)
+   ============================================================ */
+function openGroupCalls(){
+  if(TS.isHost) return; /* host doesn't need student-to-student */
+  if(!TS.peer) return;
+  var mySort = String(me().id);
+  TS.participants.forEach(function(p){
+    if(p.user_id === me().id) return;
+    if(p.role === 'host') return;
+    if(!p.peer_id) return;
+    /* Only one side initiates: sort by userId to avoid duplicates */
+    if(mySort < String(p.user_id)){
+      if(TS.groupCalls[p.peer_id]) return;
+      var call = TS.peer.call(p.peer_id, TS.localStream || undefined, {
+        metadata: { kind: 'group' }
+      });
+      if(!call) return;
+      TS.groupCalls[p.peer_id] = call;
+      call.on('stream', function(remote){
+        TS.streams[p.peer_id] = remote;
+        attachRemoteStream(p.peer_id, remote);
+      });
+      call.on('close', function(){
+        delete TS.groupCalls[p.peer_id];
+        detachRemoteStream(p.peer_id);
+      });
+    }
+  });
+}
+
+function closeGroupCalls(){
+  Object.keys(TS.groupCalls).forEach(function(pid){
+    try { TS.groupCalls[pid].close(); } catch(e){}
+    delete TS.groupCalls[pid];
+  });
+}
+
+/* ============================================================
+   REMOTE STREAM ATTACH/DETACH
+   ============================================================ */
+function attachRemoteStream(peerId, stream){
+  var t = document.querySelector('[data-tt-peer="' + peerId + '"]');
+  if(!t) return;
+  var v = t.querySelector('video');
+  if(!v) return;
+  if(v.srcObject !== stream){
+    v.srcObject = stream;
+    v.play().catch(function(){});
+  }
+  /* Audio autoplay — attach audio-only playback */
+  var alreadyAttached = document.querySelector('[data-tt-audio="' + peerId + '"]');
+  if(!alreadyAttached && stream.getAudioTracks().length){
+    var a = document.createElement('audio');
+    a.setAttribute('data-tt-audio', peerId);
+    a.autoplay = true;
+    a.srcObject = stream;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.play().catch(function(){});
+  }
+}
+
+function detachRemoteStream(peerId){
+  var a = document.querySelector('[data-tt-audio="' + peerId + '"]');
+  if(a) a.remove();
+  var t = document.querySelector('[data-tt-peer="' + peerId + '"]');
+  if(t){
+    var v = t.querySelector('video');
+    if(v) v.srcObject = null;
+  }
+}
+
+/* ============================================================
+   REALTIME
+   ============================================================ */
+function setupRealtime(){
+  var c = db(); if(!c) return;
+  teardownRealtime();
+
+  var roomId = TS.room.id;
+
+  var chRoom = c.channel('tt-room-' + roomId)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tutor_rooms', filter: 'id=eq.' + roomId }, function(p){
+      var row = p.new; if(!row) return;
+      TS.room = row;
+      if(typeof row.current_page === 'number'){
+        var newIdx = Math.max(0, row.current_page - 1);
+        if(newIdx !== TS.slideIndex){
+          TS.slideIndex = newIdx;
+          paintSlide();
+        }
+      }
+      if(typeof row.group_call_enabled === 'boolean' && row.group_call_enabled !== TS.groupEnabled){
+        TS.groupEnabled = row.group_call_enabled;
+        if(TS.groupEnabled){ openGroupCalls(); ttToast('Group call is ON', 'success'); }
+        else { closeGroupCalls(); ttToast('Group call is OFF'); }
+        paintRoom();
+      }
+      if(row.deck_type && row.deck_type !== TS.deck){
+        TS.deck = row.deck_type;
+        paintRoom();
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tutor_participants', filter: 'room_id=eq.' + roomId }, function(p){
+      handleParticipantChange(p);
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tutor_messages', filter: 'room_id=eq.' + roomId }, function(p){
+      var row = p.new; if(!row) return;
+      TS.messages.push(row);
+      if(TS.tab !== 'chat') TS.unread++;
+      paintChat();
+      paintTabs();
+    })
+    .subscribe();
+
+  TS.rt.push(chRoom);
+}
+
+function teardownRealtime(){
+  var c = db(); if(!c) return;
+  (TS.rt||[]).forEach(function(ch){ try { c.removeChannel(ch); } catch(e){} });
+  TS.rt = [];
+}
+
+function handleParticipantChange(payload){
+  var row = payload.new || payload.old;
+  if(!row) return;
+  if(payload.eventType === 'DELETE'){
+    var rid = row.id;
+    var removed = TS.participants.find(function(x){ return x.id === rid; });
+    TS.participants = TS.participants.filter(function(x){ return x.id !== rid; });
+    if(removed && removed.peer_id){
+      detachRemoteStream(removed.peer_id);
+      if(TS.calls[removed.peer_id]){ try { TS.calls[removed.peer_id].close(); } catch(e){} delete TS.calls[removed.peer_id]; }
+      if(TS.groupCalls[removed.peer_id]){ try { TS.groupCalls[removed.peer_id].close(); } catch(e){} delete TS.groupCalls[removed.peer_id]; }
+    }
+    paintParticipants();
+    paintVideoStrip();
+    return;
+  }
+  var existingIdx = -1;
+  for(var i = 0; i < TS.participants.length; i++){
+    if(TS.participants[i].id === row.id){ existingIdx = i; break; }
+  }
+  if(existingIdx >= 0) TS.participants[existingIdx] = row;
+  else {
+    TS.participants.push(row);
+    if(row.user_id !== me().id){
+      /* New student joined — if we're host, connect */
+      if(TS.isHost && row.peer_id){
+        connectTutorToStudent(row.peer_id);
+      }
+      if(TS.groupEnabled && !TS.isHost){ openGroupCalls(); }
+    }
+  }
+  paintParticipants();
+  paintVideoStrip();
+  ensureHostConnections();
+}
+
+/* ============================================================
+   HEARTBEAT
+   ============================================================ */
+function startHeartbeat(){
+  stopHeartbeat();
+  TS.heartbeatTimer = setInterval(async function(){
+    var u = me(); if(!u) return;
+    var c = db(); if(!c) return;
+    try {
+      await c.from('tutor_participants')
+        .update({ last_seen: nowUtc(), peer_id: TS.myPeerId, muted: TS.currentMicState(), cam_on: TS.currentCamState() })
+        .eq('room_id', TS.room.id).eq('user_id', u.id);
+    } catch(e){}
+  }, 15000);
+}
+
+function stopHeartbeat(){
+  if(TS.heartbeatTimer){ clearInterval(TS.heartbeatTimer); TS.heartbeatTimer = null; }
+}
+
+/* ============================================================
+   MEDIA STATE HELPERS
+   ============================================================ */
+TS.currentMicState = function(){
+  if(!TS.localStream) return true;
+  var t = TS.localStream.getAudioTracks()[0];
+  return t ? !t.enabled : true;
+};
+TS.currentCamState = function(){
+  if(!TS.localStream) return false;
+  var t = TS.localStream.getVideoTracks()[0];
+  return t ? t.enabled : false;
+};
+
+/* ============================================================
+   RENDER: ROOM
+   ============================================================ */
+function paintRoom(){
+  var host = $('#tt-room-title');
+  if(host) host.textContent = TS.room.title || 'Class';
+  var body = $('#tt-room-body');
+  if(!body) return;
+  body.innerHTML = buildRoomHtml();
+  wireRoom();
+  paintSlide();
+  paintVideoStrip();
+  paintParticipants();
+  paintChat();
+  paintTabs();
+}
+
+function buildRoomHtml(){
+  var u = me();
+  var micOn = !TS.currentMicState();
+  var camOn = TS.currentCamState();
+  var myHand = false;
+  var myP = TS.participants.find(function(x){ return x.user_id === u.id; });
+  if(myP) myHand = !!myP.hand;
+
+  var html = '';
+
+  /* Video strip (all participants) */
+  html += '<div class="tt-video-strip" id="tt-video-strip"></div>';
+
+  /* Group call notice for students */
+  if(!TS.isHost){
+    html += '<div id="tt-group-banner" style="display:' + (TS.groupEnabled ? 'flex' : 'none') + ';align-items:center;gap:8px;padding:10px 14px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);font-size:12px;color:#10b981;font-weight:800;">' +
+      '<i class="fa-solid fa-users"></i> Group call is ON — you can hear other students' +
+    '</div>';
+  }
+
+  /* Deck tabs (host can switch) */
+  html += '<div class="tt-deck-tabs">';
+  html += deckTabBtn('qaida', 'Noorani Qaida');
+  html += deckTabBtn('quran', 'Holy Quran');
+  html += deckTabBtn('custom', 'Custom');
+  html += '</div>';
+
+  /* Slide */
+  html += '<div id="tt-slide-host"></div>';
+
+  /* Page navigation bar */
+  html += '<div class="tt-page-bar" id="tt-page-bar"></div>';
+
+  /* Controls */
+  html += '<div class="tt-bar">' +
+    '<button class="tt-ctrl ' + (TS.realMic ? (micOn ? 'on' : 'off') : 'off') + '" id="tt-mic" title="' + (micOn ? 'Mute' : 'Unmute') + '" ' + (TS.realMic ? '' : 'disabled') + '>' +
+      '<i class="fa-solid fa-microphone' + (micOn ? '' : '-slash') + '"></i>' +
+    '</button>' +
+    '<button class="tt-ctrl ' + (camOn ? 'on' : 'off') + '" id="tt-cam" title="' + (camOn ? 'Stop camera' : 'Start camera') + '" ' + (TS.realCam ? '' : 'disabled') + '>' +
+      '<i class="fa-solid fa-video' + (camOn ? '' : '-slash') + '"></i>' +
+    '</button>' +
+    '<button class="tt-ctrl ' + (myHand ? 'on' : '') + '" id="tt-hand" title="Raise hand">' +
+      '<i class="fa-solid fa-hand"></i>' +
+    '</button>' +
+    '<button class="tt-ctrl danger" id="tt-leave" title="Leave class">' +
+      '<i class="fa-solid fa-phone-slash"></i>' +
+    '</button>' +
+  '</div>';
+
+  /* Host-only: group call toggle */
+  if(TS.isHost){
+    html += '<button id="tt-group-toggle" class="tt-secondary" style="' + (TS.groupEnabled ? 'border-color:#10b981;color:#10b981;background:rgba(16,185,129,.08);' : '') + '">' +
+      '<i class="fa-solid fa-users"></i> ' + (TS.groupEnabled ? 'Group call: ON — students can hear each other' : 'Group call: OFF — students only hear you') +
+    '</button>';
+  }
+
+  /* Tabs: People / Chat */
+  html += '<div style="display:flex;gap:6px;">' +
+    '<button class="tt-tab ' + (TS.tab === 'people' ? 'on' : '') + '" data-tt-tab="people"><i class="fa-solid fa-users"></i> People (<span id="tt-count">' + TS.participants.length + '</span>)</button>' +
+    '<button class="tt-tab ' + (TS.tab === 'chat' ? 'on' : '') + '" data-tt-tab="chat"><i class="fa-solid fa-comments"></i> Chat' +
+      (TS.unread > 0 ? '<span class="badge">' + TS.unread + '</span>' : '') +
+    '</button>' +
+  '</div>';
+
+  /* Panes */
+  html += '<div class="tt-pane" id="tt-pane-people" style="display:' + (TS.tab === 'people' ? 'block' : 'none') + ';">' +
+    '<div id="tt-people-list"></div>' +
+  '</div>';
+  html += '<div class="tt-pane" id="tt-pane-chat" style="display:' + (TS.tab === 'chat' ? 'block' : 'none') + ';">' +
+    '<div class="tt-chat-log" id="tt-chat-log"></div>' +
+    '<form class="tt-chat-form" id="tt-chat-form">' +
+      '<input id="tt-chat-input" placeholder="Type a message…" maxlength="300" autocomplete="off">' +
+      '<button type="submit"><i class="fa-solid fa-paper-plane"></i></button>' +
+    '</form>' +
+  '</div>';
+
+  return html;
+}
+
+function deckTabBtn(id, label){
+  var on = TS.deck === id;
+  return '<button data-tt-deck="' + id + '" class="' + (on ? 'on' : '') + '" ' + (!TS.isHost ? 'disabled style="cursor:not-allowed;opacity:.6;"' : '') + '>' +
+    (on ? '<i class="fa-solid fa-circle-dot" style="margin-right:4px;"></i>' : '') + esc(label) +
+  '</button>';
+}
+
+/* ============================================================
+   WIRING
+   ============================================================ */
+function wireRoom(){
+  var mic = $('#tt-mic');
+  if(mic) mic.onclick = toggleMic;
+  var cam = $('#tt-cam');
+  if(cam) cam.onclick = toggleCam;
+  var hand = $('#tt-hand');
+  if(hand) hand.onclick = toggleHand;
+  var leave = $('#tt-leave');
+  if(leave) leave.onclick = window.__tt_leave;
+
+  var gt = $('#tt-group-toggle');
+  if(gt) gt.onclick = toggleGroup;
+
+  $$('[data-tt-tab]').forEach(function(b){
+    b.onclick = function(){
+      TS.tab = this.getAttribute('data-tt-tab');
+      if(TS.tab === 'chat') TS.unread = 0;
+      paintTabs();
+      var pp = $('#tt-pane-people'), pc = $('#tt-pane-chat');
+      if(pp) pp.style.display = TS.tab === 'people' ? 'block' : 'none';
+      if(pc) pc.style.display = TS.tab === 'chat' ? 'block' : 'none';
+      if(TS.tab === 'chat') scrollChatBottom();
+    };
+  });
+
+  var cf = $('#tt-chat-form');
+  if(cf) cf.onsubmit = function(e){
+    e.preventDefault();
+    var inp = $('#tt-chat-input');
+    if(!inp || !inp.value.trim()) return;
+    var v = inp.value; inp.value = '';
+    sendMessage(v);
+  };
+
+  $$('[data-tt-deck]').forEach(function(b){
+    if(!TS.isHost) return;
+    b.onclick = async function(){
+      var deck = this.getAttribute('data-tt-deck');
+      if(deck === TS.deck) return;
+      var c = db(); if(!c) return;
+      var page = deck === 'quran' ? 1 : 1;
+      var r = await c.from('tutor_rooms').update({
+        deck_type: deck, current_page: page, updated_at: nowUtc()
+      }).eq('id', TS.room.id).select().maybeSingle();
+      if(r.error){ ttToast('Could not switch deck', 'error'); return; }
+      TS.deck = deck;
+      TS.slideIndex = page - 1;
+      paintRoom();
+      ttToast('Deck switched to ' + deck);
+    };
+  });
+
+  /* Page nav bar built inside paintSlide */
+  wirePageBar();
+}
+
+function wirePageBar(){
+  var bar = $('#tt-page-bar');
+  if(!bar) return;
+  var prev = bar.querySelector('[data-tt-prev]');
+  var next = bar.querySelector('[data-tt-next]');
+  var inp  = bar.querySelector('[data-tt-goto]');
+  if(prev) prev.onclick = function(){ goToSlide(TS.slideIndex - 1); };
+  if(next) next.onclick = function(){ goToSlide(TS.slideIndex + 1); };
+  if(inp){
+    inp.onkeydown = function(e){
+      if(e.key === 'Enter'){ e.preventDefault(); goToSlide((parseInt(this.value) || 1) - 1); }
+    };
+    inp.onblur = function(){ this.value = (TS.slideIndex + 1); };
+  }
+  var upload = bar.querySelector('[data-tt-upload]');
+  if(upload && TS.isHost){
+    upload.onclick = function(){ uploadCustomSlide(this); };
+  }
+}
+
+/* ============================================================
+   SLIDE RENDERING
+   ============================================================ */
+function paintSlide(){
+  var host = $('#tt-slide-host');
+  if(!host) return;
+  if(TS.deck === 'qaida')      host.innerHTML = buildQaidaSlide();
+  else if(TS.deck === 'quran') host.innerHTML = buildQuranSlide();
+  else                          host.innerHTML = buildCustomSlide();
+  paintPageBar();
+  wirePageBar();
+}
+
+function slideFrame(title, num, innerHtml){
+  return '<div class="tt-slide">' +
+    '<div class="tt-slide-head">' +
+      '<div class="tt-slide-title">' + esc(title) + '</div>' +
+      '<div class="tt-slide-num">' + esc(num) + '</div>' +
+    '</div>' +
+    '<div class="tt-slide-body">' + innerHtml + '</div>' +
+  '</div>';
+}
+
+function buildQaidaSlide(){
+  var idx = Math.min(Math.max(0, TS.slideIndex), QAIDA_PAGES.length - 1);
+  var p = QAIDA_PAGES[idx];
+  var inner = '';
+  p.rows.forEach(function(row){
+    inner += '<div class="tt-slide-row">' + row.map(function(x){ return '<span>' + esc(x) + '</span>'; }).join('') + '</div>';
+  });
+  return slideFrame(p.title, (idx + 1) + ' / ' + QAIDA_PAGES.length, inner);
+}
+
+function buildQuranSlide(){
+  var pageNum = Math.max(1, TS.slideIndex + 1);
+  var cached = TS.quranCache[pageNum];
+  if(!cached){
+    /* Fetch and repaint */
+    fetchQuranPage(pageNum).then(function(verses){
+      if(TS.deck !== 'quran') return;
+      var host = $('#tt-slide-host');
+      if(host) paintSlide();
+    });
+    return slideFrame('القرآن الكريم — Page ' + pageNum, pageNum + ' / 604', '<div style="text-align:center;color:#64748b;font-size:13px;padding:30px;">Loading page ' + pageNum + '…</div>');
+  }
+  if(!cached.length){
+    return slideFrame('القرآن الكريم — Page ' + pageNum, pageNum + ' / 604', '<div style="text-align:center;color:#a16262;font-size:13px;padding:30px;">Could not load page ' + pageNum + '. Check your connection.</div>');
+  }
+  var inner = '';
+  cached.forEach(function(v){
+    var text = (v.text_uthmani || '').trim();
+    var num = v.verse_key || '';
+    /* Append verse number as an Arabic-indic styled span */
+    inner += '<div class="tt-quran-verse">' + esc(text) + ' <span class="verse-num">' + esc(num.split(':')[1]) + '</span></div>';
+  });
+  return slideFrame('القرآن الكريم — Page ' + pageNum, pageNum + ' / 604', inner);
+}
+
+function buildCustomSlide(){
+  if(!TS.customPages.length){
+    return slideFrame('Custom slides', '—', '<div style="text-align:center;color:#94a3b8;font-size:13px;padding:30px;">No custom slides yet.<br>Use the Upload button below to add one.</div>');
+  }
+  var idx = Math.min(TS.slideIndex, TS.customPages.length - 1);
+  var src = TS.customPages[idx];
+  return slideFrame('Custom', (idx + 1) + ' / ' + TS.customPages.length, '<img src="' + esc(src) + '" style="max-width:100%;max-height:520px;display:block;margin:0 auto;border-radius:8px;">');
+}
+
+function paintPageBar(){
+  var bar = $('#tt-page-bar');
+  if(!bar) return;
+  var isHost = TS.isHost;
+  var total = TS.deck === 'qaida' ? QAIDA_PAGES.length : (TS.deck === 'quran' ? 604 : TS.customPages.length);
+  if(total === 0) total = 1;
+  var cur = Math.min(TS.slideIndex, total - 1);
+  var html = '';
+  html += '<button data-tt-prev ' + (cur <= 0 ? 'disabled' : '') + '><i class="fa-solid fa-chevron-left"></i> Prev</button>';
+  html += '<button data-tt-next ' + (cur >= total - 1 ? 'disabled' : '') + '>Next <i class="fa-solid fa-chevron-right"></i></button>';
+  html += '<span class="tt-page-label">Page</span>';
+  html += '<input data-tt-goto type="number" min="1" max="' + total + '" value="' + (cur + 1) + '" ' + (!isHost ? 'readonly' : '') + '>';
+  html += '<span class="tt-page-label">of ' + total + '</span>';
+  html += '<div style="flex:1;"></div>';
+  if(isHost && TS.deck === 'custom'){
+    html += '<button data-tt-upload><i class="fa-solid fa-cloud-arrow-up"></i> Upload</button>';
+  }
+  bar.innerHTML = html;
+}
+
+async function goToSlide(i){
+  var isHost = TS.isHost;
+  var total = TS.deck === 'qaida' ? QAIDA_PAGES.length : (TS.deck === 'quran' ? 604 : TS.customPages.length);
+  if(total === 0) return;
+  if(i < 0) i = 0;
+  if(i >= total) i = total - 1;
+
+  if(isHost){
+    var c = db(); if(!c) return;
+    var page = i + 1;
+    var r = await c.from('tutor_rooms').update({
+      current_page: page, updated_at: nowUtc()
+    }).eq('id', TS.room.id).select().maybeSingle();
+    if(r.error){ ttToast('Could not change page', 'error'); return; }
+    TS.slideIndex = i;
+    paintSlide();
+  } else {
+    /* Students cannot navigate — tutor controls */
+    ttToast('Only the tutor can change pages');
+  }
+}
+
+async function uploadCustomSlide(btn){
+  if(!TS.isHost) return;
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async function(){
+    var f = input.files && input.files[0];
+    if(!f) return;
+    if(f.size > 8 * 1024 * 1024){ ttToast('Image under 8 MB', 'error'); return; }
+    btn.disabled = true;
+    var orig = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Uploading…';
+    try {
+      var url = await Z.storeMedia(f);
+      if(!url) throw new Error('Upload failed');
+      TS.customPages.push(url);
+      TS.slideIndex = TS.customPages.length - 1;
+      var c = db();
+      if(c){
+        await c.from('tutor_rooms').update({
+          current_page: TS.customPages.length, updated_at: nowUtc()
+        }).eq('id', TS.room.id);
+      }
+      paintSlide();
+      ttToast('Slide added', 'success');
+    } catch(e){
+      ttToast('Upload failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  };
+  input.click();
+}
+
+/* ============================================================
+   VIDEO STRIP
+   ============================================================ */
+function paintVideoStrip(){
+  var strip = $('#tt-video-strip');
+  if(!strip) return;
+  var u = me();
+  var html = '';
+
+  /* Me first */
+  html += videoTileHtml({
+    userId: u.id,
+    peerId: TS.myPeerId,
+    name: (Z.displayName ? Z.displayName(u) : (u.name || u.username || 'You')),
+    isMe: true,
+    isHost: TS.isHost,
+    hand: (TS.participants.find(function(p){ return p.user_id === u.id; }) || {}).hand,
+    muteForHost: false
+  });
+
+  /* Others — host first */
+  var sorted = TS.participants.slice().sort(function(a, b){
+    if(a.role === 'host' && b.role !== 'host') return -1;
+    if(b.role === 'host' && a.role !== 'host') return 1;
+    return (a.joined_at || '').localeCompare(b.joined_at || '');
+  });
+  sorted.forEach(function(p){
+    if(p.user_id === u.id) return;
+    var prof = Z.getProfileById(p.user_id) || { id: p.user_id, name: p.user_id.slice(0, 6) };
+    html += videoTileHtml({
+      userId: p.user_id,
+      peerId: p.peer_id,
+      name: Z.displayName(prof),
+      isMe: false,
+      isHost: p.role === 'host',
+      hand: p.hand,
+      muteForHost: !!p.muted,
+      showControls: TS.isHost
+    });
+  });
+
+  strip.innerHTML = html;
+  wireVideoStrip();
+}
+
+function videoTileHtml(opts){
+  var peerAttr = opts.peerId ? ' data-tt-peer="' + esc(opts.peerId) + '"' : '';
+  var initial = (opts.name || 'U').trim().charAt(0).toUpperCase() || 'U';
+  var badge = '';
+  if(opts.isHost) badge += '<span class="tt-hosttag">HOST</span>';
+  var ctl = '';
+  if(opts.showControls && !opts.isMe){
+    var mic = opts.muteForHost
+      ? '<button class="danger" data-tt-force-unmute="' + esc(opts.userId) + '" title="Unmute student"><i class="fa-solid fa-microphone"></i></button>'
+      : '<button data-tt-force-mute="' + esc(opts.userId) + '" title="Mute student"><i class="fa-solid fa-microphone-slash"></i></button>';
+    ctl = '<div class="tt-ctl">' + mic + '</div>';
+  }
+  return '<div class="tt-tile-v ' + (opts.isMe ? 'me' : '') + '"' + peerAttr + ' data-tt-user="' + esc(opts.userId) + '">' +
+    '<video autoplay playsinline ' + (opts.isMe ? 'muted' : '') + '></video>' +
+    '<div class="tt-ph">' + esc(initial) + '</div>' +
+    '<div class="tt-badges">' + (opts.hand ? '<i class="tt-hand-raised">✋</i>' : '') + '</div>' +
+    badge +
+    ctl +
+    '<div class="tt-tname">' + esc(opts.name) + (opts.isMe ? ' (You)' : '') + '</div>' +
+  '</div>';
+}
+
+function wireVideoStrip(){
+  /* Attach local video to my tile */
+  var myTile = document.querySelector('[data-tt-user="' + me().id + '"]');
+  if(myTile && TS.localStream){
+    var v = myTile.querySelector('video');
+    if(v && v.srcObject !== TS.localStream){
+      v.srcObject = TS.localStream;
+      v.muted = true;
+      v.play().catch(function(){});
+    }
+  }
+  /* Force-mute buttons */
+  $$('[data-tt-force-mute]').forEach(function(b){
+    b.onclick = function(e){
+      e.stopPropagation();
+      var uid = this.getAttribute('data-tt-force-mute');
+      hostForceMute(uid, true);
+    };
+  });
+  $$('[data-tt-force-unmute]').forEach(function(b){
+    b.onclick = function(e){
+      e.stopPropagation();
+      var uid = this.getAttribute('data-tt-force-unmute');
+      hostForceMute(uid, false);
+    };
+  });
+}
+
+/* ============================================================
+   HOST ACTIONS: FORCE MUTE / UNMUTE
+   ============================================================ */
+async function hostForceMute(targetUserId, mute){
+  if(!TS.isHost) return;
+  var target = TS.participants.find(function(p){ return p.user_id === targetUserId; });
+  if(!target) return;
+  var c = db(); if(!c) return;
+  try {
+    await c.from('tutor_participants').update({
+      muted: !!mute, last_seen: nowUtc()
+    }).eq('room_id', TS.room.id).eq('user_id', targetUserId);
+    /* Send data signal to the specific peer */
+    if(target.peer_id && TS.calls[target.peer_id]){
+      try {
+        TS.calls[target.peer_id].send({ type: 'force_mute', muted: !!mute });
+      } catch(e){}
+    }
+    ttToast((mute ? 'Muted ' : 'Unmuted ') + (Z.displayName(Z.getProfileById(targetUserId)) || 'student'));
+  } catch(e){
+    ttToast('Failed to ' + (mute ? 'mute' : 'unmute'), 'error');
+  }
+}
+
+/* Handle incoming data messages on calls */
+function wireDataChannel(call){
+  call.on('data', function(data){
+    if(!data || !data.type) return;
+    if(data.type === 'force_mute'){
+      if(TS.isHost) return; /* host can't be force-muted */
+      if(TS.localStream){
+        TS.localStream.getAudioTracks().forEach(function(t){ t.enabled = !data.muted; });
+      }
+      paintRoom();
+      ttToast(data.muted ? 'Tutor muted your microphone' : 'Tutor unmuted your microphone', data.muted ? 'warn' : 'success');
+    }
+  });
+}
+
+/* Wrap the original call handlers to also wire data channel */
+var _origSetupPeer = setupPeer;
+setupPeer = function(){
+  _origSetupPeer.apply(this, arguments);
+  if(!TS.peer) return;
+  var _origCallOn = TS.peer.on.bind(TS.peer);
+  /* PeerJS doesn't have a data channel on MediaConnection by default —
+     but PeerJS DOES support .send() and .on('data') on MediaConnection,
+     so we just need to attach handlers when the call is created. */
+};
+
+/* Attach data handlers inside connectTutorToStudent and connectToHost */
+function attachDataHandler(call){
+  if(!call || call._dataWired) return;
+  call._dataWired = true;
+  call.on('data', function(data){
+    if(!data || !data.type) return;
+    if(data.type === 'force_mute'){
+      if(TS.isHost) return;
+      if(TS.localStream){
+        TS.localStream.getAudioTracks().forEach(function(t){ t.enabled = !data.muted; });
+      }
+      paintRoom();
+      ttToast(data.muted ? 'Tutor muted your microphone' : 'Tutor unmuted your microphone', data.muted ? 'warn' : 'success');
+    }
+  });
+}
+
+/* ============================================================
+   LOCAL CONTROLS
+   ============================================================ */
+function toggleMic(){
+  if(!TS.realMic) return;
+  var t = TS.localStream.getAudioTracks()[0];
+  if(!t) return;
+  t.enabled = !t.enabled;
+  var c = db();
+  if(c) c.from('tutor_participants').update({ muted: !t.enabled, last_seen: nowUtc() })
+    .eq('room_id', TS.room.id).eq('user_id', me().id);
+  paintRoom();
+}
+
+function toggleCam(){
+  if(!TS.realCam) return;
+  var t = TS.localStream.getVideoTracks()[0];
+  if(!t) return;
+  t.enabled = !t.enabled;
+  var c = db();
+  if(c) c.from('tutor_participants').update({ cam_on: t.enabled, last_seen: nowUtc() })
+    .eq('room_id', TS.room.id).eq('user_id', me().id);
+  paintRoom();
+}
+
+async function toggleHand(){
+  var u = me(); if(!u) return;
+  var mine = TS.participants.find(function(p){ return p.user_id === u.id; });
+  var newVal = !(mine && mine.hand);
+  var c = db(); if(!c) return;
+  await c.from('tutor_participants').update({ hand: newVal }).eq('room_id', TS.room.id).eq('user_id', u.id);
+  if(newVal){
+    await sendMessage('✋ ' + (Z.displayName(u) || 'Student') + ' raised their hand');
+    ttToast('Hand raised', 'success');
+  }
+  paintRoom();
+}
+
+async function toggleGroup(){
+  if(!TS.isHost) return;
+  var c = db(); if(!c) return;
+  var next = !TS.groupEnabled;
+  var r = await c.from('tutor_rooms').update({
+    group_call_enabled: next, updated_at: nowUtc()
+  }).eq('id', TS.room.id).select().maybeSingle();
+  if(r.error){ ttToast('Could not toggle group call', 'error'); return; }
+  TS.groupEnabled = next;
+  if(next) ttToast('Group call ON — students can hear each other', 'success');
+  else ttToast('Group call OFF');
+  paintRoom();
+}
+
+/* ============================================================
+   PARTICIPANTS PANEL
+   ============================================================ */
+function paintParticipants(){
+  var host = $('#tt-people-list');
+  if(!host) return;
+  var u = me();
+  var html = '';
+  var sorted = TS.participants.slice().sort(function(a, b){
+    if(a.role === 'host' && b.role !== 'host') return -1;
+    if(b.role === 'host' && a.role !== 'host') return 1;
+    return (a.joined_at || '').localeCompare(b.joined_at || '');
+  });
+  sorted.forEach(function(p){
+    var prof = Z.getProfileById(p.user_id) || { id: p.user_id, name: p.user_id.slice(0, 6) };
+    var isMe = p.user_id === u.id;
+    var nm = Z.displayName(prof) + (isMe ? ' (You)' : '');
+    var roleBadge = '<span class="rl ' + (p.role === 'host' ? 'host' : 'student') + '">' + esc(p.role) + '</span>';
+    var hand = p.hand ? '<i class="fa-solid fa-hand tt-hand-raised" style="color:#a18554;margin-right:4px;"></i>' : '';
+    var micIcon = p.muted
+      ? '<i class="fa-solid fa-microphone-slash" style="color:#a16262;"></i>'
+      : '<i class="fa-solid fa-microphone" style="color:#10b981;"></i>';
+    var actions = '';
+    if(TS.isHost && !isMe && p.role !== 'host'){
+      actions += '<button class="mi ' + (p.muted ? 'muted' : '') + '" data-tt-toggle-mute="' + esc(p.user_id) + '" title="' + (p.muted ? 'Unmute' : 'Mute') + '">' + micIcon + '</button>';
+    }
+    html += '<div class="tt-person-row">' +
+      '<div style="width:28px;text-align:center;font-size:13px;">' + hand + '</div>' +
+      '<div class="nm">' + esc(nm) + '</div>' +
+      roleBadge +
+      actions +
+    '</div>';
+  });
+  host.innerHTML = html;
+  $$('[data-tt-toggle-mute]').forEach(function(b){
+    b.onclick = function(){
+      var uid = this.getAttribute('data-tt-toggle-mute');
+      var p = TS.participants.find(function(x){ return x.user_id === uid; });
+      if(!p) return;
+      hostForceMute(uid, !p.muted);
+    };
+  });
+  var cnt = $('#tt-count');
+  if(cnt) cnt.textContent = TS.participants.length;
+}
+
+/* ============================================================
+   CHAT
+   ============================================================ */
+function paintChat(){
+  var log = $('#tt-chat-log');
+  if(!log) return;
+  var u = me();
+  var html = '';
+  TS.messages.forEach(function(m){
+    var mine = m.sender_id === u.id;
+    if(m.kind === 'text' && m.text.indexOf('✋ ') === 0){
+      html += '<div class="tt-msg"><span class="tt-sys">' + esc(m.text) + '</span></div>';
+    } else {
+      var prof = Z.getProfileById(m.sender_id) || { name: 'User' };
+      html += '<div class="tt-msg ' + (mine ? 'mine' : '') + '">' +
+        (!mine ? '<span class="tt-who">' + esc(Z.displayName(prof)) + '</span>' : '') +
+        esc(m.text) +
+      '</div>';
+    }
+  });
+  log.innerHTML = html;
+  scrollChatBottom();
+}
+
+function scrollChatBottom(){
+  var log = $('#tt-chat-log');
+  if(log) log.scrollTop = log.scrollHeight;
+}
+
+function paintTabs(){
+  $$('[data-tt-tab]').forEach(function(b){
+    var isActive = b.getAttribute('data-tt-tab') === TS.tab;
+    b.classList.toggle('on', isActive);
+    var badge = b.querySelector('.badge');
+    if(badge){
+      if(TS.unread > 0 && !isActive){ badge.textContent = TS.unread; badge.style.display = 'flex'; }
+      else badge.style.display = 'none';
+    }
+  });
+}
+
+/* ============================================================
+   LEAVE
+   ============================================================ */
+window.__tt_leave = async function(){
+  if(TS.room){
+    var u = me();
+    var c = db();
+    if(c && u){
+      try { await c.from('tutor_participants').delete().eq('room_id', TS.room.id).eq('user_id', u.id); } catch(e){}
+      if(TS.isHost){
+        /* Host leaving ends the class */
+        try { await c.from('tutor_rooms').update({ is_active: false, updated_at: nowUtc() }).eq('id', TS.room.id); } catch(e){}
+      }
+    }
+  }
+  cleanup();
+  Z.showView('tutor-lobby');
+};
+
+function cleanup(){
+  stopHeartbeat();
+  teardownRealtime();
+  try { closeGroupCalls(); } catch(e){}
+  Object.keys(TS.calls).forEach(function(k){ try { TS.calls[k].close(); } catch(e){} });
+  TS.calls = {};
+  Object.keys(TS.streams).forEach(function(k){ detachRemoteStream(k); });
+  TS.streams = {};
+  try { if(TS.peer) TS.peer.destroy(); } catch(e){}
+  TS.peer = null;
+  try { if(TS.localStream) TS.localStream.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
+  TS.localStream = null;
+  TS.room = null;
+  TS.participants = [];
+  TS.messages = [];
+  TS.customPages = [];
+  TS.isHost = false;
+  TS.unread = 0;
+}
+
+/* ============================================================
+   VIEW REGISTRATION
+   ============================================================ */
+if(!Z._tutorViews){
+  Z._tutorViews = true;
+  Z._bizPages = Z._bizPages || {};
+  var _prevRender = Z.renderView;
+  Z.renderView = function(view, param){
+    if(view === 'tutor-lobby') return renderLobby();
+    if(view === 'tutor-room')  return renderRoomPlaceholder();
+    return _prevRender.call(this, view, param);
+  };
+  /* After the room placeholder paints, enter the room */
+  var _prevShowView = Z.showView;
+  Z.showView = function(view, param){
+    var r = _prevShowView.apply(this, arguments);
+    if(view === 'tutor-room' && param){
+      setTimeout(function(){ enterRoom(param); }, 20);
+    }
+    if(view !== 'tutor-room'){
+      if(TS.room) cleanup();
+    }
+    return r;
+  };
+}
+
+/* ============================================================
+   FLOATING TUTOR BUTTON (Lounge only)
+   ============================================================ */
+function ensureTutorFab(){
+  if(document.getElementById('zynix-tutor-fab')) return;
+  var fab = document.createElement('button');
+  fab.id = 'zynix-tutor-fab';
+  fab.className = 'tt-fab';
+  fab.title = 'ZYNIX Tutoring';
+  fab.innerHTML = '<i class="fa-solid fa-chalkboard-user"></i>';
+  fab.addEventListener('click', function(){
+    if(Z.showView) Z.showView('tutor-lobby');
+  });
+  document.body.appendChild(fab);
+}
+
+function updateTutorFab(){
+  var fab = document.getElementById('zynix-tutor-fab');
+  if(!fab) return;
+  var u = Z.State.currentUser;
+  var v = Z.State.currentView;
+  fab.style.display = (u && v === 'lounge') ? 'flex' : 'none';
+}
+
+ensureTutorFab();
+setInterval(updateTutorFab, 400);
+
+/* ============================================================
+   HOOK FORCE-MUTE DATA INTO ALL OUTGOING CALLS
+   ============================================================ */
+var _origConnectHost = connectToHost;
+connectToHost = function(){
+  _origConnectHost.apply(this, arguments);
+  var hostPeerId = 'zynix-tutor-' + TS.room.code + '-HOST';
+  var c = TS.calls[hostPeerId];
+  if(c) attachDataHandler(c);
+};
+
+var _origConnectStudent = connectTutorToStudent;
+connectTutorToStudent = function(peerId){
+  _origConnectStudent.apply(this, arguments);
+  var c = TS.calls[peerId];
+  if(c) attachDataHandler(c);
+};
+
+/* ============================================================
+   PRESENCE: mark students offline if last_seen > 30s ago
+   ============================================================ */
+setInterval(async function(){
+  if(!TS.room || !TS.isHost) return;
+  var c = db(); if(!c) return;
+  var cutoff = new Date(Date.now() - 60000).toISOString();
+  try {
+    await c.from('tutor_participants')
+      .delete()
+      .eq('room_id', TS.room.id)
+      .lt('last_seen', cutoff)
+      .neq('role', 'host');
+  } catch(e){}
+}, 45000);
+
+/* ============================================================
+   EXPORTS
+   ============================================================ */
+Z.Tutor = {
+  open: function(){ Z.showView('tutor-lobby'); },
+  state: TS,
+  destroy: cleanup
+};
+
+console.log('[ZYNIX Section 19] Tutoring ready — Noorani Qaida · Quran · Live audio/video');
+})();
+</script>   
 </body>
 </html>
 
