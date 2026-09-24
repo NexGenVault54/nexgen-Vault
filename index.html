@@ -15413,6 +15413,151 @@ document.addEventListener('click', function(e){
 
 console.log('[HScroll] wheel + drag ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- HOME DOM REPAIR — standalone, immune to duplicates           -->
+<!-- Fixes: comments vanish, share rate vanish, badge vanish      -->
+<!-- Runs after reloadData + every 3s while on Home               -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixHomeRepair) return; Z.__zynixHomeRepair = true;
+
+Z.repairHomeDom = function(){
+  if(Z.State.currentView !== 'home') return;
+  var container = document.getElementById('app-container');
+  if(!container) return;
+
+  var statePosts = Z.State.allPosts || [];
+  var profiles = Z.State.allProfiles || [];
+
+  container.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
+    var pid = card.getAttribute('data-post-id');
+    if(!pid) return;
+    var post = statePosts.find(function(p){ return p && p.id === pid; });
+    if(!post) return;
+
+    /* 1. Comment count on button */
+    try {
+      var commentBtn = null;
+      card.querySelectorAll('.post-actions button').forEach(function(b){
+        if(b.querySelector('.fa-comment')) commentBtn = b;
+      });
+      if(commentBtn){
+        var wantCount = Z.countAllComments(post._comments || []);
+        var span = commentBtn.querySelector('span');
+        if(span && String(wantCount) !== span.textContent){
+          span.textContent = wantCount;
+        }
+      }
+    } catch(e){}
+
+    /* 2. Comment body if section is open */
+    try {
+      var cw = card.querySelector('.post-comments');
+      if(cw && cw.classList.contains('open')){
+        var stateComments = post._comments || [];
+        var domComments = cw.querySelectorAll('.comment-item').length;
+        var wantDom = Z.countAllComments(stateComments);
+        if(stateComments.length > 0 && domComments < wantDom){
+          var cpEl = cw.querySelector('.comment-color-picker');
+          var inEl = cw.querySelector('.comment-input-wrap');
+          var newHtml = '';
+          stateComments.forEach(function(cm){
+            try { newHtml += Z.renderComment(cm, post, profiles); } catch(e){}
+          });
+          Array.prototype.slice.call(cw.children).forEach(function(ch){
+            if(ch === cpEl || ch === inEl) return;
+            ch.remove();
+          });
+          if(newHtml){
+            var tmp = document.createElement('div');
+            tmp.innerHTML = newHtml;
+            var anchor = cpEl || inEl || null;
+            Array.prototype.slice.call(tmp.children).forEach(function(node){
+              if(anchor) cw.insertBefore(node, anchor);
+              else cw.appendChild(node);
+            });
+          }
+        }
+      }
+    } catch(e){}
+
+    /* 3. Budget badge */
+    try {
+      var actionsRow = card.querySelector('.post-actions');
+      if(actionsRow){
+        var cap = Number(post.share_budget_cap) || 0;
+        var badge = actionsRow.querySelector('span[data-share-budget="1"]');
+        if(cap > 0){
+          var paid = Number(post.share_bounty_paid) || 0;
+          var rem = Math.max(0, cap - paid);
+          var col = rem > 0 ? '#10b981' : '#a16262';
+          var bh = '<span data-share-budget="1" style="white-space:nowrap;font-size:10px;font-weight:800;color:' + col + ';background:rgba(255,255,255,.04);padding:3px 8px;border-radius:12px;">$' + rem.toFixed(2) + '/$' + cap.toFixed(2) + '</span>';
+          if(badge){
+            if(badge.outerHTML !== bh) badge.outerHTML = bh;
+          } else {
+            var shareBtnAdd = actionsRow.querySelector('button[onclick*="sharePost"]');
+            if(shareBtnAdd) shareBtnAdd.insertAdjacentHTML('afterend', bh);
+          }
+        } else if(badge){
+          badge.remove();
+        }
+      }
+    } catch(e){}
+
+    /* 4. Share rate on share button */
+    try {
+      var shareBtn = null;
+      card.querySelectorAll('.post-actions button').forEach(function(b){
+        if(b.querySelector('.fa-share-nodes')) shareBtn = b;
+      });
+      if(shareBtn){
+        var sb = Number(post.share_bounty) || 0;
+        var spans = shareBtn.querySelectorAll('span');
+        var hasRate = false;
+        spans.forEach(function(s){ if((s.textContent||'').indexOf('$') !== -1) hasRate = true; });
+        if(sb > 0 && !hasRate){
+          var count = (post.shares||0);
+          shareBtn.innerHTML = '<i class="fa-solid fa-share-nodes"></i><span>' + count + '</span><span style="color:#10b981;font-weight:800;"> · $' + sb.toFixed(2) + '</span>';
+        }
+      }
+    } catch(e){}
+  });
+};
+
+/* Hook: after reloadData */
+var _origReloadData = Z.reloadData;
+if(typeof _origReloadData === 'function'){
+  Z.reloadData = async function(){
+    var result = await _origReloadData.apply(this, arguments);
+    setTimeout(function(){ try { Z.repairHomeDom(); } catch(e){} }, 250);
+    return result;
+  };
+}
+
+/* Hook: after showView to Home */
+var _origShowView = Z.showView;
+if(typeof _origShowView === 'function'){
+  Z.showView = function(view, param){
+    var result = _origShowView.apply(this, arguments);
+    if(view === 'home'){
+      setTimeout(function(){ try { Z.repairHomeDom(); } catch(e){} }, 400);
+      setTimeout(function(){ try { Z.repairHomeDom(); } catch(e){} }, 1200);
+    }
+    return result;
+  };
+}
+
+/* Hook: continuous safety net */
+setInterval(function(){
+  try { Z.repairHomeDom(); } catch(e){}
+}, 3000);
+
+console.log('[HomeRepair] standalone repair ready');
+})();
 </script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
