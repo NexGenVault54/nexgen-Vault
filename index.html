@@ -5948,8 +5948,14 @@ Z.openCreateSparkModal = function(){
         '</div>' +
         '<label class="form-label" style="margin-top:10px;">Or Video URL</label>' +
         '<input type="text" id="spark-url" class="form-input" placeholder="https://...">' +
-        '<label class="form-label">Share Bounty</label>' +
+               '<label class="form-label">Share Bounty</label>' +
         '<select id="spark-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
+        '<label class="form-label" style="margin-top:8px;">Total share budget <span style="color:#64748b;font-weight:500;">(0 = no cap)</span></label>' +
+        '<select id="spark-share-budget" class="form-select">' +
+          [0, 0.5, 1, 5, 10, 25, 50, 100].map(function(v){
+            return '<option value="' + v + '">$' + v.toFixed(2) + (v === 0 ? ' (no cap)' : '') + '</option>';
+          }).join('') +
+        '</select>' +
         '<button class="btn-primary" onclick="Z.submitSpark()">Publish Spark</button>' +
       '</div>' +
     '</div>'
@@ -6036,7 +6042,7 @@ Z.submitSparkImpl = async function(forceNoCaption){
   var fi = document.getElementById('spark-file');
   var url = ((document.getElementById('spark-url')||{}).value || '').trim();
   var shareBounty = parseFloat((document.getElementById('spark-share-bounty')||{}).value || '0') || 0;
-
+  var shareBudgetCap = parseFloat((document.getElementById('spark-share-budget')||{}).value || '0') || 0;
   var cached = Z._mediaCache.spark;
   var hasFile = !!(cached && cached.blob) || !!(fi && fi.files && fi.files[0]);
   if(!hasFile && !url){ Z.toast('Provide video.'); return; }
@@ -6051,9 +6057,10 @@ Z.submitSparkImpl = async function(forceNoCaption){
 
     var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
   var sparkId = Z.uuid();
-  var optimistic = {
+   var optimistic = {
     id: sparkId, author_id: me.id, caption: caption, video_url: localUrl,
     tags: tags, type: 'spark', share_bounty: shareBounty,
+    share_budget_cap: shareBudgetCap, share_bounty_paid: 0,
     created_at: new Date().toISOString(), views: 0, shares: 0,
     _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
     _optimistic: true
@@ -6097,10 +6104,11 @@ Z.submitSparkImpl = async function(forceNoCaption){
       if(Z.State.currentView === 'spark') Z.showView('spark');
       return;
     }
-    var sp = await Z.DB.createSpark({
+      var sp = await Z.DB.createSpark({
       id: sparkId,
       author_id: me.id, caption: caption, video_url: vu,
-      tags: tags, type: 'spark', share_bounty: shareBounty
+      tags: tags, type: 'spark', share_bounty: shareBounty,
+      share_budget_cap: shareBudgetCap
     });
     var arr = Z.State.allSparks || [];
     var idx = -1;
