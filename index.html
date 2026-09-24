@@ -15558,6 +15558,153 @@ setInterval(function(){
 
 console.log('[HomeRepair] standalone repair ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- REPOST VISUAL — shows original author + "View original" link  -->
+<!-- Also patches renderPostCard to add the badge                  -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixRepostFix) return; Z.__zynixRepostFix = true;
+
+/* Open original post in modal */
+Z.openOriginalPost = async function(postId){
+  var c = Z.sb(); if(!c) return;
+  try {
+    var r = await c.from('posts').select('*').eq('id', postId).maybeSingle();
+    if(!r.data){ Z.toast('Original post no longer available.'); return; }
+    var orig = r.data;
+    var author = Z.getProfileById(orig.author_id) || { id: orig.author_id, name: 'User' };
+
+    var bodyHtml = '';
+    /* Banner style */
+    if(orig.post_style && orig.post_style.type === 'banner' && orig.content){
+      var bgMap = { 'deep-blue':'linear-gradient(135deg,#1e3a8a,#312e81)', 'warm-sand':'linear-gradient(135deg,#78350f,#92400e)', 'emerald':'linear-gradient(135deg,#065f46,#047857)' };
+      var fmMap = { 'display': {css:'system-ui,sans-serif',weight:900}, 'clean': {css:'system-ui,sans-serif',weight:700}, 'editorial': {css:'Georgia,serif',weight:800} };
+      var bg = bgMap[orig.post_style.bg] || bgMap['deep-blue'];
+      var fm = fmMap[orig.post_style.font] || fmMap['display'];
+      var len = (orig.content||'').length;
+      var fs = 24;
+      if(len > 60) fs = 20;
+      if(len > 120) fs = 17;
+      bodyHtml += '<div style="background:' + bg + ';border-radius:12px;padding:24px;margin-bottom:12px;"><div style="font-family:' + fm.css + ';font-weight:' + fm.weight + ';font-size:' + fs + 'px;color:#fff;text-align:center;line-height:1.3;white-space:pre-wrap;">' + Z.escape(orig.content) + '</div></div>';
+    } else if(orig.content){
+      bodyHtml += '<div style="font-size:13px;color:#e2e8f0;line-height:1.6;margin-bottom:12px;white-space:pre-wrap;word-break:break-word;">' + Z.escape(orig.content) + '</div>';
+    }
+    /* Media */
+    if(orig.media_url){
+      var mt = orig.media_type || (Z.isVideoUrl(orig.media_url) ? 'video' : 'image');
+      if(mt === 'video'){
+        bodyHtml += '<div style="border-radius:12px;overflow:hidden;background:#000;"><video src="' + Z.escape(orig.media_url) + '" controls playsinline style="width:100%;max-height:400px;display:block;background:#000;"></video></div>';
+      } else {
+        bodyHtml += '<div style="border-radius:12px;overflow:hidden;"><img src="' + Z.escape(orig.media_url) + '" style="width:100%;max-height:400px;object-fit:contain;display:block;"></div>';
+      }
+    }
+
+    Z.openModal(
+      '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+        '<div class="modal-box" style="max-width:480px;">' +
+          '<div class="modal-header"><h3>Original Post</h3>' +
+            '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;" onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')">' +
+            '<img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;">' +
+            '<div>' +
+              '<div style="font-weight:700;color:#fff;">' + Z.escape(Z.displayName(author)) + '</div>' +
+              '<div style="font-size:10px;color:#64748b;">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(orig.created_at).getTime()) + '</div>' +
+            '</div>' +
+          '</div>' +
+          bodyHtml +
+          '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center;">' +
+            '<div style="font-size:11px;color:#64748b;">❤️ ' + (orig.reactions ? Object.values(orig.reactions).reduce(function(a,b){return a+b;},0) : 0) + ' · 💬 ' + (orig.comments_count || 0) + '</div>' +
+            '<button onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')" style="background:transparent;border:1px solid #1e293b;color:#60a5fa;font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px;cursor:pointer;">View profile</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  } catch(e){
+    Z.toast('Could not load original post.');
+  }
+};
+
+/* Patch renderPostCard to add repost badge */
+function installRepostBadge(){
+  if(!Z.renderPostCard) return false;
+  if(Z.renderPostCard.__repostPatched) return true;
+
+  var _origRender = Z.renderPostCard;
+  Z.renderPostCard = function(p, profiles, me, isNew){
+    var html = _origRender.apply(this, arguments);
+    if(!p || !p.shared_from_id) return html;
+    if(html.indexOf('data-repost-badge') !== -1) return html;
+
+    /* Find original author from state if possible */
+    var origAuthor = null;
+    try {
+      var origPost = (Z.State.allPosts || []).find(function(x){ return x && x.id === p.shared_from_id; });
+      if(!origPost && Z.State.spacePosts){
+        origPost = Z.State.spacePosts.find(function(x){ return x && x.id === p.shared_from_id; });
+      }
+      if(origPost){
+        origAuthor = (profiles || []).find(function(x){ return x.id === origPost.author_id; });
+      }
+    } catch(e){}
+
+    var authorLink = origAuthor
+      ? ' from <a href="#" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(origAuthor.id) + '\');return false;" style="color:#60a5fa;text-decoration:none;font-weight:700;">@' + Z.escape(origAuthor.username || 'user') + '</a>'
+      : '';
+
+    var badge =
+      '<div data-repost-badge="1" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;padding:6px 0 8px;border-bottom:1px solid rgba(255,255,255,.04);margin-bottom:10px;">' +
+        '<i class="fa-solid fa-retweet" style="color:#60a5fa;"></i>' +
+        '<span>Reposted' + authorLink + '</span>' +
+        '<button onclick="event.stopPropagation();Z.openOriginalPost(\'' + Z.escape(p.shared_from_id) + '\')" style="background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:700;cursor:pointer;padding:2px 6px;margin-left:auto;text-decoration:underline;">View original</button>' +
+      '</div>';
+
+    /* Insert badge right after the closing div of post-author */
+    var marker = '</div>';
+    var authorCloseIdx = html.indexOf('post-author');
+    if(authorCloseIdx === -1) return html;
+
+    /* Find the first "</div>" after "post-author" that closes the header container.
+       The header has nested divs so we look for the sequence that closes it:
+       menuBtn ends with "</div>" then "</div>" closes post-author.
+       Safer approach: insert right before the caption or media block. */
+    var insertIdx = html.indexOf('post-content');
+    if(insertIdx === -1) insertIdx = html.indexOf('post-media');
+    if(insertIdx === -1) insertIdx = html.indexOf('post-reactions');
+    if(insertIdx === -1) return html;
+
+    /* Walk back to the last '<div' opening before that point */
+    var before = html.substring(0, insertIdx);
+    var lastOpen = before.lastIndexOf('<div');
+    if(lastOpen === -1) return html;
+
+    return html.substring(0, lastOpen) + badge + html.substring(lastOpen);
+  };
+  Z.renderPostCard.__repostPatched = true;
+  return true;
+}
+
+/* Retry install until renderPostCard exists */
+var tries = 0;
+var timer = setInterval(function(){
+  tries++;
+  if(installRepostBadge()){ clearInterval(timer); }
+  else if(tries > 20){ clearInterval(timer); }
+}, 300);
+
+/* Also re-render Home whenever this runs the first time */
+setTimeout(function(){
+  if(Z.State.currentView === 'home'){
+    try { if(typeof Z.softRefresh === 'function') Z.softRefresh(); } catch(e){}
+  }
+}, 800);
+
+console.log('[RepostFix] installed');
+})();
 </script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
