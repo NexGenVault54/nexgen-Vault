@@ -472,7 +472,7 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
    18. CAPTION SEE-MORE (post / status / spark)
    ============================================================ */
 .post-content.post-caption{position:relative;margin-bottom:10px}
-.post-caption .pc-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;color:#e2e8f0;line-height:1.6}
+.post-caption .pc-text{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;font-size:13px;color:#e2e8f0;line-height:1.6}
 .post-caption .pc-see-more{display:none;position:absolute;right:0;bottom:0;background:linear-gradient(to right, rgba(17,24,39,0), rgba(17,24,39,1) 40%);color:#10b981;font-weight:700;font-size:11px;cursor:pointer;padding-left:22px;height:1.6em;line-height:1.6em;border:none}
 .post-caption.has-overflow:not(.expanded) .pc-see-more{display:inline-block}
 .post-caption.expanded .pc-text{display:block;-webkit-line-clamp:unset;overflow:visible}
@@ -1511,12 +1511,14 @@ Z.saveSnapshot = function(){
     };
     var snap = {
       ts: Date.now(),
-      posts: (Z.State.allPosts||[]).slice(0,30).map(function(p){
+          posts: (Z.State.allPosts||[]).slice(0,30).map(function(p){
         var safeMedia = safeUrl(p.media_url);
         return { id:p.id, author_id:p.author_id, content:p.content,
                  media_url: safeMedia,
                  media_type: safeMedia ? p.media_type : null,
-                 created_at:p.created_at, views:p.views, shares:p.shares, reactions:p.reactions||{} };
+                 created_at:p.created_at, views:p.views, shares:p.shares, reactions:p.reactions||{},
+                 post_style: p.post_style || null,
+                 visibility: p.visibility || ['public'] };
       }),
       sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
         return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title,
@@ -3088,7 +3090,7 @@ Z.renderPostCard = function(p, profiles, me, isNew){
 
   var newClass = isNew ? ' zynix-new-item' : '';
 
-  return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '">' +
+   return '<div class="post-card' + newClass + '" data-post-id="' + Z.escape(p.id) + '" data-is-banner="' + (_isBanner ? '1' : '0') + '">' +
        '<div class="post-author">' +
       '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
       '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')">' +
@@ -3289,7 +3291,7 @@ Z.expandComposer = function(){
 
     if(b.active){
       wrap.setAttribute('style', 'background:' + bg + ';border-radius:16px;padding:24px;transition:background .25s ease;');
-      ta.setAttribute('style', 'width:100%;background:transparent;border:none;outline:none;resize:none;color:#fff;font-family:' + fm.css + ';font-weight:' + fm.weight + ';text-align:center;line-height:1.25;min-height:140px;max-height:280px;padding:0;font-size:28px;');
+      ta.setAttribute('style', 'width:100%;background:transparent;border:none;outline:none;resize:none;color:#fff;font-family:' + fm.css + ';font-weight:' + fm.weight + ';text-align:center;line-height:1.25;min-height:160px;height:auto;padding:0;font-size:28px;overflow:hidden;');
       ta.className = '';
       ta.setAttribute('placeholder', 'Type your banner text...');
       if(picker) picker.style.display = 'block';
@@ -15019,18 +15021,27 @@ Z.softRefreshIfChanged = function(view){
   /* Media repair check — snapshot may have painted null media (blob filtered),
      while state now has the real R2 URL from reloadData. If DOM is missing
      media but state has it → rebuild. Otherwise first refresh shows blank media. */
-  var _needRepair = false;
+   var _needRepair = false;
   try {
     for(var _k = 0; _k <= topStateIdx; _k++){
       var _p = statePosts[_k];
-      if(!_p || !_p.media_url) continue;
-      if(typeof _p.media_url !== 'string') continue;
-      if(_p.media_url.indexOf('blob:') === 0) continue;
-      if(_p.media_url.indexOf('http') !== 0) continue;
+      if(!_p) continue;
       var _card = container.querySelector('.post-card[data-post-id="' + _p.id + '"]');
       if(!_card) continue;
-      var _hasMedia = _card.querySelector('.post-media img, .post-media video');
-      if(!_hasMedia){ _needRepair = true; break; }
+
+      /* Media repair */
+      if(_p.media_url
+         && typeof _p.media_url === 'string'
+         && _p.media_url.indexOf('blob:') !== 0
+         && _p.media_url.indexOf('http') === 0){
+        var _hasMedia = _card.querySelector('.post-media img, .post-media video');
+        if(!_hasMedia){ _needRepair = true; break; }
+      }
+
+      /* Banner repair */
+      var _stateIsBanner = !!(_p.post_style && _p.post_style.type === 'banner');
+      var _domIsBanner = _card.getAttribute('data-is-banner') === '1';
+      if(_stateIsBanner !== _domIsBanner){ _needRepair = true; break; }
     }
   } catch(e){}
   if(_needRepair){ Z.softRefresh(); return; }
