@@ -15990,7 +15990,240 @@ Z.openPostPage = function(postId){
 
 console.log('[PostPage] ready');
 })();
-</script>     
+</script>
+<!-- ============================================================ -->
+<!-- SPARK FIX 1 — View Original + full page now Spark-aware      -->
+<!-- Falls back to sparks table when posts lookup fails            -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkPostPageFix) return; Z.__zynixSparkPostPageFix = true;
+
+/* Helper: fetch from posts, fall back to sparks */
+Z._fetchOriginalContent = async function(contentId){
+  var c = Z.sb(); if(!c) return null;
+  try {
+    var r = await c.from('posts').select('*').eq('id', contentId).maybeSingle();
+    if(r.data) return { data: r.data, kind: 'post' };
+  } catch(e){}
+  try {
+    var s = await c.from('sparks').select('*').eq('id', contentId).maybeSingle();
+    if(s.data){
+      var sp = s.data;
+      return {
+        data: {
+          id: sp.id,
+          author_id: sp.author_id,
+          content: sp.caption || sp.title || '',
+          media_url: sp.video_url,
+          media_type: 'video',
+          created_at: sp.created_at,
+          views: sp.views || 0,
+          shares: sp.shares || 0,
+          share_bounty: Number(sp.share_bounty) || 0,
+          share_budget_cap: Number(sp.share_budget_cap) || 0,
+          share_bounty_paid: Number(sp.share_bounty_paid) || 0,
+          post_style: null,
+          _is_spark: true
+        },
+        kind: 'spark'
+      };
+    }
+  } catch(e){}
+  return null;
+};
+
+/* Override openOriginalPost — Spark-aware */
+Z.openOriginalPost = async function(contentId){
+  var c = Z.sb(); if(!c) return;
+  try {
+    var found = await Z._fetchOriginalContent(contentId);
+    if(!found){ Z.toast('Original content no longer available.'); return; }
+    var orig = found.data;
+    var author = Z.getProfileById(orig.author_id) || { id: orig.author_id, name: 'User' };
+
+    var bodyHtml = '';
+    if(orig.post_style && orig.post_style.type === 'banner' && orig.content){
+      var bgMap = { 'deep-blue':'linear-gradient(135deg,#1e3a8a,#312e81)', 'warm-sand':'linear-gradient(135deg,#78350f,#92400e)', 'emerald':'linear-gradient(135deg,#065f46,#047857)' };
+      var fmMap = { 'display': {css:'system-ui,sans-serif',weight:900}, 'clean': {css:'system-ui,sans-serif',weight:700}, 'editorial': {css:'Georgia,serif',weight:800} };
+      var bg = bgMap[orig.post_style.bg] || bgMap['deep-blue'];
+      var fm = fmMap[orig.post_style.font] || fmMap['display'];
+      var len = (orig.content||'').length;
+      var fs = 24;
+      if(len > 60) fs = 20;
+      if(len > 120) fs = 17;
+      bodyHtml += '<div style="background:' + bg + ';border-radius:12px;padding:24px;margin-bottom:12px;"><div style="font-family:' + fm.css + ';font-weight:' + fm.weight + ';font-size:' + fs + 'px;color:#fff;text-align:center;line-height:1.3;white-space:pre-wrap;">' + Z.escape(orig.content) + '</div></div>';
+    } else if(orig.content){
+      bodyHtml += '<div style="font-size:13px;color:#e2e8f0;line-height:1.6;margin-bottom:12px;white-space:pre-wrap;word-break:break-word;">' + Z.escape(orig.content) + '</div>';
+    }
+    if(orig.media_url){
+      var mt = orig.media_type || (Z.isVideoUrl(orig.media_url) ? 'video' : 'image');
+      if(mt === 'video'){
+        bodyHtml += '<div style="border-radius:12px;overflow:hidden;background:#000;"><video src="' + Z.escape(orig.media_url) + '" controls playsinline style="width:100%;max-height:400px;display:block;background:#000;"></video></div>';
+      } else {
+        bodyHtml += '<div style="border-radius:12px;overflow:hidden;"><img src="' + Z.escape(orig.media_url) + '" style="width:100%;max-height:400px;object-fit:contain;display:block;"></div>';
+      }
+    }
+
+    var rxCount = 0, cmCount = 0;
+    try {
+      if(found.kind === 'post'){
+        var rR = await c.from('post_reactions').select('reaction', { count: 'exact', head: true }).eq('post_id', contentId);
+        rxCount = rR.count || 0;
+        var rC = await c.from('comments').select('id', { count: 'exact', head: true }).eq('post_id', contentId);
+        cmCount = rC.count || 0;
+      } else {
+        var rR2 = await c.from('spark_reactions').select('reaction', { count: 'exact', head: true }).eq('spark_id', contentId);
+        rxCount = rR2.count || 0;
+        var rC2 = await c.from('comments').select('id', { count: 'exact', head: true }).eq('spark_id', contentId);
+        cmCount = rC2.count || 0;
+      }
+    } catch(e){}
+
+    var shareRate = Number(orig.share_bounty) || 0;
+    var budgetCap = Number(orig.share_budget_cap) || 0;
+    var budgetPaid = Number(orig.share_bounty_paid) || 0;
+    var budgetRem = Math.max(0, budgetCap - budgetPaid);
+
+    var connectBtnModal = '';
+    try {
+      var cs = Z.getConnectionState(orig.author_id);
+      var bountyAmt = Z.getConnectBounty(author);
+      if(cs === 'none'){ connectBtnModal = '<button onclick="Z.closeModal();Z.sendConnectRequest(\'' + Z.escape(orig.author_id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-handshake"></i> Bond · $' + bountyAmt.toFixed(2) + '</button>'; }
+      else if(cs === 'connected'){ connectBtnModal = '<button style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.35);color:#10b981;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:default;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-check"></i> Bonded</button>'; }
+      else if(cs === 'connecting_in'){ connectBtnModal = '<button onclick="Z.closeModal();Z.acceptIncomingBond(\'' + Z.escape(orig.author_id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-handshake"></i> Accept Bond</button>'; }
+      else if(cs === 'connecting_out'){ connectBtnModal = '<button style="background:#1e293b;border:1px solid #334155;color:#fbbf24;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:default;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-hourglass-half"></i> Pending</button>'; }
+    } catch(e){}
+
+    Z.openModal(
+      '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
+        '<div class="modal-box" style="max-width:520px;">' +
+          '<div class="modal-header"><h3>Original ' + (found.kind === 'spark' ? 'Spark' : 'Post') + '</h3>' +
+            '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
+            '<img src="' + Z.escape(Z.displayAvatar(author)) + '" onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')" style="width:44px;height:44px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">' +
+            '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')">' +
+              '<div style="font-weight:800;font-size:14px;color:#fff;">' + Z.escape(Z.displayName(author)) + '</div>' +
+              '<div style="font-size:11px;color:#64748b;">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(orig.created_at).getTime()) + '</div>' +
+            '</div>' +
+          '</div>' +
+          bodyHtml +
+          '<div style="display:flex;gap:16px;padding:12px 0;border-top:1px solid #1e293b;border-bottom:1px solid #1e293b;margin-top:12px;font-size:12px;color:#94a3b8;font-weight:700;">' +
+            '<span><i class="fa-solid fa-heart" style="color:#ef4444;"></i> ' + rxCount + '</span>' +
+            '<span><i class="fa-regular fa-comment"></i> ' + cmCount + '</span>' +
+            '<span><i class="fa-regular fa-eye"></i> ' + (orig.views || 0) + '</span>' +
+          '</div>' +
+          (shareRate > 0 || budgetCap > 0 ?
+            '<div style="padding:12px 0;border-bottom:1px solid #1e293b;">' +
+              (shareRate > 0 ? '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;margin-bottom:6px;"><span>Share bounty rate</span><b style="color:#10b981;">$' + shareRate.toFixed(2) + '</b></div>' : '') +
+              (budgetCap > 0 ? '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;"><span>Total budget</span><b style="color:' + (budgetRem > 0 ? '#10b981' : '#a16262') + ';">$' + budgetRem.toFixed(2) + ' / $' + budgetCap.toFixed(2) + '</b></div>' : '') +
+            '</div>' : '') +
+          '<div style="display:flex;gap:8px;margin-top:14px;">' +
+            connectBtnModal +
+            '<button onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')" style="flex:1;background:transparent;border:1px solid #1e293b;color:#cbd5e1;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:pointer;">View full profile</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  } catch(e){
+    Z.toast('Could not load original content.');
+  }
+};
+
+/* Override loadPostPage — Spark-aware */
+Z.loadPostPage = async function(contentId){
+  var c = Z.sb(); if(!c) return;
+  var host = document.getElementById('post-page-host');
+  if(!host) return;
+  try {
+    var found = await Z._fetchOriginalContent(contentId);
+    if(!found){ host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Content not found.' }); return; }
+    var item = found.data;
+    var me = Z.State.currentUser;
+
+    if(found.kind === 'post'){
+      var rx = await c.from('post_reactions').select('user_id, reaction').eq('post_id', contentId);
+      var rxMap = {}, myRx = {};
+      (rx.data || []).forEach(function(x){
+        rxMap[x.reaction] = (rxMap[x.reaction] || 0) + 1;
+        if(me && x.user_id === me.id) myRx[x.reaction] = true;
+      });
+      item.reactions = rxMap;
+      item._myReactions = myRx;
+      var cm = await c.from('comments').select('*').eq('post_id', contentId).order('created_at', {ascending: true});
+      var comments = cm.data || [];
+      var cIds = comments.map(function(x){ return x.id; });
+      var crMap = {}, myCrMap = {};
+      if(cIds.length){
+        var cr = await c.from('comment_reactions').select('comment_id, reaction, user_id').in('comment_id', cIds);
+        (cr.data || []).forEach(function(x){
+          crMap[x.comment_id] = crMap[x.comment_id] || {};
+          crMap[x.comment_id][x.reaction] = (crMap[x.comment_id][x.reaction] || 0) + 1;
+          if(me && x.user_id === me.id){
+            myCrMap[x.comment_id] = myCrMap[x.comment_id] || {};
+            myCrMap[x.comment_id][x.reaction] = true;
+          }
+        });
+      }
+      comments.forEach(function(x){
+        x._reactionCounts = crMap[x.id] || {};
+        x._myReactions = myCrMap[x.id] || {};
+        x._replies = [];
+      });
+      var byId = {};
+      comments.forEach(function(x){ byId[x.id] = x; });
+      comments.forEach(function(x){
+        if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x);
+      });
+      item._comments = comments.filter(function(x){ return !x.parent_id; });
+      var profiles = Z.State.allProfiles || [];
+      if(!profiles.find(function(p){ return p.id === item.author_id; })){
+        var pr = await c.from('profiles').select('*').eq('id', item.author_id).maybeSingle();
+        if(pr.data){ profiles = profiles.concat([pr.data]); Z.State.allProfiles = profiles; }
+      }
+      host.innerHTML = Z.renderPostCard(item, profiles, me, false);
+      var cw = document.getElementById('comments-' + contentId);
+      if(cw) cw.classList.add('open');
+      setTimeout(function(){
+        try { Z.observeFreezeDots(); } catch(e){}
+        try { Z._tagMediaContainers(); } catch(e){}
+        try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+      }, 100);
+    } else {
+      var author = Z.getProfileById(item.author_id) || { id: item.author_id, name: 'User' };
+      host.innerHTML =
+        '<div style="display:flex;flex-direction:column;gap:12px;">' +
+          '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:14px;">' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
+              '<img src="' + Z.escape(Z.displayAvatar(author)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')" style="width:42px;height:42px;border-radius:50%;object-fit:cover;cursor:pointer;">' +
+              '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')">' +
+                '<div style="font-weight:800;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(author)) + '</div>' +
+                '<div style="font-size:10px;color:#64748b;">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(item.created_at).getTime()) + '</div>' +
+              '</div>' +
+            '</div>' +
+            '<div style="border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px;">' +
+              '<video src="' + Z.escape(item.media_url) + '" controls playsinline preload="metadata" style="width:100%;max-height:500px;display:block;background:#000;"></video>' +
+            '</div>' +
+            (item.content ? '<div style="font-size:13px;color:#e2e8f0;line-height:1.6;white-space:pre-wrap;word-break:break-word;">' + Z.escape(item.content) + '</div>' : '') +
+            '<div style="display:flex;gap:16px;padding-top:12px;border-top:1px solid #1e293b;margin-top:12px;font-size:12px;color:#94a3b8;font-weight:700;">' +
+              '<span><i class="fa-regular fa-eye"></i> ' + (item.views || 0) + '</span>' +
+              '<span><i class="fa-solid fa-share-nodes"></i> ' + (item.shares || 0) + '</span>' +
+            '</div>' +
+          '</div>' +
+          '<button onclick="Z.showView(\'spark\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Open Spark Feed</button>' +
+        '</div>';
+    }
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load content.' });
+  }
+};
+
+console.log('[Spark PostPage Fix] openOriginalPost + loadPostPage now spark-aware');
+})();
+</script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
