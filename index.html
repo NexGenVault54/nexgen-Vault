@@ -3018,8 +3018,34 @@ Z.renderPostCard = function(p, profiles, me, isNew){
   var comments = (p._comments || []);
   var cHtml = comments.map(function(cm){ return Z.renderComment(cm, p, profiles); }).join('');
 
-  var captionHtml = '';
-  if(p.content){
+   var captionHtml = '';
+  var _isBanner = false;
+  try {
+    _isBanner = !!(p.post_style && p.post_style.type === 'banner' && p.content);
+  } catch(e){}
+  if(_isBanner){
+    var _bgMap = {
+      'deep-blue': 'linear-gradient(135deg,#1e3a8a,#312e81)',
+      'warm-sand': 'linear-gradient(135deg,#78350f,#92400e)',
+      'emerald':   'linear-gradient(135deg,#065f46,#047857)'
+    };
+    var _fontMap = {
+      'display':   { css: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", weight: 900 },
+      'clean':     { css: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", weight: 700 },
+      'editorial': { css: "Georgia, 'Times New Roman', serif", weight: 800 }
+    };
+    var _bg = _bgMap[p.post_style.bg] || _bgMap['deep-blue'];
+    var _fm = _fontMap[p.post_style.font] || _fontMap['display'];
+    var _len = (p.content || '').length;
+    var _fs = 28;
+    if(_len > 60) _fs = 24;
+    if(_len > 120) _fs = 20;
+    if(_len > 220) _fs = 17;
+    captionHtml =
+      '<div style="background:' + _bg + ';border-radius:14px;padding:28px 22px;margin-bottom:10px;">' +
+        '<div style="font-family:' + _fm.css + ';font-weight:' + _fm.weight + ';font-size:' + _fs + 'px;line-height:1.3;color:#fff;text-align:center;white-space:pre-wrap;word-break:break-word;">' + Z.escape(p.content) + '</div>' +
+      '</div>';
+  } else if(p.content){
     captionHtml =
       '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)">' +
         '<div class="pc-text">' + Z.escape(p.content) + '</div>' +
@@ -3027,8 +3053,8 @@ Z.renderPostCard = function(p, profiles, me, isNew){
       '</div>';
   }
 
-  var mHtml = '';
-  if(p.media_url){
+   var mHtml = '';
+  if(p.media_url && !_isBanner){
     var mt = p.media_type || (Z.isVideoUrl(p.media_url) ? 'video' : 'image');
     if(mt === 'video'){
       mHtml = '<div class="post-media has-video" data-post-media="' + Z.escape(p.id) + '">' +
@@ -3181,19 +3207,36 @@ Z.expandComposer = function(){
   if(!Z.State.currentUser){ Z.openAuthModal('login'); return; }
   if(c.innerHTML) return;
 
-  /* Multi-select visibility state */
   Z._composerVis = { public: true, connections: false, family: false };
+  Z._composerBanner = { active: false, bg: 'deep-blue', font: 'display' };
 
   Z.toggleComposerVis = function(kind){
     var v = Z._composerVis;
-    if(kind === 'public'){
-      v.public = !v.public;
-      if(v.public){ v.connections = false; v.family = false; }
-    } else {
-      v.public = false;
-      v[kind] = !v[kind];
-    }
+    if(kind === 'public'){ v.public = !v.public; if(v.public){ v.connections = false; v.family = false; } }
+    else { v.public = false; v[kind] = !v[kind]; }
     paintComposerVis();
+  };
+
+  Z.toggleComposerBanner = function(){
+    var b = Z._composerBanner;
+    b.active = !b.active;
+    if(b.active){
+      /* banner overrides media */
+      try { Z.removeComposerFile(); } catch(e){}
+      b.bg = b.bg || 'deep-blue';
+      b.font = b.font || 'display';
+    }
+    paintComposerBanner();
+  };
+
+  Z.setBannerBg = function(id){
+    Z._composerBanner.bg = id;
+    paintComposerBanner();
+  };
+
+  Z.setBannerFont = function(id){
+    Z._composerBanner.font = id;
+    paintComposerBanner();
   };
 
   function paintComposerVis(){
@@ -3202,24 +3245,19 @@ Z.expandComposer = function(){
     var con = document.querySelector('.composer-vis-btn[data-vis="connections"]');
     var fam = document.querySelector('.composer-vis-btn[data-vis="family"]');
     if(!pub || !con || !fam) return;
-
     var onStyle = 'background:rgba(16,185,129,.15);border:1px solid #10b981;color:#10b981;';
     var offStyle = 'background:rgba(255,255,255,.03);border:1px solid #1e293b;color:#94a3b8;';
     var disStyle = 'background:rgba(255,255,255,.02);border:1px solid #1e293b;color:#475569;opacity:.55;';
-
     pub.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;' + (v.public ? onStyle : offStyle));
     if(v.public){
       con.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:not-allowed;display:inline-flex;align-items:center;gap:5px;' + disStyle);
       fam.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:not-allowed;display:inline-flex;align-items:center;gap:5px;' + disStyle);
-      con.disabled = true;
-      fam.disabled = true;
+      con.disabled = true; fam.disabled = true;
     } else {
       con.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;' + (v.connections ? onStyle : offStyle));
       fam.setAttribute('style', 'padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px;' + (v.family ? onStyle : offStyle));
-      con.disabled = false;
-      fam.disabled = false;
+      con.disabled = false; fam.disabled = false;
     }
-
     var hint = document.getElementById('composer-vis-hint');
     if(hint){
       if(v.public) hint.textContent = 'Anyone on ZYNIX';
@@ -3228,12 +3266,100 @@ Z.expandComposer = function(){
     }
   }
 
+  function paintComposerBanner(){
+    var b = Z._composerBanner;
+    var wrap = document.getElementById('composer-banner-wrap');
+    var ta = document.getElementById('composer-text');
+    var picker = document.getElementById('composer-banner-picker');
+    var toggle = document.querySelector('.composer-banner-btn');
+    if(!wrap || !ta) return;
+
+    var bgMap = {
+      'deep-blue': 'linear-gradient(135deg,#1e3a8a,#312e81)',
+      'warm-sand': 'linear-gradient(135deg,#78350f,#92400e)',
+      'emerald':   'linear-gradient(135deg,#065f46,#047857)'
+    };
+    var fontMap = {
+      'display':   { css: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", weight: 900 },
+      'clean':     { css: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", weight: 700 },
+      'editorial': { css: "Georgia, 'Times New Roman', serif", weight: 800 }
+    };
+    var bg = bgMap[b.bg] || bgMap['deep-blue'];
+    var fm = fontMap[b.font] || fontMap['display'];
+
+    if(b.active){
+      wrap.setAttribute('style', 'background:' + bg + ';border-radius:16px;padding:24px;transition:background .25s ease;');
+      ta.setAttribute('style', 'width:100%;background:transparent;border:none;outline:none;resize:none;color:#fff;font-family:' + fm.css + ';font-weight:' + fm.weight + ';text-align:center;line-height:1.25;min-height:140px;max-height:280px;padding:0;font-size:28px;');
+      ta.className = '';
+      ta.setAttribute('placeholder', 'Type your banner text...');
+      if(picker) picker.style.display = 'block';
+    } else {
+      wrap.setAttribute('style', 'background:transparent;border-radius:16px;padding:0;');
+      ta.setAttribute('style', '');
+      ta.className = 'form-textarea';
+      ta.setAttribute('placeholder', 'What\'s on your mind?');
+      if(picker) picker.style.display = 'none';
+    }
+    if(toggle){
+      toggle.innerHTML = b.active
+        ? '<i class="fa-solid fa-palette"></i> Banner ✓'
+        : '<i class="fa-solid fa-palette"></i> Banner';
+      toggle.style.background = b.active ? 'rgba(16,185,129,.15)' : '#1e293b';
+      toggle.style.borderColor = b.active ? '#10b981' : '#1e293b';
+      toggle.style.color = b.active ? '#10b981' : '#94a3b8';
+    }
+
+    /* Banner picker swatch active states */
+    ['deep-blue','warm-sand','emerald'].forEach(function(k){
+      var sw = document.querySelector('.banner-bg-swatch[data-bg="' + k + '"]');
+      if(sw){
+        sw.style.borderColor = (b.bg === k) ? '#10b981' : 'transparent';
+        sw.style.boxShadow = (b.bg === k) ? '0 0 0 2px rgba(16,185,129,.3)' : 'none';
+      }
+    });
+    ['display','clean','editorial'].forEach(function(k){
+      var fb = document.querySelector('.banner-font-btn[data-font="' + k + '"]');
+      if(fb){
+        fb.style.background = (b.font === k) ? 'rgba(16,185,129,.15)' : '#0f172a';
+        fb.style.borderColor = (b.font === k) ? '#10b981' : '#1e293b';
+        fb.style.color = (b.font === k) ? '#10b981' : '#94a3b8';
+      }
+    });
+
+    /* Autogrow font size based on length */
+    if(b.active){
+      var len = (ta.value || '').length;
+      var fs = 28;
+      if(len > 60) fs = 24;
+      if(len > 120) fs = 20;
+      if(len > 220) fs = 17;
+      ta.style.fontSize = fs + 'px';
+    }
+  }
+
   c.innerHTML =
     '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">' +
-      '<textarea id="composer-text" class="form-textarea" placeholder="What\'s on your mind?"></textarea>' +
-      '<div class="media-pick-row">' +
+      '<div id="composer-banner-wrap">' +
+        '<textarea id="composer-text" class="form-textarea" placeholder="What\'s on your mind?" oninput="Z.autoGrow(this);var b=Z._composerBanner;if(b&&b.active){var ta=this;var len=(ta.value||\'\').length;var fs=28;if(len>60)fs=24;if(len>120)fs=20;if(len>220)fs=17;ta.style.fontSize=fs+\'px\';}"></textarea>' +
+      '</div>' +
+      '<div class="media-pick-row" style="margin-top:10px;">' +
+        '<button type="button" class="composer-banner-btn" onclick="Z.toggleComposerBanner()" style="background:#1e293b;border:1px solid #1e293b;color:#94a3b8;padding:7px 14px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-palette"></i> Banner</button>' +
         '<button type="button" onclick="document.getElementById(\'composer-file-photo\').click()"><i class="fa-solid fa-camera"></i> Photo</button>' +
         '<button type="button" onclick="document.getElementById(\'composer-file-video\').click()"><i class="fa-solid fa-video"></i> Video</button>' +
+      '</div>' +
+      '<div id="composer-banner-picker" style="display:none;padding:12px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;margin-top:8px;">' +
+        '<div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Background</div>' +
+        '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+          '<div class="banner-bg-swatch" data-bg="deep-blue" onclick="Z.setBannerBg(\'deep-blue\')" style="width:44px;height:32px;border-radius:8px;border:2px solid transparent;cursor:pointer;background:linear-gradient(135deg,#1e3a8a,#312e81);"></div>' +
+          '<div class="banner-bg-swatch" data-bg="warm-sand" onclick="Z.setBannerBg(\'warm-sand\')" style="width:44px;height:32px;border-radius:8px;border:2px solid transparent;cursor:pointer;background:linear-gradient(135deg,#78350f,#92400e);"></div>' +
+          '<div class="banner-bg-swatch" data-bg="emerald" onclick="Z.setBannerBg(\'emerald\')" style="width:44px;height:32px;border-radius:8px;border:2px solid transparent;cursor:pointer;background:linear-gradient(135deg,#065f46,#047857);"></div>' +
+        '</div>' +
+        '<div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Font</div>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<button type="button" class="banner-font-btn" data-font="display" onclick="Z.setBannerFont(\'display\')" style="flex:1;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-size:11px;font-weight:900;cursor:pointer;">Display</button>' +
+          '<button type="button" class="banner-font-btn" data-font="clean" onclick="Z.setBannerFont(\'clean\')" style="flex:1;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-size:11px;font-weight:700;cursor:pointer;">Clean</button>' +
+          '<button type="button" class="banner-font-btn" data-font="editorial" onclick="Z.setBannerFont(\'editorial\')" style="flex:1;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-size:11px;font-weight:800;font-family:Georgia,serif;cursor:pointer;">Editorial</button>' +
+        '</div>' +
       '</div>' +
       '<input type="file" id="composer-file-photo" accept="image/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
       '<input type="file" id="composer-file-video" accept="video/*" style="display:none;" onchange="Z.previewComposerFile(this)">' +
@@ -3259,6 +3385,7 @@ Z.expandComposer = function(){
     var e = document.getElementById('composer-text');
     if(e) e.focus();
     paintComposerVis();
+    paintComposerBanner();
   }, 50);
 };
 
@@ -3429,11 +3556,19 @@ Z.submitComposer = async function(forceNoCaption){
         if(_visArr.length === 0) _visArr = ['private'];
       }
     } catch(e){ _visArr = ['public']; }
+       var _postStyle = null;
+    try {
+      var _cb = Z._composerBanner;
+      if(_cb && _cb.active && text){
+        _postStyle = { type: 'banner', bg: _cb.bg || 'deep-blue', font: _cb.font || 'display' };
+      }
+    } catch(e){}
     var row = await Z.DB.createPost({
       id: postId,
       author_id: me.id, content: text, media_url: mu||null,
       media_type: mt||null, share_bounty: shareBounty,
-      visibility: _visArr
+      visibility: _visArr,
+      post_style: _postStyle
     });
     var arr = Z.State.allPosts || [];
     var idx = -1;
