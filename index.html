@@ -1522,7 +1522,9 @@ Z.saveSnapshot = function(){
                  visibility: p.visibility || ['public'],
                  share_bounty: Number(p.share_bounty) || 0,
                  share_budget_cap: Number(p.share_budget_cap) || 0,
-                 share_bounty_paid: Number(p.share_bounty_paid) || 0 };
+                 share_bounty_paid: Number(p.share_bounty_paid) || 0,
+                 shared_from_id: p.shared_from_id || null,
+                 shared_from_type: p.shared_from_type || null };
       }),
       sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
         return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title,
@@ -15603,23 +15605,77 @@ Z.openOriginalPost = async function(postId){
       }
     }
 
+        /* Fetch stats — reactions + comments count */
+    var rxCount = 0, cmCount = 0;
+    try {
+      var rR = await c.from('post_reactions').select('reaction', { count: 'exact', head: true }).eq('post_id', postId);
+      rxCount = rR.count || 0;
+    } catch(e){}
+    try {
+      var rC = await c.from('comments').select('id', { count: 'exact', head: true }).eq('post_id', postId);
+      cmCount = rC.count || 0;
+    } catch(e){}
+
+    /* Share rate + budget for footer */
+    var shareRate = Number(orig.share_bounty) || 0;
+    var budgetCap = Number(orig.share_budget_cap) || 0;
+    var budgetPaid = Number(orig.share_bounty_paid) || 0;
+    var budgetRem = Math.max(0, budgetCap - budgetPaid);
+
+    /* Connect button state for original author */
+    var connectBtnModal = '';
+    try {
+      var cs = Z.getConnectionState(orig.author_id);
+      var bountyAmt = Z.getConnectBounty(author);
+      if(cs === 'none'){
+        connectBtnModal = '<button onclick="Z.closeModal();Z.sendConnectRequest(\'' + Z.escape(orig.author_id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-handshake"></i> Bond · $' + bountyAmt.toFixed(2) + '</button>';
+      } else if(cs === 'connected'){
+        connectBtnModal = '<button style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.35);color:#10b981;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:default;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-check"></i> Bonded</button>';
+      } else if(cs === 'connecting_in'){
+        connectBtnModal = '<button onclick="Z.closeModal();Z.acceptIncomingBond(\'' + Z.escape(orig.author_id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-handshake"></i> Accept Bond</button>';
+      } else if(cs === 'connecting_out'){
+        connectBtnModal = '<button style="background:#1e293b;border:1px solid #334155;color:#fbbf24;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:default;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-hourglass-half"></i> Pending</button>';
+      }
+    } catch(e){}
+
     Z.openModal(
       '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()">' +
-        '<div class="modal-box" style="max-width:480px;">' +
+        '<div class="modal-box" style="max-width:520px;">' +
           '<div class="modal-header"><h3>Original Post</h3>' +
             '<button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button>' +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;" onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')">' +
-            '<img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;">' +
-            '<div>' +
-              '<div style="font-weight:700;color:#fff;">' + Z.escape(Z.displayName(author)) + '</div>' +
-              '<div style="font-size:10px;color:#64748b;">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(orig.created_at).getTime()) + '</div>' +
+
+          /* Author header */
+          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
+            '<img src="' + Z.escape(Z.displayAvatar(author)) + '" onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')" style="width:44px;height:44px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">' +
+            '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')">' +
+              '<div style="font-weight:800;font-size:14px;color:#fff;">' + Z.escape(Z.displayName(author)) + '</div>' +
+              '<div style="font-size:11px;color:#64748b;">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(orig.created_at).getTime()) + '</div>' +
             '</div>' +
           '</div>' +
+
+          /* Content + media */
           bodyHtml +
-          '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center;">' +
-            '<div style="font-size:11px;color:#64748b;">❤️ ' + (orig.reactions ? Object.values(orig.reactions).reduce(function(a,b){return a+b;},0) : 0) + ' · 💬 ' + (orig.comments_count || 0) + '</div>' +
-            '<button onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')" style="background:transparent;border:1px solid #1e293b;color:#60a5fa;font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px;cursor:pointer;">View profile</button>' +
+
+          /* Stats row */
+          '<div style="display:flex;gap:16px;padding:12px 0;border-top:1px solid #1e293b;border-bottom:1px solid #1e293b;margin-top:12px;font-size:12px;color:#94a3b8;font-weight:700;">' +
+            '<span><i class="fa-solid fa-heart" style="color:#ef4444;"></i> ' + rxCount + '</span>' +
+            '<span><i class="fa-regular fa-comment"></i> ' + cmCount + '</span>' +
+            '<span><i class="fa-regular fa-eye"></i> ' + (orig.views || 0) + '</span>' +
+          '</div>' +
+
+          /* Bounty info */
+          (shareRate > 0 || budgetCap > 0 ?
+            '<div style="padding:12px 0;border-bottom:1px solid #1e293b;">' +
+              (shareRate > 0 ? '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;margin-bottom:6px;"><span>Share bounty rate</span><b style="color:#10b981;">$' + shareRate.toFixed(2) + '</b></div>' : '') +
+              (budgetCap > 0 ? '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;"><span>Total budget</span><b style="color:' + (budgetRem > 0 ? '#10b981' : '#a16262') + ';">$' + budgetRem.toFixed(2) + ' / $' + budgetCap.toFixed(2) + '</b></div>' : '') +
+            '</div>'
+            : '') +
+
+          /* Actions */
+          '<div style="display:flex;gap:8px;margin-top:14px;">' +
+            connectBtnModal +
+            '<button onclick="Z.closeModal();Z.showView(\'public-profile\',\'' + Z.escape(orig.author_id) + '\')" style="flex:1;background:transparent;border:1px solid #1e293b;color:#cbd5e1;font-weight:800;font-size:12px;padding:9px 14px;border-radius:10px;cursor:pointer;">View full profile</button>' +
           '</div>' +
         '</div>' +
       '</div>'
@@ -15656,11 +15712,36 @@ function installRepostBadge(){
       ? ' from <a href="#" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(origAuthor.id) + '\');return false;" style="color:#60a5fa;text-decoration:none;font-weight:700;">@' + Z.escape(origAuthor.username || 'user') + '</a>'
       : '';
 
+        var avatar = origAuthor ? Z.displayAvatar(origAuthor) : '';
+    var connectBtn = '';
+    try {
+      if(origAuthor && origAuthor.id){
+        var connState = Z.getConnectionState(origAuthor.id);
+        var bounty = Z.getConnectBounty(origAuthor);
+        if(connState === 'none'){
+          connectBtn = '<button onclick="event.stopPropagation();Z.sendConnectRequest(\'' + Z.escape(origAuthor.id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:800;font-size:10px;padding:4px 10px;border-radius:12px;cursor:pointer;white-space:nowrap;">Bond · $' + bounty.toFixed(2) + '</button>';
+        } else if(connState === 'connected'){
+          connectBtn = '<span style="font-size:10px;color:#10b981;font-weight:800;white-space:nowrap;">✓ Bonded</span>';
+        } else if(connState === 'connecting_out'){
+          connectBtn = '<span style="font-size:10px;color:#fbbf24;font-weight:800;white-space:nowrap;">Pending</span>';
+        } else if(connState === 'connecting_in'){
+          connectBtn = '<button onclick="event.stopPropagation();Z.acceptIncomingBond(\'' + Z.escape(origAuthor.id) + '\')" style="background:#10b981;border:none;color:#000;font-weight:800;font-size:10px;padding:4px 10px;border-radius:12px;cursor:pointer;white-space:nowrap;">Accept Bond</button>';
+        }
+      }
+    } catch(e){}
+
     var badge =
-      '<div data-repost-badge="1" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;padding:6px 0 8px;border-bottom:1px solid rgba(255,255,255,.04);margin-bottom:10px;">' +
-        '<i class="fa-solid fa-retweet" style="color:#60a5fa;"></i>' +
-        '<span>Reposted' + authorLink + '</span>' +
-        '<button onclick="event.stopPropagation();Z.openOriginalPost(\'' + Z.escape(p.shared_from_id) + '\')" style="background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:700;cursor:pointer;padding:2px 6px;margin-left:auto;text-decoration:underline;">View original</button>' +
+      '<div data-repost-badge="1" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(96,165,250,.05);border:1px solid rgba(96,165,250,.18);border-radius:10px;margin-bottom:10px;">' +
+        '<i class="fa-solid fa-retweet" style="color:#60a5fa;font-size:14px;"></i>' +
+        (avatar ? '<img src="' + Z.escape(avatar) + '" style="width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0;">' : '') +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:11px;color:#cbd5e1;line-height:1.3;">Reposted from</div>' +
+          '<div style="font-size:11.5px;color:#60a5fa;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(origAuthor ? origAuthor.id : '') + '\')">' +
+            '@' + Z.escape(origAuthor ? (origAuthor.username || 'user') : 'user') +
+          '</div>' +
+        '</div>' +
+        connectBtn +
+        '<button onclick="event.stopPropagation();Z.openOriginalPost(\'' + Z.escape(p.shared_from_id) + '\')" style="background:transparent;border:none;color:#60a5fa;font-size:10px;font-weight:700;cursor:pointer;padding:4px 8px;text-decoration:underline;white-space:nowrap;">View original</button>' +
       '</div>';
 
     /* Insert badge right after the closing div of post-author */
@@ -15704,6 +15785,60 @@ setTimeout(function(){
 }, 800);
 
 console.log('[RepostFix] installed');
+})();
+</script>
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixRepostRepair) return; Z.__zynixRepostRepair = true;
+
+/* Extends the existing Z.repairHomeDom to also repair repost badges */
+function repairRepostBadges(){
+  if(Z.State.currentView !== 'home') return;
+  var container = document.getElementById('app-container');
+  if(!container) return;
+
+  var statePosts = Z.State.allPosts || [];
+
+  container.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
+    var pid = card.getAttribute('data-post-id');
+    if(!pid) return;
+    var post = statePosts.find(function(p){ return p && p.id === pid; });
+    if(!post) return;
+
+    var wantsBadge = !!post.shared_from_id;
+    var hasBadge = !!card.querySelector('[data-repost-badge="1"]');
+
+    if(wantsBadge && !hasBadge){
+      /* Force a full rebuild of just this card */
+      try {
+        var profiles = Z.State.allProfiles || [];
+        var me = Z.State.currentUser;
+        var html = Z.renderPostCard(post, profiles, me, false);
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        if(tmp.firstChild){
+          card.parentNode.replaceChild(tmp.firstChild, card);
+        }
+      } catch(e){}
+    }
+  });
+}
+
+setInterval(function(){ try { repairRepostBadges(); } catch(e){} }, 3500);
+
+/* Also run after reloadData finishes */
+var _prevReload = Z.reloadData;
+if(typeof _prevReload === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReload.apply(this, arguments);
+    setTimeout(function(){ try { repairRepostBadges(); } catch(e){} }, 350);
+    return r;
+  };
+}
+
+console.log('[RepostRepair] active');
 })();
 </script>   
 <!-- ============================================================ -->
