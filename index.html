@@ -17135,6 +17135,149 @@ Z.rerenderSparkCommentsBody = function(sparkId){
 
 console.log('[Spark Full Page] ready — reactions · freeze · comments · share · menu');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- COMMENT PERSISTENCE FIX — Home + Spark                        -->
+<!-- Rebuilds comments only when DOM disagrees with state.         -->
+<!-- Never touches <video>. Never uses aggressive timers.          -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixCommentRepair) return; Z.__zynixCommentRepair = true;
+
+/* ---------- Home: rebuild comments section if DOM < state ---------- */
+function repairHomeComments(){
+  if(Z.State.currentView !== 'home') return;
+  var container = document.getElementById('app-container');
+  if(!container) return;
+  var posts = Z.State.allPosts || [];
+  var profiles = Z.State.allProfiles || [];
+
+  container.querySelectorAll('.post-card[data-post-id]').forEach(function(card){
+    if(card.getAttribute('data-spark-page') === '1') return; /* skip spark full pages */
+    var pid = card.getAttribute('data-post-id');
+    var post = posts.find(function(p){ return p && p.id === pid; });
+    if(!post) return;
+
+    var cw = card.querySelector('.post-comments');
+    if(!cw) return;
+
+    var stateRoots = post._comments || [];
+    var stateTotal = Z.countAllComments(stateRoots);
+    var domCount = cw.querySelectorAll('.comment-item').length;
+
+    /* Only repair when DOM is missing comments that state has */
+    if(stateTotal <= domCount) return;
+
+    /* Preserve user's typed text in the input box (if any) */
+    var oldInput = cw.querySelector('textarea');
+    var savedText = oldInput ? oldInput.value : '';
+
+    var cp = cw.querySelector('.comment-color-picker');
+    var inputWrap = cw.querySelector('.comment-input-wrap');
+
+    var newHtml = '';
+    stateRoots.forEach(function(cm){
+      try { newHtml += Z.renderComment(cm, post, profiles); } catch(e){}
+    });
+
+    /* Remove only comment nodes — leave color picker + input wrap untouched */
+    Array.prototype.slice.call(cw.children).forEach(function(ch){
+      if(ch === cp || ch === inputWrap) return;
+      ch.remove();
+    });
+
+    /* Insert rebuilt comments before the color picker / input wrap */
+    if(newHtml){
+      var tmp = document.createElement('div');
+      tmp.innerHTML = newHtml;
+      var anchor = cp || inputWrap || null;
+      Array.prototype.slice.call(tmp.children).forEach(function(node){
+        if(anchor) cw.insertBefore(node, anchor);
+        else cw.appendChild(node);
+      });
+    }
+
+    /* Restore user's typed text if the textarea was replaced (it wasn't, but be safe) */
+    var newInput = cw.querySelector('textarea');
+    if(newInput && savedText && newInput.value !== savedText){ newInput.value = savedText; }
+  });
+}
+
+/* ---------- Spark: fix counter text on visible slides ---------- */
+function repairSparkComments(){
+  if(Z.State.currentView !== 'spark') return;
+  var feed = document.getElementById('spark-feed');
+  if(!feed) return;
+  var sparks = Z.State.allSparks || [];
+
+  feed.querySelectorAll('.spark-slide').forEach(function(slide){
+    var vid = slide.querySelector('video[data-spark-id]');
+    if(!vid) return;
+    var sid = vid.getAttribute('data-spark-id');
+    var sp = sparks.find(function(x){ return x && x.id === sid; });
+    if(!sp) return;
+
+    var commentBtn = slide.querySelector('[data-spark-comments-btn]');
+    if(!commentBtn) return;
+    var counter = commentBtn.querySelector('.spark-action-count');
+    if(!counter) return;
+    var want = String(sp._commentsCount || 0);
+    if(counter.textContent !== want) counter.textContent = want;
+  });
+}
+
+/* ---------- Public: run all repairs once ---------- */
+Z.repairAllComments = function(){
+  try { repairHomeComments(); } catch(e){}
+  try { repairSparkComments(); } catch(e){}
+};
+
+/* ---------- Hook A: after reloadData resolves ---------- */
+var _prevReload = Z.reloadData;
+if(typeof _prevReload === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReload.apply(this, arguments);
+    /* One pass at 400ms — after state is fresh from the fetch */
+    setTimeout(function(){ try { Z.repairAllComments(); } catch(e){} }, 400);
+    /* Second pass at 1600ms — covers realtime that arrived right after fetch */
+    setTimeout(function(){ try { Z.repairAllComments(); } catch(e){} }, 1600);
+    return r;
+  };
+}
+
+/* ---------- Hook B: after showView to Home or Spark ---------- */
+var _prevShowView = Z.showView;
+if(typeof _prevShowView === 'function'){
+  Z.showView = function(view, param){
+    var r = _prevShowView.apply(this, arguments);
+    if(view === 'home' || view === 'spark'){
+      setTimeout(function(){ try { Z.repairAllComments(); } catch(e){} }, 500);
+      setTimeout(function(){ try { Z.repairAllComments(); } catch(e){} }, 1500);
+    }
+    return r;
+  };
+}
+
+/* ---------- Hook C: opening comments on Home — repair if needed ---------- */
+var _prevToggle = Z.toggleComments;
+if(typeof _prevToggle === 'function'){
+  Z.toggleComments = function(postId){
+    var el = document.getElementById('comments-' + postId);
+    var willOpen = el && !el.classList.contains('open');
+    var r = _prevToggle.apply(this, arguments);
+    if(willOpen){
+      /* One microtask later, ensure comments exist */
+      setTimeout(function(){ try { repairHomeComments(); } catch(e){} }, 20);
+    }
+    return r;
+  };
+}
+
+console.log('[Comment Repair] ready — no intervals · event-driven only');
+})();
 </script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
