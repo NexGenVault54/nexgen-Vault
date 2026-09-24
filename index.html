@@ -16607,6 +16607,184 @@ if(typeof _prevShowView === 'function'){
 
 console.log('[Repost Badge Spark Fix] active — @user fallback for spark sources');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPARK FIX 2 v2 — Rate inside share button · Budget as rows   -->
+<!-- Replaces the wide horizontal pills from v1. Add-only.        -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkDisplayFixV2) return; Z.__zynixSparkDisplayFixV2 = true;
+
+function buildBudgetBlock(spark){
+  var cap = Number(spark.share_budget_cap) || 0;
+  var paid = Number(spark.share_bounty_paid) || 0;
+  if(cap <= 0) return '';
+  var rem = Math.max(0, cap - paid);
+  var remCol = rem > 0 ? '#10b981' : '#a16262';
+  return (
+    '<div data-spark-budget-rows="1" style="display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:4px;padding:4px 2px;">' +
+      '<div style="font-size:10px;font-weight:900;color:' + remCol + ';line-height:1;white-space:nowrap;">$' + rem.toFixed(2) + ' /</div>' +
+      '<div style="font-size:10px;font-weight:800;color:#94a3b8;line-height:1;white-space:nowrap;">$' + cap.toFixed(2) + '</div>' +
+    '</div>'
+  );
+}
+
+/* Install v2 on top of renderSparkSlide */
+function installV2(){
+  if(!Z.renderSparkSlide) return false;
+  if(Z.renderSparkSlide.__sparkV2) return true;
+
+  var _orig = Z.renderSparkSlide;
+  Z.renderSparkSlide = function(spark, index){
+    var html = _orig.apply(this, arguments);
+
+    /* 1. Strip v1's wide horizontal pills, if present */
+    var guard = 0;
+    while(html.indexOf('data-spark-rate-budget="1"') !== -1 && guard++ < 10){
+      var ds = html.indexOf('data-spark-rate-budget="1"');
+      var openStart = html.lastIndexOf('<div', ds);
+      if(openStart === -1) break;
+      var closeEnd = html.indexOf('</div>', ds);
+      if(closeEnd === -1) break;
+      html = html.substring(0, openStart) + html.substring(closeEnd + 6);
+    }
+
+    /* 2. Insert rate inside the share button */
+    var rate = Number(spark.share_bounty) || 0;
+    var shareMarker = "Z.openSparkShare('" + spark.id + "')";
+    if(rate > 0){
+      var shareIdx = html.indexOf(shareMarker);
+      if(shareIdx !== -1){
+        var tagOpenEnd = html.indexOf('>', shareIdx);
+        if(tagOpenEnd !== -1){
+          var buttonClose = html.indexOf('</button>', tagOpenEnd);
+          if(buttonClose !== -1){
+            var rateHtml = '<div data-spark-rate-mark="1" style="font-size:10px;font-weight:900;color:#10b981;line-height:1;margin-top:1px;">$' + rate.toFixed(2) + '</div>';
+            html = html.substring(0, buttonClose) + rateHtml + html.substring(buttonClose);
+          }
+        }
+      }
+    }
+
+    /* 3. Insert budget rows right after the share button */
+    var budgetHtml = buildBudgetBlock(spark);
+    if(budgetHtml){
+      var shareIdx2 = html.indexOf(shareMarker);
+      if(shareIdx2 !== -1){
+        var buttonClose2 = html.indexOf('</button>', shareIdx2);
+        if(buttonClose2 !== -1){
+          var insertAt = buttonClose2 + '</button>'.length;
+          html = html.substring(0, insertAt) + budgetHtml + html.substring(insertAt);
+        }
+      }
+    }
+
+    return html;
+  };
+  Z.renderSparkSlide.__sparkV2 = true;
+  return true;
+}
+
+var tries = 0;
+var t = setInterval(function(){
+  tries++;
+  if(installV2()){ clearInterval(t); }
+  else if(tries > 20){ clearInterval(t); }
+}, 300);
+
+/* Repair function — updates existing slides without re-render */
+Z.repairSparkDom = function(){
+  if(Z.State.currentView !== 'spark') return;
+  var feed = document.getElementById('spark-feed');
+  if(!feed) return;
+
+  var sparks = Z.State.allSparks || [];
+
+  feed.querySelectorAll('.spark-slide').forEach(function(slide){
+    var vid = slide.querySelector('video[data-spark-id]');
+    if(!vid) return;
+    var sid = vid.getAttribute('data-spark-id');
+    var sp = sparks.find(function(x){ return x && x.id === sid; });
+    if(!sp) return;
+
+    /* Remove any v1 pills anywhere in the slide */
+    slide.querySelectorAll('[data-spark-rate-budget="1"]').forEach(function(el){ el.remove(); });
+
+    var stack = slide.querySelector('.spark-actions-stack');
+    if(!stack) return;
+
+    /* Find the share button */
+    var shareBtn = null;
+    stack.querySelectorAll('button').forEach(function(b){
+      var oc = b.getAttribute('onclick') || '';
+      if(oc.indexOf('openSparkShare') !== -1) shareBtn = b;
+    });
+    if(!shareBtn) return;
+
+    var rate = Number(sp.share_bounty) || 0;
+    var cap = Number(sp.share_budget_cap) || 0;
+    var paid = Number(sp.share_bounty_paid) || 0;
+
+    /* Update rate inside share button (no flicker: modify text only) */
+    var rateEl = shareBtn.querySelector('[data-spark-rate-mark="1"]');
+    if(rate > 0){
+      var want = '$' + rate.toFixed(2);
+      if(rateEl){
+        if(rateEl.textContent !== want) rateEl.textContent = want;
+      } else {
+        var newRate = document.createElement('div');
+        newRate.setAttribute('data-spark-rate-mark','1');
+        newRate.style.cssText = 'font-size:10px;font-weight:900;color:#10b981;line-height:1;margin-top:1px;';
+        newRate.textContent = want;
+        shareBtn.appendChild(newRate);
+      }
+    } else if(rateEl){
+      rateEl.remove();
+    }
+
+    /* Update or add budget block right after share button */
+    var existingBudget = stack.querySelector('[data-spark-budget-rows="1"]');
+    if(cap > 0){
+      var rem = Math.max(0, cap - paid);
+      var remCol = rem > 0 ? '#10b981' : '#a16262';
+      if(existingBudget){
+        existingBudget.innerHTML =
+          '<div style="font-size:10px;font-weight:900;color:' + remCol + ';line-height:1;white-space:nowrap;">$' + rem.toFixed(2) + ' /</div>' +
+          '<div style="font-size:10px;font-weight:800;color:#94a3b8;line-height:1;white-space:nowrap;">$' + cap.toFixed(2) + '</div>';
+      } else {
+        var bWrap = document.createElement('div');
+        bWrap.setAttribute('data-spark-budget-rows','1');
+        bWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:4px;padding:4px 2px;';
+        bWrap.innerHTML =
+          '<div style="font-size:10px;font-weight:900;color:' + remCol + ';line-height:1;white-space:nowrap;">$' + rem.toFixed(2) + ' /</div>' +
+          '<div style="font-size:10px;font-weight:800;color:#94a3b8;line-height:1;white-space:nowrap;">$' + cap.toFixed(2) + '</div>';
+        shareBtn.parentNode.insertBefore(bWrap, shareBtn.nextSibling);
+      }
+    } else if(existingBudget){
+      existingBudget.remove();
+    }
+  });
+};
+
+setInterval(function(){ try { Z.repairSparkDom(); } catch(e){} }, 3000);
+
+var _prevShowView = Z.showView;
+if(typeof _prevShowView === 'function'){
+  Z.showView = function(view, param){
+    var r = _prevShowView.apply(this, arguments);
+    if(view === 'spark'){
+      setTimeout(function(){ try { Z.repairSparkDom(); } catch(e){} }, 500);
+      setTimeout(function(){ try { Z.repairSparkDom(); } catch(e){} }, 1500);
+    }
+    return r;
+  };
+}
+
+console.log('[Spark Display Fix v2] rate inside share button · budget as stacked rows');
+})();
 </script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
