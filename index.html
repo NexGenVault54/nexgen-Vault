@@ -3129,10 +3129,22 @@ Z.renderPostCard = function(p, profiles, me, isNew){
     captionHtml +
     mHtml +
     '<div class="post-reactions">' + Z.renderReactionRowForPost(p) + '</div>' +
-    '<div class="post-actions">' +
+     '<div class="post-actions">' +
       '<button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')"><i class="fa-regular fa-comment"></i> Comment ' + Z.countAllComments(comments) + '</button>' +
       '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')"><i class="fa-solid fa-share-nodes"></i> Share ' + (p.shares||0) + '</button>' +
       '<button style="cursor:default;"><i class="fa-regular fa-eye"></i> Views ' + (p.views||0) + '</button>' +
+      (function(){
+        try {
+          var _cap = Number(p.share_budget_cap) || 0;
+          if(_cap <= 0) return '';
+          var _paid = Number(p.share_bounty_paid) || 0;
+          var _rem = Math.max(0, _cap - _paid);
+          var _col = _rem > 0 ? '#10b981' : '#a16262';
+          return '<span style="margin-left:auto;font-size:10px;font-weight:800;color:' + _col + ';background:rgba(255,255,255,.04);padding:3px 8px;border-radius:12px;">' +
+            'Budget $' + _rem.toFixed(2) + ' / $' + _cap.toFixed(2) +
+          '</span>';
+        } catch(e){ return ''; }
+      })() +
     '</div>' +
     '<div class="post-comments" id="comments-' + Z.escape(p.id) + '">' + cHtml + cp +
       '<div class="comment-input-wrap">' +
@@ -3379,8 +3391,14 @@ Z.expandComposer = function(){
         '<button type="button" class="composer-vis-btn" data-vis="family" onclick="Z.toggleComposerVis(\'family\')"><i class="fa-solid fa-house-user"></i> Family</button>' +
       '</div>' +
       '<div id="composer-vis-hint" style="font-size:10px;color:#64748b;margin-bottom:12px;">Anyone on ZYNIX</div>' +
-      '<label class="form-label">Share Bounty (paid to whoever shares your post)</label>' +
+           '<label class="form-label">Share Bounty (paid to whoever shares your post)</label>' +
       '<select id="composer-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
+      '<label class="form-label" style="margin-top:8px;">Total share budget <span style="color:#64748b;font-weight:500;">(0 = no cap)</span></label>' +
+      '<select id="composer-share-budget" class="form-select">' +
+        [0, 0.5, 1, 5, 10, 25, 50, 100].map(function(v){
+          return '<option value="' + v + '">$' + v.toFixed(2) + (v === 0 ? ' (no cap)' : '') + '</option>';
+        }).join('') +
+      '</select>' +
       '<div style="display:flex;gap:8px;margin-top:6px;">' +
         '<button onclick="Z.submitComposer()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;font-size:12px;cursor:pointer;">Publish</button>' +
         '<button onclick="Z.cancelComposer()" style="background:transparent;border:none;color:#64748b;padding:8px 12px;font-size:12px;cursor:pointer;">Cancel</button>' +
@@ -3585,10 +3603,15 @@ Z.submitComposer = async function(forceNoCaption){
         _postStyle = { type: 'banner', bg: _cb.bg || 'deep-blue', font: _cb.font || 'display' };
       }
     } catch(e){}
+        var _shareBudget = 0;
+    try {
+      _shareBudget = parseFloat((document.getElementById('composer-share-budget')||{}).value || '0') || 0;
+    } catch(e){}
     var row = await Z.DB.createPost({
       id: postId,
       author_id: me.id, content: text, media_url: mu||null,
       media_type: mt||null, share_bounty: shareBounty,
+      share_budget_cap: _shareBudget,
       visibility: _visArr,
       post_style: _postStyle
     });
