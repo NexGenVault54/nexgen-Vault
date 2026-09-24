@@ -2790,9 +2790,10 @@ Z.softRefresh = function(){
     var el = document.getElementById(id);
     if(el) el.classList.add('open');
   });
-  window.scrollTo(0, savedY);
-  requestAnimationFrame(function(){ window.scrollTo(0, savedY); });
-  setTimeout(function(){ window.scrollTo(0, savedY); }, 20);
+   var _sf = (typeof Z.safeScrollTo === 'function') ? Z.safeScrollTo : function(y){ try { window.scrollTo(0, y); } catch(e){} };
+  _sf(savedY);
+  requestAnimationFrame(function(){ _sf(savedY); });
+  setTimeout(function(){ _sf(savedY); }, 20);
   Z.updateHeader();
   Z.observeFreezeDots();
   Z.updateScrollTopBtn();
@@ -17277,6 +17278,90 @@ if(typeof _prevToggle === 'function'){
 }
 
 console.log('[Comment Repair] ready — no intervals · event-driven only');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- SCROLL STABILITY — Home mobile refresh + pull-to-refresh      -->
+<!-- Save on leave · dedupe identical scrolls · one-shot restore   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixScrollStability) return; Z.__zynixScrollStability = true;
+
+/* 1. Dedupe identical scrollTo calls within 800ms */
+Z._lastScrollCall = { y: -1, t: 0 };
+Z.safeScrollTo = function(y){
+  y = Number(y) || 0;
+  if(y < 0) y = 0;
+  var now = Date.now();
+  if(Z._lastScrollCall.y === y && (now - Z._lastScrollCall.t) < 800) return;
+  Z._lastScrollCall.y = y;
+  Z._lastScrollCall.t = now;
+  try { window.scrollTo(0, y); } catch(e){}
+};
+
+/* 2. Save scroll + anchor on leave-home events so boot restore is accurate */
+(function(){
+  function saveOnLeaveHome(){
+    if(Z.State.currentView !== 'home') return;
+    try {
+      var y = window.scrollY || document.documentElement.scrollTop || 0;
+      Z.saveScroll(y);
+      Z.saveHomeAnchor();
+    } catch(e){}
+  }
+  window.addEventListener('beforeunload', saveOnLeaveHome);
+  window.addEventListener('pagehide', saveOnLeaveHome);
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'hidden') saveOnLeaveHome();
+  });
+})();
+
+/* 3. One-shot anchor/offset restore per Home entry */
+Z._homeRestoreDone = false;
+Z.restoreHomeAnchorOrScroll = function(){
+  if(Z._homeRestoreDone) return;
+  try {
+    if(Z.State.homeAnchorPost){
+      var el = document.querySelector('.post-card[data-post-id="' + Z.State.homeAnchorPost + '"]');
+      if(el){
+        var r = el.getBoundingClientRect();
+        var targetY = (window.scrollY || 0) + r.top - Z.State.homeAnchorOffset;
+        if(targetY < 0) targetY = 0;
+        Z.safeScrollTo(targetY);
+        Z._homeRestoreDone = true;
+        return;
+      }
+      /* Anchor not in DOM yet — wait for the scheduled retry, do not fall through */
+      return;
+    }
+    var y = Z.restoreScroll();
+    if(y > 0) Z.safeScrollTo(y);
+    Z._homeRestoreDone = true;
+  } catch(e){}
+};
+
+/* 4. Reset one-shot flag when entering Home */
+var _prevShowViewForScroll = Z.showView;
+if(typeof _prevShowViewForScroll === 'function'){
+  Z.showView = function(view, param){
+    if(view === 'home') Z._homeRestoreDone = false;
+    return _prevShowViewForScroll.apply(this, arguments);
+  };
+}
+
+/* 5. User-initiated top-scroll must never be deduped away */
+var _prevScrollToLatest = Z.scrollToLatest;
+if(typeof _prevScrollToLatest === 'function'){
+  Z.scrollToLatest = function(){
+    Z._lastScrollCall = { y: -1, t: 0 };
+    return _prevScrollToLatest.apply(this, arguments);
+  };
+}
+
+console.log('[Scroll Stability] ready');
 })();
 </script>   
 <!-- ============================================================ -->
