@@ -2900,8 +2900,8 @@ Z.renderHome = function(){
   var profiles = Z.State.allProfiles || [];
   var lastVisit = Z.getLastVisit('home');
 
-   var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
-  html += '<div id="home-discover-host"></div>';
+      var html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+  html += '<div id="home-hero-spark"></div>';
   if(me){
     html +=
       '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;display:flex;align-items:center;gap:10px;">' +
@@ -2915,6 +2915,7 @@ Z.renderHome = function(){
       '</div>';
   }
   html += '<div id="composer-expanded"></div>';
+  html += '<div id="home-discover-host"></div>';
 
   if(posts.length){
     posts.forEach(function(p){
@@ -16211,96 +16212,17 @@ Z.loadPostPage = async function(contentId){
         try { Z._tagMediaContainers(); } catch(e){}
         try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
       }, 100);
-         } else {
-      /* Spark source — render the full spark-shaped page */
-
-      /* Fetch spark reactions */
-      var _rxRes = await c.from('spark_reactions').select('user_id, reaction').eq('spark_id', contentId);
-      var _rxMap = {}, _myRx = {};
-      (_rxRes.data || []).forEach(function(x){
-        _rxMap[x.reaction] = (_rxMap[x.reaction] || 0) + 1;
-        if(me && x.user_id === me.id) _myRx[x.reaction] = true;
-      });
-
-      /* Fetch comments with reactions + replies */
-      var _cmRes = await c.from('comments').select('*').eq('spark_id', contentId).order('created_at', {ascending: true});
-      var _comments = _cmRes.data || [];
-      var _cIds = _comments.map(function(x){ return x.id; });
-      var _crMap = {}, _myCrMap = {};
-      if(_cIds.length){
-        var _crRes = await c.from('comment_reactions').select('comment_id, reaction, user_id').in('comment_id', _cIds);
-        (_crRes.data || []).forEach(function(x){
-          _crMap[x.comment_id] = _crMap[x.comment_id] || {};
-          _crMap[x.comment_id][x.reaction] = (_crMap[x.comment_id][x.reaction] || 0) + 1;
-          if(me && x.user_id === me.id){
-            _myCrMap[x.comment_id] = _myCrMap[x.comment_id] || {};
-            _myCrMap[x.comment_id][x.reaction] = true;
-          }
-        });
+              } else {
+      /* Spark source — redirect to Spark feed at this spark */
+      if(typeof Z.openSparkInFeed === 'function'){
+        Z.openSparkInFeed(contentId);
+        return;
       }
-      _comments.forEach(function(x){
-        x._reactionCounts = _crMap[x.id] || {};
-        x._myReactions = _myCrMap[x.id] || {};
-        x._replies = [];
-      });
-      var _byId = {};
-      _comments.forEach(function(x){ _byId[x.id] = x; });
-      _comments.forEach(function(x){
-        if(x.parent_id && _byId[x.parent_id]) _byId[x.parent_id]._replies.push(x);
-      });
-
-      /* Ensure author profile in state */
-      var _profiles = Z.State.allProfiles || [];
-      if(!_profiles.find(function(p){ return p.id === item.author_id; })){
-        var _pr = await c.from('profiles').select('*').eq('id', item.author_id).maybeSingle();
-        if(_pr.data){ _profiles = _profiles.concat([_pr.data]); Z.State.allProfiles = _profiles; }
-      }
-      var author = Z.getProfileById(item.author_id) || { id: item.author_id, name: 'User', username: 'user' };
-
-      /* Build spark-shaped object */
-      var _sparkForPage = {
-        id: item.id,
-        author_id: item.author_id,
-        caption: item.content || '',
-        title: '',
-        video_url: item.media_url,
-        tags: [],
-        type: 'spark',
-        created_at: item.created_at,
-        views: item.views || 0,
-        shares: item.shares || 0,
-        share_bounty: Number(item.share_bounty) || 0,
-        share_budget_cap: Number(item.share_budget_cap) || 0,
-        share_bounty_paid: Number(item.share_bounty_paid) || 0,
-        _reactions: _rxMap,
-        _myReactions: _myRx,
-        _comments: _comments.filter(function(x){ return !x.parent_id; }),
-        _commentsCount: _comments.length
-      };
-
-      /* Sync into state so all spark handlers resolve this spark */
-      var _existing = (Z.State.allSparks || []).find(function(x){ return x.id === item.id; });
-      if(_existing){
-        _existing._reactions = _rxMap;
-        _existing._myReactions = _myRx;
-        _existing._comments = _sparkForPage._comments;
-        _existing._commentsCount = _comments.length;
-      } else {
-        Z.State.allSparks = (Z.State.allSparks || []).concat([_sparkForPage]);
-      }
-
-      host.innerHTML = Z.renderSparkFullPage(_sparkForPage, author);
-
-      /* Force comments open */
-      var _cw = document.getElementById('comments-' + item.id);
-      if(_cw) _cw.classList.add('open');
-
+      /* Fallback if the helper is not yet registered */
+      host.innerHTML = '<div class="empty-state"><i class="fa-solid fa-bolt"></i><p>Opening Spark feed…</p></div>';
       setTimeout(function(){
-        try { Z.observeFreezeDots(); } catch(e){}
-        try { Z._tagMediaContainers(); } catch(e){}
-        try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
-        try { Z.detectCaptionOverflow(); } catch(e){}
-      }, 100);
+        if(typeof Z.openSparkInFeed === 'function') Z.openSparkInFeed(contentId);
+      }, 200);
     }
   } catch(e){
     host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load content.' });
@@ -17430,7 +17352,203 @@ if(_fresh){
 
 console.log('[Native Scroll Kill] nav =', _nav, '· fresh =', _fresh);
 })();
-</script>     
+</script>
+<!-- ============================================================ -->
+<!-- HOME HERO SPARK v2 + Spark-Feed Landing                       -->
+<!-- Hero video · tap → Spark feed at exact slide                  -->
+<!-- Also exposes Z.openSparkInFeed() for "View original" links    -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixHomeHeroV2) return; Z.__zynixHomeHeroV2 = true;
+
+/* ---------- 1. openSparkInFeed — jump to spark's slide ---------- */
+Z.openSparkInFeed = async function(sparkId){
+  if(!sparkId) return;
+  var c = Z.sb();
+  var arr = Z.State.allSparks || [];
+  var idx = -1;
+  for(var i = 0; i < arr.length; i++){
+    if(arr[i] && arr[i].id === sparkId){ idx = i; break; }
+  }
+
+  /* If not in state, fetch it + its author, then unshift */
+  if(idx === -1 && c){
+    try {
+      var r = await c.from('sparks').select('*').eq('id', sparkId).maybeSingle();
+      if(r.data && r.data.video_url){
+        var fetched = r.data;
+        Z._backfillItem(fetched, true);
+        arr = [fetched].concat(arr);
+        Z.State.allSparks = arr;
+        idx = 0;
+
+        /* Ensure author is in state */
+        if(!Z.getProfileById(fetched.author_id)){
+          try {
+            var pr = await c.from('profiles').select('*').eq('id', fetched.author_id).maybeSingle();
+            if(pr.data) Z.State.allProfiles = (Z.State.allProfiles || []).concat([pr.data]);
+          } catch(e){}
+        }
+      }
+    } catch(e){}
+  }
+
+  if(idx === -1){ Z.toast('Spark not available.'); return; }
+
+  /* Set the target index, then navigate */
+  Z.State.sparkSlideIndex = idx;
+  Z.showView('spark');
+
+  /* Force scroll after feed paints — belt and braces against late reflow */
+  setTimeout(function(){
+    try {
+      var feed = document.getElementById('spark-feed');
+      if(!feed) return;
+      var slides = feed.querySelectorAll('.spark-slide');
+      if(slides[idx]) feed.scrollTop = slides[idx].offsetTop;
+    } catch(e){}
+  }, 60);
+  setTimeout(function(){
+    try {
+      var feed = document.getElementById('spark-feed');
+      if(!feed) return;
+      var slides = feed.querySelectorAll('.spark-slide');
+      if(slides[idx]) feed.scrollTop = slides[idx].offsetTop;
+    } catch(e){}
+  }, 260);
+};
+
+/* ---------- 2. Hero card HTML ---------- */
+Z.renderHeroSparkCard = function(spark, author){
+  if(!spark || !author || !spark.video_url) return '';
+  var views = spark.views || 0;
+  var caption = spark.caption || '';
+  var captionPreview = caption.length > 140 ? (caption.substring(0, 140) + '…') : caption;
+  var isMine = Z.State.currentUser && Z.State.currentUser.id === spark.author_id;
+  var sparkId = Z.escape(spark.id);
+
+  return '<div class="home-hero-spark" data-hero-spark="' + sparkId + '" ' +
+    'onclick="Z.openSparkInFeed(\'' + sparkId + '\')" ' +
+    'style="position:relative;border-radius:16px;overflow:hidden;background:#000;height:clamp(380px,58vh,560px);cursor:pointer;">' +
+
+    '<video src="' + Z.escape(spark.video_url) + '" autoplay muted loop playsinline preload="metadata" ' +
+      'style="width:100%;height:100%;object-fit:contain;background:#000;display:block;pointer-events:none;"></video>' +
+
+    '<div style="position:absolute;top:0;left:0;right:0;height:100px;background:linear-gradient(to bottom,rgba(0,0,0,.65),transparent);pointer-events:none;"></div>' +
+    '<div style="position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(0,0,0,.85),transparent);pointer-events:none;"></div>' +
+
+    '<div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:20px;padding:5px 11px;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#fff;border:1px solid rgba(255,255,255,.18);pointer-events:none;">' +
+      '<i class="fa-solid fa-bolt" style="color:#10b981;font-size:11px;"></i>' +
+      '<span>Latest Spark</span>' +
+    '</div>' +
+
+    '<div style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:20px;padding:5px 11px;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#fff;border:1px solid rgba(255,255,255,.18);pointer-events:none;">' +
+      '<i class="fa-regular fa-eye" style="color:#10b981;font-size:11px;"></i>' +
+      '<span>' + views + '</span>' +
+    '</div>' +
+
+    '<div style="position:absolute;bottom:0;left:0;right:0;padding:14px;pointer-events:none;">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+        '<img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.9);flex-shrink:0;">' +
+        '<div style="min-width:0;">' +
+          '<div style="font-weight:800;font-size:13px;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9);">' + Z.escape(Z.displayName(author)) + '</div>' +
+          '<div style="font-size:10px;color:#cbd5e1;text-shadow:0 1px 4px rgba(0,0,0,.9);">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(spark.created_at).getTime()) + '</div>' +
+        '</div>' +
+      '</div>' +
+      (captionPreview ? '<div style="font-size:12px;color:#f1f5f9;line-height:1.4;margin-bottom:10px;text-shadow:0 1px 4px rgba(0,0,0,.9);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">' + Z.escape(captionPreview) + '</div>' : '') +
+      '<div style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:800;font-size:11px;padding:7px 14px;border-radius:20px;box-shadow:0 4px 14px rgba(0,0,0,.4);">' +
+        '<i class="fa-solid fa-bolt" style="font-size:10px;"></i>' +
+        '<span>Watch in Spark feed</span>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+};
+
+/* ---------- 3. Fill hero from state or DB ---------- */
+Z.fillHomeHero = async function(){
+  if(Z.State.currentView !== 'home') return;
+  var host = document.getElementById('home-hero-spark');
+  if(!host) return;
+  var existing = host.querySelector('video');
+  if(existing){
+    var src = existing.getAttribute('src') || '';
+    if(src && src !== 'null' && src !== 'undefined') return;
+  }
+  var sparks = (Z.State.allSparks || []).filter(function(s){
+    return s && s.video_url &&
+      (s.type === 'spark' || !s.type) &&
+      typeof s.video_url === 'string' &&
+      s.video_url.indexOf('http') === 0;
+  });
+  if(sparks.length){
+    var spark = sparks[0];
+    var author = Z.getProfileById(spark.author_id);
+    if(author){
+      host.innerHTML = Z.renderHeroSparkCard(spark, author);
+      try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+      return;
+    }
+  }
+  var c = Z.sb(); if(!c) return;
+  try {
+    var r = await c.from('sparks')
+      .select('id,author_id,type,title,caption,video_url,tags,views,shares,share_bounty,share_budget_cap,share_bounty_paid,created_at')
+      .eq('type','spark')
+      .order('created_at', {ascending: false})
+      .limit(1);
+    if(!r.data || !r.data[0]) return;
+    var s2 = r.data[0];
+    if(!s2.video_url || typeof s2.video_url !== 'string' || s2.video_url.indexOf('http') !== 0) return;
+    Z.State.allSparks = [s2].concat(Z.State.allSparks || []);
+    var a2 = Z.getProfileById(s2.author_id);
+    if(!a2){
+      var pr = await c.from('profiles').select('*').eq('id', s2.author_id).maybeSingle();
+      if(pr.data){
+        a2 = pr.data;
+        Z.State.allProfiles = (Z.State.allProfiles || []).concat([a2]);
+      }
+    }
+    if(!a2) return;
+    host.innerHTML = Z.renderHeroSparkCard(s2, a2);
+    try { if(typeof Z.setupFeedVideoAutoplay === 'function') Z.setupFeedVideoAutoplay(); } catch(e){}
+  } catch(e){}
+};
+
+/* ---------- 4. Hooks: fill hero after nav/reload/softRefresh ---------- */
+var _prevShowView = Z.showView;
+if(typeof _prevShowView === 'function'){
+  Z.showView = function(view, param){
+    var r = _prevShowView.apply(this, arguments);
+    if(view === 'home'){
+      setTimeout(function(){ try { Z.fillHomeHero(); } catch(e){} }, 100);
+      setTimeout(function(){ try { Z.fillHomeHero(); } catch(e){} }, 500);
+    }
+    return r;
+  };
+}
+var _prevReload = Z.reloadData;
+if(typeof _prevReload === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReload.apply(this, arguments);
+    setTimeout(function(){ try { Z.fillHomeHero(); } catch(e){} }, 300);
+    return r;
+  };
+}
+var _prevSoft = Z.softRefresh;
+if(typeof _prevSoft === 'function'){
+  Z.softRefresh = function(){
+    var r = _prevSoft.apply(this, arguments);
+    setTimeout(function(){ try { Z.fillHomeHero(); } catch(e){} }, 300);
+    return r;
+  };
+}
+
+console.log('[Home Hero v2] ready — taps jump to Spark feed at exact slide');
+})();
+</script>   
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
