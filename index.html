@@ -17358,6 +17358,74 @@ console.log('[Boot Scroll Policy] nav =', _navType, '· restore =', _shouldResto
 })();
 </script>
 <!-- ============================================================ -->
+<!-- STEP 2b — disable native browser scroll restore on refresh   -->
+<!-- Spark works because it uses internal scroll. Home uses        -->
+<!-- window scroll, so the browser's own restore fights us.        -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixNativeScrollKill) return; Z.__zynixNativeScrollKill = true;
+
+function _navType(){
+  try {
+    var e = performance.getEntriesByType && performance.getEntriesByType('navigation');
+    if(e && e.length && e[0].type) return e[0].type;
+  } catch(err){}
+  try {
+    if(performance.navigation && performance.navigation.type != null){
+      var t = performance.navigation.type;
+      if(t === 1) return 'reload';
+      if(t === 2) return 'back_forward';
+      return 'navigate';
+    }
+  } catch(err){}
+  return 'navigate';
+}
+
+var _nav = _navType();
+var _fresh = (_nav !== 'back_forward');
+
+/* 1. Tell the browser: I control scroll, you don't. */
+if('scrollRestoration' in history){
+  try { history.scrollRestoration = _fresh ? 'manual' : 'auto'; } catch(e){}
+}
+
+/* 2. On fresh load, force top repeatedly for the first 2 seconds.
+      This defeats any late native restore, address-bar collapse,
+      or lazy image reflow that tries to move us. */
+if(_fresh){
+  var _killed = false;
+  function forceTop(){
+    if(_killed) return;
+    if(Z.State.currentView !== 'home') return;
+    try { window.scrollTo(0, 0); } catch(e){}
+  }
+  forceTop();
+  setTimeout(forceTop, 80);
+  setTimeout(forceTop, 200);
+  setTimeout(forceTop, 500);
+  setTimeout(forceTop, 900);
+  setTimeout(forceTop, 1400);
+  setTimeout(forceTop, 2000);
+
+  /* Stop forcing the moment the user actually scrolls */
+  window.addEventListener('touchstart', function(){ _killed = true; }, {passive:true, once:true});
+  window.addEventListener('wheel', function(){ _killed = true; }, {passive:true, once:true});
+}
+
+/* 3. Also clear stale keys again — belt and suspenders */
+if(_fresh){
+  try { localStorage.removeItem('zynix_last_scroll'); } catch(e){}
+  Z.State.homeAnchorPost = null;
+  Z.State.homeAnchorOffset = 0;
+}
+
+console.log('[Native Scroll Kill] nav =', _nav, '· fresh =', _fresh);
+})();
+</script>     
+<!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
 <!-- Server-authoritative. No localStorage for money.             -->
