@@ -3146,7 +3146,7 @@ Z.renderPostCard = function(p, profiles, me, isNew){
     '<div class="post-reactions">' + Z.renderReactionRowForPost(p) + '</div>' +
           '<div class="post-actions" style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">' +
       '<button onclick="Z.toggleComments(\'' + Z.escape(p.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-regular fa-comment"></i><span>' + Z.countAllComments(comments) + '</span></button>' +
-      '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-share-nodes"></i><span>' + (p.shares||0) + '</span>' + (function(){ var sr = Number(p.share_bounty) || 0; return sr > 0 ? '<span style="color:#10b981;font-weight:800;">· $' + sr.toFixed(2) + '</span>' : ''; })() + '</button>' +
+         '<button onclick="Z.sharePost(\'' + Z.escape(p.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-share-nodes"></i><span>' + (p.shares||0) + '</span>' + (function(){ var sr = Number(p.share_bounty) || 0; var cap = Number(p.share_budget_cap) || 0; return (sr > 0 && cap > 0) ? '<span style="color:#10b981;font-weight:800;">· $' + sr.toFixed(2) + '</span>' : ''; })() + '</button>' +
       (function(){
         try {
           var _cap = Number(p.share_budget_cap) || 0;
@@ -3525,8 +3525,13 @@ Z.submitComposer = async function(forceNoCaption){
   var text = ((document.getElementById('composer-text')||{}).value||'').trim();
   var fileObj = Z._getComposerFile();
   var hasFile = !!fileObj;
-  var shareBounty = parseFloat((document.getElementById('composer-share-bounty')||{}).value || '0') || 0;
+   var shareBounty = parseFloat((document.getElementById('composer-share-bounty')||{}).value || '0') || 0;
   var _shareBudgetRead = parseFloat((document.getElementById('composer-share-budget')||{}).value || '0') || 0;
+  /* Zero budget means zero bounty. If rate > 0 but budget = 0, warn + zero out. */
+  if(shareBounty > 0 && _shareBudgetRead <= 0){
+    Z.toast('Set a budget to enable share rewards — bounty reset to $0.', 'error');
+    shareBounty = 0;
+  }
   if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
   if(!text && hasFile && !forceNoCaption){
     Z.confirmNoCaption('Z.submitComposer(true)');
@@ -6386,7 +6391,7 @@ Z.submitStatus = async function(forceNoCaption){
   var text = ((document.getElementById('status-text')||{}).value||'').trim();
   var fileObj = Z._getStatusFile();
   var hasFile = !!fileObj;
-  if(!text && !hasFile){ Z.toast('Add text or media.'); return; }
+ 'Add text or media.'); return; }
   if(!text && hasFile && !forceNoCaption){
     Z.confirmNoCaption('Z.submitStatus(true)');
     return;
@@ -16641,10 +16646,11 @@ function installV2(){
       html = html.substring(0, openStart) + html.substring(closeEnd + 6);
     }
 
-    /* 2. Insert rate inside the share button */
+      /* 2. Insert rate inside the share button — only if budget > 0 */
     var rate = Number(spark.share_bounty) || 0;
+    var _sparkCapForRate = Number(spark.share_budget_cap) || 0;
     var shareMarker = "Z.openSparkShare('" + spark.id + "')";
-    if(rate > 0){
+    if(rate > 0 && _sparkCapForRate > 0){
       var shareIdx = html.indexOf(shareMarker);
       if(shareIdx !== -1){
         var tagOpenEnd = html.indexOf('>', shareIdx);
@@ -17548,7 +17554,76 @@ if(typeof _prevSoft === 'function'){
 
 console.log('[Home Hero v2] ready — taps jump to Spark feed at exact slide');
 })();
-</script>   
+</script>
+<!-- ============================================================ -->
+<!-- POST PAGE FLASH FIX — spark sources skip the shell entirely   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixPostPageFlashFix) return; Z.__zynixPostPageFlashFix = true;
+
+var _origOpenPostPage = Z.openPostPage;
+Z.openPostPage = async function(postId){
+  if(!postId) return;
+  try {
+    var found = await Z._fetchOriginalContent(postId);
+    if(found && found.kind === 'spark' && typeof Z.openSparkInFeed === 'function'){
+      Z.openSparkInFeed(postId);
+      return;
+    }
+  } catch(e){}
+  if(typeof _origOpenPostPage === 'function'){
+    return _origOpenPostPage.apply(this, arguments);
+  }
+  Z.showView('post-page', postId);
+};
+
+console.log('[Post Page Flash Fix] ready — spark sources skip the shell');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- SPARK RATE CAP RULE — hides rate on live slides if cap = 0   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkRateCapRule) return; Z.__zynixSparkRateCapRule = true;
+
+var _origRepairSpark = Z.repairSparkDom;
+Z.repairSparkDom = function(){
+  if(typeof _origRepairSpark === 'function'){
+    try { _origRepairSpark.apply(this, arguments); } catch(e){}
+  }
+  if(Z.State.currentView !== 'spark') return;
+  var feed = document.getElementById('spark-feed');
+  if(!feed) return;
+  var sparks = Z.State.allSparks || [];
+  feed.querySelectorAll('.spark-slide').forEach(function(slide){
+    var vid = slide.querySelector('video[data-spark-id]');
+    if(!vid) return;
+    var sid = vid.getAttribute('data-spark-id');
+    var sp = sparks.find(function(x){ return x && x.id === sid; });
+    if(!sp) return;
+    var cap = Number(sp.share_budget_cap) || 0;
+    if(cap > 0) return; /* rate is allowed when cap > 0 — nothing to do */
+    /* cap = 0 → strip the rate line if present */
+    var shareBtn = null;
+    slide.querySelectorAll('.spark-actions-stack button').forEach(function(b){
+      var oc = b.getAttribute('onclick') || '';
+      if(oc.indexOf('openSparkShare') !== -1) shareBtn = b;
+    });
+    if(!shareBtn) return;
+    var rateEl = shareBtn.querySelector('[data-spark-rate-mark="1"]');
+    if(rateEl) rateEl.remove();
+  });
+};
+
+console.log('[Spark Rate Cap Rule] ready — zero budget means zero rate');
+})();
+</script>     
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
