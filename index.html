@@ -5929,8 +5929,10 @@ Z.postSparkToWall = async function(sparkId){
       .eq('repost_post_id', repostId)
       .maybeSingle();
 
-    Z.closeSheet();
-    if(pr.data && pr.data.status === 'pending'){
+        Z.closeSheet();
+    var _capCheck = Number(s.share_budget_cap) || 0;
+    var _rateCheck = Number(s.share_bounty) || 0;
+    if(pr.data && pr.data.status === 'pending' && _capCheck > 0 && _rateCheck > 0){
       var amt = Number(pr.data.bounty_amount) || 0;
       Z.toast('Spark shared to your wall. Bounty of $' + amt.toFixed(2) + ' settles in 24h.');
     } else {
@@ -5972,10 +5974,10 @@ Z.openCreateSparkModal = function(){
         '<input type="text" id="spark-url" class="form-input" placeholder="https://...">' +
                '<label class="form-label">Share Bounty</label>' +
         '<select id="spark-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
-        '<label class="form-label" style="margin-top:8px;">Total share budget <span style="color:#64748b;font-weight:500;">(0 = no cap)</span></label>' +
+                '<label class="form-label" style="margin-top:8px;">Total share budget <span style="color:#64748b;font-weight:500;">(0 = off)</span></label>' +
         '<select id="spark-share-budget" class="form-select">' +
           [0, 0.5, 1, 5, 10, 25, 50, 100].map(function(v){
-            return '<option value="' + v + '">$' + v.toFixed(2) + (v === 0 ? ' (no cap)' : '') + '</option>';
+            return '<option value="' + v + '">$' + v.toFixed(2) + (v === 0 ? ' (off)' : '') + '</option>';
           }).join('') +
         '</select>' +
         '<button class="btn-primary" onclick="Z.submitSpark()">Publish Spark</button>' +
@@ -6065,6 +6067,11 @@ Z.submitSparkImpl = async function(forceNoCaption){
   var url = ((document.getElementById('spark-url')||{}).value || '').trim();
   var shareBounty = parseFloat((document.getElementById('spark-share-bounty')||{}).value || '0') || 0;
   var shareBudgetCap = parseFloat((document.getElementById('spark-share-budget')||{}).value || '0') || 0;
+  /* Zero budget means zero bounty. Warn + zero out before publish. */
+  if(shareBounty > 0 && shareBudgetCap <= 0){
+    Z.toast('Set a budget to enable share rewards — bounty reset to $0.', 'error');
+    shareBounty = 0;
+  }
   var cached = Z._mediaCache.spark;
   var hasFile = !!(cached && cached.blob) || !!(fi && fi.files && fi.files[0]);
   if(!hasFile && !url){ Z.toast('Provide video.'); return; }
