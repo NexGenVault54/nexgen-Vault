@@ -17279,7 +17279,84 @@ if(typeof _prevToggle === 'function'){
 console.log('[Comment Repair] ready — no intervals · event-driven only');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- BOOT SCROLL POLICY — fresh load lands at top · back-nav keeps -->
+<!-- position · logout clears stale scroll · spark repair dedupe   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixBootScrollPolicy) return; Z.__zynixBootScrollPolicy = true;
 
+/* ---------- 1. Detect navigation type ---------- */
+function getNavType(){
+  /* Modern API */
+  try {
+    var entries = performance.getEntriesByType && performance.getEntriesByType('navigation');
+    if(entries && entries.length && entries[0].type) return entries[0].type;
+  } catch(e){}
+  /* Legacy fallback */
+  try {
+    if(performance.navigation && performance.navigation.type != null){
+      var t = performance.navigation.type;
+      if(t === 1) return 'reload';
+      if(t === 2) return 'back_forward';
+      return 'navigate';
+    }
+  } catch(e){}
+  /* Default: treat as fresh */
+  return 'navigate';
+}
+
+var _navType = getNavType();
+var _shouldRestore = (_navType === 'back_forward');
+
+/* ---------- 2. Fresh load: clear stale scroll state once ---------- */
+if(!_shouldRestore){
+  try { localStorage.removeItem('zynix_last_scroll'); } catch(e){}
+  Z.State.homeAnchorPost = null;
+  Z.State.homeAnchorOffset = 0;
+  Z.State.lastScroll = 0;
+}
+
+/* ---------- 3. Override restore path — top on fresh, original on back-nav ---------- */
+var _origRestore = Z.restoreHomeAnchorOrScroll;
+Z.restoreHomeAnchorOrScroll = function(){
+  if(!_shouldRestore){
+    try { window.scrollTo(0, 0); } catch(e){}
+    return;
+  }
+  if(typeof _origRestore === 'function') return _origRestore.apply(this, arguments);
+};
+
+/* ---------- 4. Logout clears stale scroll (belt and suspenders) ---------- */
+var _origLogout = Z.logout;
+if(typeof _origLogout === 'function'){
+  Z.logout = async function(){
+    try { localStorage.removeItem('zynix_last_scroll'); } catch(e){}
+    Z.State.homeAnchorPost = null;
+    Z.State.homeAnchorOffset = 0;
+    Z.State.lastScroll = 0;
+    return _origLogout.apply(this, arguments);
+  };
+}
+
+/* ---------- 5. Dedupe spark repair (v1 ghost + v2 both fire every 3s) ---------- */
+var _origRepairSpark = Z.repairSparkDom;
+if(typeof _origRepairSpark === 'function'){
+  var _lastSparkRepairAt = 0;
+  Z.repairSparkDom = function(){
+    var now = Date.now();
+    if(now - _lastSparkRepairAt < 2500) return;
+    _lastSparkRepairAt = now;
+    return _origRepairSpark.apply(this, arguments);
+  };
+}
+
+console.log('[Boot Scroll Policy] nav =', _navType, '· restore =', _shouldRestore);
+})();
+</script>
 <!-- ============================================================ -->
 <!-- SECTION 18 v4.0 — Business Model                             -->
 <!-- Part 1 of 4 — Foundation + Self-Test Panel                   -->
