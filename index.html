@@ -20937,8 +20937,7 @@ console.log('[New Posts Banner] active — poll 45s · tap to load · no auto-in
 </script>
 <!-- ============================================================ -->
 <!-- SWIPE → ZYNIX PUBLIC + hint                                    -->
-<!-- Right-to-left swipe on footer pages → public-home.            -->
-<!-- Hint: once per user, keyed by user ID (not device).           -->
+<!-- Hint: once per login session, every login.                    -->
 <!-- ============================================================ -->
 <script>
 (function(){
@@ -20946,23 +20945,8 @@ console.log('[New Posts Banner] active — poll 45s · tap to load · no auto-in
 var Z = window.Z; if(!Z) return;
 if(Z.__zynixSwipeToPublic) return; Z.__zynixSwipeToPublic = true;
 
+var HINT_KEY = 'zynix_sh_hint';
 var FOOTER_VIEWS = ['home','spark','galleria','lounge'];
-var MIN_DX = 80, DY_RATIO = 0.8, MAX_DURATION = 900, LEFT_END_X = 0.55;
-
-function hintKey(){
-  var me = Z.State.currentUser;
-  return me && me.id ? ('zynix_swipe_hint_' + me.id) : null;
-}
-function hasSeenHint(){
-  var k = hintKey();
-  if(!k) return true;
-  try { return localStorage.getItem(k) === '1'; } catch(e){ return true; }
-}
-function markHintSeen(){
-  var k = hintKey();
-  if(!k) return;
-  try { localStorage.setItem(k, '1'); } catch(e){}
-}
 
 function isFooterPage(){
   var v = Z.State.currentView;
@@ -20974,7 +20958,33 @@ function isFooterPage(){
   return false;
 }
 
-function isOverlayOpen(){
+/* ---------- HINT: once per login session ---------- */
+function tryHint(){
+  if(!Z.State.currentUser) return;
+  try { if(sessionStorage.getItem(HINT_KEY) === '1') return; } catch(e){ return; }
+  if(!isFooterPage()) return;
+  try { sessionStorage.setItem(HINT_KEY, '1'); } catch(e){}
+  try { Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
+}
+
+/* On logout: clear flag so next login shows hint again */
+var _prevLogout = Z.logout;
+Z.logout = async function(){
+  try { sessionStorage.removeItem(HINT_KEY); } catch(e){}
+  return _prevLogout.apply(this, arguments);
+};
+
+/* Fire when user lands on footer page */
+setTimeout(tryHint, 1200);
+var _prevView = Z.showView;
+Z.showView = function(v, p){
+  var r = _prevView.apply(this, arguments);
+  setTimeout(tryHint, 300);
+  return r;
+};
+
+/* ---------- SWIPE ---------- */
+function overlayOpen(){
   try {
     var mc = document.getElementById('modal-container'); if(mc && mc.innerHTML.trim()) return true;
     var sc = document.getElementById('sheet-container');  if(sc && sc.innerHTML.trim()) return true;
@@ -20985,32 +20995,28 @@ function isOverlayOpen(){
   } catch(e){}
   return false;
 }
-
-function inHorizontalScroller(x, y){
+function inHScroll(x, y){
   try {
-    var node = document.elementFromPoint(x, y);
-    while(node && node !== document.body){
-      if(node.classList){
-        if(node.classList.contains('home-discover-scroll') ||
-           node.classList.contains('space-scroll-h') ||
-           node.classList.contains('status-scroll') ||
-           node.classList.contains('zynix-wall-grid') ||
-           node.classList.contains('share-grid')) return true;
-      }
-      node = node.parentNode;
+    var n = document.elementFromPoint(x, y);
+    while(n && n !== document.body){
+      if(n.classList && (n.classList.contains('home-discover-scroll') ||
+         n.classList.contains('space-scroll-h') ||
+         n.classList.contains('status-scroll') ||
+         n.classList.contains('zynix-wall-grid') ||
+         n.classList.contains('share-grid'))) return true;
+      n = n.parentNode;
     }
   } catch(e){}
   return false;
 }
-
 function onInteractive(x, y){
   try {
-    var node = document.elementFromPoint(x, y);
-    while(node && node !== document.body){
-      var t = node.tagName ? node.tagName.toLowerCase() : '';
+    var n = document.elementFromPoint(x, y);
+    while(n && n !== document.body){
+      var t = n.tagName ? n.tagName.toLowerCase() : '';
       if(t === 'button' || t === 'input' || t === 'textarea' || t === 'select' || t === 'a' || t === 'video' || t === 'audio') return true;
-      if(node.classList && (node.classList.contains('post-menu') || node.classList.contains('spark-menu'))) return true;
-      node = node.parentNode;
+      if(n.classList && (n.classList.contains('post-menu') || n.classList.contains('spark-menu'))) return true;
+      n = n.parentNode;
     }
   } catch(e){}
   return false;
@@ -21021,9 +21027,9 @@ var sx = 0, sy = 0, st = 0, tracking = false;
 document.addEventListener('touchstart', function(e){
   tracking = false;
   if(e.touches.length !== 1) return;
-  if(!isFooterPage() || isOverlayOpen()) return;
+  if(!isFooterPage() || overlayOpen()) return;
   var t = e.touches[0];
-  if(inHorizontalScroller(t.clientX, t.clientY)) return;
+  if(inHScroll(t.clientX, t.clientY)) return;
   if(onInteractive(t.clientX, t.clientY)) return;
   sx = t.clientX; sy = t.clientY; st = Date.now(); tracking = true;
 }, {passive:true});
@@ -21036,42 +21042,18 @@ document.addEventListener('touchend', function(e){
   var dx = t.clientX - sx, dy = t.clientY - sy, dt = Date.now() - st;
   if(dx >= 0) return;
   var adx = Math.abs(dx), ady = Math.abs(dy);
-  if(adx < MIN_DX) return;
-  if(ady > adx * DY_RATIO) return;
-  if(dt > MAX_DURATION) return;
-  if(t.clientX > window.innerWidth * LEFT_END_X) return;
-  if(isOverlayOpen() || !isFooterPage()) return;
+  if(adx < 80) return;
+  if(ady > adx * 0.8) return;
+  if(dt > 900) return;
+  if(t.clientX > window.innerWidth * 0.55) return;
+  if(overlayOpen() || !isFooterPage()) return;
   try { Z.haptic(15); } catch(e){}
   try { Z.showView('public-home'); } catch(e){}
 }, {passive:true});
 
-/* Hint: once per user */
-function maybeShowHint(){
-  if(!Z.State.currentUser) return;
-  if(hasSeenHint()) return;
-  if(!isFooterPage()) return;
-  markHintSeen();
-  try { if(Z.toast) Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
-}
-
-setTimeout(maybeShowHint, 1500);
-
-var _prev = Z.showView;
-Z.showView = function(view, param){
-  var r = _prev.apply(this, arguments);
-  setTimeout(maybeShowHint, 400);
-  return r;
-};
-
-Z.swipeHintReset = function(){
-  var k = hintKey();
-  if(k){ try { localStorage.removeItem(k); } catch(e){} }
-  console.log('hint reset for current user');
-};
-
-console.log('[Swipe to Public] ready — per-user hint');
+console.log('[Swipe to Public] ready');
 })();
-</script>  
+</script>
 </body>
 </html>
 
