@@ -20936,9 +20936,9 @@ console.log('[New Posts Banner] active — poll 45s · tap to load · no auto-in
 })();
 </script>
 <!-- ============================================================ -->
-<!-- SWIPE → ZYNIX PUBLIC                                          -->
-<!-- Right-to-left swipe on any footer page opens public-home.     -->
-<!-- One-time hint toast. No interference with modals/overlays.    -->
+<!-- SWIPE → ZYNIX PUBLIC + hint                                    -->
+<!-- Right-to-left swipe on footer pages → public-home.            -->
+<!-- Hint: once per user, keyed by user ID (not device).           -->
 <!-- ============================================================ -->
 <script>
 (function(){
@@ -20946,32 +20946,38 @@ console.log('[New Posts Banner] active — poll 45s · tap to load · no auto-in
 var Z = window.Z; if(!Z) return;
 if(Z.__zynixSwipeToPublic) return; Z.__zynixSwipeToPublic = true;
 
-/* Only these pages count as "footer pages" */
 var FOOTER_VIEWS = ['home','spark','galleria','lounge'];
-var HINT_KEY = 'zynix_swipe_hint_v1';
+var MIN_DX = 80, DY_RATIO = 0.8, MAX_DURATION = 900, LEFT_END_X = 0.55;
 
-/* Thresholds — the "80% formula" = dy/dx ratio */
-var MIN_DX       = 80;    // swipe must travel at least 80px horizontally
-var DY_RATIO     = 0.8;   // |dy| must be less than 80% of |dx| (rejects diagonal scrolls)
-var MAX_DURATION = 900;   // swipe must complete within 900ms
-var LEFT_END_X   = 0.55;  // finger must lift on left of 55% screen width
+function hintKey(){
+  var me = Z.State.currentUser;
+  return me && me.id ? ('zynix_swipe_hint_' + me.id) : null;
+}
+function hasSeenHint(){
+  var k = hintKey();
+  if(!k) return true;
+  try { return localStorage.getItem(k) === '1'; } catch(e){ return true; }
+}
+function markHintSeen(){
+  var k = hintKey();
+  if(!k) return;
+  try { localStorage.setItem(k, '1'); } catch(e){}
+}
 
-function _isFooterPage(){
+function isFooterPage(){
   var v = Z.State.currentView;
   if(FOOTER_VIEWS.indexOf(v) !== -1) return true;
   if(v === 'public-profile'){
     var me = Z.State.currentUser;
-    if(me && Z.State.currentParam === me.id) return true;   // own SPACE
+    if(me && Z.State.currentParam === me.id) return true;
   }
   return false;
 }
 
-function _isOverlayOpen(){
+function isOverlayOpen(){
   try {
-    var mc = document.getElementById('modal-container');
-    if(mc && mc.innerHTML.trim()) return true;
-    var sc = document.getElementById('sheet-container');
-    if(sc && sc.innerHTML.trim()) return true;
+    var mc = document.getElementById('modal-container'); if(mc && mc.innerHTML.trim()) return true;
+    var sc = document.getElementById('sheet-container');  if(sc && sc.innerHTML.trim()) return true;
     if(document.getElementById('status-viewer')) return true;
     if(document.getElementById('zynix-spark-caption-overlay')) return true;
     if(document.getElementById('zynix-account-dropdown')) return true;
@@ -20980,19 +20986,16 @@ function _isOverlayOpen(){
   return false;
 }
 
-function _touchStartedInHorizontalScroller(x, y){
+function inHorizontalScroller(x, y){
   try {
-    var el = document.elementFromPoint(x, y);
-    var node = el;
+    var node = document.elementFromPoint(x, y);
     while(node && node !== document.body){
       if(node.classList){
         if(node.classList.contains('home-discover-scroll') ||
            node.classList.contains('space-scroll-h') ||
            node.classList.contains('status-scroll') ||
            node.classList.contains('zynix-wall-grid') ||
-           node.classList.contains('share-grid')){
-          return true;
-        }
+           node.classList.contains('share-grid')) return true;
       }
       node = node.parentNode;
     }
@@ -21000,161 +21003,75 @@ function _touchStartedInHorizontalScroller(x, y){
   return false;
 }
 
-function _touchStartedOnInteractive(x, y){
+function onInteractive(x, y){
   try {
-    var el = document.elementFromPoint(x, y);
-    var node = el;
+    var node = document.elementFromPoint(x, y);
     while(node && node !== document.body){
-      var tag = node.tagName ? node.tagName.toLowerCase() : '';
-      if(tag === 'button' || tag === 'input' || tag === 'textarea' ||
-         tag === 'select' || tag === 'a') return true;
-      if(tag === 'video' || tag === 'audio') return true;
-      if(node.classList){
-        if(node.classList.contains('post-menu')) return true;
-        if(node.classList.contains('spark-menu')) return true;
-      }
+      var t = node.tagName ? node.tagName.toLowerCase() : '';
+      if(t === 'button' || t === 'input' || t === 'textarea' || t === 'select' || t === 'a' || t === 'video' || t === 'audio') return true;
+      if(node.classList && (node.classList.contains('post-menu') || node.classList.contains('spark-menu'))) return true;
       node = node.parentNode;
     }
   } catch(e){}
   return false;
 }
 
-var _sx = 0, _sy = 0, _st = 0, _tracking = false;
+var sx = 0, sy = 0, st = 0, tracking = false;
 
 document.addEventListener('touchstart', function(e){
-  _tracking = false;
+  tracking = false;
   if(e.touches.length !== 1) return;
-  if(!_isFooterPage()) return;
-  if(_isOverlayOpen()) return;
+  if(!isFooterPage() || isOverlayOpen()) return;
   var t = e.touches[0];
-  if(_touchStartedInHorizontalScroller(t.clientX, t.clientY)) return;
-  if(_touchStartedOnInteractive(t.clientX, t.clientY)) return;
-  _sx = t.clientX;
-  _sy = t.clientY;
-  _st = Date.now();
-  _tracking = true;
-}, {passive: true, capture: false});
+  if(inHorizontalScroller(t.clientX, t.clientY)) return;
+  if(onInteractive(t.clientX, t.clientY)) return;
+  sx = t.clientX; sy = t.clientY; st = Date.now(); tracking = true;
+}, {passive:true});
 
 document.addEventListener('touchend', function(e){
-  if(!_tracking) return;
-  _tracking = false;
+  if(!tracking) return;
+  tracking = false;
   if(!e.changedTouches || !e.changedTouches.length) return;
   var t = e.changedTouches[0];
-  var dx = t.clientX - _sx;
-  var dy = t.clientY - _sy;
-  var dt = Date.now() - _st;
-
-  /* right-to-left only */
+  var dx = t.clientX - sx, dy = t.clientY - sy, dt = Date.now() - st;
   if(dx >= 0) return;
-  var adx = Math.abs(dx);
-  var ady = Math.abs(dy);
-
+  var adx = Math.abs(dx), ady = Math.abs(dy);
   if(adx < MIN_DX) return;
   if(ady > adx * DY_RATIO) return;
   if(dt > MAX_DURATION) return;
   if(t.clientX > window.innerWidth * LEFT_END_X) return;
-
-  /* double-check nothing opened mid-swipe */
-  if(_isOverlayOpen()) return;
-  if(!_isFooterPage()) return;
-
+  if(isOverlayOpen() || !isFooterPage()) return;
   try { Z.haptic(15); } catch(e){}
   try { Z.showView('public-home'); } catch(e){}
-}, {passive: true});
+}, {passive:true});
 
-/* One-time hint toast */
-function _showHintOnce(){
-  try {
-    if(localStorage.getItem(HINT_KEY)) return;
-    localStorage.setItem(HINT_KEY, '1');
-  } catch(e){ return; }
-  setTimeout(function(){
-    try { if(Z.toast) Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
-  }, 2500);
-}
-
-var _origShowView = Z.showView;
-Z.showView = function(view, param){
-  var r = _origShowView.apply(this, arguments);
-  try { if(_isFooterPage()) _showHintOnce(); } catch(e){}
-  return r;
-};
-
-console.log('[Swipe to Public] ready — 80px · 0.8 ratio · 900ms');
-})();
-</script>
-<!-- ============================================================ -->
-<!-- SWIPE HINT V2 — fixes the V1 race condition                   -->
-<!-- Clears stale flag once · fires toast reliably                 -->
-<!-- ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__zynixSwipeHintV2) return; Z.__zynixSwipeHintV2 = true;
-
-var HINT_KEY   = 'zynix_swipe_hint_v1';
-var V2_MARKER  = 'zynix_swipe_hint_v2';
-
-/* One-time: clear V1's stale flag so user actually sees the toast */
-try {
-  if(!localStorage.getItem(V2_MARKER)){
-    localStorage.removeItem(HINT_KEY);
-    localStorage.setItem(V2_MARKER, '1');
-  }
-} catch(e){}
-
-function _isFooterPage(){
-  var v = Z.State.currentView;
-  if(['home','spark','galleria','lounge'].indexOf(v) !== -1) return true;
-  if(v === 'public-profile'){
-    var me = Z.State.currentUser;
-    if(me && Z.State.currentParam === me.id) return true;
-  }
-  return false;
-}
-
-var _fired = false;
-
-function _fireHint(){
-  if(_fired) return;
-  try { if(localStorage.getItem(HINT_KEY) === '1'){ _fired = true; return; } } catch(e){ return; }
-  _fired = true;
-  try { localStorage.setItem(HINT_KEY, '1'); } catch(e){}
+/* Hint: once per user */
+function maybeShowHint(){
+  if(!Z.State.currentUser) return;
+  if(hasSeenHint()) return;
+  if(!isFooterPage()) return;
+  markHintSeen();
   try { if(Z.toast) Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
 }
 
-/* Fire on script load if user is already on a footer page */
-setTimeout(function(){
-  try { if(_isFooterPage()) _fireHint(); } catch(e){}
-}, 1500);
+setTimeout(maybeShowHint, 1500);
 
-/* Fire whenever user navigates TO a footer page */
 var _prev = Z.showView;
 Z.showView = function(view, param){
   var r = _prev.apply(this, arguments);
-  setTimeout(function(){
-    try { if(_isFooterPage()) _fireHint(); } catch(e){}
-  }, 400);
+  setTimeout(maybeShowHint, 400);
   return r;
 };
 
-/* Debug helpers — console se chalao */
 Z.swipeHintReset = function(){
-  try {
-    localStorage.removeItem(HINT_KEY);
-    localStorage.removeItem(V2_MARKER);
-    _fired = false;
-    console.log('hint reset — reload karo');
-  } catch(e){}
-};
-Z.swipeHintForce = function(){
-  try { if(Z.toast) Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
+  var k = hintKey();
+  if(k){ try { localStorage.removeItem(k); } catch(e){} }
+  console.log('hint reset for current user');
 };
 
-console.log('[Swipe Hint V2] ready');
+console.log('[Swipe to Public] ready — per-user hint');
 })();
-</script>           
+</script>  
 </body>
 </html>
 
