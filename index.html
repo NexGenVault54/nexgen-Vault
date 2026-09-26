@@ -20679,7 +20679,70 @@ if(typeof _origSetup === 'function'){
 
 console.log('[Realtime Merge] 8 → 1 active');
 })();
-</script>     
+</script>
+<!-- ONE REACTION PER CONTENT + STOP COMMENT BOUNTY -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixOneReactionAndCommentFix) return; Z.__zynixOneReactionAndCommentFix = true;
+
+/* ---------- 1. Stop comment bounty at the source ---------- */
+if(Z.DB && typeof Z.DB.awardReactionBounty === 'function'){
+  var _origAward = Z.DB.awardReactionBounty.bind(Z.DB);
+  Z.DB.awardReactionBounty = function(contentType, contentId, reactionType){
+    if(contentType === 'comment') return Promise.resolve(0);
+    return _origAward(contentType, contentId, reactionType);
+  };
+}
+
+/* ---------- 2. Pre-check: one bounty reaction per content ---------- */
+function hasBountyReaction(myR){
+  if(!myR) return false;
+  var keys = ['love','flower','spark','clap','star'];
+  for(var i = 0; i < keys.length; i++){ if(myR[keys[i]]) return true; }
+  return false;
+}
+
+function wrapWithPreCheck(origFn, findFn){
+  if(typeof origFn !== 'function') return origFn;
+  return async function(contentId, reactionType){
+    if(reactionType === 'dislike'){
+      return origFn.apply(this, arguments);
+    }
+    var content = null;
+    try { content = findFn.call(Z, contentId); } catch(e){}
+    if(content && hasBountyReaction(content._myReactions)){
+      Z.toast('You already reacted to this. One reaction only.');
+      return;
+    }
+    return origFn.apply(this, arguments);
+  };
+}
+
+if(Z.reactToPost){
+  Z.reactToPost = wrapWithPreCheck(Z.reactToPost, function(id){ return Z.findPostInState(id); });
+}
+if(Z.sparkReact){
+  Z.sparkReact = wrapWithPreCheck(Z.sparkReact, function(id){
+    return (Z.State.allSparks || []).find(function(x){ return x.id === id; });
+  });
+}
+if(Z.reactToComment){
+  Z.reactToComment = wrapWithPreCheck(Z.reactToComment, function(id){
+    return Z.findCommentInState(id);
+  });
+}
+if(Z.reactToSparkComment){
+  Z.reactToSparkComment = wrapWithPreCheck(Z.reactToSparkComment, function(id){
+    var found = Z.findSparkCommentInState ? Z.findSparkCommentInState(id) : null;
+    return found ? found.cm : null;
+  });
+}
+
+console.log('[One Reaction + Comment Bounty Stop] active');
+})();
+</script>           
 </body>
 </html>
 
