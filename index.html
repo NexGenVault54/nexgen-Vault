@@ -20742,6 +20742,198 @@ if(Z.reactToSparkComment){
 
 console.log('[One Reaction + Comment Bounty Stop] active');
 })();
+</script>
+<!-- NEW POSTS BANNER + PREPEND-ONLY REFRESH -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixNewPostsBanner) return; Z.__zynixNewPostsBanner = true;
+
+var POLL_INTERVAL_MS    = 45000;   /* 45s — Facebook standard */
+var FIRST_POLL_DELAY_MS = 6000;    /* first check 6s after arriving Home */
+
+var _lastSeenAt   = null;          /* when user last acknowledged feed */
+var _pendingCount = 0;
+var _pollTimer    = null;
+var _bannerEl     = null;
+
+/* ---------- Banner UI (fixed pill, hidden by default) ---------- */
+function _buildBanner(){
+  if(_bannerEl) return _bannerEl;
+  var el = document.createElement('button');
+  el.id = 'zynix-new-posts-banner';
+  el.style.cssText =
+    'position:fixed;top:66px;left:50%;transform:translateX(-50%) translateY(-140%);' +
+    'z-index:950;padding:10px 18px;border-radius:24px;border:none;cursor:pointer;' +
+    'background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;' +
+    'font-size:12px;display:flex;align-items:center;gap:8px;' +
+    'box-shadow:0 8px 24px rgba(16,185,129,.45);' +
+    'transition:transform .25s ease,opacity .25s ease;' +
+    'opacity:0;pointer-events:none;max-width:calc(100% - 32px);white-space:nowrap;';
+  el.innerHTML = '<i class="fa-solid fa-arrow-up" style="font-size:11px;"></i><span id="zynix-npb-text">New posts</span>';
+  document.body.appendChild(el);
+  el.addEventListener('click', _onBannerTap);
+  _bannerEl = el;
+  return el;
+}
+
+function _showBanner(n){
+  var el = _buildBanner();
+  var t = el.querySelector('#zynix-npb-text');
+  if(t){
+    t.textContent = (n === 1)
+      ? '1 new post — tap to view'
+      : n + ' new posts — tap to view';
+  }
+  el.style.transform = 'translateX(-50%) translateY(0)';
+  el.style.opacity = '1';
+  el.style.pointerEvents = 'auto';
+}
+
+function _hideBanner(){
+  if(!_bannerEl) return;
+  _bannerEl.style.transform = 'translateX(-50%) translateY(-140%)';
+  _bannerEl.style.opacity = '0';
+  _bannerEl.style.pointerEvents = 'none';
+}
+
+/* ---------- Polling ---------- */
+async function _poll(){
+  if(!Z.State.currentUser) return;
+  if(Z.State.currentView !== 'home') return;
+  if(document.hidden) return;
+  if(_lastSeenAt === null) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('get_new_post_count', {
+      p_since: new Date(_lastSeenAt).toISOString()
+    });
+    if(r.error) return;
+    var n = Number(r.data) || 0;
+
+    if(n > 0){
+      /* If realtime already delivered the newest post into the feed,
+         the user is already seeing it. Skip the banner. */
+      var top = (Z.State.allPosts || [])[0];
+      if(top && top.created_at && new Date(top.created_at).getTime() > _lastSeenAt){
+        _lastSeenAt   = Date.now();
+        _pendingCount = 0;
+        _hideBanner();
+        return;
+      }
+      _pendingCount = n;
+      _showBanner(n);
+    } else {
+      _pendingCount = 0;
+      _hideBanner();
+    }
+  } catch(e){}
+}
+
+function _startPolling(){
+  if(_pollTimer) return;
+  _pollTimer = setInterval(_poll, POLL_INTERVAL_MS);
+  setTimeout(function(){ try { _poll(); } catch(e){} }, FIRST_POLL_DELAY_MS);
+}
+
+function _stopPolling(){
+  if(_pollTimer){ clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+/* ---------- Tap action: reload then prepend-only ---------- */
+async function _onBannerTap(){
+  _hideBanner();
+  var captured = _pendingCount;
+  _pendingCount = 0;
+
+  try { await Z.reloadData(); } catch(e){}
+
+  /* Prepend-only. Existing video elements untouched → no restart. */
+  try {
+    if(typeof Z.softRefreshIfChanged === 'function'){
+      Z.softRefreshIfChanged('home');
+    } else {
+      Z.softRefresh();
+    }
+  } catch(e){}
+
+  _lastSeenAt = Date.now();
+  if(captured > 0){
+    Z.toast(captured + ' new post' + (captured === 1 ? '' : 's') + ' loaded');
+  }
+}
+
+/* ---------- Hook showView / logout ---------- */
+var _origShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _origShowView.apply(this, arguments);
+  if(view === 'home'){
+    if(_lastSeenAt === null){ _lastSeenAt = Date.now(); }
+    _startPolling();
+  } else {
+    _stopPolling();
+    _hideBanner();
+  }
+  return r;
+};
+
+var _origLogout = Z.logout;
+if(typeof _origLogout === 'function'){
+  Z.logout = async function(){
+    _stopPolling();
+    _hideBanner();
+    _lastSeenAt   = null;
+    _pendingCount = 0;
+    return _origLogout.apply(this, arguments);
+  };
+}
+
+/* ---------- softRefresh wrapper (fixes the video-restart bug) ----------
+   The realtime posts handler in Section 13 calls Z.softRefresh() every
+   time a new post arrives, which rebuilds the entire feed DOM and
+   restarts every video. This wrapper intercepts that call: if the DOM's
+   top post is present in state at an index > 0 (meaning new posts have
+   been added to the top of state), we route to softRefreshIfChanged,
+   which prepends only the new cards without touching existing videos.
+   Everything else — deletes, saves, comment edits — still rebuilds.
+   Re-entry guard prevents loops when softRefreshIfChanged calls
+   softRefresh internally. */
+var _origSoftRefresh = Z.softRefresh;
+if(typeof _origSoftRefresh === 'function'){
+  var _inWrapper = false;
+  Z.softRefresh = function(){
+    if(_inWrapper){ return _origSoftRefresh.apply(this, arguments); }
+    _inWrapper = true;
+    try {
+      if(Z.State.currentView === 'home'
+         && typeof Z.softRefreshIfChanged === 'function'){
+        var firstDomCard = document.querySelector('#app-container .post-card[data-post-id]');
+        if(firstDomCard){
+          var domTopId = firstDomCard.getAttribute('data-post-id');
+          var posts = Z.State.allPosts || [];
+          for(var i = 0; i < posts.length; i++){
+            if(posts[i] && posts[i].id === domTopId){
+              if(i > 0){
+                Z.softRefreshIfChanged('home');
+                return;
+              }
+              break;
+            }
+          }
+        }
+      }
+    } catch(e){}
+    finally { _inWrapper = false; }
+    return _origSoftRefresh.apply(this, arguments);
+  };
+}
+
+console.log('[New Posts Banner] active — poll 45s · tap to load · no auto-insert · prepend-only');
+})();
 </script>           
 </body>
 </html>
