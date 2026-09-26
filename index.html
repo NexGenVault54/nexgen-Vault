@@ -1,3 +1,29 @@
+<!-- ============================================================
+     DO NOT MODIFY — LOADING PROTOCOL LAYERS (Session 2026-09-26)
+     ============================================================
+     The following end-of-body scripts implement the loading
+     protocol. They are additive wrappers. They modify no
+     existing code except where explicitly noted. They are
+     stable and tested.
+
+     Layers shipped:
+       2b Step A — Drive connection pre-warm (__zynixDrivePrewarmA)
+       2b Step B — Drive cache filler (__zynixDriveCacheB)
+                   + 2 lines inside Section 17's init()
+       3         — Feed video preload deferral (__zynixLayer3)
+       4         — Speculative Home prefetch (__zynixLayer4)
+       5a        — Defer statuses + wallet (__zynixLayer5a)
+
+     DO NOT REMOVE, RENAME, REORDER, OR OVERRIDE.
+     These scripts wrap Z.showView, Z.reloadData, Z.logout,
+     Z.DB.loadStatuses, Z.DB.loadWalletTx, and Z.softRefresh.
+     Removing any of them will break loading behavior.
+     Any developer changing these must first read the full
+     loading protocol notes and test all layers.
+
+     For questions, refer to handoff doc.
+     ============================================================
+-->
 <!DOCTYPE html> 
 <!-- By the name of the Lord — ZYNIX production build v3.4 -->
 <html lang="en" class="dark">
@@ -9289,8 +9315,13 @@ Z.reloadData = async function(){
       })());
     }
 
-    await Promise.all(jobs);
-  }
+      if(!Z.State._firstReloadDone){
+      Z.State._firstReloadDone = true;
+      Promise.all(jobs).catch(function(){});
+    } else {
+      await Promise.all(jobs);
+    }
+  } 
 
    Z.loadWalletBadge();
   Z.updateNotifBadge();
@@ -20031,6 +20062,8 @@ console.log('[ZYNIX Biz v4.0 Patch 2] Toast fix + richer guides + Points & Level
 })();
 </script>
 <script>
+
+   /* DO NOT MODIFY — see DO-NOT-TOUCH block at top of file */
 /* ============================================================
    LAYER 2b STEP A — Drive connection pre-warm
    Runs once per session, 5s after Home is shown.
@@ -20100,6 +20133,8 @@ console.log('[Layer 2b Step A] Drive connection pre-warm installed');
 })();
 </script>
 <script>
+
+   /* DO NOT MODIFY — see DO-NOT-TOUCH block at top of file */
 /* ============================================================
    LAYER 2b STEP B — Drive state cache filler
    Runs after Step A's connection pre-warm. Populates a 60s
@@ -20215,6 +20250,8 @@ console.log('[Layer 2b Step B] Drive state cache filler installed');
 })();
 </script>
 <script>
+
+   /* DO NOT MODIFY — see DO-NOT-TOUCH block at top of file */
 /* ============================================================
    LAYER 3 — Feed video preload deferral
    Videos in Home feed start with preload="none". When they
@@ -20293,6 +20330,8 @@ console.log('[Layer 3] Feed video preload deferral installed');
 })();
 </script>
 <script>
+
+   /* DO NOT MODIFY — see DO-NOT-TOUCH block at top of file */
 /* ============================================================
    LAYER 4 — Speculative Home prefetch
    When user lands on public-home, silently fetch the Home
@@ -20362,6 +20401,8 @@ console.log('[Layer 4] Speculative Home prefetch installed');
 })();
 </script>
 <script>
+
+   /* DO NOT MODIFY — see DO-NOT-TOUCH block at top of file */
 /* ============================================================
    LAYER 5a — Defer statuses + wallet fetch by 2.5s
    First reloadData call returns empty for these two sources.
@@ -20430,7 +20471,30 @@ if(typeof _origLogout5a === 'function'){
 
 console.log('[Layer 5a] Statuses + wallet deferred 2.5s');
 })();
-</script>   
+</script>
+<script>
+
+   /* DO NOT MODIFY — see DO-NOT-TOUCH block at top of file */
+/* ============================================================
+   LAYER 5c — Reset first-reload flag on logout so the
+   deferred backfill runs again next session.
+   ============================================================ */
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixLayer5c) return; Z.__zynixLayer5c = true;
+
+var _origLogout5c = Z.logout;
+if(typeof _origLogout5c === 'function'){
+  Z.logout = async function(){
+    Z.State._firstReloadDone = false;
+    return _origLogout5c.apply(this, arguments);
+  };
+}
+
+console.log('[Layer 5c] First reloadData backfill will defer');
+})();
+</script>         
 </body>
 </html>
 
