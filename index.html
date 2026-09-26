@@ -21082,6 +21082,78 @@ Z.showView = function(view, param){
 
 console.log('[Swipe to Public] ready — 80px · 0.8 ratio · 900ms');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SWIPE HINT V2 — fixes the V1 race condition                   -->
+<!-- Clears stale flag once · fires toast reliably                 -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSwipeHintV2) return; Z.__zynixSwipeHintV2 = true;
+
+var HINT_KEY   = 'zynix_swipe_hint_v1';
+var V2_MARKER  = 'zynix_swipe_hint_v2';
+
+/* One-time: clear V1's stale flag so user actually sees the toast */
+try {
+  if(!localStorage.getItem(V2_MARKER)){
+    localStorage.removeItem(HINT_KEY);
+    localStorage.setItem(V2_MARKER, '1');
+  }
+} catch(e){}
+
+function _isFooterPage(){
+  var v = Z.State.currentView;
+  if(['home','spark','galleria','lounge'].indexOf(v) !== -1) return true;
+  if(v === 'public-profile'){
+    var me = Z.State.currentUser;
+    if(me && Z.State.currentParam === me.id) return true;
+  }
+  return false;
+}
+
+var _fired = false;
+
+function _fireHint(){
+  if(_fired) return;
+  try { if(localStorage.getItem(HINT_KEY) === '1'){ _fired = true; return; } } catch(e){ return; }
+  _fired = true;
+  try { localStorage.setItem(HINT_KEY, '1'); } catch(e){}
+  try { if(Z.toast) Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
+}
+
+/* Fire on script load if user is already on a footer page */
+setTimeout(function(){
+  try { if(_isFooterPage()) _fireHint(); } catch(e){}
+}, 1500);
+
+/* Fire whenever user navigates TO a footer page */
+var _prev = Z.showView;
+Z.showView = function(view, param){
+  var r = _prev.apply(this, arguments);
+  setTimeout(function(){
+    try { if(_isFooterPage()) _fireHint(); } catch(e){}
+  }, 400);
+  return r;
+};
+
+/* Debug helpers — console se chalao */
+Z.swipeHintReset = function(){
+  try {
+    localStorage.removeItem(HINT_KEY);
+    localStorage.removeItem(V2_MARKER);
+    _fired = false;
+    console.log('hint reset — reload karo');
+  } catch(e){}
+};
+Z.swipeHintForce = function(){
+  try { if(Z.toast) Z.toast('Swipe left for ZYNIX Public'); } catch(e){}
+};
+
+console.log('[Swipe Hint V2] ready');
+})();
 </script>           
 </body>
 </html>
