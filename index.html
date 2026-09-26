@@ -20590,6 +20590,95 @@ try {
 
 console.log('[G2] earn pill removed');
 })();
+</script>
+<!-- REALTIME MERGE — 8 channels → 1 (Free tier: 25 → 200 concurrent users) -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixRealtimeMerge) return; Z.__zynixRealtimeMerge = true;
+
+var _shared = null;
+var _subscribed = false;
+var _origChannel = null;
+var _origRemoveChannel = null;
+
+function resetShared(){
+  if(_shared && _origRemoveChannel){
+    try { _origRemoveChannel(_shared); } catch(e){}
+  }
+  _shared = null;
+  _subscribed = false;
+}
+
+function patchClient(c){
+  if(!c || c.__zynixChannelMerged) return c;
+
+  _origChannel = c.channel.bind(c);
+  _origRemoveChannel = c.removeChannel.bind(c);
+
+  c.channel = function(name, opts){
+    /* Non-zynix channels pass through unchanged
+       (e.g. drive-events broadcast, zy-drive-* channels) */
+    if(typeof name !== 'string' || name.indexOf('zynix-') !== 0){
+      return _origChannel(name, opts);
+    }
+    if(!_shared){
+      _shared = _origChannel('zynix-merged', opts || {});
+      _subscribed = false;
+
+      var _origSub = _shared.subscribe.bind(_shared);
+      _shared.subscribe = function(cb){
+        if(_subscribed) return _shared;
+        _subscribed = true;
+        /* Defer real subscribe to next microtask so all .on()
+           bindings from the current setupRealtime run first */
+        Promise.resolve().then(function(){
+          try {
+            var p = _origSub(cb);
+            if(p && p.catch) p.catch(function(){});
+          } catch(e){}
+        });
+        return _shared;
+      };
+    }
+    return _shared;
+  };
+
+  c.removeChannel = function(ch){
+    if(ch === _shared){ _shared = null; _subscribed = false; }
+    return _origRemoveChannel(ch);
+  };
+
+  c.__zynixChannelMerged = true;
+  return c;
+}
+
+/* Patch Z.sb — create-time hook */
+var _origSb = Z.sb;
+Z.sb = function(){
+  var c = _origSb.apply(this, arguments);
+  if(c) patchClient(c);
+  return c;
+};
+
+/* Patch already-created client (defensive) */
+try {
+  var existing = _origSb();
+  if(existing) patchClient(existing);
+} catch(e){}
+
+/* Reset shared state every time setupRealtime runs */
+var _origSetup = Z.setupRealtime;
+if(typeof _origSetup === 'function'){
+  Z.setupRealtime = function(){
+    resetShared();
+    return _origSetup.apply(this, arguments);
+  };
+}
+
+console.log('[Realtime Merge] 8 → 1 active');
+})();
 </script>     
 </body>
 </html>
