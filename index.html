@@ -20213,6 +20213,84 @@ if(typeof _origLogoutB === 'function'){
 
 console.log('[Layer 2b Step B] Drive state cache filler installed');
 })();
+</script>
+<script>
+/* ============================================================
+   LAYER 3 — Feed video preload deferral
+   Videos in Home feed start with preload="none". When they
+   come within 300px of the viewport, they swap to "metadata"
+   so playback starts ready. Videos far below the fold don't
+   compete with the hero video for bandwidth.
+   ============================================================ */
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixLayer3) return; Z.__zynixLayer3 = true;
+
+var _obs = null;
+
+function _getObserver(){
+  if(_obs) return _obs;
+  if(typeof IntersectionObserver === 'undefined') return null;
+  _obs = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(!en.isIntersecting) return;
+      var v = en.target;
+      if(v.getAttribute('preload') === 'none'){
+        v.setAttribute('preload', 'metadata');
+        try { v.load(); } catch(e){}
+      }
+      _obs.unobserve(v);
+    });
+  }, { rootMargin: '300px 0px' });
+  return _obs;
+}
+
+function _deferVideos(){
+  if(Z.State.currentView !== 'home') return;
+  var obs = _getObserver();
+  if(!obs) return;
+
+  var vids = document.querySelectorAll('#app-container .post-media video, #app-container .post-media.has-video video');
+  vids.forEach(function(v){
+    if(v._layer3Hooked) return;
+    v._layer3Hooked = true;
+
+    /* If already loaded or playing, don't touch */
+    if(v.currentTime > 0) return;
+    if(!v.paused) return;
+
+    /* Set preload none, then observe */
+    v.setAttribute('preload', 'none');
+    try { v.load(); } catch(e){}
+    try { obs.observe(v); } catch(e){}
+  });
+}
+
+/* Run after Home renders. Multiple delays cover re-renders. */
+var _origShowView3 = Z.showView;
+Z.showView = function(view, param){
+  var r = _origShowView3.apply(this, arguments);
+  if(view === 'home'){
+    setTimeout(_deferVideos, 200);
+    setTimeout(_deferVideos, 800);
+  }
+  return r;
+};
+
+var _origSoft3 = Z.softRefresh;
+if(typeof _origSoft3 === 'function'){
+  Z.softRefresh = function(){
+    var r = _origSoft3.apply(this, arguments);
+    if(Z.State.currentView === 'home'){
+      setTimeout(_deferVideos, 200);
+    }
+    return r;
+  };
+}
+
+console.log('[Layer 3] Feed video preload deferral installed');
+})();
 </script>   
 </body>
 </html>
