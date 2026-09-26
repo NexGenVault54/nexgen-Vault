@@ -20029,6 +20029,75 @@ if(!Z.__bizActiveWrappedForPoints){
 console.log('[ZYNIX Biz v4.0 Patch 2] Toast fix + richer guides + Points & Levels ready');
 })();
 </script>
+<script>
+/* ============================================================
+   LAYER 2b STEP A — Drive connection pre-warm
+   Runs once per session, 5s after Home is shown.
+   Fires same queries init() uses to warm the HTTP/2 connection.
+   Does not cache. Does not modify Section 17.
+   ============================================================ */
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixDrivePrewarmA) return; Z.__zynixDrivePrewarmA = true;
+
+var _warmedUserId = null;
+
+function _warmDrive(){
+  var u = Z.State.currentUser;
+  if(!u || !u.id) return;
+  if(_warmedUserId === u.id) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  _warmedUserId = u.id;
+
+  /* Fire and forget. We do not use the results. */
+  try { c.from('drive_drivers').select('user_id').eq('user_id', u.id).limit(1); } catch(e){}
+  try { c.from('drive_travellers').select('user_id').eq('user_id', u.id).limit(1); } catch(e){}
+  try { c.from('drive_ratings').select('id').eq('rater_id', u.id).limit(1); } catch(e){}
+  try { c.from('drive_rides').select('id').eq('traveller_id', u.id).in('status',['requested','bidding','accepted','driver_arriving','in_progress']).limit(1); } catch(e){}
+}
+
+function _scheduleWarm(){
+  var run = function(){ try { _warmDrive(); } catch(e){} };
+  if(typeof requestIdleCallback === 'function'){
+    try { requestIdleCallback(run, {timeout: 8000}); }
+    catch(e){ setTimeout(run, 3000); }
+  } else {
+    setTimeout(run, 3000);
+  }
+}
+
+/* Watch for Home to appear, then warm 5s later */
+var _homeTimer = null;
+var _origShowViewA = Z.showView;
+Z.showView = function(view, param){
+  var r = _origShowViewA.apply(this, arguments);
+  if(view === 'home'){
+    if(_homeTimer){ clearTimeout(_homeTimer); }
+    _homeTimer = setTimeout(function(){
+      _homeTimer = null;
+      _scheduleWarm();
+    }, 5000);
+  }
+  return r;
+};
+
+/* Also warm after reloadData lands us on Home */
+var _origReloadDataA = Z.reloadData;
+if(typeof _origReloadDataA === 'function'){
+  Z.reloadData = async function(){
+    var r = await _origReloadDataA.apply(this, arguments);
+    if(Z.State.currentView === 'home' && Z.State.currentUser && Z.State.currentUser.id){
+      setTimeout(_scheduleWarm, 3000);
+    }
+    return r;
+  };
+}
+
+console.log('[Layer 2b Step A] Drive connection pre-warm installed');
+})();
+</script>     
 </body>
 </html>
 
