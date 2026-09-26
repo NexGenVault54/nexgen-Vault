@@ -10290,8 +10290,9 @@ async function init(container){
   container = container || document.getElementById('zy-drive-mount'); if(!container) return;
   var u = me(); if(!u){ container.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8;">Please sign in to use ZYNIX Drive.</div>'; return; }
   var c = db(); if(!c){ container.innerHTML = '<div style="padding:20px;color:#f87171;">Not connected.</div>'; return; }
-  container.innerHTML = '<div style="padding:30px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin" style="font-size:26px;color:#10b981;"></i></div>';
-  S.favDrivers = loadFavs();
+    /* Layer 2b Step B — cache short-circuit */
+  var _cacheHitB = Z._driveCache && Z._driveCache.applyIfFresh(S, u.id);
+  if (_cacheHitB) { renderShell(container); bcInit(); rt_start(); startPeriodicSync(); ensureRidePoll(); return; }
   var lsCur = null; try { lsCur = localStorage.getItem('zynix_drive_currency'); } catch(e){}
   if(lsCur && CUR_MAP[lsCur]) S.currency = lsCur;
   S.tab = loadTab();
@@ -20097,7 +20098,122 @@ if(typeof _origReloadDataA === 'function'){
 
 console.log('[Layer 2b Step A] Drive connection pre-warm installed');
 })();
-</script>     
+</script>
+<script>
+/* ============================================================
+   LAYER 2b STEP B — Drive state cache filler
+   Runs after Step A's connection pre-warm. Populates a 60s
+   cache of the same data init() fetches. init() then reads
+   the cache and skips its own fetches on the first Drive open.
+   ============================================================ */
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixDriveCacheB) return; Z.__zynixDriveCacheB = true;
+
+/* Shared cache object — read by init() via Z._driveCache.applyIfFresh */
+Z._driveCache = Z._driveCache || {
+  userId: null,
+  ts: 0,
+  driver: null,
+  traveller: null,
+  myRated: {},
+  activeRide: null,
+  applyIfFresh: function(S, userId){
+    if(!this.userId || this.userId !== userId) return false;
+    if((Date.now() - this.ts) > 60000) return false;
+    S.driver = this.driver;
+    S.traveller = this.traveller;
+    S.myRated = this.myRated || {};
+    S.activeRide = this.activeRide || null;
+    S.mode = (S.driver && S.activeDriverRide) ? 'driver' : 'rider';
+    S.lastRideFingerprint = '';
+    return true;
+  }
+};
+
+async function _fillDriveCache(){
+  var u = Z.State.currentUser;
+  if(!u || !u.id) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* Skip if cache is already fresh for this user */
+  if(Z._driveCache.userId === u.id && (Date.now() - Z._driveCache.ts) < 55000) return;
+
+  try {
+    var [dR, tR, rR] = await Promise.all([
+      c.from('drive_drivers').select('*').eq('user_id', u.id).maybeSingle(),
+      c.from('drive_travellers').select('*').eq('user_id', u.id).maybeSingle(),
+      c.from('drive_ratings').select('ride_id').eq('rater_id', u.id)
+    ]);
+
+    var rr = await c.from('drive_rides')
+      .select('*')
+      .eq('traveller_id', u.id)
+      .in('status', ['requested','bidding','accepted','driver_arriving','in_progress'])
+      .order('created_at', {ascending: false})
+      .limit(1);
+
+    var myRated = {};
+    (rR.data || []).forEach(function(x){ myRated[x.ride_id] = true; });
+
+    Z._driveCache.userId = u.id;
+    Z._driveCache.ts = Date.now();
+    Z._driveCache.driver = dR && dR.data ? dR.data : null;
+    Z._driveCache.traveller = tR && tR.data ? tR.data : null;
+    Z._driveCache.myRated = myRated;
+    Z._driveCache.activeRide = rr && rr.data && rr.data[0] ? rr.data[0] : null;
+  } catch(e){}
+}
+
+/* Fire filler after Step A's pre-warm completes. Step A already
+   hooks showView; we hook the same event one tick later. */
+var _homeTimerB = null;
+var _origShowViewB = Z.showView;
+Z.showView = function(view, param){
+  var r = _origShowViewB.apply(this, arguments);
+  if(view === 'home'){
+    if(_homeTimerB){ clearTimeout(_homeTimerB); }
+    _homeTimerB = setTimeout(function(){
+      _homeTimerB = null;
+      try { _fillDriveCache(); } catch(e){}
+    }, 5500);
+  }
+  return r;
+};
+
+/* Also refill after reloadData if user lands on Home */
+var _origReloadDataB = Z.reloadData;
+if(typeof _origReloadDataB === 'function'){
+  Z.reloadData = async function(){
+    var r = await _origReloadDataB.apply(this, arguments);
+    if(Z.State.currentView === 'home' && Z.State.currentUser && Z.State.currentUser.id){
+      setTimeout(function(){ try { _fillDriveCache(); } catch(e){} }, 3500);
+    }
+    return r;
+  };
+}
+
+/* Clear cache on logout so next user does not inherit stale state */
+var _origLogoutB = Z.logout;
+if(typeof _origLogoutB === 'function'){
+  Z.logout = async function(){
+    try {
+      Z._driveCache.userId = null;
+      Z._driveCache.ts = 0;
+      Z._driveCache.driver = null;
+      Z._driveCache.traveller = null;
+      Z._driveCache.myRated = {};
+      Z._driveCache.activeRide = null;
+    } catch(e){}
+    return _origLogoutB.apply(this, arguments);
+  };
+}
+
+console.log('[Layer 2b Step B] Drive state cache filler installed');
+})();
+</script>   
 </body>
 </html>
 
