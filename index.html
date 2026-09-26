@@ -20291,6 +20291,75 @@ if(typeof _origSoft3 === 'function'){
 
 console.log('[Layer 3] Feed video preload deferral installed');
 })();
+</script>
+<script>
+/* ============================================================
+   LAYER 4 — Speculative Home prefetch
+   When user lands on public-home, silently fetch the Home
+   feed + latest spark in background. If user taps "Enter",
+   Home opens with data already in state. No waiting.
+   ============================================================ */
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixLayer4) return; Z.__zynixLayer4 = true;
+
+var _prefetched = false;
+
+async function _prefetchHome(){
+  if(_prefetched) return;
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* Only run if we are on public-home (or about to be) */
+  if(Z.State.currentView !== 'public-home') return;
+
+  _prefetched = true;
+  try { await Z.DB.loadHomeFeed(); } catch(e){}
+  try { await Z.DB.loadSparks(); } catch(e){}
+  try { await Z.DB.loadAllProfiles(); } catch(e){}
+}
+
+/* Fire on every navigation to public-home */
+var _origShowView4 = Z.showView;
+Z.showView = function(view, param){
+  var r = _origShowView4.apply(this, arguments);
+  if(view === 'public-home'){
+    if(typeof requestIdleCallback === 'function'){
+      try { requestIdleCallback(function(){ _prefetchHome(); }, {timeout: 4000}); }
+      catch(e){ setTimeout(_prefetchHome, 1500); }
+    } else {
+      setTimeout(_prefetchHome, 1500);
+    }
+  }
+  return r;
+};
+
+/* Also prefetch after reloadData when on public-home */
+var _origReloadData4 = Z.reloadData;
+if(typeof _origReloadData4 === 'function'){
+  Z.reloadData = async function(){
+    var r = await _origReloadData4.apply(this, arguments);
+    if(Z.State.currentView === 'public-home'){
+      setTimeout(_prefetchHome, 1000);
+    }
+    return r;
+  };
+}
+
+/* Reset flag on logout so next session re-prefetches */
+var _origLogout4 = Z.logout;
+if(typeof _origLogout4 === 'function'){
+  Z.logout = async function(){
+    _prefetched = false;
+    return _origLogout4.apply(this, arguments);
+  };
+}
+
+console.log('[Layer 4] Speculative Home prefetch installed');
+})();
 </script>   
 </body>
 </html>
