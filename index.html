@@ -20467,6 +20467,99 @@ if(typeof _origLogout5a === 'function'){
 console.log('[Layer 5a] Statuses + wallet deferred 2.5s');
 })();
 </script>
+<!-- COUNTER FIX A — preserve counters if DB read is blocked by RLS -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixCounterFixA) return; Z.__zynixCounterFixA = true;
+
+var _prev = Z.reloadData;
+Z.reloadData = async function(){
+
+  var snap = { posts:{}, sparks:{} };
+
+  /* Snapshot post counters */
+  (Z.State.allPosts || []).forEach(function(p){
+    if(!p || !p.id || p._optimistic) return;
+    snap.posts[p.id] = {
+      reactions:    Object.assign({}, p.reactions || {}),
+      myReactions:  Object.assign({}, p._myReactions || {}),
+      comments:     (p._comments || []).slice()
+    };
+  });
+
+  /* Snapshot spark counters */
+  (Z.State.allSparks || []).forEach(function(s){
+    if(!s || !s.id || s._optimistic) return;
+    snap.sparks[s.id] = {
+      reactions:    Object.assign({}, s._reactions || {}),
+      myReactions:  Object.assign({}, s._myReactions || {}),
+      comments:     (s._comments || []).slice(),
+      commentsCount:Number(s._commentsCount) || 0
+    };
+  });
+
+  var result = await _prev.apply(this, arguments);
+
+  var restored = false;
+
+  /* Restore post counters that were wiped N>0 → 0 */
+  (Z.State.allPosts || []).forEach(function(p){
+    if(!p || !p.id || p._optimistic) return;
+    var s = snap.posts[p.id]; if(!s) return;
+
+    var oldR = 0, newR = 0;
+    Object.keys(s.reactions).forEach(function(k){ oldR += Number(s.reactions[k])||0; });
+    Object.keys(p.reactions||{}).forEach(function(k){ newR += Number(p.reactions[k])||0; });
+    if(oldR > 0 && newR === 0){ p.reactions = s.reactions; restored = true; }
+
+    var oldMy = 0, newMy = 0;
+    Object.keys(s.myReactions).forEach(function(k){ if(s.myReactions[k]) oldMy++; });
+    Object.keys(p._myReactions||{}).forEach(function(k){ if(p._myReactions[k]) newMy++; });
+    if(oldMy > 0 && newMy === 0){ p._myReactions = s.myReactions; restored = true; }
+
+    if(s.comments.length > 0 && (p._comments||[]).length === 0){
+      p._comments = s.comments; restored = true;
+    }
+  });
+
+  /* Restore spark counters that were wiped N>0 → 0 */
+  (Z.State.allSparks || []).forEach(function(s){
+    if(!s || !s.id || s._optimistic) return;
+    var snapS = snap.sparks[s.id]; if(!snapS) return;
+
+    var oldR = 0, newR = 0;
+    Object.keys(snapS.reactions).forEach(function(k){ oldR += Number(snapS.reactions[k])||0; });
+    Object.keys(s._reactions||{}).forEach(function(k){ newR += Number(s._reactions[k])||0; });
+    if(oldR > 0 && newR === 0){ s._reactions = snapS.reactions; restored = true; }
+
+    var oldMy = 0, newMy = 0;
+    Object.keys(snapS.myReactions).forEach(function(k){ if(snapS.myReactions[k]) oldMy++; });
+    Object.keys(s._myReactions||{}).forEach(function(k){ if(s._myReactions[k]) newMy++; });
+    if(oldMy > 0 && newMy === 0){ s._myReactions = snapS.myReactions; restored = true; }
+
+    if(snapS.comments.length > 0 && (s._comments||[]).length === 0){
+      s._comments = snapS.comments; restored = true;
+    }
+    if(snapS.commentsCount > 0 && (Number(s._commentsCount)||0) === 0){
+      s._commentsCount = snapS.commentsCount; restored = true;
+    }
+  });
+
+  if(restored){
+    var v = Z.State.currentView;
+    if(v === 'home' || v === 'spark'){
+      setTimeout(function(){ try { Z.softRefresh(); } catch(e){} }, 30);
+    }
+  }
+
+  return result;
+};
+
+console.log('[Counter Fix A] active — posts + sparks + comments protected');
+})();
+</script>           
 </body>
 </html>
 
