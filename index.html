@@ -20360,6 +20360,76 @@ if(typeof _origLogout4 === 'function'){
 
 console.log('[Layer 4] Speculative Home prefetch installed');
 })();
+</script>
+<script>
+/* ============================================================
+   LAYER 5a — Defer statuses + wallet fetch by 2.5s
+   First reloadData call returns empty for these two sources.
+   Real fetch happens 2.5s later in background. Subsequent
+   calls behave as baseline.
+   ============================================================ */
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixLayer5a) return; Z.__zynixLayer5a = true;
+
+var _firstStatuses = true;
+var _firstWallet = true;
+
+var _origStatuses = Z.DB.loadStatuses;
+Z.DB.loadStatuses = async function(){
+  if(_firstStatuses){
+    _firstStatuses = false;
+    setTimeout(function(){
+      try {
+        _origStatuses.call(Z.DB).then(function(list){
+          if(Z.State.currentView === 'home'){
+            try { if(typeof Z.renderStatusRow === 'function') Z.renderStatusRow(); } catch(e){}
+          } else if(Z.State.currentView === 'status-home'){
+            try { Z.softRefresh(); } catch(e){}
+          }
+        });
+      } catch(e){}
+    }, 2500);
+    return [];
+  }
+  return _origStatuses.apply(this, arguments);
+};
+
+var _origWallet = Z.DB.loadWalletTx;
+Z.DB.loadWalletTx = async function(userId){
+  if(_firstWallet){
+    _firstWallet = false;
+    setTimeout(function(){
+      try {
+        _origWallet.call(Z.DB, userId).then(function(tx){
+          if(Z.State.currentUser && Z.State.currentUser.id === userId){
+            Z.State.currentUser._walletTx = tx || [];
+            if(Z.State.currentView === 'wallet'){
+              var cont = document.getElementById('app-container');
+              if(cont) cont.innerHTML = Z.renderView('wallet');
+            }
+          }
+        });
+      } catch(e){}
+    }, 2500);
+    return [];
+  }
+  return _origWallet.apply(this, arguments);
+};
+
+/* Reset flags on logout so next session re-defers */
+var _origLogout5a = Z.logout;
+if(typeof _origLogout5a === 'function'){
+  Z.logout = async function(){
+    _firstStatuses = true;
+    _firstWallet = true;
+    return _origLogout5a.apply(this, arguments);
+  };
+}
+
+console.log('[Layer 5a] Statuses + wallet deferred 2.5s');
+})();
 </script>   
 </body>
 </html>
