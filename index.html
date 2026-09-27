@@ -21258,59 +21258,82 @@ console.log('[Spark Count Refresh] ready — counts correct on first paint after
 })();
 </script>
  <!-- ============================================================ -->
-<!-- DETACHED VIDEO KILLER                                         -->
-<!-- Purpose: when softRefresh / showView / replaceChild swaps out -->
-<!--          a DOM subtree, the old <video> elements stay alive   -->
-<!--          in memory and keep playing audio. This observer      -->
-<!--          catches every removal and pauses the video inside.   -->
-<!-- Root cause of: hero audio bleeding after softRefresh on Home. -->
-<!-- Trigger: MutationObserver on #app-container (subtree).        -->
-<!-- Add-only. Does not modify any existing function.              -->
+<!-- DETACHED VIDEO KILLER v2 — replaces v1                        -->
+<!-- Root cause: something calls play() on a video AFTER it has    -->
+<!--   been detached from the DOM. MutationObserver cannot stop    -->
+<!--   this because the removal has already fired.                 -->
+<!-- Three layers, each closes a different hole:                   -->
+<!--   L1: play() override — refuses new plays on detached videos  -->
+<!--   L2: MutationObserver — pauses videos the moment they leave  -->
+<!--   L3: post-nav sweep — kills any video whose owner container  -->
+<!--       is no longer the active view                            -->
+<!-- Add-only. Does not modify any existing function body.         -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixDetachedVideoKiller) return; Z.__zynixDetachedVideoKiller = true;
+if(Z.__zynixDetachKillerV2) return; Z.__zynixDetachKillerV2 = true;
 
-function killDetachedVideos(node){
-  if(!node || node.nodeType !== 1) return;
-
-  /* The removed node itself might be a video */
-  if(node.tagName === 'VIDEO'){
-    try { node.pause(); node.removeAttribute('src'); } catch(e){}
-    return;
+/* ============================================================
+   Layer 1 — refuse play() on a detached video
+   A video that is not connected to the document should never
+   be playing. Returning Promise.resolve() keeps the API
+   compatible with every existing caller (nothing expects
+   play() to fail hard).
+   ============================================================ */
+var _origPlay = HTMLMediaElement.prototype.play;
+HTMLMediaElement.prototype.play = function(){
+  if(this.tagName === 'VIDEO' && !this.isConnected){
+    try { this.pause(); this.muted = true; } catch(e){}
+    return Promise.resolve();
   }
+  return _origPlay.apply(this, arguments);
+};
 
-  /* Or contain videos */
+/* ============================================================
+   Layer 2 — MutationObserver kill on removal
+   Same observer as v1, but harder kill: pause, mute,
+   detach srcObject, clear src, and force the pipeline down
+   with load(). On some browsers, pause+removeAttribute is not
+   enough — the audio buffer keeps playing.
+   ============================================================ */
+function killOne(v){
+  try { v.pause(); }            catch(e){}
+  try { v.muted = true; }       catch(e){}
+  try { v.volume = 0; }         catch(e){}
+  try { v.srcObject = null; }   catch(e){}
+  try { v.removeAttribute('src') } catch(e){}
+  try { v.load(); }             catch(e){}
+}
+
+function walkAndKill(node){
+  if(!node || node.nodeType !== 1) return;
+  if(node.tagName === 'VIDEO'){ killOne(node); return; }
   if(node.querySelectorAll){
-    node.querySelectorAll('video').forEach(function(v){
-      try { v.pause(); v.removeAttribute('src'); } catch(e){}
-    });
+    node.querySelectorAll('video').forEach(killOne);
   }
 }
 
 function startObserver(){
   var root = document.getElementById('app-container');
   if(!root) return false;
+  if(Z._detachKillerObserver) return true;
 
   var obs = new MutationObserver(function(mutations){
     for(var i = 0; i < mutations.length; i++){
       var removed = mutations[i].removedNodes;
       if(!removed || !removed.length) continue;
       for(var j = 0; j < removed.length; j++){
-        killDetachedVideos(removed[j]);
+        walkAndKill(removed[j]);
       }
     }
   });
-
   obs.observe(root, { childList: true, subtree: true });
-  Z._detachedVideoObserver = obs;
+  Z._detachKillerObserver = obs;
   return true;
 }
 
-/* #app-container exists in the initial HTML — no wait needed,
-   but guard in case this script runs before the parser is done */
 if(!startObserver()){
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', startObserver);
@@ -21319,9 +21342,57 @@ if(!startObserver()){
   }
 }
 
-console.log('[Detached Video Killer] active — every removed video is paused');
+/* ============================================================
+   Layer 3 — post-navigation sweep
+   Runs after showView and softRefresh. Walks every video that
+   is still queryable from document and pauses any whose owner
+   container is not one of the recognised roots. This catches
+   the rare case where a video is connected but sitting inside
+   a detached wrapper that Document.querySelectorAll still
+   returns (because the wrapper's parent chain exists but is
+   not rooted at #app-container).
+   ============================================================ */
+function sweepOrphans(){
+  var allowed = [];
+  ['app-container','spark-feed','modal-container','sheet-container','status-viewer'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) allowed.push(el);
+  });
+
+  document.querySelectorAll('video').forEach(function(v){
+    var owned = false;
+    for(var i = 0; i < allowed.length; i++){
+      if(allowed[i].contains(v)){ owned = true; break; }
+    }
+    if(!owned && !v.paused){
+      killOne(v);
+    }
+  });
+}
+
+var _prevShow = Z.showView;
+if(typeof _prevShow === 'function'){
+  Z.showView = function(view, param){
+    var r = _prevShow.apply(this, arguments);
+    setTimeout(sweepOrphans, 500);
+    setTimeout(sweepOrphans, 1400);
+    return r;
+  };
+}
+
+var _prevSoft = Z.softRefresh;
+if(typeof _prevSoft === 'function'){
+  Z.softRefresh = function(){
+    var r = _prevSoft.apply(this, arguments);
+    setTimeout(sweepOrphans, 300);
+    setTimeout(sweepOrphans, 900);
+    return r;
+  };
+}
+
+console.log('[Detach Killer v2] L1 play-guard · L2 observer · L3 sweep — all active');
 })();
-</script>    
+</script>
 </body>
 </html>
 
