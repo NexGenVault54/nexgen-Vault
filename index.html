@@ -21256,7 +21256,72 @@ if(typeof _prevReload === 'function'){
 
 console.log('[Spark Count Refresh] ready — counts correct on first paint after reload');
 })();
-</script>     
+</script>
+ <!-- ============================================================ -->
+<!-- DETACHED VIDEO KILLER                                         -->
+<!-- Purpose: when softRefresh / showView / replaceChild swaps out -->
+<!--          a DOM subtree, the old <video> elements stay alive   -->
+<!--          in memory and keep playing audio. This observer      -->
+<!--          catches every removal and pauses the video inside.   -->
+<!-- Root cause of: hero audio bleeding after softRefresh on Home. -->
+<!-- Trigger: MutationObserver on #app-container (subtree).        -->
+<!-- Add-only. Does not modify any existing function.              -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixDetachedVideoKiller) return; Z.__zynixDetachedVideoKiller = true;
+
+function killDetachedVideos(node){
+  if(!node || node.nodeType !== 1) return;
+
+  /* The removed node itself might be a video */
+  if(node.tagName === 'VIDEO'){
+    try { node.pause(); node.removeAttribute('src'); } catch(e){}
+    return;
+  }
+
+  /* Or contain videos */
+  if(node.querySelectorAll){
+    node.querySelectorAll('video').forEach(function(v){
+      try { v.pause(); v.removeAttribute('src'); } catch(e){}
+    });
+  }
+}
+
+function startObserver(){
+  var root = document.getElementById('app-container');
+  if(!root) return false;
+
+  var obs = new MutationObserver(function(mutations){
+    for(var i = 0; i < mutations.length; i++){
+      var removed = mutations[i].removedNodes;
+      if(!removed || !removed.length) continue;
+      for(var j = 0; j < removed.length; j++){
+        killDetachedVideos(removed[j]);
+      }
+    }
+  });
+
+  obs.observe(root, { childList: true, subtree: true });
+  Z._detachedVideoObserver = obs;
+  return true;
+}
+
+/* #app-container exists in the initial HTML — no wait needed,
+   but guard in case this script runs before the parser is done */
+if(!startObserver()){
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', startObserver);
+  } else {
+    setTimeout(startObserver, 0);
+  }
+}
+
+console.log('[Detached Video Killer] active — every removed video is paused');
+})();
+</script>    
 </body>
 </html>
 
