@@ -23148,6 +23148,368 @@ Z.renderView = function(view, param){
 console.log('[Galleria v2 Phase 2a · Block 9] Digital Market browse ready');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 2b · Block 10                       -->
+<!-- Asset detail page + Playstore-style ratings section.          -->
+<!-- Opens from any market asset card (Block 9).                   -->
+<!-- Rating submission button gated until Phase 4 (purchase).      -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketAssetDetail) return; Z.__zynixMarketAssetDetail = true;
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-mkt-detail-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mkt-detail-css';
+  st.textContent = [
+    '.mkd-preview{aspect-ratio:1;border-radius:16px;overflow:hidden;background:linear-gradient(135deg,#0f172a,#1e293b);position:relative;}',
+    '.mkd-preview img{width:100%;height:100%;object-fit:cover;display:block;}',
+    '.mkd-preview .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#334155;font-size:44px;}',
+    '.mkd-wm{position:absolute;inset:0;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.03) 0 12px,transparent 12px 24px);pointer-events:none;}',
+    '.mkd-wm::before{content:"ZYNIX";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:52px;font-weight:900;color:rgba(255,255,255,.10);letter-spacing:6px;pointer-events:none;}',
+    '.mkd-title{font-size:20px;font-weight:900;color:#fff;line-height:1.25;}',
+    '.mkd-meta{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}',
+    '.mkd-seller{display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;cursor:pointer;}',
+    '.mkd-seller img{width:40px;height:40px;border-radius:50%;object-fit:cover;}',
+    '.mkd-price-row{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-radius:12px;background:#111827;border:1px solid #1e293b;}',
+    '.mkd-price-row .lbl{font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;}',
+    '.mkd-price-row .val{font-size:17px;font-weight:900;color:#10b981;}',
+    '.mkd-buy-disabled{padding:14px;border-radius:12px;border:1px dashed rgba(148,163,184,.35);background:rgba(148,163,184,.05);color:#94a3b8;font-weight:800;font-size:12px;text-align:center;cursor:not-allowed;}',
+    '.mkd-ratings-head{display:flex;gap:18px;align-items:center;padding:16px;border-radius:14px;background:#111827;border:1px solid #1e293b;}',
+    '.mkd-ratings-avg{text-align:center;flex-shrink:0;}',
+    '.mkd-ratings-avg .big{font-size:42px;font-weight:900;color:#fbbf24;line-height:1;}',
+    '.mkd-ratings-avg .of{font-size:11px;color:#94a3b8;font-weight:800;}',
+    '.mkd-ratings-avg .cnt{font-size:10px;color:#64748b;margin-top:2px;}',
+    '.mkd-bands{flex:1;display:flex;flex-direction:column;gap:4px;}',
+    '.mkd-band{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:transparent;border:1px solid transparent;cursor:pointer;transition:background .15s,border-color .15s;text-align:left;}',
+    '.mkd-band:hover{background:rgba(255,255,255,.03);}',
+    '.mkd-band[data-active="1"]{background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.35);}',
+    '.mkd-band-lbl{font-size:10px;color:#94a3b8;font-weight:800;min-width:44px;}',
+    '.mkd-band-bar{flex:1;height:6px;border-radius:3px;background:rgba(0,0,0,.35);overflow:hidden;}',
+    '.mkd-band-fill{height:100%;border-radius:3px;transition:width .4s ease;}',
+    '.mkd-band-cnt{font-size:11px;font-weight:900;min-width:22px;text-align:right;}',
+    '.mkd-review{padding:12px 0;border-bottom:1px solid rgba(255,255,255,.05);}',
+    '.mkd-review:last-child{border-bottom:none;}',
+    '.mkd-review-score{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:10px;font-size:12px;font-weight:900;}',
+    '.mkd-review-cmt{font-size:12.5px;color:#cbd5e1;line-height:1.55;margin-top:8px;font-style:italic;}',
+    '.mkd-review-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px;}',
+    '.mkd-review-tag{font-size:9.5px;padding:2px 8px;border-radius:10px;background:rgba(148,163,184,.12);color:#94a3b8;font-weight:800;}',
+    '.mkd-review-time{font-size:10px;color:#64748b;font-weight:700;}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+function scoreColor(s){
+  s = Number(s) || 0;
+  if(s >= 8) return '#10b981';
+  if(s >= 4) return '#a18554';
+  return '#a16262';
+}
+function scoreBg(s){
+  s = Number(s) || 0;
+  if(s >= 8) return 'rgba(16,185,129,.12)';
+  if(s >= 4) return 'rgba(161,133,84,.14)';
+  return 'rgba(161,98,162,.14)';
+}
+function timeAgoShort(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function priceTierLine(label, value){
+  return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">' +
+    '<div style="font-size:12px;color:#cbd5e1;">' + label + '</div>' +
+    '<div style="font-size:13px;font-weight:900;color:#10b981;">' + value + '</div>' +
+  '</div>';
+}
+
+/* ============================================================
+   Main render
+   ============================================================ */
+function renderAssetDetail(assetId){
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:15px;">Asset</h2>';
+  h += '</div>';
+  h += '<button class="biz-explain-btn" onclick="Z.zygOpenGuide(\'digital-market\')" title="Market guide">?</button>';
+  h += '</div>';
+  h += '<div id="mkd-host"><div style="padding:40px;text-align:center;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#10b981;"></i>' +
+       '<div style="margin-top:10px;font-size:12px;">Loading…</div>' +
+       '</div></div>';
+  h += '</div>';
+
+  setTimeout(function(){ loadAsset(assetId); }, 40);
+  return h;
+}
+
+async function loadAsset(assetId){
+  var host = document.getElementById('mkd-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c){ host.innerHTML = Z.emptyState({ icon:'fa-solid fa-plug', title:'Not connected' }); return; }
+
+  try {
+    var r = await c.rpc('market_asset_detail', { p_asset_id: assetId });
+    if(r.error) throw r.error;
+    var data = r.data && r.data[0];
+    if(!data){ host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Asset not found' }); return; }
+
+    host.innerHTML = buildAssetPage(data);
+    wireAssetPage(data);
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load asset.' });
+  }
+}
+
+function buildAssetPage(a){
+  var avg = Number(a.rating_avg) || 0;
+  var cnt = Number(a.rating_count) || 0;
+  var bLow  = Number(a.band_low)  || 0;
+  var bMid  = Number(a.band_mid)  || 0;
+  var bHigh = Number(a.band_high) || 0;
+  var bTop  = Number(a.band_top)  || 0;
+  var totalBand = Math.max(1, bLow + bMid + bHigh + bTop);
+
+  var isImage = (a.media_type === 'image');
+  var isVideo = (a.media_type === 'video');
+  var preview = a.preview_url || (isImage ? a.media_url : null);
+
+  var h = '';
+
+  /* Preview */
+  h += '<div class="mkd-preview">';
+  if(preview){
+    h += '<img src="' + Z.escape(preview) + '" alt="">';
+  } else if(isVideo){
+    h += '<video src="' + Z.escape(a.media_url) + '" preload="metadata" muted playsinline style="width:100%;height:100%;object-fit:cover;"></video>';
+  } else {
+    h += '<div class="ph"><i class="fa-solid fa-image"></i></div>';
+  }
+  h += '<div class="mkd-wm"></div>';
+  h += '</div>';
+
+  /* Title + meta */
+  h += '<div>';
+  h += '<div class="mkd-title">' + Z.escape(a.title || 'Untitled') + '</div>';
+  h += '<div class="mkd-meta" style="margin-top:6px;">';
+  h += '<span style="color:#fbbf24;font-weight:900;"><i class="fa-solid fa-star"></i> ' + (cnt > 0 ? avg.toFixed(1) : 'New') + '</span>';
+  if(cnt > 0) h += '<span>·</span><span>' + cnt + ' ratings</span>';
+  h += '<span>·</span><span>' + timeAgoShort(a.created_at) + '</span>';
+  h += '</div>';
+  if(a.description){
+    h += '<div style="font-size:13px;color:#cbd5e1;line-height:1.7;margin-top:10px;">' + Z.escape(a.description) + '</div>';
+  }
+  h += '</div>';
+
+  /* Seller */
+  var sellerName = a.seller_username ? ('@' + a.seller_username) : 'Seller';
+  var sellerAvatar = a.seller_avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(sellerName) + '&background=111827&color=34d399');
+  h += '<div class="mkd-seller" data-mkd-seller="' + Z.escape(a.seller_id) + '">';
+  h += '<img src="' + Z.escape(sellerAvatar) + '">';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div style="font-size:13px;font-weight:800;color:#fff;">' + Z.escape(sellerName) + '</div>';
+  h += '<div style="font-size:10px;color:#64748b;">Tap to view SPACE</div>';
+  h += '</div>';
+  h += '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i>';
+  h += '</div>';
+
+  /* Price tiers */
+  h += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;">';
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:8px;">PRICE</div>';
+  h += priceTierLine('Rent · 24 hours', '$0.01');
+  h += priceTierLine('Buy permanent · ' + (isVideo ? 'video' : 'image/audio'), isVideo ? '$0.20' : '$0.10');
+  h += '</div>';
+
+  /* Buy/Rent — gated until Phase 4 */
+  h += '<div class="mkd-buy-disabled">';
+  h += '<i class="fa-solid fa-lock"></i> Buy & Rent open in Phase 4';
+  h += '<div style="font-size:10px;color:#64748b;margin-top:4px;">Wallet routing + rental expiry shipping next</div>';
+  h += '</div>';
+
+  /* Ratings section */
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-top:6px;">RATINGS & REVIEWS</div>';
+
+  if(cnt === 0){
+    h += '<div style="padding:24px;border-radius:12px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">';
+    h += 'No ratings yet. Be the first to rate after buying.';
+    h += '</div>';
+  } else {
+    /* Head card with avg + distribution */
+    h += '<div class="mkd-ratings-head">';
+    h += '<div class="mkd-ratings-avg">';
+    h += '<div class="big">' + avg.toFixed(1) + '</div>';
+    h += '<div class="of">/ 10</div>';
+    h += '<div class="cnt">' + cnt + ' rating' + (cnt === 1 ? '' : 's') + '</div>';
+    h += '</div>';
+    h += '<div class="mkd-bands">';
+    h += bandRow('top',  '9 – 10', bTop,  totalBand, '#10b981');
+    h += bandRow('high', '7 – 8',  bHigh, totalBand, '#a18554');
+    h += bandRow('mid',  '4 – 6',  bMid,  totalBand, '#a18554');
+    h += bandRow('low',  '1 – 3',  bLow,  totalBand, '#a16262');
+    h += '</div>';
+    h += '</div>';
+
+    /* Clear-filter button (only visible when filtered) */
+    h += '<div id="mkd-clear-host"></div>';
+
+    /* Review list host */
+    h += '<div id="mkd-review-host" style="border-radius:12px;background:#111827;border:1px solid #1e293b;padding:0 14px;">';
+    h += '<div style="text-align:center;color:#64748b;font-size:12px;padding:20px;">Loading reviews…</div>';
+    h += '</div>';
+  }
+
+  return h;
+}
+
+function bandRow(bandKey, label, count, total, color){
+  var pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return '<button class="mkd-band" data-mkd-band="' + bandKey + '">' +
+    '<div class="mkd-band-lbl">' + label + '</div>' +
+    '<div class="mkd-band-bar"><div class="mkd-band-fill" style="width:' + pct + '%;background:' + color + ';"></div></div>' +
+    '<div class="mkd-band-cnt" style="color:' + color + ';">' + count + '</div>' +
+  '</button>';
+}
+
+function wireAssetPage(a){
+  /* Seller click */
+  var s = document.querySelector('[data-mkd-seller]');
+  if(s && !s._mkdHooked){
+    s._mkdHooked = true;
+    s.addEventListener('click', function(){
+      Z.showView('public-profile', this.getAttribute('data-mkd-seller'));
+    });
+  }
+
+  /* Band filter */
+  var activeBand = null;
+  document.querySelectorAll('[data-mkd-band]').forEach(function(b){
+    if(b._mkdHooked) return; b._mkdHooked = true;
+    b.addEventListener('click', function(){
+      var band = this.getAttribute('data-mkd-band');
+      if(activeBand === band){
+        activeBand = null;
+        document.querySelectorAll('[data-mkd-band]').forEach(function(x){ x.removeAttribute('data-active'); });
+      } else {
+        activeBand = band;
+        document.querySelectorAll('[data-mkd-band]').forEach(function(x){ x.removeAttribute('data-active'); });
+        this.setAttribute('data-active', '1');
+      }
+      paintClearHost(activeBand, a.id);
+      loadReviews(a.id, activeBand);
+    });
+  });
+
+  /* Initial load */
+  loadReviews(a.id, null);
+}
+
+function paintClearHost(activeBand, assetId){
+  var host = document.getElementById('mkd-clear-host');
+  if(!host) return;
+  if(!activeBand){ host.innerHTML = ''; return; }
+  var label = activeBand === 'top' ? '9 – 10' :
+              activeBand === 'high' ? '7 – 8' :
+              activeBand === 'mid' ? '4 – 6' : '1 – 3';
+  host.innerHTML = '<button id="mkd-clear-btn" style="width:100%;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;">' +
+    'Showing ' + label + ' only · Clear filter' +
+  '</button>';
+  var btn = document.getElementById('mkd-clear-btn');
+  if(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('[data-mkd-band]').forEach(function(x){ x.removeAttribute('data-active'); });
+      paintClearHost(null, assetId);
+      loadReviews(assetId, null);
+    });
+  }
+}
+
+async function loadReviews(assetId, band){
+  var host = document.getElementById('mkd-review-host');
+  if(!host) return;
+  host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:12px;padding:20px;">Loading reviews…</div>';
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_asset_ratings', { p_asset_id: assetId, p_band: band });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+
+    if(!list.length){
+      host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:12px;padding:24px;">' +
+        (band ? 'No reviews in this band.' : 'No reviews yet.') +
+      '</div>';
+      return;
+    }
+
+    var html = '';
+    list.forEach(function(rv){
+      var s = Number(rv.score) || 0;
+      html += '<div class="mkd-review">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+      html += '<span class="mkd-review-score" style="background:' + scoreBg(s) + ';color:' + scoreColor(s) + ';">';
+      html += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + s + ' / 10';
+      html += '</span>';
+      html += '<span class="mkd-review-time">' + timeAgoShort(rv.created_at) + '</span>';
+      html += '</div>';
+      if(rv.comment){
+        html += '<div class="mkd-review-cmt">"' + Z.escape(rv.comment) + '"</div>';
+      }
+      var tags = rv.tags;
+      if(typeof tags === 'string'){ try { tags = JSON.parse(tags); } catch(e){ tags = null; } }
+      if(Array.isArray(tags) && tags.length){
+        html += '<div class="mkd-review-tags">';
+        tags.forEach(function(t){
+          html += '<span class="mkd-review-tag">' + Z.escape(String(t)) + '</span>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+    });
+    html += '<div style="padding:12px 0;text-align:center;font-size:10.5px;color:#64748b;line-height:1.5;">' +
+      'Ratings are anonymous. Only the score and comment are shown.' +
+    '</div>';
+    host.innerHTML = html;
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;padding:20px;">Could not load reviews.</div>';
+  }
+}
+
+/* ============================================================
+   Router hook
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'market-asset') return renderAssetDetail(param);
+  return _prevRender.call(this, view, param);
+};
+
+/* Public — called by Block 9's asset card click */
+Z.openMarketAsset = function(id){
+  if(!id) return;
+  Z.showView('market-asset', id);
+};
+
+console.log('[Galleria v2 Phase 2b · Block 10] asset detail + ratings ready');
+})();
+</script>       
 </body>
 </html>
 
