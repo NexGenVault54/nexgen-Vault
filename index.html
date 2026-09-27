@@ -21140,7 +21140,79 @@ if(typeof _prevFill === 'function'){
 
 console.log('[Hero Audio] ready — controls visible, unmutes on first tap');
 })();
-</script>       
+</script>
+<!-- ============================================================ -->
+<!-- GLOBAL VIDEO UNMUTE — Home feed · Spark feed · Hero           -->
+<!-- Purpose: first user gesture unmutes every visible video.      -->
+<!--          Scroll-triggered videos unmute automatically.        -->
+<!--          Unmuting any video propagates to all others.         -->
+<!-- Add-only. Does not modify any existing function body — only   -->
+<!-- wraps recomputeFeedVideoPlayback and setupFeedVideoAutoplay.  -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixGlobalUnmute) return; Z.__zynixGlobalUnmute = true;
+
+function unmuteAllVisible(){
+  if(!Z.State._userGestureUnlocked && !Z._sparkAudioUnlocked) return;
+  document.querySelectorAll('#app-container .post-media video, #spark-feed video, .home-hero-spark video').forEach(function(v){
+    if(v.muted){ try { v.muted = false; v.volume = 1; } catch(e){} }
+  });
+}
+
+var _gestureDone = false;
+function firstGesture(){
+  if(_gestureDone) return;
+  _gestureDone = true;
+  Z.State._userGestureUnlocked = true;
+  Z._sparkAudioUnlocked = true;
+  setTimeout(unmuteAllVisible, 50);
+}
+document.addEventListener('touchstart', firstGesture, {passive:true, once:true, capture:true});
+document.addEventListener('click',      firstGesture, {capture:true, once:true});
+document.addEventListener('keydown',    firstGesture, {once:true});
+
+/* Propagate a single unmute to all others (volumechange doesn't bubble) */
+var _unmuteInProgress = false;
+document.addEventListener('volumechange', function(e){
+  if(_unmuteInProgress) return;
+  var v = e.target;
+  if(v && v.tagName === 'VIDEO' && !v.muted){
+    Z.State._userGestureUnlocked = true;
+    Z._sparkAudioUnlocked = true;
+    _unmuteInProgress = true;
+    unmuteAllVisible();
+    _unmuteInProgress = false;
+  }
+}, true);
+
+/* Newly-scrolled-to home-feed video must unmute if audio is already unlocked */
+var _prevRecompute = Z.recomputeFeedVideoPlayback;
+if(typeof _prevRecompute === 'function'){
+  Z.recomputeFeedVideoPlayback = function(){
+    var r = _prevRecompute.apply(this, arguments);
+    if(Z.State._userGestureUnlocked || Z._sparkAudioUnlocked){
+      var vid = Z._feedPlayingVideo;
+      if(vid && vid.muted){ try { vid.muted = false; vid.volume = 1; } catch(e){} }
+    }
+    return r;
+  };
+}
+
+var _prevSetup = Z.setupFeedVideoAutoplay;
+if(typeof _prevSetup === 'function'){
+  Z.setupFeedVideoAutoplay = function(){
+    var r = _prevSetup.apply(this, arguments);
+    setTimeout(unmuteAllVisible, 100);
+    return r;
+  };
+}
+
+console.log('[Global Unmute] ready — first gesture + scroll + manual unmute all propagate');
+})();
+</script>     
 </body>
 </html>
 
