@@ -880,12 +880,13 @@ Z.toast = function(msg, type){
   }, isError ? 4000 : 2600);
 };
 
-Z.closeModal = function(){ var c = document.getElementById('modal-container'); if(c) c.innerHTML=''; };
+Z.closeModal = function(){ var c = document.getElementById('modal-container'); if(c) c.innerHTML=''; try { Z.resumeBackgroundVideos(); } catch(e){} };
 Z.openModal  = function(html){ try { Z.pauseAllBackgroundVideos(); } catch(e){} var c = document.getElementById('modal-container'); if(c) c.innerHTML=html; };
 Z.closeSheet = function(){
   Z._openSparkCommentsId = null;
   var c = document.getElementById('sheet-container');
   if(c) c.innerHTML='';
+  try { Z.resumeBackgroundVideos(); } catch(e){}
 };
 Z.openSheet  = function(html){ try { Z.pauseAllBackgroundVideos(); } catch(e){} var c = document.getElementById('sheet-container'); if(c) c.innerHTML=html; };
 
@@ -2064,6 +2065,30 @@ document.addEventListener('visibilitychange', function(){
     _visPaused = null;
   }
 });
+
+  Z.resumeBackgroundVideos = function(){
+  try {
+    var view = Z.State.currentView;
+    if(view === 'spark'){
+      var feed = document.getElementById('spark-feed');
+      if(!feed) return;
+      var vids = feed.querySelectorAll('video');
+      var vh = window.innerHeight, best = null, bestRatio = 0;
+      vids.forEach(function(v){
+        var r = v.getBoundingClientRect();
+        var visible = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
+        var ratio = r.height > 0 ? visible / r.height : 0;
+        if(ratio > bestRatio){ bestRatio = ratio; best = v; }
+      });
+      if(best && bestRatio >= 0.75){
+        if(Z._sparkAudioUnlocked){ best.muted = false; best.volume = 1; }
+        try { Z.playExclusive(best); } catch(e){}
+      }
+    } else if(view === 'home'){
+      try { if(typeof Z.recomputeFeedVideoPlayback === 'function') Z.recomputeFeedVideoPlayback(); } catch(e){}
+    }
+  } catch(e){}
+};   
 
 Z.loadBuildTimeline = async function(){
   var c = sb();
