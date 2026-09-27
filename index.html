@@ -21316,6 +21316,95 @@ if(typeof _origOpen === 'function'){
 console.log('[Lounge Scroll Preserve] active — toggles keep scroll position');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- LOUNGE TILE TOGGLE — in-place update                          -->
+<!-- Purpose: Section 15 v2.1's tile-toggle handler closes and     -->
+<!--   reopens the customize sheet on every tile tap, which         -->
+<!--   produces a visible flash. This block intercepts the click    -->
+<!--   in the capture phase BEFORE the original handler runs, then  -->
+<!--   updates only the clicked button's visuals and persists the   -->
+<!--   tile list to localStorage. Sheet stays open. No flash.       -->
+<!-- Reads tile state from the DOM (checkmark icon present/absent). -->
+<!-- Does not need getTiles/setTiles — those are private to         -->
+<!--   Section 15. Does not modify any existing function body.      -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixLoungeTileInPlace) return; Z.__zynixLoungeTileInPlace = true;
+
+function currentEnabledIds(sheet){
+  var ids = [];
+  sheet.querySelectorAll('[data-cust-tile]').forEach(function(b){
+    var icon = b.querySelector('i.fa-check-circle, i.fa-circle');
+    if(icon && icon.classList.contains('fa-check-circle')){
+      ids.push(b.getAttribute('data-cust-tile'));
+    }
+  });
+  return ids;
+}
+
+function saveTiles(ids){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  try { localStorage.setItem('zynix_lounge_tiles_' + u.id, JSON.stringify(ids)); } catch(e){}
+}
+
+function repaintButton(btn, isOn){
+  var labelSpan = btn.children[0];
+  var iconSpan  = labelSpan ? labelSpan.children[0] : null;
+  var checkIcon = btn.children[1];
+
+  btn.style.background  = isOn ? 'rgba(16,185,129,.06)' : '#0f172a';
+  btn.style.borderColor = isOn ? 'rgba(16,185,129,.35)' : '#1e293b';
+
+  if(labelSpan) labelSpan.style.color = isOn ? '#10b981' : '#cbd5e1';
+  if(iconSpan)  iconSpan.style.color  = isOn ? '#10b981' : '#64748b';
+
+  if(checkIcon){
+    checkIcon.classList.toggle('fa-check-circle', isOn);
+    checkIcon.classList.toggle('fa-circle', !isOn);
+    checkIcon.style.color = isOn ? '#10b981' : '#334155';
+  }
+}
+
+function handleToggle(btn){
+  var sheet = btn.closest('.zynix-lounge-sheet');
+  if(!sheet) return;
+
+  var ids = currentEnabledIds(sheet);
+  var id = btn.getAttribute('data-cust-tile');
+  var idx = ids.indexOf(id);
+  var isNowOn;
+
+  if(idx === -1){ ids.push(id); isNowOn = true; }
+  else { ids.splice(idx, 1); isNowOn = false; }
+
+  saveTiles(ids);
+  repaintButton(btn, isNowOn);
+
+  /* Refresh the app grid behind the sheet so it matches too */
+  if(typeof Z.refreshLoungeTiles === 'function'){
+    try { Z.refreshLoungeTiles(); } catch(e){}
+  }
+}
+
+/* Capture-phase interceptor at document level. Fires BEFORE the
+   button's own handler. stopPropagation prevents the original
+   close/reopen from ever running. */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-cust-tile]');
+  if(!btn) return;
+  if(!btn.closest('#sheet-container .zynix-lounge-sheet')) return;
+  e.stopPropagation();
+  e.preventDefault();
+  handleToggle(btn);
+}, true);
+
+console.log('[Lounge Tile Toggle] in-place update — no more close/reopen flash');
+})();
+</script>       
 </body>
 </html>
 
