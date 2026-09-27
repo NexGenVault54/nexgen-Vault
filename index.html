@@ -21212,6 +21212,50 @@ if(typeof _prevSetup === 'function'){
 
 console.log('[Global Unmute] ready — first gesture + scroll + manual unmute all propagate');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPARK REACTION COUNT REFRESH                                  -->
+<!-- Purpose: after Z.reloadData() finishes, spark reaction counts -->
+<!--          are correct in state but the DOM still shows the     -->
+<!--          snapshot's empty counts. This block re-renders the   -->
+<!--          visible spark reaction columns once data arrives.    -->
+<!-- Trigger: wraps Z.reloadData only. No timers, no observers.    -->
+<!-- Add-only. Does not modify any existing function body.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkCountRefresh) return; Z.__zynixSparkCountRefresh = true;
+
+function refreshVisibleSparkReactions(){
+  if(Z.State.currentView !== 'spark') return;
+  var sparks = Z.State.allSparks || [];
+  sparks.forEach(function(s){
+    if(!s || !s.id) return;
+    var stack = document.querySelector('[data-spark-actions="' + s.id + '"]');
+    if(!stack) return;
+    var wrap = stack.querySelector('.spark-action-reactions');
+    if(wrap){
+      try { wrap.innerHTML = Z.renderSparkReactionButtons(s); } catch(e){}
+    }
+  });
+}
+
+var _prevReload = Z.reloadData;
+if(typeof _prevReload === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReload.apply(this, arguments);
+    /* 250ms — after reloadData resolves and view is rendered */
+    setTimeout(refreshVisibleSparkReactions, 250);
+    /* 900ms — catches slow realtime updates that land right after */
+    setTimeout(refreshVisibleSparkReactions, 900);
+    return r;
+  };
+}
+
+console.log('[Spark Count Refresh] ready — counts correct on first paint after reload');
+})();
 </script>     
 </body>
 </html>
