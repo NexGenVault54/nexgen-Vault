@@ -21257,30 +21257,33 @@ if(typeof _prevReload === 'function'){
 console.log('[Spark Count Refresh] ready — counts correct on first paint after reload');
 })();
 </script>
- <!-- ============================================================ -->
-<!-- DETACHED VIDEO KILLER v2 — replaces v1                        -->
-<!-- Root cause: something calls play() on a video AFTER it has    -->
-<!--   been detached from the DOM. MutationObserver cannot stop    -->
-<!--   this because the removal has already fired.                 -->
-<!-- Three layers, each closes a different hole:                   -->
-<!--   L1: play() override — refuses new plays on detached videos  -->
-<!--   L2: MutationObserver — pauses videos the moment they leave  -->
-<!--   L3: post-nav sweep — kills any video whose owner container  -->
-<!--       is no longer the active view                            -->
-<!-- Add-only. Does not modify any existing function body.         -->
+<!-- ============================================================ -->
+<!-- VIDEO AUDIO FIX v3 — replaces Detach Killer v2                -->
+<!-- Fixes THREE bugs at once:                                     -->
+<!--                                                               -->
+<!-- 1. Home feed recompute bug: `best` was skipped in the pause   -->
+<!--    loop, so a video at <75% visibility never paused.           -->
+<!--    Symptom: hero keeps playing when you scroll down.           -->
+<!--                                                               -->
+<!-- 2. Home exit mute: leaving Home now hard-mutes every video    -->
+<!--    instead of only pausing — prevents any resumed audio.       -->
+<!--                                                               -->
+<!-- 3. Graveyard watchdog: detached videos are tracked in a list  -->
+<!--    and re-killed every second. Defeats the race where a        -->
+<!--    queued play() call fires after the detach observer.         -->
+<!--                                                               -->
+<!-- Add-only. Replaces v2 with stricter, narrower guards.          -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixDetachKillerV2) return; Z.__zynixDetachKillerV2 = true;
+if(Z.__zynixVideoFixV3) return; Z.__zynixVideoFixV3 = true;
 
 /* ============================================================
-   Layer 1 — refuse play() on a detached video
-   A video that is not connected to the document should never
-   be playing. Returning Promise.resolve() keeps the API
-   compatible with every existing caller (nothing expects
-   play() to fail hard).
+   LAYER 1 — Refuse play() on a detached video
+   Carried forward from v2. A queued callback that tries to
+   restart a removed hero is refused at the API boundary.
    ============================================================ */
 var _origPlay = HTMLMediaElement.prototype.play;
 HTMLMediaElement.prototype.play = function(){
@@ -21292,33 +21295,41 @@ HTMLMediaElement.prototype.play = function(){
 };
 
 /* ============================================================
-   Layer 2 — MutationObserver kill on removal
-   Same observer as v1, but harder kill: pause, mute,
-   detach srcObject, clear src, and force the pipeline down
-   with load(). On some browsers, pause+removeAttribute is not
-   enough — the audio buffer keeps playing.
+   LAYER 2 — Detach observer + graveyard
+   Every removed video is paused+muted+unloaded AND pushed to a
+   graveyard array. Watchdog below keeps killing them every
+   second, catching any callback that tries to revive them.
    ============================================================ */
+Z._videoGraveyard = Z._videoGraveyard || [];
+
 function killOne(v){
-  try { v.pause(); }            catch(e){}
-  try { v.muted = true; }       catch(e){}
-  try { v.volume = 0; }         catch(e){}
-  try { v.srcObject = null; }   catch(e){}
+  try { v.pause(); }             catch(e){}
+  try { v.muted = true; }        catch(e){}
+  try { v.volume = 0; }          catch(e){}
+  try { v.srcObject = null; }    catch(e){}
   try { v.removeAttribute('src') } catch(e){}
-  try { v.load(); }             catch(e){}
+  try { v.load(); }              catch(e){}
 }
 
 function walkAndKill(node){
   if(!node || node.nodeType !== 1) return;
-  if(node.tagName === 'VIDEO'){ killOne(node); return; }
+  if(node.tagName === 'VIDEO'){
+    killOne(node);
+    Z._videoGraveyard.push(node);
+    return;
+  }
   if(node.querySelectorAll){
-    node.querySelectorAll('video').forEach(killOne);
+    node.querySelectorAll('video').forEach(function(v){
+      killOne(v);
+      Z._videoGraveyard.push(v);
+    });
   }
 }
 
 function startObserver(){
   var root = document.getElementById('app-container');
   if(!root) return false;
-  if(Z._detachKillerObserver) return true;
+  if(Z._videoKillerObserverV3) return true;
 
   var obs = new MutationObserver(function(mutations){
     for(var i = 0; i < mutations.length; i++){
@@ -21330,7 +21341,7 @@ function startObserver(){
     }
   });
   obs.observe(root, { childList: true, subtree: true });
-  Z._detachKillerObserver = obs;
+  Z._videoKillerObserverV3 = obs;
   return true;
 }
 
@@ -21342,55 +21353,79 @@ if(!startObserver()){
   }
 }
 
+/* Watchdog — every second, re-kill any graveyarded video that
+   somehow left the DOM. Also drop entries that came back to
+   the DOM (they are safe again). */
+setInterval(function(){
+  if(!Z._videoGraveyard || !Z._videoGraveyard.length) return;
+  Z._videoGraveyard = Z._videoGraveyard.filter(function(v){
+    if(!v) return false;
+    if(v.isConnected) return false;
+    if(!v.paused){ try { v.pause(); } catch(e){} }
+    if(!v.muted){  try { v.muted = true; } catch(e){} }
+    try { v.volume = 0; } catch(e){}
+    return true;
+  });
+}, 1000);
+
 /* ============================================================
-   Layer 3 — post-navigation sweep
-   Runs after showView and softRefresh. Walks every video that
-   is still queryable from document and pauses any whose owner
-   container is not one of the recognised roots. This catches
-   the rare case where a video is connected but sitting inside
-   a detached wrapper that Document.querySelectorAll still
-   returns (because the wrapper's parent chain exists but is
-   not rooted at #app-container).
+   LAYER 3 — FIX the Home feed recompute bug
+   This is the root cause of "hero keeps playing when scrolling".
+   We replace the function entirely. Behaviour changes:
+     - `best` is NO LONGER skipped in the pause loop.
+     - If bestRatio < 0.75, best gets paused just like the rest.
+   Everything else is identical to the original implementation.
    ============================================================ */
-function sweepOrphans(){
-  var allowed = [];
-  ['app-container','spark-feed','modal-container','sheet-container','status-viewer'].forEach(function(id){
-    var el = document.getElementById(id);
-    if(el) allowed.push(el);
+Z.recomputeFeedVideoPlayback = function(){
+  if(Z.State.currentView !== 'home') return;
+
+  var vids = document.querySelectorAll('#app-container video:not([data-spark-id]):not([data-space-spark])');
+  if(!vids.length){ Z._feedPlayingVideo = null; return; }
+
+  var vh = window.innerHeight, best = null, bestRatio = 0;
+  vids.forEach(function(v){
+    var r = v.getBoundingClientRect();
+    var visible = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
+    var ratio = r.height > 0 ? visible / r.height : 0;
+    if(ratio > bestRatio){ bestRatio = ratio; best = v; }
   });
 
-  document.querySelectorAll('video').forEach(function(v){
-    var owned = false;
-    for(var i = 0; i < allowed.length; i++){
-      if(allowed[i].contains(v)){ owned = true; break; }
-    }
-    if(!owned && !v.paused){
-      killOne(v);
+  var shouldPlay = best && bestRatio >= 0.75;
+
+  vids.forEach(function(v){
+    if(shouldPlay && v === best){
+      if(v.paused){
+        try { v.play().catch(function(){}); } catch(e){}
+      }
+      Z._feedPlayingVideo = v;
+    } else {
+      if(!v.paused){ try { v.pause(); } catch(e){} }
+      if(v === best) Z._feedPlayingVideo = null;
     }
   });
-}
 
+  if(!shouldPlay) Z._feedPlayingVideo = null;
+};
+
+/* ============================================================
+   LAYER 4 — Home exit mute
+   When leaving Home for any other view, hard-mute every video
+   in the document. Returning to Home creates new videos with
+   autoplay+muted, so state is consistent.
+   ============================================================ */
 var _prevShow = Z.showView;
-if(typeof _prevShow === 'function'){
-  Z.showView = function(view, param){
-    var r = _prevShow.apply(this, arguments);
-    setTimeout(sweepOrphans, 500);
-    setTimeout(sweepOrphans, 1400);
-    return r;
-  };
-}
+Z.showView = function(view, param){
+  var prevView = Z.State.currentView;
+  var r = _prevShow.apply(this, arguments);
+  if(prevView === 'home' && view !== 'home'){
+    document.querySelectorAll('video').forEach(function(v){
+      try { v.pause(); v.muted = true; v.volume = 0; } catch(e){}
+    });
+  }
+  return r;
+};
 
-var _prevSoft = Z.softRefresh;
-if(typeof _prevSoft === 'function'){
-  Z.softRefresh = function(){
-    var r = _prevSoft.apply(this, arguments);
-    setTimeout(sweepOrphans, 300);
-    setTimeout(sweepOrphans, 900);
-    return r;
-  };
-}
-
-console.log('[Detach Killer v2] L1 play-guard · L2 observer · L3 sweep — all active');
+console.log('[Video Fix v3] recompute-fix · exit-mute · graveyard-watchdog — active');
 })();
 </script>
 </body>
