@@ -12032,9 +12032,15 @@ Z.showView = async function(view, param){
     await renderDriveProfilePage(param);
     return;
   }
-  if(view === 'drive'){
+   if(view === 'drive'){
+    if(prevView && prevView !== 'drive' && prevView !== 'drive-profile'){
+      Z.State.navStack = Z.State.navStack || [];
+      Z.State.navStack.push({ view: prevView, param: prevParam });
+      if(Z.State.navStack.length > 40) Z.State.navStack.shift();
+    }
     var app = document.getElementById('app-container'); if(!app) return;
-    app.innerHTML = '<div style="display:flex;flex-direction:column;gap:14px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.showView(\'galleria\')"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;"><i class="fa-solid fa-car-side" style="color:#10b981;margin-right:8px;"></i>ZYNIX Drive</h2></div><div id="zy-drive-mount"></div></div>';
+    app.innerHTML = '<div style="display:flex;flex-direction:column;gap:14px;"><div class="view-header"><button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button><h2 class="view-title" style="margin-left:6px;"><i class="fa-solid fa-car-side" style="color:#10b981;margin-right:8px;"></i>ZYNIX Drive</h2></div><div id="zy-drive-mount"></div></div>';
+    
     document.querySelectorAll('#bottom-nav button:not(.create-btn)').forEach(function(b){ b.classList.remove('active'); });
     var navG = document.getElementById('nav-galleria'); if(navG) navG.classList.add('active');
     Z.State.currentView = 'drive'; Z.State.currentParam = null;
@@ -17268,8 +17274,9 @@ Z.renderHeroSparkCard = function(spark, author){
     'onclick="Z.openSparkInFeed(\'' + sparkId + '\')" ' +
     'style="position:relative;border-radius:16px;overflow:hidden;background:#000;height:clamp(380px,58vh,560px);cursor:pointer;">' +
 
-    '<video src="' + Z.escape(spark.video_url) + '" autoplay muted loop playsinline preload="metadata" ' +
-      'style="width:100%;height:100%;object-fit:contain;background:#000;display:block;pointer-events:none;"></video>' +
+      '<video src="' + Z.escape(spark.video_url) + '" autoplay muted loop playsinline preload="metadata" controls ' +
+      'onclick="event.stopPropagation()" ' +
+      'style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>' +
 
     '<div style="position:absolute;top:0;left:0;right:0;height:100px;background:linear-gradient(to bottom,rgba(0,0,0,.65),transparent);pointer-events:none;"></div>' +
     '<div style="position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(0,0,0,.85),transparent);pointer-events:none;"></div>' +
@@ -21097,6 +21104,43 @@ document.addEventListener('touchend', function(e){
 console.log('[Swipe to Public] ready');
 })();
 </script>
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixHeroAudio) return; Z.__zynixHeroAudio = true;
+
+function unmuteHero(){
+  document.querySelectorAll('.home-hero-spark video').forEach(function(v){
+    if(v.muted){ try { v.muted = false; v.volume = 1; } catch(e){} }
+  });
+}
+
+/* If Spark audio was already unlocked this session, unmute now */
+if(Z._sparkAudioUnlocked) setTimeout(unmuteHero, 300);
+
+/* First user gesture anywhere → unlock and unmute hero */
+function firstGesture(){
+  Z._sparkAudioUnlocked = true;
+  setTimeout(unmuteHero, 50);
+}
+document.addEventListener('touchstart', firstGesture, {passive:true, once:true});
+document.addEventListener('click',      firstGesture, {capture:true, once:true});
+document.addEventListener('keydown',    firstGesture, {once:true});
+
+/* Re-check after every home re-render (uses the same flag) */
+var _prevFill = Z.fillHomeHero;
+if(typeof _prevFill === 'function'){
+  Z.fillHomeHero = async function(){
+    var r = await _prevFill.apply(this, arguments);
+    if(Z._sparkAudioUnlocked) setTimeout(unmuteHero, 150);
+    return r;
+  };
+}
+
+console.log('[Hero Audio] ready — controls visible, unmutes on first tap');
+})();
+</script>       
 </body>
 </html>
 
