@@ -21362,68 +21362,6 @@ Z.showView = function(view, param){
 console.log('[Video Fix v3] recompute-fix · exit-mute · graveyard-watchdog — active');
 })();
 </script>
-<!-- ============================================================ -->
-<!-- SCROLL-TO-TOP RE-RENDER FIX                                   -->
-<!-- Root cause of "Home full load + instant reload" on arrow      -->
-<!-- click: Z.scrollToLatest calls Z.reloadData().then(            -->
-<!-- Z.softRefresh). softRefresh wipes #app-container and          -->
-<!-- re-renders the entire Home — hero, feed, discover, all posts. -->
-<!-- On a slow connection reloadData takes 1-3s, so the reload     -->
-<!-- appears "a couple of seconds" after the arrow tap.            -->
-<!--                                                               -->
-<!-- Fix: intercept Z.scrollToLatest for the Home view only.       -->
-<!-- Replace softRefresh with softRefreshIfChanged, which:         -->
-<!--   - does nothing if DOM already matches state (no visual)     -->
-<!--   - prepends only new cards when new posts arrived            -->
-<!--   - falls back to softRefresh ONLY if DOM/state desync        -->
-<!-- Add-only. Spark and other views go to the original untouched. -->
-<!-- ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__zynixScrollTopFix) return; Z.__zynixScrollTopFix = true;
-
-var _origScrollToLatest = Z.scrollToLatest;
-if(typeof _origScrollToLatest !== 'function') return;
-
-Z.scrollToLatest = function(){
-  var view = Z.State.currentView;
-
-  Z.State.arrowVisible = false;
-  var btn = document.getElementById('scroll-top-btn');
-  if(btn) btn.style.display = 'none';
-
-  /* Home: scroll now, smart-refresh when data lands — no full re-render */
-  if(view === 'home'){
-    Z.State.homeAnchorPost = null;
-    Z.State.homeAnchorOffset = 0;
-    Z.State._lastScrollY = 0;
-    window.scrollTo(0, 0);
-    Z.updateScrollTopBtn();
-
-    Z.reloadData().then(function(){
-      if(Z.State.currentView !== 'home') return;
-      try {
-        if(typeof Z.softRefreshIfChanged === 'function'){
-          Z.softRefreshIfChanged('home');
-        }
-      } catch(e){}
-      window.scrollTo(0, 0);
-      Z.State._lastScrollY = 0;
-      Z.updateScrollTopBtn();
-    }).catch(function(){});
-
-    return;
-  }
-
-  /* Spark and every other view — original behaviour untouched */
-  return _origScrollToLatest.apply(this, arguments);
-};
-
-console.log('[Scroll Top Fix] Home arrow-click now uses softRefreshIfChanged');
-})();
-</script>     
 </body>
 </html>
 
