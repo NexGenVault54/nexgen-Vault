@@ -21247,7 +21247,75 @@ Z.showView = function(view, param){
 console.log('[Video Fix v3] recompute-fix · exit-mute · graveyard-watchdog — active');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- LOUNGE CUSTOMIZE SCROLL PRESERVATION                          -->
+<!-- Purpose: openLoungeCustomizeV2 destroys and rebuilds the      -->
+<!--   sheet on every tile toggle. Fresh sheets start at          -->
+<!--   scrollTop = 0, so the user has to scroll back down every   -->
+<!--   time they enable/disable a tile. This wrapper saves and    -->
+<!--   restores the scroll position across that rebuild.          -->
+<!-- Trigger: only when close-then-open happens within 100ms      -->
+<!--   (i.e. a toggle-in-progress). Fresh opens from the pencil   -->
+<!--   button start at top as before.                             -->
+<!-- Add-only. Does not modify any existing function body.        -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixLoungeScrollPreserve) return; Z.__zynixLoungeScrollPreserve = true;
 
+var _savedScroll = 0;
+var _lastCloseAt = 0;
+
+function findScrollableBody(){
+  var sheet = document.querySelector('#sheet-container .zynix-lounge-sheet');
+  if(!sheet) return null;
+  var children = sheet.children;
+  for(var i = 0; i < children.length; i++){
+    var style = children[i].getAttribute('style') || '';
+    if(style.indexOf('overflow-y:auto') !== -1) return children[i];
+  }
+  return null;
+}
+
+var _origClose = Z.closeLoungeCustomizeV2;
+var _origOpen  = Z.openLoungeCustomizeV2;
+
+if(typeof _origClose === 'function'){
+  Z.closeLoungeCustomizeV2 = function(){
+    var body = findScrollableBody();
+    if(body) _savedScroll = body.scrollTop || 0;
+    _lastCloseAt = Date.now();
+    return _origClose.apply(this, arguments);
+  };
+}
+
+if(typeof _origOpen === 'function'){
+  Z.openLoungeCustomizeV2 = function(){
+    var r = _origOpen.apply(this, arguments);
+    var isToggleReopen = (Date.now() - _lastCloseAt) < 100;
+    if(isToggleReopen && _savedScroll > 0){
+      setTimeout(function(){
+        var body = findScrollableBody();
+        if(body) body.scrollTop = _savedScroll;
+      }, 80);
+      setTimeout(function(){
+        var body = findScrollableBody();
+        if(body && Math.abs(body.scrollTop - _savedScroll) > 4){
+          body.scrollTop = _savedScroll;
+        }
+      }, 220);
+    } else {
+      _savedScroll = 0;
+    }
+    return r;
+  };
+}
+
+console.log('[Lounge Scroll Preserve] active — toggles keep scroll position');
+})();
+</script>
 </body>
 </html>
 
