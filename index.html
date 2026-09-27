@@ -22949,6 +22949,205 @@ Z.renderView = function(view, param){
 console.log('[Digital Market Guide v2] corrected pricing · 13 sections · accordion · toggle');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 2a · Block 9                        -->
+<!-- Digital Market browse view.                                    -->
+<!-- Renders when any Digital Market sub-item is tapped.            -->
+<!-- Reads market_assets via RPC market_list.                       -->
+<!-- Empty state ready for Phase 3 (upload).                        -->
+<!-- Asset detail + ratings come in Block 10 (Phase 2b).            -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketBrowse) return; Z.__zynixMarketBrowse = true;
+
+/* ============================================================
+   1. Give every Digital Market sub-item a live action.
+      Currently Block 8 set them all active:false → toast.
+      We flip to active:true and route to market-browse.
+   ============================================================ */
+if(Z.zygSubitems && Z.zygSubitems['digital-market']){
+  Z.zygSubitems['digital-market'].forEach(function(s){
+    s.active = true;
+    s.action = function(){ Z.showView('market-browse', s.key); };
+  });
+}
+
+/* ============================================================
+   2. Lookup helper
+   ============================================================ */
+function findSub(key){
+  if(!Z.zygSubitems || !Z.zygSubitems['digital-market']) return null;
+  var list = Z.zygSubitems['digital-market'];
+  for(var i = 0; i < list.length; i++) if(list[i].key === key) return list[i];
+  return null;
+}
+
+/* ============================================================
+   3. Render market-browse view
+   ============================================================ */
+function marketShell(inner){
+  return '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">' + inner + '</div>';
+}
+
+function marketHeader(sub){
+  var h = '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;display:flex;align-items:center;gap:6px;min-width:0;">';
+  h += '<i class="' + sub.icon + '" style="color:#10b981;"></i>';
+  h += '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + sub.label + '</span>';
+  h += '</h2></div>';
+  h += '<button class="biz-explain-btn" onclick="Z.zygOpenGuide(\'digital-market\')" title="How it works">?</button>';
+  h += '</div>';
+  return h;
+}
+
+function marketFiltersBar(){
+  var h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+  h += '<div style="font-size:11px;color:#94a3b8;font-weight:800;">Sort:</div>';
+  h += '<button data-mkt-sort="rating"  class="mkt-sort-btn" data-active="1">Best rated</button>';
+  h += '<button data-mkt-sort="newest"  class="mkt-sort-btn">Newest</button>';
+  h += '<button data-mkt-sort="popular" class="mkt-sort-btn">Popular</button>';
+  h += '</div>';
+  return h;
+}
+
+function marketSortCss(){
+  if(document.getElementById('zynix-mkt-browse-css')) return;
+  var st = document.createElement('style');
+  st.id = 'zynix-mkt-browse-css';
+  st.textContent = [
+    '.mkt-sort-btn{padding:6px 12px;border-radius:16px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:800;font-size:11px;cursor:pointer;}',
+    '.mkt-sort-btn[data-active="1"]{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.5);color:#10b981;}',
+    '.mkt-asset-card{background:#111827;border:1px solid #1e293b;border-radius:14px;overflow:hidden;cursor:pointer;transition:border-color .2s,transform .15s;display:flex;flex-direction:column;}',
+    '.mkt-asset-card:hover{border-color:#10b981;}',
+    '.mkt-asset-card:active{transform:scale(.98);}',
+    '.mkt-asset-thumb{aspect-ratio:1;background:linear-gradient(135deg,#0f172a,#1e293b);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}',
+    '.mkt-asset-thumb img{width:100%;height:100%;object-fit:cover;}',
+    '.mkt-asset-thumb .placeholder-icon{color:#334155;font-size:26px;}',
+    '.mkt-asset-body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:4px;}',
+    '.mkt-asset-title{font-size:12px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.mkt-asset-meta{font-size:10px;color:#94a3b8;display:flex;align-items:center;gap:4px;}',
+    '.mkt-asset-meta .star{color:#fbbf24;}',
+    '.mkt-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}',
+    '@media(min-width:641px){.mkt-grid{grid-template-columns:repeat(3,1fr);}}',
+    '@media(min-width:900px){.mkt-grid{grid-template-columns:repeat(4,1fr);}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+function assetCardHTML(asset){
+  var rating = Number(asset.rating_avg) || 0;
+  var count  = Number(asset.rating_count) || 0;
+  var ratingTxt = count > 0 ? (rating.toFixed(1) + ' · ' + count) : 'New';
+  var thumb = asset.preview_url
+    ? '<img src="' + Z.escape(asset.preview_url) + '" alt="" loading="lazy">'
+    : '<i class="fa-solid fa-image placeholder-icon"></i>';
+  return '<div class="mkt-asset-card" data-mkt-asset="' + Z.escape(asset.id) + '">' +
+    '<div class="mkt-asset-thumb">' + thumb + '</div>' +
+    '<div class="mkt-asset-body">' +
+      '<div class="mkt-asset-title">' + Z.escape(asset.title || 'Untitled') + '</div>' +
+      '<div class="mkt-asset-meta">' +
+        '<i class="fa-solid fa-star star"></i>' +
+        '<span>' + ratingTxt + '</span>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderMarketBrowse(categoryKey){
+  var sub = findSub(categoryKey);
+  if(!sub) return Z.emptyState({ icon:'fa-solid fa-circle-question', title:'Category not found' });
+
+  marketSortCss();
+
+  var h = marketShell(
+    marketHeader(sub) +
+    '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;">' +
+      'Browse ' + sub.label + ' from other creators. Tap any card for details. Buying opens in Phase 4.' +
+    '</div>' +
+    marketFiltersBar() +
+    '<div id="mkt-grid-host" class="mkt-grid">' +
+      Z.skeletonList(4) +
+    '</div>'
+  );
+
+  setTimeout(function(){ loadAssets(categoryKey, 'rating'); }, 40);
+  return h;
+}
+
+async function loadAssets(categoryKey, sort){
+  var host = document.getElementById('mkt-grid-host');
+  if(!host) return;
+  host.innerHTML = Z.skeletonList(4);
+
+  var c = Z.sb && Z.sb();
+  if(!c){ host.innerHTML = Z.emptyState({ icon:'fa-solid fa-plug', title:'Not connected' }); return; }
+
+  try {
+    var r = await c.rpc('market_list', {
+      p_category: categoryKey,
+      p_sort: sort || 'rating',
+      p_limit: 40,
+      p_offset: 0
+    });
+    if(r.error) throw r.error;
+    var assets = r.data || [];
+
+    if(!assets.length){
+      host.innerHTML = Z.emptyState({
+        icon: 'fa-solid fa-store',
+        title: 'Nothing here yet. Be the first seller.',
+        cta: { label: 'Learn how to sell', onclick: "Z.zygOpenGuide('digital-market')" }
+      });
+      return;
+    }
+
+    var html = '';
+    assets.forEach(function(a){ html += assetCardHTML(a); });
+    host.innerHTML = html;
+
+    host.querySelectorAll('[data-mkt-asset]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = this.getAttribute('data-mkt-asset');
+        if(typeof Z.openMarketAsset === 'function') Z.openMarketAsset(id);
+        else Z.toast('Detail page comes in Phase 2b');
+      });
+    });
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load assets.' });
+  }
+}
+
+/* Sort buttons */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-mkt-sort]');
+  if(!btn) return;
+  if(Z.State.currentView !== 'market-browse') return;
+  document.querySelectorAll('[data-mkt-sort]').forEach(function(b){ b.removeAttribute('data-active'); });
+  btn.setAttribute('data-active', '1');
+  var sort = btn.getAttribute('data-mkt-sort');
+  var cat = Z.State.currentParam;
+  loadAssets(cat, sort);
+});
+
+/* ============================================================
+   4. Router hook
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'market-browse') return renderMarketBrowse(param);
+  return _prevRender.call(this, view, param);
+};
+
+console.log('[Galleria v2 Phase 2a · Block 9] Digital Market browse ready');
+})();
+</script>
 </body>
 </html>
 
