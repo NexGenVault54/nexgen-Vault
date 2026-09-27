@@ -21428,6 +21428,63 @@ Z.showView = function(view, param){
 console.log('[Video Fix v3] recompute-fix · exit-mute · graveyard-watchdog — active');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- HERO FILL IDEMPOTENCY                                         -->
+<!-- Fixes the "hero video reloads after arrow click" bug.         -->
+<!-- Root cause: Z.fillHomeHero was scheduled twice per             -->
+<!--   arrow-click (reloadData wrapper + softRefresh wrapper).     -->
+<!--   Both ran within milliseconds. The src-attribute guard was    -->
+<!--   not atomic, so the second call re-rendered the hero,        -->
+<!--   restarting the video.                                        -->
+<!-- Fix: wrap Z.fillHomeHero. If the hero host ALREADY holds a    -->
+<!--   card whose data-hero-spark id equals the target spark id,   -->
+<!--   return early. Otherwise call the original.                  -->
+<!-- Add-only. Does not modify any existing function body.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixHeroFillGuard) return; Z.__zynixHeroFillGuard = true;
+
+var _origFill = Z.fillHomeHero;
+if(typeof _origFill !== 'function') return;
+
+function pickTargetSparkId(){
+  var sparks = (Z.State.allSparks || []).filter(function(s){
+    return s && s.video_url
+        && (s.type === 'spark' || !s.type)
+        && typeof s.video_url === 'string'
+        && s.video_url.indexOf('http') === 0;
+  });
+  return sparks.length ? sparks[0].id : null;
+}
+
+Z.fillHomeHero = async function(){
+  if(Z.State.currentView !== 'home') return;
+  var host = document.getElementById('home-hero-spark');
+  if(!host) return;
+
+  var targetId = pickTargetSparkId();
+
+  /* If a hero card is already on screen for the same target spark,
+     do nothing. This is the whole point of the wrapper. */
+  var existing = host.querySelector('.home-hero-spark');
+  if(existing && targetId && existing.getAttribute('data-hero-spark') === targetId){
+    return;
+  }
+
+  /* If target is null but a card is already rendered, keep it. */
+  if(existing && !targetId){
+    return;
+  }
+
+  return _origFill.apply(this, arguments);
+};
+
+console.log('[Hero Fill Guard] active — same-spark re-renders are now no-ops');
+})();
+</script>     
 </body>
 </html>
 
