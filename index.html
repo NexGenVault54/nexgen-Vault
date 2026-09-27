@@ -23509,6 +23509,583 @@ Z.openMarketAsset = function(id){
 
 console.log('[Galleria v2 Phase 2b · Block 10] asset detail + ratings ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 3a · Block 11                       -->
+<!-- Seller upload form + lot submission.                          -->
+<!-- Adds "Sell" button to market-browse.                          -->
+<!-- Form: category · up to 10 items · title/desc/tags per item.   -->
+<!-- Copyright checkbox required.                                  -->
+<!-- Fee display shown; actual debit lands in Phase 4.             -->
+<!-- Uploads via Z.storeMedia (same R2 path as posts/sparks).      -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketSell) return; Z.__zynixMarketSell = true;
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-mkt-sell-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mkt-sell-css';
+  st.textContent = [
+    '.mks-label{display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}',
+    '.mks-input,.mks-textarea{width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;font-family:inherit;}',
+    '.mks-input:focus,.mks-textarea:focus{border-color:#10b981;}',
+    '.mks-textarea{resize:vertical;min-height:70px;}',
+    '.mks-item{background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:12px;margin-bottom:10px;}',
+    '.mks-item-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}',
+    '.mks-item-num{font-size:11px;color:#94a3b8;font-weight:900;letter-spacing:.5px;}',
+    '.mks-item-rm{background:transparent;border:1px solid rgba(161,98,98,.35);color:#a16262;font-size:10px;font-weight:800;padding:4px 10px;border-radius:8px;cursor:pointer;}',
+    '.mks-preview{aspect-ratio:1;border-radius:12px;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:10px;}',
+    '.mks-preview img,.mks-preview video{width:100%;height:100%;object-fit:contain;background:#000;display:block;}',
+    '.mks-preview .ph{color:#334155;font-size:32px;}',
+    '.mks-preview .wm{position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.03) 0 12px,transparent 12px 24px);}',
+    '.mks-preview .wm::before{content:"ZYNIX";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:44px;font-weight:900;color:rgba(255,255,255,.10);letter-spacing:6px;pointer-events:none;}',
+    '.mks-btn-primary{width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;}',
+    '.mks-btn-primary[disabled]{opacity:.5;cursor:not-allowed;}',
+    '.mks-btn-ghost{width:100%;padding:12px;border-radius:10px;border:1px dashed rgba(59,130,246,.5);background:rgba(59,130,246,.06);color:#60a5fa;font-weight:800;font-size:12px;cursor:pointer;margin-top:6px;}',
+    '.mks-fee{padding:12px;border-radius:10px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);font-size:11.5px;color:#cbd5e1;line-height:1.6;}',
+    '.mks-copyright{padding:14px;border-radius:12px;background:rgba(161,98,98,.08);border:1px solid rgba(161,98,98,.35);font-size:11.5px;color:#cbd5e1;line-height:1.65;}',
+    '.mks-copyright label{display:flex;gap:10px;align-items:flex-start;cursor:pointer;margin-top:10px;}',
+    '.mks-copyright input{margin-top:2px;flex-shrink:0;}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+function isVideoFile(f){
+  if(!f) return false;
+  if(f.type && f.type.indexOf('video/') === 0) return true;
+  return Z.isVideoUrl(f.name);
+}
+function sizeMB(bytes){
+  return (Number(bytes) || 0) / (1024 * 1024);
+}
+function fmtMB(bytes){
+  return sizeMB(bytes).toFixed(2) + ' MB';
+}
+
+/* Per-item size caps (from Box 2 spec) */
+var CATEGORY_CAPS = {
+  'shop-banner':       30, /* not in current list yet — kept for future */
+  'circle-banner':      5,
+  'banners':            5,
+  'wallpapers':         3,
+  'thumbnails':         3,
+  'backgrounds':        3,
+  'templates':          3,
+  'themes':             5,
+  'avatar-frames':      3,
+  'handle-decorations': 3,
+  'verification-styles':3,
+  'circle-badges':      3,
+  'stickers':           3,
+  'reaction-emojis':    2,
+  'gif-packs':         10,
+  'quick-replies':      2,
+  'sounds':             5,
+  'voice-bgs':          5,
+  'spark-intro-audio':  5,
+  'spark-outro-audio':  5,
+  'fonts-palettes':     2,
+  'ai-videos':        100,
+  'ai-ads':           100,
+  'video-editing':      5,
+  'consultancy':        5
+};
+function capFor(category){
+  var c = CATEGORY_CAPS[category];
+  return c ? c : 5;
+}
+
+/* ============================================================
+   Render form
+   ============================================================ */
+var _form = null;   /* active form state */
+
+function newItem(){
+  return {
+    file: null,
+    localUrl: '',
+    mediaType: '',
+    title: '',
+    description: '',
+    tags: ''
+  };
+}
+
+function renderSellForm(categoryKey){
+  var u = Z.State.currentUser;
+  if(!u){
+    return Z.emptyState({
+      icon: 'fa-solid fa-user-lock',
+      title: 'Please log in to sell.',
+      cta: { label: 'Login', onclick: "Z.openAuthModal('login')" }
+    });
+  }
+  var sub = null;
+  if(Z.zygSubitems && Z.zygSubitems['digital-market']){
+    var list = Z.zygSubitems['digital-market'];
+    for(var i = 0; i < list.length; i++) if(list[i].key === categoryKey){ sub = list[i]; break; }
+  }
+  if(!sub){
+    return Z.emptyState({ icon:'fa-solid fa-circle-question', title:'Category not found' });
+  }
+
+  _form = {
+    category: categoryKey,
+    items: [ newItem() ],
+    acceptedCopyright: false,
+    submitting: false
+  };
+
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  /* Header */
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;display:flex;align-items:center;gap:6px;min-width:0;">';
+  h += '<i class="fa-solid fa-cloud-arrow-up" style="color:#10b981;"></i>';
+  h += '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Sell — ' + sub.label + '</span>';
+  h += '</h2></div>';
+  h += '<button class="biz-explain-btn" onclick="Z.zygOpenGuide(\'digital-market\')" title="Market guide">?</button>';
+  h += '</div>';
+
+  /* Intro */
+  h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:12px;color:#cbd5e1;line-height:1.65;">';
+  h += 'Your lot enters the committee queue after submit. Up to 10 items in this lot. ';
+  h += 'Once approved, you cannot submit another lot in this category until a new seller joins or 30 days pass without a sale.';
+  h += '</div>';
+
+  /* Items host */
+  h += '<div id="mks-items-host"></div>';
+
+  /* Add item button */
+  h += '<button class="mks-btn-ghost" id="mks-add" type="button">';
+  h += '<i class="fa-solid fa-plus"></i> Add another item (max 10)';
+  h += '</button>';
+
+  /* Copyright + fee + submit */
+  h += '<div class="mks-copyright">';
+  h += '<b style="color:#c9a5a5;">Copyright notice</b><br>';
+  h += 'This asset is for in-platform use only. Any outside distribution or copyright violation will result in permanent seller ban and forfeiture of funds.';
+  h += '<label>';
+  h += '<input type="checkbox" id="mks-copy-cb">';
+  h += '<span>I confirm I own or have full rights to every item in this lot, and I accept the terms above.</span>';
+  h += '</label>';
+  h += '</div>';
+
+  h += '<div class="mks-fee">';
+  h += '<b style="color:#a18554;"><i class="fa-solid fa-circle-info"></i> Upload fee</b><br>';
+  h += '$1.00 per lot. Split: $0.10 to the reviewing committee member, $0.90 to platform (storage, ops, bounty pool).<br>';
+  h += '<span style="color:#64748b;">Wallet debit arrives in Phase 4. Nothing is charged today.</span>';
+  h += '</div>';
+
+  h += '<button class="mks-btn-primary" id="mks-submit" type="button" disabled>Submit lot for review</button>';
+
+  h += '</div>';
+
+  setTimeout(function(){ paintItems(); wireForm(); }, 40);
+  return h;
+}
+
+/* ============================================================
+   Paint items list
+   ============================================================ */
+function paintItems(){
+  var host = document.getElementById('mks-items-host');
+  if(!host || !_form) return;
+
+  var capMB = capFor(_form.category);
+  var h = '';
+
+  _form.items.forEach(function(item, idx){
+    h += '<div class="mks-item" data-mks-item="' + idx + '">';
+
+    /* Head */
+    h += '<div class="mks-item-head">';
+    h += '<span class="mks-item-num">ITEM ' + (idx + 1) + ' OF ' + _form.items.length + '</span>';
+    if(_form.items.length > 1){
+      h += '<button class="mks-item-rm" data-mks-rm="' + idx + '" type="button"><i class="fa-solid fa-trash"></i> Remove</button>';
+    }
+    h += '</div>';
+
+    /* Preview */
+    h += '<div class="mks-preview">';
+    if(item.localUrl){
+      if(item.mediaType === 'video'){
+        h += '<video src="' + Z.escape(item.localUrl) + '" preload="metadata" muted playsinline></video>';
+      } else {
+        h += '<img src="' + Z.escape(item.localUrl) + '" alt="">';
+      }
+      h += '<div class="wm"></div>';
+    } else {
+      h += '<i class="fa-solid fa-image ph"></i>';
+    }
+    h += '</div>';
+
+    /* File picker */
+    h += '<label class="mks-label" style="margin-top:8px;">Media (' + capMB + ' MB max)</label>';
+    h += '<button class="mks-btn-ghost" data-mks-pick="' + idx + '" type="button">';
+    if(item.file) h += '<i class="fa-solid fa-rotate"></i> Replace file';
+    else h += '<i class="fa-solid fa-cloud-arrow-up"></i> Choose image or video';
+    h += '</button>';
+    if(item.file){
+      h += '<div style="font-size:10px;color:#64748b;margin-top:6px;">' + Z.escape(item.file.name || 'file') + ' · ' + fmtMB(item.file.size) + '</div>';
+    }
+
+    /* Title */
+    h += '<label class="mks-label" style="margin-top:12px;">Title</label>';
+    h += '<input class="mks-input" data-mks-title="' + idx + '" type="text" maxlength="80" ' +
+         'placeholder="Give it a short, clear name" value="' + Z.escape(item.title) + '">';
+
+    /* Description */
+    h += '<label class="mks-label" style="margin-top:12px;">Description</label>';
+    h += '<textarea class="mks-textarea" data-mks-desc="' + idx + '" maxlength="300" ' +
+         'placeholder="What is it? What style? Any details buyers should know.">' + Z.escape(item.description) + '</textarea>';
+
+    /* Tags */
+    h += '<label class="mks-label" style="margin-top:12px;">Tags (comma separated)</label>';
+    h += '<input class="mks-input" data-mks-tags="' + idx + '" type="text" ' +
+         'placeholder="e.g. ramadan, dark, minimal, luxury" value="' + Z.escape(item.tags) + '">';
+
+    h += '</div>';
+  });
+
+  host.innerHTML = h;
+
+  /* Wire */
+  host.querySelectorAll('[data-mks-pick]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var idx = parseInt(this.getAttribute('data-mks-pick'), 10);
+      pickFile(idx);
+    });
+  });
+  host.querySelectorAll('[data-mks-rm]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var idx = parseInt(this.getAttribute('data-mks-rm'), 10);
+      removeItem(idx);
+    });
+  });
+  host.querySelectorAll('[data-mks-title]').forEach(function(el){
+    el.addEventListener('input', function(){
+      var idx = parseInt(this.getAttribute('data-mks-title'), 10);
+      _form.items[idx].title = this.value;
+      validateForm();
+    });
+  });
+  host.querySelectorAll('[data-mks-desc]').forEach(function(el){
+    el.addEventListener('input', function(){
+      var idx = parseInt(this.getAttribute('data-mks-desc'), 10);
+      _form.items[idx].description = this.value;
+    });
+  });
+  host.querySelectorAll('[data-mks-tags]').forEach(function(el){
+    el.addEventListener('input', function(){
+      var idx = parseInt(this.getAttribute('data-mks-tags'), 10);
+      _form.items[idx].tags = this.value;
+    });
+  });
+}
+
+/* ============================================================
+   File picker
+   ============================================================ */
+function pickFile(idx){
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*,video/*';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', function(){
+    var f = input.files && input.files[0];
+    document.body.removeChild(input);
+    if(!f) return;
+    var capMB = capFor(_form.category);
+    if(sizeMB(f.size) > capMB){
+      Z.toast('File too large (' + fmtMB(f.size) + '). Max ' + capMB + ' MB.', 'error');
+      return;
+    }
+    var isVid = isVideoFile(f);
+    var type = isVid ? 'video' : 'image';
+    if(_form.items[idx].localUrl){
+      try { URL.revokeObjectURL(_form.items[idx].localUrl); } catch(e){}
+    }
+    _form.items[idx].file = f;
+    _form.items[idx].mediaType = type;
+    _form.items[idx].localUrl = URL.createObjectURL(f);
+    paintItems();
+    validateForm();
+  });
+  input.click();
+}
+
+function removeItem(idx){
+  if(!_form || _form.items.length <= 1) return;
+  var it = _form.items[idx];
+  if(it.localUrl){ try { URL.revokeObjectURL(it.localUrl); } catch(e){} }
+  _form.items.splice(idx, 1);
+  paintItems();
+  validateForm();
+}
+
+/* ============================================================
+   Validation
+   ============================================================ */
+function validateForm(){
+  var btn = document.getElementById('mks-submit');
+  if(!btn || !_form) return;
+
+  var ok = true;
+  if(!_form.acceptedCopyright) ok = false;
+  if(!_form.items.length) ok = false;
+  _form.items.forEach(function(it){
+    if(!it.file) ok = false;
+    if(!it.title || it.title.trim().length < 3) ok = false;
+  });
+
+  btn.disabled = !ok || _form.submitting;
+}
+
+/* ============================================================
+   Wire form-level controls
+   ============================================================ */
+function wireForm(){
+  var cb = document.getElementById('mks-copy-cb');
+  if(cb && !cb._mksHooked){
+    cb._mksHooked = true;
+    cb.addEventListener('change', function(){
+      _form.acceptedCopyright = this.checked;
+      validateForm();
+    });
+  }
+
+  var add = document.getElementById('mks-add');
+  if(add && !add._mksHooked){
+    add._mksHooked = true;
+    add.addEventListener('click', function(){
+      if(!_form || _form.items.length >= 10){
+        Z.toast('Maximum 10 items per lot.');
+        return;
+      }
+      _form.items.push(newItem());
+      paintItems();
+      validateForm();
+    });
+  }
+
+  var sub = document.getElementById('mks-submit');
+  if(sub && !sub._mksHooked){
+    sub._mksHooked = true;
+    sub.addEventListener('click', submitLot);
+  }
+
+  validateForm();
+}
+
+/* ============================================================
+   Submit
+   ============================================================ */
+async function submitLot(){
+  if(!_form || _form.submitting) return;
+  var u = Z.State.currentUser;
+  if(!u){ Z.toast('Please log in.'); return; }
+
+  _form.submitting = true;
+  var btn = document.getElementById('mks-submit');
+  if(btn){ btn.disabled = true; btn.textContent = 'Uploading media…'; }
+
+  try {
+    /* 1. Upload every file */
+    var uploaded = [];
+    for(var i = 0; i < _form.items.length; i++){
+      var it = _form.items[i];
+      if(btn) btn.textContent = 'Uploading ' + (i + 1) + ' / ' + _form.items.length + '…';
+      var url = await Z.storeMedia(it.file);
+      if(!url) throw new Error('Upload failed for item ' + (i + 1));
+      var tagsArr = (it.tags || '').split(',').map(function(t){ return t.trim(); }).filter(Boolean);
+      uploaded.push({
+        title: it.title.trim(),
+        description: it.description.trim(),
+        media_url: url,
+        preview_url: it.mediaType === 'image' ? url : null,
+        media_type: it.mediaType,
+        tags: tagsArr
+      });
+    }
+
+    /* 2. Submit the lot */
+    if(btn) btn.textContent = 'Submitting lot…';
+    var c = Z.sb && Z.sb();
+    if(!c) throw new Error('Not connected.');
+
+    var r = await c.rpc('market_submit_lot', {
+      p_category: _form.category,
+      p_items: uploaded
+    });
+    if(r.error) throw r.error;
+
+    /* Cleanup local URLs */
+    _form.items.forEach(function(it){
+      if(it.localUrl){ try { URL.revokeObjectURL(it.localUrl); } catch(e){} }
+    });
+
+    /* Success view */
+    var lotId = r.data && r.data[0] ? r.data[0].lot_id : null;
+    var count = r.data && r.data[0] ? r.data[0].item_count : uploaded.length;
+    Z.showView('market-sell-success', _form.category + '|' + count);
+    _form = null;
+
+  } catch(err){
+    _form.submitting = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Submit lot for review'; }
+    var msg = (err && err.message) ? err.message : 'Unknown error';
+    if(msg.indexOf('lot_already_active') !== -1){
+      Z.toast('You already have an active lot in this category.', 'error');
+    } else if(msg.indexOf('too_many_items') !== -1){
+      Z.toast('Maximum 10 items per lot.', 'error');
+    } else if(msg.indexOf('no_items') !== -1){
+      Z.toast('Add at least one item.', 'error');
+    } else {
+      Z.toast('Submit failed: ' + msg, 'error');
+    }
+  }
+}
+
+/* ============================================================
+   Success view
+   ============================================================ */
+function renderSellSuccess(param){
+  var parts = String(param || '').split('|');
+  var catKey = parts[0] || '';
+  var count  = parseInt(parts[1], 10) || 0;
+  var sub = null;
+  if(Z.zygSubitems && Z.zygSubitems['digital-market']){
+    var list = Z.zygSubitems['digital-market'];
+    for(var i = 0; i < list.length; i++) if(list[i].key === catKey){ sub = list[i]; break; }
+  }
+  var catLabel = sub ? sub.label : 'Digital Market';
+
+  var h = '<div style="display:flex;flex-direction:column;gap:18px;padding:20px 16px 40px;text-align:center;">';
+  h += '<div style="width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;margin:20px auto 0;">';
+  h += '<i class="fa-solid fa-check" style="font-size:34px;color:#000;"></i>';
+  h += '</div>';
+  h += '<div style="font-size:20px;font-weight:900;color:#fff;">Lot submitted</div>';
+  h += '<div style="font-size:13px;color:#cbd5e1;line-height:1.7;padding:0 12px;">';
+  h += 'Your lot of <b style="color:#10b981;">' + count + '</b> item' + (count === 1 ? '' : 's') + ' in <b>' + Z.escape(catLabel) + '</b> is now in the committee queue.';
+  h += '<br><br>Review typically completes within 24 hours. You will be notified either way.';
+  h += '</div>';
+  h += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;font-size:12px;color:#cbd5e1;line-height:1.6;text-align:left;">';
+  h += '<b style="color:#10b981;">What happens next</b><br>';
+  h += '1. A committee member reviews your lot.<br>';
+  h += '2. If approved, items go live in the market.<br>';
+  h += '3. If rejected, you get feedback and can resubmit.<br>';
+  h += '4. You cannot submit another lot in this category until a new seller joins or 30 days pass.';
+  h += '</div>';
+  h += '<button onclick="Z.showView(\'galleria-cat\',\'digital-market\')" ' +
+       'style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">';
+  h += 'Back to Digital Market';
+  h += '</button>';
+  h += '</div>';
+  return h;
+}
+
+/* ============================================================
+   Sell button — inject into market-browse
+   ============================================================ */
+async function injectSellButton(categoryKey){
+  if(Z.State.currentView !== 'market-browse') return;
+  if(Z.State.currentParam !== categoryKey) return;
+  var u = Z.State.currentUser;
+  if(!u) return;
+
+  var host = document.querySelector('#app-container .mkt-grid, #mkt-grid-host');
+  if(!host) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var canSubmit = true, reason = null;
+  try {
+    var r = await c.rpc('market_can_submit', { p_category: categoryKey });
+    if(r.data && r.data[0]){
+      canSubmit = !!r.data[0].can_submit;
+      reason    = r.data[0].reason;
+    }
+  } catch(e){}
+
+  /* Look for the intro box to attach the button under */
+  var app = document.getElementById('app-container');
+  var intros = app.querySelectorAll('div');
+  var introBox = null;
+  for(var i = 0; i < intros.length; i++){
+    var t = intros[i].textContent || '';
+    if(t.indexOf('Browse ' + '') === 0) continue;
+    if(t.indexOf('from other creators') !== -1){ introBox = intros[i]; break; }
+  }
+
+  /* Fallback: attach above the grid host */
+  var target = introBox ? introBox.parentNode : null;
+  var anchor = introBox || host;
+
+  var b = document.createElement('div');
+  b.style.cssText = 'margin-bottom:12px;';
+
+  if(canSubmit){
+    b.innerHTML =
+      '<button id="mks-open" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+        '<i class="fa-solid fa-cloud-arrow-up"></i> Sell in this category' +
+      '</button>';
+    setTimeout(function(){
+      var btn = document.getElementById('mks-open');
+      if(btn) btn.addEventListener('click', function(){
+        Z.showView('market-sell', categoryKey);
+      });
+    }, 30);
+  } else {
+    b.innerHTML =
+      '<div style="padding:12px;border-radius:10px;background:rgba(161,133,84,.08);border:1px solid rgba(161,133,84,.35);font-size:11.5px;color:#cbd5e1;line-height:1.55;">' +
+        '<i class="fa-solid fa-hourglass-half" style="color:#a18554;"></i> ' +
+        Z.escape(reason || 'You already have a lot in this category.') +
+      '</div>';
+  }
+
+  if(target) target.insertBefore(b, anchor);
+  else host.parentNode.insertBefore(b, host);
+}
+
+/* ============================================================
+   Router hook
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'market-sell')         return renderSellForm(param);
+  if(view === 'market-sell-success') return renderSellSuccess(param);
+  return _prevRender.call(this, view, param);
+};
+
+/* Hook market-browse so the sell button appears after grid loads.
+   We wrap loadAssets by triggering injectSellButton on a timer. */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-browse'){
+    setTimeout(function(){ try { injectSellButton(param); } catch(e){} }, 500);
+    setTimeout(function(){ try { injectSellButton(param); } catch(e){} }, 1400);
+  }
+  return r;
+};
+
+console.log('[Galleria v2 Phase 3a · Block 11] seller upload ready');
+})();
 </script>       
 </body>
 </html>
