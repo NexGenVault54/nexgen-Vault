@@ -21983,6 +21983,150 @@ Z.showView = function(view, param){
 console.log('[Galleria v2 Phase 1 · Block 4] prioritize pencil ready');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 1 · Block 5 (patch)                 -->
+<!-- Fixes two bugs from Blocks 2 & 4:                              -->
+<!--   1. Wallpaper chosen in pencil did not apply to Galleria      -->
+<!--   2. Up/down reorder closed and reopened the sheet, losing     -->
+<!--      scroll position                                           -->
+<!-- Add-only. Does not modify any existing function body.          -->
+<!-- Removal: delete this entire <script> block.                    -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixGalleriaPatch) return; Z.__zynixGalleriaPatch = true;
+
+/* Wallpaper CSS map — mirrors Block 4's catalogue */
+var WALL_CSS = {
+  aurora:    'radial-gradient(circle at 20% 30%, rgba(16,185,129,.55), transparent 55%), radial-gradient(circle at 85% 20%, rgba(59,130,246,.55), transparent 55%), radial-gradient(circle at 60% 95%, rgba(139,92,246,.45), transparent 60%), #0a0f1c',
+  navy:      'linear-gradient(160deg, #0a1628 0%, #0f2744 50%, #061020 100%)',
+  purple:    'linear-gradient(160deg, #1a0b2e 0%, #2d1b4e 50%, #0f0820 100%)',
+  emerald:   'linear-gradient(160deg, #041c14 0%, #064e3b 50%, #02120c 100%)',
+  slate:     'linear-gradient(160deg, #0f172a 0%, #334155 60%, #0a0f1c 100%)',
+  rosewood:  'linear-gradient(160deg, #2a0810 0%, #7f1d1d 55%, #1a0407 100%)',
+  sandstone: 'linear-gradient(160deg, #1c1408 0%, #78350f 60%, #0f0a05 100%)',
+  obsidian:  '#000000'
+};
+
+function getWallId(){
+  var u = Z.State.currentUser;
+  if(!u) return 'aurora';
+  try {
+    var v = localStorage.getItem('zynix_galleria_wall_' + u.id);
+    return (v && WALL_CSS[v]) ? v : 'aurora';
+  } catch(e){ return 'aurora'; }
+}
+
+/* ---------- Fix 1 — apply wallpaper to zyg-root ---------- */
+var _origRender = Z.renderGalleria;
+if(typeof _origRender === 'function'){
+  Z.renderGalleria = function(){
+    var html = _origRender.apply(this, arguments);
+    if(typeof html !== 'string') return html;
+    var wall = WALL_CSS[getWallId()] || WALL_CSS.aurora;
+    /* Inject inline background onto the zyg-root wrapper */
+    html = html.replace(
+      '<div class="zyg-root">',
+      '<div class="zyg-root" style="background:' + wall + ';padding:14px;border-radius:18px;margin-left:-14px;margin-right:-14px;">'
+    );
+    return html;
+  };
+}
+
+/* ---------- Fix 2 — in-place reorder, no sheet rebuild ---------- */
+/* Capture-phase listener fires BEFORE Block 4's bubble handlers.
+   stopImmediatePropagation prevents Block 4 from closing the sheet. */
+document.addEventListener('click', function(e){
+  var upBtn   = e.target.closest('[data-zyg-up]');
+  var downBtn = e.target.closest('[data-zyg-down]');
+  if(!upBtn && !downBtn) return;
+
+  /* Only intercept within the Galleria prioritize sheet */
+  var sheet = (upBtn || downBtn).closest('.zyg-prio-sheet');
+  if(!sheet) return;
+
+  e.stopImmediatePropagation();
+  e.preventDefault();
+
+  var btn  = upBtn || downBtn;
+  var item = btn.closest('.zyg-prio-item');
+  var list = item.parentNode;
+  if(!list) return;
+
+  if(upBtn){
+    var prev = item.previousElementSibling;
+    if(!prev) return;
+    list.insertBefore(item, prev);
+  } else {
+    var next = item.nextElementSibling;
+    if(!next) return;
+    list.insertBefore(next, item);
+  }
+
+  /* Renumber */
+  var items = list.querySelectorAll('.zyg-prio-item');
+  items.forEach(function(el, i){
+    var pos = el.querySelector('.zyg-prio-pos');
+    if(pos) pos.textContent = String(i + 1);
+  });
+
+  /* Persist order */
+  var u = Z.State.currentUser;
+  if(u){
+    var arr = [];
+    items.forEach(function(el){
+      var id = el.getAttribute('data-zyg-prio-id');
+      if(id) arr.push(id);
+    });
+    try { localStorage.setItem('zynix_galleria_tiles_' + u.id, JSON.stringify(arr)); } catch(e){}
+  }
+}, true);
+
+/* Reorder the Galleria grid after sheet closes so it matches */
+var _origClose = Z.closeGalleriaPrioSheet;
+if(typeof _origClose === 'function'){
+  Z.closeGalleriaPrioSheet = function(){
+    var r = _origClose.apply(this, arguments);
+    setTimeout(function(){
+      var u = Z.State.currentUser;
+      if(!u) return;
+      var raw = null;
+      try { raw = localStorage.getItem('zynix_galleria_tiles_' + u.id); } catch(e){}
+      if(!raw) return;
+      var arr;
+      try { arr = JSON.parse(raw); } catch(e){ return; }
+      if(!Array.isArray(arr)) return;
+
+      var grid = document.getElementById('zyg-cat-grid');
+      if(!grid) return;
+      var catsById = {};
+      (Z.zygCategories || []).forEach(function(c){ catsById[c.key] = c; });
+      var html = '';
+      arr.forEach(function(id){
+        var c = catsById[id];
+        if(!c) return;
+        var badge = c.active ? '' : '<span class="zyg-soon-badge">SOON</span>';
+        html += '<button class="zyg-cat-tile" data-zyg-cat="' + c.key + '">' + badge +
+          '<div class="zyg-cat-icon"><i class="' + c.icon + '"></i></div>' +
+          '<div class="zyg-cat-label">' + c.label + '</div>' +
+        '</button>';
+      });
+      grid.innerHTML = html;
+      grid.querySelectorAll('[data-zyg-cat]').forEach(function(b){
+        b.addEventListener('click', function(){
+          Z.zygOpenCategory(this.getAttribute('data-zyg-cat'));
+        });
+      });
+    }, 80);
+    return r;
+  };
+}
+
+console.log('[Galleria v2 Phase 1 · Block 5] wallpaper apply + in-place reorder');
+})();
+</script>         
 </body>
 </html>
 
