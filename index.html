@@ -7441,13 +7441,21 @@ function renderPublicSpace(userId, isOwner){
   h += '<button class="sp5-subtab" data-sp5-subtab="sparks" ' + (sub === 'sparks' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'sparks\')"><i class="fa-solid fa-bolt"></i> Public Sparks <span class="cnt">' + sparks.length + '</span></button>';
   h += '</div>';
 
-  /* Header row above grid — guide button on videos, nothing on sparks */
+    /* Header row above grid — guide button on videos, nothing on sparks */
   h += '<div class="sp5-sec-head" style="margin-bottom:0;">';
   h += '<div class="sp5-sec-title">' + (sub === 'videos' ? '<i class="fa-solid fa-film" style="color:#10b981;"></i> Full Videos' : '<i class="fa-solid fa-bolt" style="color:#10b981;"></i> Sparks') + ' <span class="cnt">' + (sub === 'videos' ? videos.length : sparks.length) + '</span></div>';
   if(sub === 'videos'){
     h += '<button class="sp5-fullview guide" onclick="Z.openFullVideoCreatorGuide()"><i class="fa-solid fa-circle-question"></i> How it works</button>';
   }
   h += '</div>';
+
+  /* Full Video application slot — owner sees Apply/status; visitor sees badge if approved */
+  if(sub === 'videos'){
+    h += '<div id="sp5-fv-app-host" style="margin-bottom:4px;"></div>';
+    setTimeout(function(){
+      try { Z.paintFullVideoApplicationSlot(userId); } catch(e){}
+    }, 80);
+  }
 
   /* Grid — global content. Videos have no per-creator lock in public view. */
   if(sub === 'videos'){
@@ -8206,128 +8214,135 @@ Z.openSpaceRatingSummary = async function(userId){
   var bands = d.bands || {};
   var total = Math.max(1, (bands.low||0) + (bands.mid||0) + (bands.high||0) + (bands.top||0));
 
-  function bandRow(label, count, col){
+  /* Fetch all reviews for this creator via their videos */
+  var reviews = [];
+  try {
+    var vids = await c.from('sparks').select('id').eq('author_id', userId).eq('type','long_video');
+    var videoIds = (vids.data || []).map(function(x){ return x.id; });
+    if(videoIds.length){
+      var revs = await c.from('space_video_ratings')
+        .select('score, comment, tags, created_at')
+        .in('video_id', videoIds)
+        .order('created_at', { ascending: false })
+        .limit(80);
+      reviews = revs.data || [];
+    }
+  } catch(e){}
+
+  var activeBand = null;
+
+  function bandRow(bandKey, label, count, col){
     var pct = Math.round((count / total) * 100);
-    return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;">' +
+    var active = activeBand === bandKey;
+    return '<button data-sp5-band="' + bandKey + '" ' + (active ? 'data-active="1"' : '') + ' style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;width:100%;background:' + (active ? 'rgba(16,185,129,.08)' : 'transparent') + ';border:1px solid ' + (active ? 'rgba(16,185,129,.35)' : 'transparent') + ';cursor:pointer;text-align:left;">' +
       '<div style="font-size:11px;color:#94a3b8;font-weight:800;min-width:52px;">' + label + '</div>' +
       '<div style="flex:1;height:8px;border-radius:4px;background:rgba(0,0,0,.35);overflow:hidden;">' +
         '<div style="height:100%;width:' + pct + '%;background:' + col + ';"></div>' +
       '</div>' +
       '<div style="font-size:11px;font-weight:900;color:' + col + ';min-width:22px;text-align:right;">' + count + '</div>' +
-    '</div>';
+    '</button>';
+  }
+
+  function reviewsHtml(){
+    var list = reviews.slice();
+    if(activeBand){
+      list = list.filter(function(rv){
+        var s = Number(rv.score) || 0;
+        if(activeBand === 'top')  return s >= 9;
+        if(activeBand === 'high') return s >= 7 && s <= 8;
+        if(activeBand === 'mid')  return s >= 4 && s <= 6;
+        if(activeBand === 'low')  return s >= 1 && s <= 3;
+        return true;
+      });
+    }
+    if(!list.length){
+      return '<div style="text-align:center;color:#64748b;font-size:12px;padding:24px;">' +
+        (activeBand ? 'No reviews in this band.' : 'No reviews yet.') + '</div>';
+    }
+    var out = '';
+    list.slice(0, 30).forEach(function(rv){
+      var s = Number(rv.score) || 0;
+      var sc = scoreColor(s);
+      var sb = scoreBg(s);
+      var tags = rv.tags;
+      if(typeof tags === 'string'){ try { tags = JSON.parse(tags); } catch(e){ tags = null; } }
+      out += '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.05);">';
+      out += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+      out += '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:12px;background:' + sb + ';color:' + sc + ';font-weight:900;font-size:13px;">';
+      out += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + s + ' / 10</span>';
+      out += '<span style="font-size:10px;color:#64748b;font-weight:700;">' + ago(rv.created_at) + '</span>';
+      out += '</div>';
+      if(rv.comment) out += '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.55;font-style:italic;">"' + esc(rv.comment) + '"</div>';
+      if(Array.isArray(tags) && tags.length){
+        out += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px;">';
+        tags.forEach(function(t){ out += '<span style="font-size:9.5px;padding:2px 8px;border-radius:10px;background:rgba(148,163,184,.12);color:#94a3b8;font-weight:800;">' + esc(String(t)) + '</span>'; });
+        out += '</div>';
+      }
+      out += '</div>';
+    });
+    out += '<div style="padding:12px 0;text-align:center;font-size:10.5px;color:#64748b;line-height:1.5;">Ratings are anonymous. Only the score and comment are shown.</div>';
+    return out;
   }
 
   var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
   h += '<div class="sheet-handle"></div>';
   h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Ratings from Full Videos</h3>';
   h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
-  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
   h += '<div style="display:flex;align-items:baseline;gap:8px;justify-content:center;margin-bottom:16px;">';
   h += '<div style="font-size:42px;font-weight:900;color:' + scoreColor(avg) + ';">' + avg.toFixed(1) + '</div>';
   h += '<div style="font-size:14px;color:#94a3b8;font-weight:700;">/ 10</div>';
   h += '</div>';
   h += '<div style="text-align:center;font-size:11px;color:#94a3b8;margin-bottom:16px;">' + cnt + ' rating' + (cnt === 1 ? '' : 's') + ' across all Full Videos</div>';
-  h += bandRow('9 – 10', bands.top || 0, '#10b981');
-  h += bandRow('7 – 8', bands.high || 0, '#a18554');
-  h += bandRow('4 – 6', bands.mid || 0, '#a18554');
-  h += bandRow('1 – 3', bands.low || 0, '#a16262');
-  h += '<div style="margin-top:16px;font-size:10.5px;color:#64748b;line-height:1.55;text-align:center;">Ratings are anonymous. Only from Full Videos.</div>';
-  h += '</div></div></div>';
-  Z.openSheet(h);
-};
-
-/* Per-video rating sheet — matches Block 7 design language */
-Z.openVideoRatingSheet = async function(videoId){
-  var me = Z.State.currentUser;
-  if(!me){ Z.openAuthModal('login'); return; }
-  var c = Z.sb && Z.sb(); if(!c) return;
-  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
-  if(!v){ Z.toast('Video not found.'); return; }
-  if(v.author_id === me.id){ Z.toast('You cannot rate your own video.'); return; }
-
-  var existing = null;
-  try {
-    var r = await c.from('space_video_ratings').select('score, comment, tags').eq('video_id', videoId).eq('rater_id', me.id).maybeSingle();
-    if(!r.error && r.data) existing = r.data;
-  } catch(e){}
-
-  var score = existing ? Number(existing.score) : 0;
-  var selectedTags = [];
-  if(existing && existing.tags){
-    try { selectedTags = Array.isArray(existing.tags) ? existing.tags.slice() : JSON.parse(existing.tags); }
-    catch(e){ selectedTags = []; }
-  }
-
-  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
-  h += '<div class="sheet-handle"></div>';
-  h += '<div class="sheet-header">';
-  h += '<h3 style="font-size:14px;font-weight:900;">' + (existing ? 'Update your rating' : 'Rate this video') + '</h3>';
-  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  h += '<div id="sp5-bands-wrap" style="margin-bottom:14px;">';
+  h += bandRow('top',  '9 – 10', bands.top  || 0, '#10b981');
+  h += bandRow('high', '7 – 8',  bands.high || 0, '#a18554');
+  h += bandRow('mid',  '4 – 6',  bands.mid  || 0, '#a18554');
+  h += bandRow('low',  '1 – 3',  bands.low  || 0, '#a16262');
   h += '</div>';
-  h += '<div class="sheet-body" style="padding:16px;">';
-  h += '<div style="text-align:center;font-size:12px;color:#cbd5e1;line-height:1.55;margin-bottom:6px;">Rate 1 to 10. 9-10 excellent · 7-8 good · 4-6 fair · 1-3 poor.</div>';
-  h += '<div class="mkr-star-row" id="sp5-stars">';
-  for(var i = 1; i <= 10; i++){
-    h += '<button class="mkr-star" data-star="' + i + '" ' + (i <= score ? 'data-active="1"' : '') + '>' + i + '</button>';
-  }
-  h += '</div>';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-top:8px;margin-bottom:6px;">Comment (optional)</label>';
-  h += '<textarea id="sp5-rate-comment" class="mks-textarea" maxlength="300" placeholder="What stood out? Anything others should know?">' + esc(existing && existing.comment ? existing.comment : '') + '</textarea>';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-top:12px;margin-bottom:6px;">Tags (optional)</label>';
-  h += '<div class="mkr-tag-row" id="sp5-tags">';
-  RATING_TAGS.forEach(function(t){
-    var active = selectedTags.indexOf(t) !== -1;
-    h += '<button class="mkr-tag" data-tag="' + esc(t) + '" ' + (active ? 'data-active="1"' : '') + '>' + esc(t) + '</button>';
-  });
-  h += '</div>';
-  h += '<button id="sp5-rate-submit" style="width:100%;margin-top:16px;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Submit rating</button>';
+  h += '<div id="sp5-band-clear" style="display:none;margin-bottom:10px;"></div>';
+  h += '<div id="sp5-reviews-host" style="border-radius:12px;background:#111827;border:1px solid #1e293b;padding:0 14px;">' + reviewsHtml() + '</div>';
   h += '</div></div></div>';
   Z.openSheet(h);
 
-  var selected = score;
   setTimeout(function(){
-    document.querySelectorAll('#sp5-stars [data-star]').forEach(function(b){
-      b.addEventListener('click', function(){
-        selected = parseInt(this.getAttribute('data-star'), 10);
-        document.querySelectorAll('#sp5-stars [data-star]').forEach(function(x){
-          var n = parseInt(x.getAttribute('data-star'), 10);
-          if(n <= selected) x.setAttribute('data-active','1');
-          else x.removeAttribute('data-active');
-        });
+    var bandsWrap = document.getElementById('sp5-bands-wrap');
+    var clearHost = document.getElementById('sp5-band-clear');
+    var listHost  = document.getElementById('sp5-reviews-host');
+    if(!bandsWrap) return;
+
+    function repaint(){
+      /* Update band row styles */
+      bandsWrap.querySelectorAll('[data-sp5-band]').forEach(function(b){
+        var key = b.getAttribute('data-sp5-band');
+        var on = (key === activeBand);
+        b.setAttribute('data-active', on ? '1' : '0');
+        b.style.background = on ? 'rgba(16,185,129,.08)' : 'transparent';
+        b.style.borderColor = on ? 'rgba(16,185,129,.35)' : 'transparent';
       });
-    });
-    document.querySelectorAll('#sp5-tags [data-tag]').forEach(function(b){
-      b.addEventListener('click', function(){
-        var val = this.getAttribute('data-tag');
-        var idx = selectedTags.indexOf(val);
-        if(idx === -1){ selectedTags.push(val); this.setAttribute('data-active','1'); }
-        else { selectedTags.splice(idx, 1); this.removeAttribute('data-active'); }
-      });
-    });
-    var sub = document.getElementById('sp5-rate-submit');
-    if(sub) sub.addEventListener('click', async function(){
-      if(!selected || selected < 1 || selected > 10){ Z.toast('Pick 1–10.', 'error'); return; }
-      sub.disabled = true; sub.textContent = 'Submitting…';
-      var comment = (document.getElementById('sp5-rate-comment') || {}).value || '';
-      try {
-        var rr = await c.rpc('space_submit_video_rating', {
-          p_video_id: videoId,
-          p_score: selected,
-          p_comment: comment.trim() || null,
-          p_tags: selectedTags
-        });
-        if(rr.error) throw rr.error;
-        Z.closeSheet();
-        Z.toast('Rating submitted.');
-      } catch(e){
-        var msg = (e && e.message) || 'unknown';
-        if(msg.indexOf('cannot_rate_own') !== -1) Z.toast('You cannot rate your own video.', 'error');
-        else if(msg.indexOf('invalid_score') !== -1) Z.toast('Score must be 1–10.', 'error');
-        else Z.toast('Failed: ' + msg, 'error');
-        sub.disabled = false; sub.textContent = 'Submit rating';
+      /* Clear chip */
+      if(clearHost){
+        if(activeBand){
+          var lbl = activeBand === 'top' ? '9 – 10' : activeBand === 'high' ? '7 – 8' : activeBand === 'mid' ? '4 – 6' : '1 – 3';
+          clearHost.style.display = 'block';
+          clearHost.innerHTML = '<button id="sp5-band-clear-btn" style="width:100%;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;">Showing ' + lbl + ' only · Clear filter</button>';
+          var cb = document.getElementById('sp5-band-clear-btn');
+          if(cb) cb.onclick = function(){ activeBand = null; repaint(); };
+        } else {
+          clearHost.style.display = 'none';
+          clearHost.innerHTML = '';
+        }
       }
+      if(listHost) listHost.innerHTML = reviewsHtml();
+    }
+
+    bandsWrap.querySelectorAll('[data-sp5-band]').forEach(function(b){
+      b.onclick = function(){
+        var key = this.getAttribute('data-sp5-band');
+        activeBand = (activeBand === key) ? null : key;
+        repaint();
+      };
     });
   }, 40);
 };
@@ -8685,6 +8700,231 @@ Z.openFullVideoCreatorGuide = function(){
   Z.openSheet(h);
 };
 
+/* ============================================================
+   FULL VIDEO APPLICATION
+   ============================================================ */
+Z._fvApp = Z._fvApp || {};
+
+Z.fetchFullVideoApp = async function(userId){
+  var c = Z.sb && Z.sb();
+  if(!c || !userId) return null;
+  if(Z._fvApp[userId] !== undefined) return Z._fvApp[userId];
+  try {
+    var r = await c.from('full_video_applications')
+      .select('status, applied_at, reviewed_at, notes')
+      .eq('user_id', userId)
+      .maybeSingle();
+    Z._fvApp[userId] = r.data || null;
+  } catch(e){ Z._fvApp[userId] = null; }
+  return Z._fvApp[userId];
+};
+
+Z.paintFullVideoApplicationSlot = async function(userId){
+  var host = document.getElementById('sp5-fv-app-host');
+  if(!host) return;
+  var me = Z.State.currentUser;
+  if(!me) return;
+
+  var isOwner = me.id === userId;
+  var app = await Z.fetchFullVideoApp(userId);
+
+  /* Non-owner: only show status if approved */
+  if(!isOwner){
+    if(app && app.status === 'approved'){
+      host.innerHTML = '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);font-size:12px;color:#cbd5e1;line-height:1.6;">' +
+        '<b style="color:#10b981;"><i class="fa-solid fa-circle-check"></i> Full Video Creator</b><br>' +
+        'This SPACE offers paid Full Videos. Subscribe to watch — free for viewers.' +
+        '</div>';
+    } else {
+      host.innerHTML = '';
+    }
+    return;
+  }
+
+  /* Owner view */
+  if(app && app.status === 'approved'){
+    host.innerHTML = '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.4);">' +
+      '<div style="display:flex;align-items:center;gap:10px;">' +
+        '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-circle-check" style="color:#10b981;"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:13px;font-weight:900;color:#10b981;">Full Video Creator · Approved</div>' +
+          '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;">Welcome aboard. Your videos are earning. View earnings in Earning Hub.</div>' +
+        '</div>' +
+      '</div>' +
+      '<button onclick="Z.openFullVideoCreatorGuide()" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.06);color:#10b981;font-weight:800;font-size:11px;cursor:pointer;"><i class="fa-solid fa-book-open"></i> Read the Creator Guide</button>' +
+    '</div>';
+    return;
+  }
+
+  if(app && app.status === 'pending'){
+    host.innerHTML = '<div style="padding:14px;border-radius:12px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);">' +
+      '<div style="display:flex;align-items:center;gap:10px;">' +
+        '<div style="width:36px;height:36px;border-radius:10px;background:rgba(161,133,84,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-hourglass-half" style="color:#a18554;"></i></div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:13px;font-weight:900;color:#a18554;">Application under review</div>' +
+          '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;">Shortlisting in progress. You will be notified when the decision is made.</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+    return;
+  }
+
+  if(app && app.status === 'rejected'){
+    host.innerHTML = '<div style="padding:14px;border-radius:12px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.35);">' +
+      '<div style="font-size:13px;font-weight:900;color:#c9a5a5;">Application not approved</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;">' + (app.notes ? esc(app.notes) : 'Your application did not meet current criteria. You may reapply later.') + '</div>' +
+      '<button onclick="Z.openFullVideoApplication()" style="width:100%;margin-top:10px;padding:9px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:transparent;color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;">Reapply</button>' +
+    '</div>';
+    return;
+  }
+
+  /* No application yet */
+  host.innerHTML = '<button onclick="Z.openFullVideoApplication()" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+    '<i class="fa-solid fa-star"></i> Apply for Full Video Access</button>';
+};
+
+Z.openFullVideoApplication = function(){
+  var me = Z.State.currentUser;
+  if(!me){ Z.openAuthModal('login'); return; }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:90vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Apply for Full Video Access</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+
+  /* --- What we offer --- */
+  h += '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.32);margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#10b981;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-gift"></i> WHAT WE OFFER</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
+  h += '• <b style="color:#fff;">$0.30</b> to your Cash wallet per active subscriber, every month<br>';
+  h += '• <b style="color:#fff;">ZYNIX invests $0.20</b> more per subscriber to promote your SPACE on Ad TV, banners, and discover surfaces<br>';
+  h += '• <b style="color:#fff;">Viewers pay $0</b> — subscriptions are free forever<br>';
+  h += '• <b style="color:#fff;">Minimum 500 subscribers</b> required to start earning<br>';
+  h += '• <b style="color:#fff;">Aggregate rating ≥ 7.0</b> required monthly (from Full Video ratings)<br>';
+  h += '• <b style="color:#fff;">Per-creator cap:</b> $4,000 per month';
+  h += '</div></div>';
+
+  /* --- What we want --- */
+  h += '<div style="padding:14px;border-radius:12px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#a18554;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-handshake"></i> WHAT WE WANT IN RETURN</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
+  h += '• Minimum <b style="color:#fff;">1 fresh Full Video</b> per 30 days<br>';
+  h += '• Minimum <b style="color:#fff;">5 videos at 20+ minutes</b> live on your SPACE<br>';
+  h += '• Minimum <b style="color:#fff;">60 Sparks posted per month</b><br>';
+  h += '• Ethical, original content — you own all rights<br>';
+  h += '• 720p minimum, 1080p recommended<br>';
+  h += '• Consistent upload cadence, premium presentation';
+  h += '</div></div>';
+
+  /* --- Fee structure --- */
+  h += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-receipt"></i> UPLOAD FEE STRUCTURE</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
+  h += '• <b style="color:#fff;">$1</b> per video, 1–10 minutes<br>';
+  h += '• <b style="color:#fff;">+$1</b> for each additional 10-minute band<br>';
+  h += '• Max video length: 60 minutes<br>';
+  h += '• Max file size: 200 MB per video<br>';
+  h += '• Formats: mp4, webm, mov';
+  h += '</div></div>';
+
+  /* --- $0.20 explanation --- */
+  h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-bullhorn"></i> ABOUT THE $0.20 PROMOTION</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
+  h += 'ZYNIX invests <b style="color:#fff;">$0.20 per subscriber per month</b> from its own budget to promote your SPACE. It funds Ad TV placements, home banners, discover surfaces, and recommendations. ';
+  h += '<b style="color:#fbbf24;">This is not deducted from your earnings.</b> ';
+  h += '<b style="color:#fbbf24;">It is not mandatory for you to spend anything.</b> ';
+  h += 'You do nothing — ZYNIX manages the promotion fully on your behalf.';
+  h += '</div></div>';
+
+  /* --- Shortlisting notice (bold) --- */
+  h += '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(236,72,153,.10),rgba(161,133,84,.10));border:1px solid rgba(236,72,153,.4);margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#ec4899;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-triangle-exclamation"></i> SHORTLISTING REQUIRED</div>';
+  h += '<div style="font-size:12px;color:#f8fafc;line-height:1.75;font-weight:700;">';
+  h += 'This is a <b style="color:#fff;">selective program</b>. Applications are shortlisted based on content nature, quality, and public demand. ';
+  h += '<b style="color:#fbbf24;">Approval can take days, weeks, or months</b>, subject to available funds and platform priority. ';
+  h += '<b style="color:#fff;">Submission does not guarantee approval.</b>';
+  h += '</div></div>';
+
+  /* --- Terms checkbox --- */
+  h += '<div class="mks-copyright" style="margin-bottom:14px;">';
+  h += '<label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">';
+  h += '<input type="checkbox" id="sp5-fv-accept" style="margin-top:2px;flex-shrink:0;">';
+  h += '<span style="font-size:12px;color:#cbd5e1;line-height:1.65;">I have read and accept the terms above. I understand that shortlisting applies, my content will be reviewed, and approval timing depends on funds and public priority.</span>';
+  h += '</label>';
+  h += '</div>';
+
+  h += '<button id="sp5-fv-submit" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;opacity:.5;" disabled>Submit application</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var cb = document.getElementById('sp5-fv-accept');
+    var sub = document.getElementById('sp5-fv-submit');
+    if(cb && sub){
+      cb.addEventListener('change', function(){
+        sub.disabled = !this.checked;
+        sub.style.opacity = this.checked ? '1' : '.5';
+      });
+      sub.addEventListener('click', function(){ Z.submitFullVideoApplication(sub); });
+    }
+  }, 40);
+};
+
+Z.submitFullVideoApplication = async function(btn){
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  if(btn){ btn.disabled = true; btn.textContent = 'Submitting…'; }
+
+  try {
+    var r = await c.from('full_video_applications').insert({
+      user_id: me.id,
+      status: 'pending',
+      notes: null
+    }).select().maybeSingle();
+
+    if(r.error){
+      if(String(r.error.message).indexOf('duplicate') !== -1){
+        Z.toast('You already have a pending application.', 'error');
+      } else {
+        throw r.error;
+      }
+    } else {
+      /* Self-notification as receipt */
+      try {
+        await c.from('notifications').insert({
+          user_id: me.id,
+          message: 'Your Full Video Access application has been received. Shortlisting is in progress — you will be notified when a decision is made.',
+          read: false,
+          deliver_at: new Date().toISOString()
+        });
+      } catch(e){}
+      Z.toast('Application submitted. Shortlisting in progress.');
+    }
+
+    Z._fvApp[me.id] = undefined;
+    Z.closeSheet();
+
+    /* Refresh slot */
+    if(Z.State.currentView === 'public-profile'){
+      setTimeout(function(){ Z.paintFullVideoApplicationSlot(Z.State.spaceUserId); }, 200);
+    }
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    Z.toast('Submit failed: ' + msg, 'error');
+    if(btn){ btn.disabled = false; btn.textContent = 'Submit application'; }
+  }
+};
+
+     
 /* ============================================================
    POOL HEALTH METER — global + creator-projected
    ============================================================ */
