@@ -28392,7 +28392,202 @@ Z.marketDebugMedia = async function(){
 
 console.log('[Market Block 16] fixes ready — run Z.marketDebugMedia() in console to diagnose');
 })();
-</script>     
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 17 — Form-loss guard + avatar cleanup    -->
+<!-- 1. Blocks navigation away from sell form if items are filled  -->
+<!--    — prevents the "10 items lost" bug.                        -->
+<!-- 2. Aggressive avatar dropdown scrub — removes committee link  -->
+<!--    on load, on open, and on a 1-sec interval safety net.      -->
+<!-- 3. Reliable seller-guard for committee apply button.          -->
+<!-- 4. Media retry — one retry after 2s on load failure.          -->
+<!-- 5. Z.marketTestMediaUrl() diagnostic.                         -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketFix3) return; Z.__zynixMarketFix3 = true;
+
+/* ============================================================
+   1. CRITICAL — block navigation if sell form has data
+   ============================================================ */
+(function(){
+  function hasFormData(){
+    if(Z.State.currentView !== 'market-sell') return false;
+    var host = document.getElementById('mks-items-host');
+    if(!host) return false;
+
+    /* Any item with a file attached? */
+    var hasFile = false;
+    host.querySelectorAll('button[data-mks-pick]').forEach(function(b){
+      if((b.textContent || '').indexOf('Replace') !== -1) hasFile = true;
+    });
+    if(hasFile) return true;
+
+    /* Any title/desc filled? */
+    var hasText = false;
+    host.querySelectorAll('[data-mks-title],[data-mks-desc],[data-mks-tags]').forEach(function(el){
+      if((el.value || '').trim().length >= 1) hasText = true;
+    });
+    return hasText;
+  }
+
+  /* Back button */
+  var _prevGoBack = Z.goBack;
+  Z.goBack = function(){
+    if(hasFormData()){
+      if(!confirm('You have unsaved items with attached files.\n\nGoing back will lose them.\n\nDiscard and go back?')) return;
+      if(typeof Z.marketClearFormCache === 'function') Z.marketClearFormCache();
+    }
+    return _prevGoBack.apply(this, arguments);
+  };
+
+  /* Any other view change */
+  var _prevShow = Z.showView;
+  Z.showView = function(view, param){
+    if(Z.State.currentView === 'market-sell' && view !== 'market-sell' && hasFormData()){
+      if(!confirm('You have unsaved items with attached files.\n\nLeaving will lose them.\n\nDiscard and leave?')) return;
+      if(typeof Z.marketClearFormCache === 'function') Z.marketClearFormCache();
+    }
+    return _prevShow.apply(this, arguments);
+  };
+})();
+
+/* ============================================================
+   2. AGGRESSIVE avatar dropdown scrub
+   ============================================================ */
+(function(){
+  function scrub(){
+    var dd = document.getElementById('zynix-account-dropdown');
+    if(!dd) return;
+    /* Remove by attribute */
+    dd.querySelectorAll('[data-mk-committee-link]').forEach(function(l){ l.remove(); });
+    /* Remove by text match (fallback) */
+    dd.querySelectorAll('button').forEach(function(b){
+      var t = (b.textContent || '').toLowerCase();
+      if(t.indexOf('committee queue') !== -1 || t.indexOf('committee portal') !== -1){
+        b.remove();
+      }
+    });
+  }
+
+  /* Immediate scrub on load */
+  scrub();
+  setTimeout(scrub, 500);
+  setTimeout(scrub, 2000);
+
+  /* Scrub on every dropdown open with multiple delays */
+  var _prevDD = Z.openAccountDropdown;
+  if(typeof _prevDD === 'function'){
+    Z.openAccountDropdown = function(){
+      var r = _prevDD.apply(this, arguments);
+      [20, 60, 120, 250, 500, 900].forEach(function(ms){ setTimeout(scrub, ms); });
+      return r;
+    };
+  }
+
+  /* 1-second safety net — cheap */
+  setInterval(scrub, 1000);
+})();
+
+/* ============================================================
+   3. Reliable seller-guard for committee apply button
+   ============================================================ */
+(function(){
+  async function isSeller(){
+    var me = Z.State.currentUser;
+    if(!me) return false;
+    var c = Z.sb && Z.sb();
+    if(!c) return false;
+    try {
+      var r = await c.from('market_assets')
+        .select('id', { count: 'exact', head: true })
+        .eq('seller_id', me.id)
+        .in('status', ['active', 'pending_review']);
+      return (r.count || 0) > 0;
+    } catch(e){ return false; }
+  }
+
+  var _prevOps = Z.marketRenderOpsBar;
+  if(typeof _prevOps !== 'function') return;
+
+  Z.marketRenderOpsBar = async function(){
+    await _prevOps.apply(this, arguments);
+    setTimeout(async function(){
+      /* Remove guide tab if still present */
+      var guide = document.getElementById('mkops-guide');
+      if(guide && guide.parentNode) guide.parentNode.removeChild(guide);
+
+      /* Disable apply if user is a seller */
+      var apply = document.getElementById('mkops-apply');
+      if(!apply) return;
+      if(await isSeller()){
+        apply.disabled = true;
+        apply.style.opacity = '0.5';
+        apply.style.cursor = 'not-allowed';
+        apply.title = 'Sellers cannot become committee members. Remove your listings first.';
+        var sp = apply.querySelector('span');
+        if(sp) sp.textContent = 'Seller';
+        var sub = apply.querySelector('.sub');
+        if(sub) sub.textContent = 'Cannot apply';
+      }
+    }, 150);
+  };
+})();
+
+/* ============================================================
+   4. Media retry — one retry after 2s on load failure
+   ============================================================ */
+document.addEventListener('error', function(e){
+  var img = e.target;
+  if(!img || img.tagName !== 'IMG') return;
+  var src = img.getAttribute('src');
+  if(!src) return;
+  if(img._mkpRetried) return;
+  img._mkpRetried = true;
+  /* Only retry once, and only for R2/remote URLs (not data: or blob:) */
+  if(src.indexOf('http') !== 0) return;
+  setTimeout(function(){
+    var sep = (src.indexOf('?') === -1) ? '?' : '&';
+    img.src = src + sep + '_retry=' + Date.now();
+    console.log('[ZYNIX Media] Retrying: ' + src);
+  }, 2000);
+}, true);
+
+/* ============================================================
+   5. Diagnostic helper
+   ============================================================ */
+Z.marketTestMediaUrl = async function(){
+  var c = Z.sb && Z.sb();
+  if(!c){ console.warn('Not connected'); return; }
+  var r = await c.from('market_assets')
+    .select('id,title,preview_url,media_url,status')
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if(r.error){ console.error(r.error); return; }
+  var rows = r.data || [];
+  console.log('=== ZYNIX Media Diagnostic ===');
+  for(var i = 0; i < rows.length; i++){
+    var row = rows[i];
+    var src = row.preview_url || row.media_url;
+    if(!src){ console.warn('[' + i + '] ' + row.title + ' → NO URL'); continue; }
+    try {
+      var resp = await fetch(src, { method: 'HEAD', mode: 'no-cors' });
+      console.log('[' + i + '] ' + row.title + ' → HTTP ' + resp.status + ' · ' + (resp.type || '') + ' · ' + src.substring(0, 70) + '...');
+    } catch(e){
+      console.error('[' + i + '] ' + row.title + ' → FETCH FAILED: ' + e.message);
+    }
+  }
+  console.log('=== Tip: if all show ERR_FAILED or 404, R2 public access is OFF ===');
+  console.log('Fix: Cloudflare → R2 → bucket → Settings → Public Access → ON');
+  return rows;
+};
+
+console.log('[Market Block 17] form-loss guard + avatar cleanup + seller guard + retry');
+})();
+</script>    
      
 </body>
 </html>
