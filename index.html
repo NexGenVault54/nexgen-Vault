@@ -28097,6 +28097,301 @@ if(typeof _prevOpenDD === 'function'){
 
 console.log('[Market Block 15] ops bar + committee + media fix ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 16 — Fix pass 2                          -->
+<!-- · Chips → wrapping grid (2-3 rows, all categories visible)   -->
+<!-- · Ops bar → 2 cols, Market Guide tab removed                 -->
+<!-- · Committee apply → hidden for sellers                       -->
+<!-- · Avatar dropdown → MutationObserver nukes committee link    -->
+<!-- · Media → universal resolver + lightbox + console log        -->
+<!-- · Committee queue media → fetched fresh from DB per card     -->
+<!-- · Seller My Selling media → same treatment + View button    -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketFix2) return; Z.__zynixMarketFix2 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+/* ============================================================
+   1. GLOBAL MEDIA HELPERS
+   ============================================================ */
+window.mkpResolve = function(preview, media){
+  var p = (preview == null) ? '' : String(preview).trim();
+  var m = (media   == null) ? '' : String(media).trim();
+  if(p && p !== 'null' && p !== 'undefined') return p;
+  if(m && m !== 'null' && m !== 'undefined') return m;
+  return '';
+};
+window.mkpPlaceholder = function(){
+  return '<div style="width:100%;height:100%;min-height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#64748b;font-size:10px;gap:4px;background:#0f172a;">' +
+    '<i class="fa-solid fa-image" style="font-size:22px;opacity:.5;"></i>' +
+    '<span>Media unavailable</span>' +
+    '</div>';
+};
+window.mkpBuildImg = function(preview, media, title, lightbox){
+  var src = window.mkpResolve(preview, media);
+  if(!src) return window.mkpPlaceholder();
+  var lbAttr = lightbox
+    ? ' data-mkp-lb="' + esc(src) + '" data-mkp-title="' + esc(title||'') + '"'
+    : '';
+  return '<img src="' + esc(src) + '" alt="" loading="lazy" ' +
+    'data-mkp-src="' + esc(src) + '"' + lbAttr +
+    ' style="width:100%;height:100%;object-fit:cover;display:block;' +
+    (lightbox ? 'cursor:zoom-in;' : '') + '">';
+};
+
+/* Error handler — logs URL for diagnosis */
+document.addEventListener('error', function(e){
+  var t = e.target;
+  if(!t || t.tagName !== 'IMG') return;
+  if(!t.hasAttribute('data-mkp-src')) return;
+  var url = t.getAttribute('data-mkp-src');
+  console.warn('[ZYNIX Media] Failed:', url);
+  var wrap = t.parentNode;
+  if(wrap) wrap.innerHTML = window.mkpPlaceholder();
+}, true);
+
+/* Lightbox click */
+document.addEventListener('click', function(e){
+  var el = e.target.closest('[data-mkp-lb]');
+  if(!el) return;
+  e.stopPropagation();
+  e.preventDefault();
+  var src = el.getAttribute('data-mkp-lb');
+  var title = el.getAttribute('data-mkp-title') || '';
+  if(window.mkpOpenLightbox) window.mkpOpenLightbox(src, title);
+}, true);
+
+/* ============================================================
+   2. CSS OVERRIDES
+   ============================================================ */
+var st = document.createElement('style');
+st.id = 'zynix-mk-fix2-css';
+st.textContent = [
+  /* Chips → wrap, compact, all visible */
+  '.mkh2-chips{display:flex !important;flex-wrap:wrap !important;gap:5px !important;overflow:visible !important;padding:2px 0 6px !important;scrollbar-width:none !important;}',
+  '.mkh2-chips::-webkit-scrollbar{display:none !important;}',
+  '.mkh2-chip{padding:5px 9px !important;font-size:10px !important;border-radius:12px !important;flex:0 0 auto !important;gap:4px !important;max-width:100%;}',
+  '.mkh2-chip i{font-size:9px !important;}',
+  '.mkh2-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+  '@media(max-width:400px){.mkh2-chip{padding:4px 7px !important;font-size:9px !important;}}',
+  /* Ops bar → 2 cols */
+  '.mkops-bar{grid-template-columns:1fr 1fr !important;}',
+  /* Media thumbs */
+  '.mkq-thumb img, .mk3-thumb img, .mkq-similar-thumb img{width:100% !important;height:100% !important;object-fit:cover !important;display:block !important;cursor:zoom-in !important;}'
+].join('');
+document.head.appendChild(st);
+
+/* ============================================================
+   3. AVATAR DROPDOWN — kill committee link aggressively
+   ============================================================ */
+(function(){
+  function killLink(root){
+    if(!root) return;
+    root.querySelectorAll('[data-mk-committee-link]').forEach(function(l){ l.remove(); });
+    root.querySelectorAll('button').forEach(function(b){
+      var t = (b.textContent || '').toLowerCase();
+      if(t.indexOf('committee queue') !== -1 || t.indexOf('committee portal') !== -1){
+        b.remove();
+      }
+    });
+  }
+
+  var _prevDD = Z.openAccountDropdown;
+  if(typeof _prevDD === 'function'){
+    Z.openAccountDropdown = function(){
+      var r = _prevDD.apply(this, arguments);
+      var start = Date.now();
+      var iv = setInterval(function(){
+        var dd = document.getElementById('zynix-account-dropdown');
+        if(dd) killLink(dd);
+        if(Date.now() - start > 30000) clearInterval(iv);
+        if(!dd && Date.now() - start > 3000) clearInterval(iv);
+      }, 80);
+      return r;
+    };
+  }
+})();
+
+/* ============================================================
+   4. OPS BAR — remove guide tab, disable committee for sellers
+   ============================================================ */
+(function(){
+  var _prevOps = Z.marketRenderOpsBar;
+  if(typeof _prevOps !== 'function') return;
+  Z.marketRenderOpsBar = async function(){
+    await _prevOps.apply(this, arguments);
+    setTimeout(async function(){
+      var guide = document.getElementById('mkops-guide');
+      if(guide && guide.parentNode) guide.parentNode.removeChild(guide);
+
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var r = await c.rpc('market_my_selling');
+        if(r.error || !r.data) return;
+        var isSeller = r.data.some(function(x){
+          return (Number(x.active_count)||0) > 0 || (Number(x.pending_count)||0) > 0;
+        });
+        if(isSeller){
+          var apply = document.getElementById('mkops-apply');
+          if(apply){
+            apply.disabled = true;
+            apply.title = 'Sellers cannot apply for committee.';
+            var sp = apply.querySelector('span');
+            if(sp) sp.textContent = 'Seller';
+            var sub = apply.querySelector('.sub');
+            if(sub) sub.textContent = 'Cannot apply';
+          }
+        }
+      } catch(e){}
+    }, 120);
+  };
+})();
+
+/* ============================================================
+   5. COMMITTEE QUEUE + SELLER MEDIA — refetch per card
+   ============================================================ */
+async function fixCommitteeMedia(){
+  var host = document.getElementById('mkq-queue');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var cards = host.querySelectorAll('.mkq-card[data-mkq-id]');
+  for(var i = 0; i < cards.length; i++){
+    var card = cards[i];
+    var id = card.getAttribute('data-mkq-id');
+    var thumbWrap = card.querySelector('.mkq-thumb');
+    if(!thumbWrap || thumbWrap._mkpFixed) continue;
+    thumbWrap._mkpFixed = true;
+
+    try {
+      var r = await c.from('market_assets')
+        .select('preview_url,media_url,title')
+        .eq('id', id).maybeSingle();
+      if(r.error || !r.data) continue;
+      thumbWrap.innerHTML = window.mkpBuildImg(r.data.preview_url, r.data.media_url, r.data.title, true);
+    } catch(e){}
+  }
+
+  /* Similar items thumbnails */
+  var simImgs = host.querySelectorAll('.mkq-similar-thumb');
+  simImgs.forEach(function(w){
+    if(w._mkpFixed) return;
+    w._mkpFixed = true;
+    var img = w.querySelector('img');
+    if(img && !img.hasAttribute('data-mkp-src')){
+      /* normalize */
+      var src = img.getAttribute('src');
+      if(src){
+        img.setAttribute('data-mkp-src', src);
+      }
+    }
+  });
+}
+
+async function fixSellerMedia(){
+  var host = document.getElementById('mk3-mysell-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var cards = host.querySelectorAll('.mk3-card[data-mk3-item]');
+  for(var i = 0; i < cards.length; i++){
+    var card = cards[i];
+    var id = card.getAttribute('data-mk3-item');
+    var thumbWrap = card.querySelector('.mk3-thumb');
+    if(thumbWrap && !thumbWrap._mkpFixed){
+      thumbWrap._mkpFixed = true;
+      try {
+        var r = await c.from('market_assets')
+          .select('preview_url,media_url,title')
+          .eq('id', id).maybeSingle();
+        if(!r.error && r.data){
+          thumbWrap.innerHTML = window.mkpBuildImg(r.data.preview_url, r.data.media_url, r.data.title, true);
+        }
+      } catch(e){}
+    }
+
+    if(!card.querySelector('[data-mkp-view]')){
+      var btn = document.createElement('button');
+      btn.setAttribute('data-mkp-view','1');
+      btn.style.cssText = 'margin-top:10px;width:100%;padding:8px;border-radius:9px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:800;font-size:11px;cursor:pointer;';
+      btn.innerHTML = '<i class="fa-solid fa-magnifying-glass-plus"></i> View full preview';
+      (function(capturedId){
+        btn.addEventListener('click', async function(e){
+          e.stopPropagation();
+          try {
+            var r2 = await c.from('market_assets')
+              .select('preview_url,media_url,title').eq('id', capturedId).maybeSingle();
+            if(r2.error || !r2.data) return;
+            var s = window.mkpResolve(r2.data.preview_url, r2.data.media_url);
+            if(!s){ Z.toast('No media available.', 'error'); return; }
+            window.mkpOpenLightbox(s, r2.data.title || '');
+          } catch(err){ Z.toast('Could not load media.', 'error'); }
+        });
+      })(id);
+      card.appendChild(btn);
+    }
+  }
+}
+
+/* Hook into view changes */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  var out = _prevRender.call(this, view, param);
+  if(view === 'market-committee'){
+    setTimeout(fixCommitteeMedia, 300);
+    setTimeout(fixCommitteeMedia, 900);
+  }
+  if(view === 'market-my-selling'){
+    setTimeout(fixSellerMedia, 300);
+    setTimeout(fixSellerMedia, 900);
+  }
+  return out;
+};
+
+/* ============================================================
+   6. DEBUG TOOL — run in console: Z.marketDebugMedia()
+   ============================================================ */
+Z.marketDebugMedia = async function(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var r = await c.from('market_assets')
+    .select('id,title,preview_url,media_url,media_type,status,category,created_at')
+    .order('created_at', { ascending: false }).limit(10);
+  if(r.data){
+    console.table(r.data);
+    console.log('[ZYNIX Market] Media debug — check preview_url & media_url format');
+    /* Also test if URLs load */
+    for(var i = 0; i < Math.min(r.data.length, 3); i++){
+      var row = r.data[i];
+      var src = window.mkpResolve(row.preview_url, row.media_url);
+      if(!src){ console.warn('Row ' + i + ' has NO media URL'); continue; }
+      try {
+        var resp = await fetch(src, { method: 'HEAD' });
+        console.log('Row ' + i + ' → ' + src + ' → HTTP ' + resp.status);
+      } catch(e){
+        console.error('Row ' + i + ' → ' + src + ' → FETCH FAILED', e.message);
+      }
+    }
+  }
+  return r.data;
+};
+
+console.log('[Market Block 16] fixes ready — run Z.marketDebugMedia() in console to diagnose');
+})();
 </script>     
      
 </body>
