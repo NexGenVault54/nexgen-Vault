@@ -7146,51 +7146,61 @@ Z.renderPublicProfile = function(userId){
   Z.State._spaceLandingMySub     = null;
 
   var sameUser = (Z.State.spaceUserId === userId);
+  var isOwner  = !!(me && me.id === userId);
 
   if(landingTab){
     Z.State.spaceTab       = landingTab;
     Z.State.spacePublicTab = landingPublicSub || 'sparks';
     Z.State.spaceMySub     = landingMySub || 'default';
   } else if(!sameUser){
-    /* Avatar click → My Space tab (the user's personal view) */
-    Z.State.spaceTab       = 'my';
+    /* Avatar click (visitor) → user B's personal space
+       Bottom SPACE button (owner, sets landingTab) → public view */
+   Z.State.spaceTab = 'my';
     Z.State.spacePublicTab = 'sparks';
     Z.State.spaceMySub     = 'default';
   }
-  /* else: keep previous state */
 
   Z.State.spaceUserId = userId;
-  var isOwner = !!(me && me.id === userId);
 
   var h = '<div class="sp5-root"><div class="sp5-inner">';
   h += '<div id="sp5-head-host"><div style="padding:18px;border-radius:14px;background:#131c30;border:1px solid #1e293b;color:#64748b;font-size:12px;text-align:center;">Loading…</div></div>';
-
-  /* Main tabs — always both visible */
-  h += '<div class="sp5-tabs" id="sp5-tabs">';
-  h += '<button class="sp5-tab" data-sp5-tab="public" ' + (Z.State.spaceTab === 'public' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchTab(\'public\')"><i class="fa-solid fa-globe"></i> Public Space</button>';
-  h += '<button class="sp5-tab" data-sp5-tab="my" ' + (Z.State.spaceTab === 'my' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchTab(\'my\')"><i class="fa-solid fa-user"></i> My Space</button>';
-  h += '</div>';
-
   h += '<div id="sp5-content-host"></div>';
   h += '</div></div>';
 
   setTimeout(function(){ Z.sp5Load(userId, isOwner); }, 30);
   return h;
 };
-
 /* ============================================================
    TAB SWITCHERS
    ============================================================ */
 Z.sp5SwitchTab = function(tab){
-  if(Z.State.spaceTab === tab) return;
-  Z.State.spaceTab = tab;
+  /* Kept for backward-compat — route through new helpers */
+  if(tab === 'my') Z.sp5GoMySpaceView();
+  else if(tab === 'public') Z.sp5GoPublicView();
+};
+
+Z.sp5GoMySpaceView = function(){
+  if(Z.State.spaceTab === 'my') return;
+  Z.State.spaceTab = 'my';
   Z.State.spaceMySub = 'default';
-  document.querySelectorAll('[data-sp5-tab]').forEach(function(b){
-    if(b.getAttribute('data-sp5-tab') === tab) b.setAttribute('data-active','1');
-    else b.removeAttribute('data-active');
-  });
   var me = Z.State.currentUser;
   Z.sp5RenderContent(Z.State.spaceUserId, me && me.id === Z.State.spaceUserId);
+};
+
+Z.sp5GoPublicView = function(){
+  if(Z.State.spaceTab === 'public') return;
+  Z.State.spaceTab = 'public';
+  var me = Z.State.currentUser;
+  /* Trigger global fetch if needed */
+  if(!Z.State.publicSparksAll.length && !Z.State.publicVideosAll.length){
+    Z.sp5FetchGlobalContent().then(function(){
+      Z.sp5RenderContent(Z.State.spaceUserId, true);
+    }).catch(function(){
+      Z.sp5RenderContent(Z.State.spaceUserId, true);
+    });
+  } else {
+    Z.sp5RenderContent(Z.State.spaceUserId, true);
+  }
 };
 
 Z.sp5SwitchPublicTab = function(sub){
@@ -7345,13 +7355,48 @@ Z.sp5FetchContent = async function(profile){
 };
 
 /* ============================================================
+   GLOBAL PUBLIC CONTENT — all users' Sparks + Full Videos
+   Used by the owner's Public Sparks / Public Full Videos subtabs.
+   ============================================================ */
+Z.State.publicSparksAll = Z.State.publicSparksAll || [];
+Z.State.publicVideosAll = Z.State.publicVideosAll || [];
+Z.State._publicGlobalLoadedAt = 0;
+
+Z.sp5FetchGlobalContent = async function(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var rs = await c.from('sparks').select('*').eq('type','spark').order('created_at',{ascending:false}).limit(60);
+    Z.State.publicSparksAll = rs.data || [];
+  } catch(e){ Z.State.publicSparksAll = []; }
+  try {
+    var rv = await c.from('sparks').select('*').eq('type','long_video').order('created_at',{ascending:false}).limit(60);
+    Z.State.publicVideosAll = rv.data || [];
+  } catch(e){ Z.State.publicVideosAll = []; }
+  Z.State._publicGlobalLoadedAt = Date.now();
+};     
+
+/* ============================================================
    RENDER CONTENT (Public / My)
    ============================================================ */
 Z.sp5RenderContent = function(userId, isOwner){
+  /* Re-render header (button labels may have changed) */
+  var head = document.getElementById('sp5-head-host');
+  if(head && Z.State.spaceProfile){
+    head.innerHTML = renderHeader(Z.State.spaceProfile, isOwner, Z.State.spaceRating || { avg_score:0, rating_count:0, bands:{} });
+  }
+
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
-  if(Z.State.spaceTab === 'public') host.innerHTML = renderPublicSpace(userId, isOwner);
-  else host.innerHTML = renderMySpace(userId, isOwner, Z.State.spaceProfile);
+
+  if(!isOwner){
+    /* Visitor: user B's personal space only. No tabs. */
+    host.innerHTML = renderMySpace(userId, false, Z.State.spaceProfile);
+  } else if(Z.State.spaceTab === 'public'){
+    host.innerHTML = renderPublicSpace(userId, true);
+  } else {
+    host.innerHTML = renderMySpace(userId, true, Z.State.spaceProfile);
+  }
 
   setTimeout(function(){
     try { if(typeof Z.resolveIdbRefs === 'function') Z.resolveIdbRefs(host); } catch(e){}
@@ -7366,18 +7411,37 @@ Z.sp5RenderContent = function(userId, isOwner){
    Default: Sparks (when landing via SPACE button)
    ============================================================ */
 function renderPublicSpace(userId, isOwner){
-  var videos = Z.State.spaceVideos || [];
-  var sparks = Z.State.spaceSparks || [];
+  /* Use global content — every user's public Sparks + Full Videos */
+  var videos = Z.State.publicVideosAll || [];
+  var sparks = Z.State.publicSparksAll || [];
   var sub = Z.State.spacePublicTab || 'sparks';
-  var hasSub = isOwner || !!Z.State.spaceSubscriber[userId];
+
+  /* Async fetch (cached 60s) */
+  var stale = (Date.now() - (Z.State._publicGlobalLoadedAt || 0)) > 60000;
+  if(!Z.State.publicSparksAll.length && !Z.State.publicVideosAll.length){
+    if(!Z._publicFetchInFlight){
+      Z._publicFetchInFlight = true;
+      Z.sp5FetchGlobalContent().then(function(){
+        Z._publicFetchInFlight = false;
+        if(Z.State.spaceTab === 'public' && Z.State.currentView === 'public-profile'){
+          Z.sp5RenderContent(userId, true);
+        }
+      }).catch(function(){ Z._publicFetchInFlight = false; });
+    }
+  } else if(stale && !Z._publicFetchInFlight){
+    Z._publicFetchInFlight = true;
+    Z.sp5FetchGlobalContent().then(function(){ Z._publicFetchInFlight = false; }).catch(function(){ Z._publicFetchInFlight = false; });
+  }
 
   var h = '<div style="display:flex;flex-direction:column;gap:12px;">';
+
+  /* Subtabs — renamed, no "Public Space" heading above */
   h += '<div class="sp5-subtabs">';
-  h += '<button class="sp5-subtab" data-sp5-subtab="videos" ' + (sub === 'videos' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'videos\')"><i class="fa-solid fa-film"></i> Full Videos <span class="cnt">' + videos.length + '</span></button>';
-  h += '<button class="sp5-subtab" data-sp5-subtab="sparks" ' + (sub === 'sparks' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'sparks\')"><i class="fa-solid fa-bolt"></i> Sparks <span class="cnt">' + sparks.length + '</span></button>';
+  h += '<button class="sp5-subtab" data-sp5-subtab="videos" ' + (sub === 'videos' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'videos\')"><i class="fa-solid fa-film"></i> Public Full Videos <span class="cnt">' + videos.length + '</span></button>';
+  h += '<button class="sp5-subtab" data-sp5-subtab="sparks" ' + (sub === 'sparks' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'sparks\')"><i class="fa-solid fa-bolt"></i> Public Sparks <span class="cnt">' + sparks.length + '</span></button>';
   h += '</div>';
 
-  /* Guide button row (above grid) */
+  /* Header row above grid — guide button on videos, nothing on sparks */
   h += '<div class="sp5-sec-head" style="margin-bottom:0;">';
   h += '<div class="sp5-sec-title">' + (sub === 'videos' ? '<i class="fa-solid fa-film" style="color:#10b981;"></i> Full Videos' : '<i class="fa-solid fa-bolt" style="color:#10b981;"></i> Sparks') + ' <span class="cnt">' + (sub === 'videos' ? videos.length : sparks.length) + '</span></div>';
   if(sub === 'videos'){
@@ -7385,15 +7449,16 @@ function renderPublicSpace(userId, isOwner){
   }
   h += '</div>';
 
+  /* Grid — global content. Videos have no per-creator lock in public view. */
   if(sub === 'videos'){
-    h += '<div class="sp5-vgrid">' + renderVideoGrid(videos, userId, hasSub, isOwner) + '</div>';
+    h += '<div class="sp5-vgrid">' + renderVideoGrid(videos, userId, true, isOwner) + '</div>';
   } else {
     h += '<div class="sp5-sgrid">' + renderSparkGrid(sparks, userId) + '</div>';
   }
+
   h += '</div>';
   return h;
 }
-
 function renderVideoGrid(videos, userId, hasAccess, isOwner){
   if(!videos.length){
     return '<div class="sp5-empty"><i class="fa-solid fa-film" style="font-size:24px;color:#334155;display:block;margin-bottom:10px;"></i>No Full Videos yet.</div>';
@@ -7594,8 +7659,15 @@ function renderHeader(p, isOwner, rating){
     : '<img src="' + esc(avUrl) + '" alt="">';
 
   /* --- Actions --- */
-  var actions = '';
+   var actions = '';
   if(isOwner){
+    /* Toggle button — swaps between My Space and Public Space views */
+    var toggleLabel = (Z.State.spaceTab === 'public') ? 'My Space' : 'Public Space';
+    var toggleIcon  = (Z.State.spaceTab === 'public') ? 'fa-solid fa-user' : 'fa-solid fa-globe';
+    var toggleFn    = (Z.State.spaceTab === 'public') ? 'Z.sp5GoMySpaceView()' : 'Z.sp5GoPublicView()';
+    actions += '<button class="sp5-act" onclick="' + toggleFn + '" title="' + toggleLabel + '" style="width:auto;padding:0 12px;font-size:11px;font-weight:900;gap:6px;display:inline-flex;align-items:center;">' +
+               '<i class="' + toggleIcon + '"></i> ' + toggleLabel +
+               '</button>';
     actions += '<button class="sp5-act gear" onclick="Z.openSpaceSettings()" title="Settings"><i class="fa-solid fa-gear"></i></button>';
     actions += '<button class="sp5-act" onclick="Z.shareSpace(\'' + esc(p.id) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
   } else {
