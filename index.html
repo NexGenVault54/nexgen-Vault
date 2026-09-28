@@ -24627,6 +24627,224 @@ if(typeof _prevOpenDD === 'function'){
 
 console.log('[Galleria v2 Phase 3b · Block 12] committee queue + seller dashboard ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 4 · Block 13                        -->
+<!-- Buy + Rent buttons on asset detail. Confirmation sheet.       -->
+<!-- Calls market_buy RPC. Ownership check + renew button.         -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPhase4) return; Z.__zynixMarketPhase4 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+async function getOwnership(assetId){
+  var c = Z.sb && Z.sb();
+  if(!c) return null;
+  try {
+    var r = await c.rpc('market_check_owned', { p_asset_id: assetId });
+    if(r.error) return null;
+    return r.data || null;
+  } catch(e){ return null; }
+}
+
+async function getAsset(assetId){
+  var c = Z.sb && Z.sb();
+  if(!c) return null;
+  try {
+    var r = await c.rpc('market_asset_detail', { p_asset_id: assetId });
+    if(r.error) return null;
+    return r.data && r.data[0];
+  } catch(e){ return null; }
+}
+
+async function patchBuySection(){
+  if(Z.State.currentView !== 'market-asset') return;
+  var assetId = Z.State.currentParam;
+  if(!assetId) return;
+
+  var host = document.getElementById('mkd-host');
+  if(!host) return;
+
+  var disabled = host.querySelector('.mkd-buy-disabled');
+  if(!disabled) return;
+  if(host.querySelector('[data-mkp4-section]')) return;
+
+  var owner = await getOwnership(assetId);
+  var asset = await getAsset(assetId);
+  if(!asset) return;
+
+  var isVideo = asset.media_type === 'video';
+  var permanentPrice = isVideo ? 0.20 : 0.10;
+  if(asset.category === 'circle-banner') permanentPrice = 5.00;
+  if(asset.category === 'shop-banner')   permanentPrice = 10.00;
+
+  var h = '<div data-mkp4-section="1">';
+
+  if(owner && owner.owned){
+    var isRental = owner.purchase_type === 'rental_24h';
+    var expTxt = '';
+    if(isRental && owner.expires_at){
+      var ms = new Date(owner.expires_at).getTime() - Date.now();
+      var hrs = Math.max(0, Math.floor(ms / 3600000));
+      var mins = Math.max(0, Math.floor((ms % 3600000) / 60000));
+      expTxt = 'Expires in ' + hrs + 'h ' + mins + 'm';
+    }
+    h += '<div style="padding:14px;border-radius:12px;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.4);display:flex;gap:10px;align-items:center;">';
+    h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;">';
+    h += '<i class="fa-solid fa-check-circle" style="color:#10b981;"></i></div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:13px;font-weight:900;color:#10b981;">' + (isRental ? 'Rented' : 'You own this') + '</div>';
+    if(expTxt) h += '<div style="font-size:11px;color:#cbd5e1;margin-top:2px;">' + expTxt + '</div>';
+    h += '</div>';
+    if(isRental){
+      h += '<button data-mkp4-renew="' + esc(assetId) + '" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);color:#10b981;font-weight:900;font-size:11px;cursor:pointer;">Extend</button>';
+    }
+    h += '</div>';
+    h += '<button data-mkp4-apply="' + esc(assetId) + '" style="width:100%;margin-top:10px;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">';
+    h += '<i class="fa-solid fa-wand-magic-sparkles"></i> Apply to my profile';
+    h += '</button>';
+  } else {
+    h += '<div style="display:flex;flex-direction:column;gap:8px;">';
+    h += '<button data-mkp4-rent="' + esc(assetId) + '" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">';
+    h += '<i class="fa-solid fa-clock"></i> Rent · $0.01 / 24 hours';
+    h += '</button>';
+    h += '<button data-mkp4-buy="' + esc(assetId) + '" style="width:100%;padding:14px;border-radius:12px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-weight:900;font-size:13px;cursor:pointer;">';
+    h += '<i class="fa-solid fa-bag-shopping"></i> Buy permanent · $' + permanentPrice.toFixed(2);
+    h += '</button>';
+    h += '</div>';
+  }
+  h += '</div>';
+
+  var wrapper = document.createElement('div');
+  wrapper.innerHTML = h;
+  disabled.parentNode.replaceChild(wrapper.firstChild, disabled);
+
+  setTimeout(function(){
+    var rentBtn = host.querySelector('[data-mkp4-rent]');
+    if(rentBtn) rentBtn.addEventListener('click', function(){
+      openConfirm(assetId, 'rental_24h', permanentPrice, asset);
+    });
+    var buyBtn = host.querySelector('[data-mkp4-buy]');
+    if(buyBtn) buyBtn.addEventListener('click', function(){
+      openConfirm(assetId, 'permanent', permanentPrice, asset);
+    });
+    var renewBtn = host.querySelector('[data-mkp4-renew]');
+    if(renewBtn) renewBtn.addEventListener('click', function(){
+      openConfirm(assetId, 'rental_24h', permanentPrice, asset);
+    });
+    var applyBtn = host.querySelector('[data-mkp4-apply]');
+    if(applyBtn) applyBtn.addEventListener('click', function(){
+      Z.toast('Apply-to-profile opens in Phase 4b');
+    });
+  }, 30);
+}
+
+function openConfirm(assetId, tier, permanentPrice, asset){
+  var isRental = tier === 'rental_24h';
+  var price = isRental ? 0.01 : permanentPrice;
+  var title = isRental ? 'Rent for 24 hours' : 'Buy permanently';
+  var what  = isRental
+    ? 'Access for 24 hours. Extend any time before expiry.'
+    : 'Yours forever. Free updates included.';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">' + title + '</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+
+  if(asset.preview_url){
+    h += '<div style="aspect-ratio:1;border-radius:12px;overflow:hidden;background:#000;margin-bottom:14px;">';
+    h += '<img src="' + esc(asset.preview_url) + '" style="width:100%;height:100%;object-fit:cover;">';
+    h += '</div>';
+  }
+
+  h += '<div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:10px;">' + esc(asset.title || 'Asset') + '</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">' + what + '</div>';
+
+  h += '<div style="padding:12px;border-radius:10px;background:rgba(0,0,0,.25);margin-bottom:14px;">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+  h += '<span style="font-size:12px;color:#94a3b8;">Total</span>';
+  h += '<span style="font-size:18px;font-weight:900;color:#10b981;">$' + price.toFixed(2) + '</span>';
+  h += '</div></div>';
+
+  h += '<div style="font-size:11px;color:#94a3b8;line-height:1.5;margin-bottom:14px;">';
+  h += 'Debited from Bounty first. Falls back to Cash if Bounty is insufficient.';
+  h += '</div>';
+
+  h += '<button id="mkp4-confirm" style="width:100%;padding:14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Confirm · $' + price.toFixed(2) + '</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var btn = document.getElementById('mkp4-confirm');
+    if(!btn) return;
+    btn.addEventListener('click', async function(){
+      btn.disabled = true;
+      btn.textContent = 'Processing…';
+      await doPurchase(assetId, tier);
+    });
+  }, 40);
+}
+
+async function doPurchase(assetId, tier){
+  var c = Z.sb && Z.sb();
+  if(!c){ Z.toast('Not connected.'); return; }
+  try {
+    var r = await c.rpc('market_buy', { p_asset_id: assetId, p_tier: tier });
+    if(r.error) throw r.error;
+    var data = r.data || {};
+    Z.closeSheet();
+    var fromTxt = data.paid_from === 'bounty' ? 'Bounty' : 'Cash';
+    Z.toast('Purchased · $' + Number(data.price).toFixed(2) + ' from ' + fromTxt);
+    if(typeof Z.refreshSession === 'function'){
+      try { await Z.refreshSession(); } catch(e){}
+      try { Z.updateHeader(); } catch(e){}
+    }
+    if(Z.State.currentView === 'market-asset'){
+      Z.showView('market-asset', assetId);
+    }
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('insufficient_funds') !== -1) Z.toast('Not enough balance. Top up wallet.', 'error');
+    else if(msg.indexOf('already_owned') !== -1) Z.toast('You already own this.', 'error');
+    else if(msg.indexOf('cannot_buy_own') !== -1) Z.toast('You cannot buy your own asset.', 'error');
+    else if(msg.indexOf('asset_not_available') !== -1) Z.toast('Asset is no longer available.', 'error');
+    else Z.toast('Purchase failed: ' + msg, 'error');
+    Z.closeSheet();
+    /* Rebuild to reflect fresh state */
+    if(Z.State.currentView === 'market-asset'){
+      setTimeout(function(){ Z.showView('market-asset', assetId); }, 300);
+    }
+  }
+}
+
+/* Post-render hook */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-asset'){
+    setTimeout(function(){ patchBuySection().catch(function(){}); }, 500);
+    setTimeout(function(){ patchBuySection().catch(function(){}); }, 1400);
+  }
+  return r;
+};
+
+console.log('[Galleria v2 Phase 4 · Block 13] purchase + rental ready');
+})();
 </script>       
 </body>
 </html>
