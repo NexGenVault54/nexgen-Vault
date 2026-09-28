@@ -21961,12 +21961,16 @@ console.log('[Galleria Block 2] algorithm ready');
 })();
 </script>
 <!-- ============================================================ -->
-<!-- ZYNIX GALLERIA · BLOCK 3 — Pencil + wallpaper                 -->
-<!-- Prioritize sheet: wallpaper picker + category reorder.        -->
-<!-- In-place reorder (no sheet rebuild). Wallpaper applies via    -->
-<!-- Z.zygGetWallpaperCss() called by Block 1.                     -->
-<!-- Public API: Z.openGalleriaPrioritizeSheet, Z.closeGalleriaPrioritizeSheet, -->
-<!--             Z.zygGetWallpaperCss, Z.zygGetTileOrder.          -->
+<!-- ZYNIX GALLERIA · BLOCK 3 — Pencil + Wallpaper + THEME         -->
+<!-- Prioritize sheet now includes:                                -->
+<!--   1. WALLPAPER (existing)                                     -->
+<!--   2. THEME (NEW) — surface selector + owned themes + browse   -->
+<!--   3. PRIORITIZE (existing manual reorder)                     -->
+<!-- Theme section reads market_my_themes() and routes to market   -->
+<!-- for browsing/purchase.                                        -->
+<!-- Public API: Z.openGalleriaPrioritizeSheet,                    -->
+<!--   Z.closeGalleriaPrioritizeSheet, Z.zygGetWallpaperCss,       -->
+<!--   Z.zygGetTileOrder, Z.themeOpenPicker                        -->
 <!-- Removal: delete this entire <script> block.                   -->
 <!-- ============================================================ -->
 <script>
@@ -21975,7 +21979,14 @@ console.log('[Galleria Block 2] algorithm ready');
 var Z = window.Z; if(!Z) return;
 if(Z.__zynixGalleriaPencil) return; Z.__zynixGalleriaPencil = true;
 
-/* ---------- Wallpaper inventory (identical to Lounge) ---------- */
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+/* ---------- Wallpaper inventory ---------- */
 var ZYG_WALLPAPERS = [
   { id:'aurora',    label:'Aurora',    css:'radial-gradient(circle at 20% 30%, rgba(16,185,129,.55), transparent 55%), radial-gradient(circle at 85% 20%, rgba(59,130,246,.55), transparent 55%), radial-gradient(circle at 60% 95%, rgba(139,92,246,.45), transparent 60%), #0a0f1c' },
   { id:'navy',      label:'Deep Navy', css:'linear-gradient(160deg, #0a1628 0%, #0f2744 50%, #061020 100%)' },
@@ -21986,37 +21997,32 @@ var ZYG_WALLPAPERS = [
   { id:'sandstone', label:'Sandstone', css:'linear-gradient(160deg, #1c1408 0%, #78350f 60%, #0f0a05 100%)' },
   { id:'obsidian',  label:'Obsidian',  css:'#000000' }
 ];
-
-var WALL_BY_ID = {};
-ZYG_WALLPAPERS.forEach(function(w){ WALL_BY_ID[w.id] = w; });
+var WALL_BY_ID = {}; ZYG_WALLPAPERS.forEach(function(w){ WALL_BY_ID[w.id] = w; });
 var DEFAULT_WALL = 'aurora';
 
+/* ---------- Surface list ---------- */
+var SURFACES = [
+  { key:'space',   label:'SPACE',   icon:'fa-solid fa-user' },
+  { key:'lounge',  label:'Lounge',  icon:'fa-solid fa-couch' },
+  { key:'circle',  label:'Circle',  icon:'fa-solid fa-users' },
+  { key:'shop',    label:'Shop',    icon:'fa-solid fa-bag-shopping' },
+  { key:'gigs',    label:'Gigs',    icon:'fa-solid fa-briefcase' },
+  { key:'profile', label:'Profile', icon:'fa-solid fa-gear' }
+];
+
 /* ---------- Storage keys ---------- */
-function tilesKey(){
-  var u = Z.State.currentUser;
-  return u ? ('zynix_galleria_tiles_' + u.id) : '';
-}
-function wallKey(){
-  var u = Z.State.currentUser;
-  return u ? ('zynix_galleria_wall_' + u.id) : '';
-}
+function tilesKey(){ var u = Z.State.currentUser; return u ? ('zynix_galleria_tiles_' + u.id) : ''; }
+function wallKey(){ var u = Z.State.currentUser; return u ? ('zynix_galleria_wall_' + u.id) : ''; }
 
 /* ---------- Tile order ---------- */
-function defaultTileOrder(){
-  return (Z.zygCategories || []).map(function(c){ return c.key; });
-}
-
+function defaultTileOrder(){ return (Z.zygCategories || []).map(function(c){ return c.key; }); }
 function getTileOrder(){
-  var key = tilesKey();
-  var defaults = defaultTileOrder();
+  var key = tilesKey(); var defaults = defaultTileOrder();
   if(!key) return defaults;
   try {
-    var raw = localStorage.getItem(key);
-    if(!raw) return defaults;
-    var arr = JSON.parse(raw);
-    if(!Array.isArray(arr)) return defaults;
-    var valid = {};
-    (Z.zygCategories || []).forEach(function(c){ valid[c.key] = true; });
+    var raw = localStorage.getItem(key); if(!raw) return defaults;
+    var arr = JSON.parse(raw); if(!Array.isArray(arr)) return defaults;
+    var valid = {}; (Z.zygCategories || []).forEach(function(c){ valid[c.key] = true; });
     var filtered = arr.filter(function(id){ return valid[id]; });
     (Z.zygCategories || []).forEach(function(c){
       if(filtered.indexOf(c.key) === -1) filtered.push(c.key);
@@ -22024,37 +22030,75 @@ function getTileOrder(){
     return filtered;
   } catch(e){ return defaults; }
 }
-
 function setTileOrder(arr){
-  var key = tilesKey();
-  if(!key) return;
+  var key = tilesKey(); if(!key) return;
   try { localStorage.setItem(key, JSON.stringify(arr || [])); } catch(e){}
 }
 
-/* ---------- Wallpaper ---------- */
+/* ---------- Wallpaper helpers ---------- */
 function getWallId(){
-  var key = wallKey();
-  if(!key) return DEFAULT_WALL;
+  var key = wallKey(); if(!key) return DEFAULT_WALL;
   try {
     var v = localStorage.getItem(key);
     return (v && WALL_BY_ID[v]) ? v : DEFAULT_WALL;
   } catch(e){ return DEFAULT_WALL; }
 }
 function setWallId(id){
-  var key = wallKey();
-  if(!key) return;
+  var key = wallKey(); if(!key) return;
   if(!WALL_BY_ID[id]) return;
   try { localStorage.setItem(key, id); } catch(e){}
 }
 
-/* ---------- Public API used by Block 1 ---------- */
+/* ---------- Public API ---------- */
 Z.zygGetWallpaperCss = function(){
   return (WALL_BY_ID[getWallId()] || WALL_BY_ID[DEFAULT_WALL]).css;
 };
 Z.zygGetTileOrder = getTileOrder;
 Z.zygGetWallpaperId = getWallId;
 
-/* ---------- Prioritize sheet render ---------- */
+/* ============================================================
+   THEME STATE (in-sheet)
+   ============================================================ */
+var _themeState = {
+  surface: 'space',
+  owned: [],          /* from market_my_themes() */
+  activeBySurface: {}, /* surface -> theme_id */
+  loaded: false
+};
+
+async function loadThemeState(){
+  var u = Z.State.currentUser;
+  if(!u){ _themeState.loaded = true; _themeState.owned = []; return; }
+  var c = Z.sb && Z.sb();
+  if(!c){ _themeState.loaded = true; return; }
+  try {
+    var r = await c.rpc('market_my_themes');
+    if(!r.error && r.data){
+      _themeState.owned = r.data || [];
+      _themeState.activeBySurface = {};
+      _themeState.owned.forEach(function(x){
+        if(x.active && x.surface) _themeState.activeBySurface[x.surface] = x.theme_id;
+      });
+    }
+  } catch(e){}
+  _themeState.loaded = true;
+}
+
+function themesForSurface(surface){
+  return _themeState.owned.filter(function(t){
+    /* If theme declares surfaces array, use it; else default to allowing all */
+    var cfg = t.theme_config || {};
+    var surfaces = cfg.surfaces;
+    if(Array.isArray(surfaces) && surfaces.length){
+      return surfaces.indexOf(surface) !== -1;
+    }
+    return true;
+  });
+}
+
+/* ============================================================
+   Render prioritize sheet (now with theme section)
+   ============================================================ */
 function renderPrioSheet(){
   var tiles = getTileOrder();
   var wallId = getWallId();
@@ -22064,12 +22108,12 @@ function renderPrioSheet(){
   var h = '<div class="zyg-prio-sheet">';
   h += '<div style="width:40px;height:4px;background:#334155;border-radius:2px;margin:8px auto 0;"></div>';
   h += '<div style="padding:14px 16px;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">' +
-         '<div style="font-weight:900;font-size:15px;color:#fff;">Prioritize Galleria</div>' +
+         '<div style="font-weight:900;font-size:15px;color:#fff;">Customize Galleria</div>' +
          '<button onclick="Z.closeGalleriaPrioritizeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:22px;cursor:pointer;padding:0 6px;line-height:1;">&times;</button>' +
        '</div>';
   h += '<div style="padding:14px 16px;overflow-y:auto;flex:1;">';
 
-  /* Wallpaper section */
+  /* ---------- WALLPAPER ---------- */
   h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;">' +
          '<i class="fa-solid fa-image" style="color:#3b82f6;margin-right:6px;"></i>WALLPAPER</div>';
   h += '<div class="zyg-prio-wall-grid" style="margin-bottom:20px;">';
@@ -22087,9 +22131,16 @@ function renderPrioSheet(){
        '</div>';
   h += '</div>';
 
-  /* Prioritize section */
+  /* ---------- THEME (NEW) ---------- */
   h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;">' +
-         '<i class="fa-solid fa-grip" style="color:#10b981;margin-right:6px;"></i>PRIORITIZE</div>';
+         '<i class="fa-solid fa-palette" style="color:#ec4899;margin-right:6px;"></i>THEME</div>';
+  h += '<div id="zyg-theme-section" style="margin-bottom:20px;">';
+  h += renderThemeSection();
+  h += '</div>';
+
+  /* ---------- PRIORITIZE ---------- */
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;">' +
+         '<i class="fa-solid fa-grip" style="color:#10b981;margin-right:6px;"></i>PRIORITIZE CATEGORIES</div>';
   h += '<div id="zyg-prio-list">';
   tiles.forEach(function(id, idx){
     var cat = catsById[id];
@@ -22114,20 +22165,79 @@ function renderPrioSheet(){
   return h;
 }
 
-Z.openGalleriaPrioritizeSheet = function(){
-  Z.openSheet(renderPrioSheet());
-  setTimeout(wirePrioSheet, 60);
-};
+/* ============================================================
+   Theme section HTML (updated in place via Z.themeRefreshSection)
+   ============================================================ */
+function renderThemeSection(){
+  var h = '';
 
-Z.closeGalleriaPrioritizeSheet = function(){
-  Z.closeSheet();
-  /* Repaint Galleria grid to reflect any reorder */
-  setTimeout(function(){
-    if(Z.State.currentView === 'galleria') Z.showView('galleria');
-  }, 80);
-};
+  /* Surface selector chips */
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">';
+  SURFACES.forEach(function(s){
+    var active = _themeState.surface === s.key;
+    h += '<button data-zyg-theme-surface="' + s.key + '" ' +
+      'style="padding:6px 10px;border-radius:12px;border:1px solid ' + (active ? '#ec4899' : '#1e293b') + ';' +
+      'background:' + (active ? 'rgba(236,72,153,.12)' : '#0f172a') + ';' +
+      'color:' + (active ? '#ec4899' : '#cbd5e1') + ';font-weight:900;font-size:10.5px;cursor:pointer;' +
+      'display:inline-flex;align-items:center;gap:5px;">' +
+      '<i class="' + s.icon + '"></i>' + s.label +
+    '</button>';
+  });
+  h += '</div>';
 
-/* ---------- Wire sheet actions ---------- */
+  if(!_themeState.loaded){
+    h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11.5px;">' +
+         '<i class="fa-solid fa-circle-notch fa-spin"></i> Loading themes…</div>';
+    return h;
+  }
+
+  var surface = _themeState.surface;
+  var activeThemeId = _themeState.activeBySurface[surface];
+  var mine = themesForSurface(surface);
+
+  if(!mine.length){
+    h += '<div style="padding:14px;border-radius:10px;background:rgba(236,72,153,.06);border:1px dashed rgba(236,72,153,.35);text-align:center;">';
+    h += '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.55;margin-bottom:10px;">' +
+         'You don\'t own any themes for <b>' + esc(SURFACES.filter(function(s){return s.key===surface;})[0].label) + '</b> yet.</div>';
+    h += '<button data-zyg-theme-browse="1" style="padding:9px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#ec4899,#f59e0b);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;">' +
+         '<i class="fa-solid fa-store"></i> Browse market</button>';
+    h += '</div>';
+    return h;
+  }
+
+  /* Owned theme tiles */
+  h += '<div class="zyg-prio-wall-grid" style="margin-bottom:10px;">';
+  mine.forEach(function(t){
+    var cfg = t.theme_config || {};
+    var preview = cfg.preview_image || '';
+    var active = t.theme_id === activeThemeId;
+    h += '<div data-zyg-theme-id="' + esc(t.theme_id) + '" ' +
+      'style="position:relative;aspect-ratio:9/16;border-radius:14px;border:2px solid ' +
+      (active ? '#ec4899' : 'transparent') + ';overflow:hidden;cursor:pointer;' +
+      'background:' + (preview ? 'url(' + esc(preview) + ') center/cover' : 'linear-gradient(135deg,#1f2937,#0f172a)') + ';">';
+    h += '<div style="position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.65);color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.name || 'Theme') + '</div>';
+    if(active) h += '<div class="check" style="background:#ec4899;">&#10003;</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+
+  /* Browse button */
+  h += '<button data-zyg-theme-browse="1" style="width:100%;padding:9px;border-radius:10px;border:1px dashed rgba(236,72,153,.4);background:rgba(236,72,153,.04);color:#ec4899;font-weight:900;font-size:11px;cursor:pointer;">' +
+       '<i class="fa-solid fa-plus"></i> Get more themes from market</button>';
+
+  return h;
+}
+
+function refreshThemeSection(){
+  var host = document.getElementById('zyg-theme-section');
+  if(!host) return;
+  host.innerHTML = renderThemeSection();
+  wireThemeSection();
+}
+
+/* ============================================================
+   Wire sheet actions
+   ============================================================ */
 function wirePrioSheet(){
   document.querySelectorAll('[data-zyg-wall]').forEach(function(el){
     if(el._zygHooked) return; el._zygHooked = true;
@@ -22140,18 +22250,82 @@ function wirePrioSheet(){
   var prem = document.querySelector('[data-zyg-wall-premium]');
   if(prem && !prem._zygHooked){
     prem._zygHooked = true;
-    prem.addEventListener('click', function(){
-      Z.toast('Premium wallpapers coming soon');
-    });
+    prem.addEventListener('click', function(){ Z.toast('Premium wallpapers coming soon'); });
   }
 }
 
-/* ---------- In-place reorder (capture-phase, blocks sheet rebuild) ---------- */
+function wireThemeSection(){
+  document.querySelectorAll('[data-zyg-theme-surface]').forEach(function(el){
+    if(el._zygHooked) return; el._zygHooked = true;
+    el.addEventListener('click', function(){
+      _themeState.surface = this.getAttribute('data-zyg-theme-surface');
+      refreshThemeSection();
+    });
+  });
+
+  document.querySelectorAll('[data-zyg-theme-id]').forEach(function(el){
+    if(el._zygHooked) return; el._zygHooked = true;
+    el.addEventListener('click', async function(){
+      var tid = this.getAttribute('data-zyg-theme-id');
+      var surface = _themeState.surface;
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var r = await c.rpc('market_activate_theme', { p_theme_id: tid, p_surface: surface });
+        if(r.error) throw r.error;
+        _themeState.activeBySurface[surface] = tid;
+        Z.toast('Theme activated for ' + surface + '.');
+        refreshThemeSection();
+        /* Reload applied CSS vars */
+        if(typeof Z.themeLoadMyActive === 'function'){
+          try { await Z.themeLoadMyActive(); } catch(e){}
+        }
+      } catch(e){
+        Z.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-zyg-theme-browse]').forEach(function(el){
+    if(el._zygHooked) return; el._zygHooked = true;
+    el.addEventListener('click', function(){
+      Z.closeGalleriaPrioritizeSheet();
+      Z.showView('market-themes');
+    });
+  });
+}
+
+/* ============================================================
+   Open/close sheet
+   ============================================================ */
+Z.openGalleriaPrioritizeSheet = async function(){
+  Z.openSheet(renderPrioSheet());
+  /* Load themes async, then refresh section */
+  _themeState.loaded = false;
+  setTimeout(async function(){
+    await loadThemeState();
+    refreshThemeSection();
+  }, 60);
+  setTimeout(function(){
+    wirePrioSheet();
+    wireThemeSection();
+  }, 80);
+};
+
+Z.closeGalleriaPrioritizeSheet = function(){
+  Z.closeSheet();
+  setTimeout(function(){
+    if(Z.State.currentView === 'galleria') Z.showView('galleria');
+  }, 80);
+};
+
+/* ============================================================
+   In-place reorder (capture-phase, blocks sheet rebuild)
+   ============================================================ */
 document.addEventListener('click', function(e){
   var upBtn   = e.target.closest('[data-zyg-up]');
   var downBtn = e.target.closest('[data-zyg-down]');
   if(!upBtn && !downBtn) return;
-
   var sheet = (upBtn || downBtn).closest('.zyg-prio-sheet');
   if(!sheet) return;
 
@@ -22164,12 +22338,10 @@ document.addEventListener('click', function(e){
   if(!list) return;
 
   if(upBtn){
-    var prev = item.previousElementSibling;
-    if(!prev) return;
+    var prev = item.previousElementSibling; if(!prev) return;
     list.insertBefore(item, prev);
   } else {
-    var next = item.nextElementSibling;
-    if(!next) return;
+    var next = item.nextElementSibling; if(!next) return;
     list.insertBefore(next, item);
   }
 
@@ -22187,7 +22359,7 @@ document.addEventListener('click', function(e){
   setTileOrder(arr);
 }, true);
 
-console.log('[Galleria Block 3] pencil + wallpaper ready');
+console.log('[Galleria Block 3] pencil + wallpaper + theme section ready');
 })();
 </script>
 <!-- ============================================================ -->
@@ -29991,6 +30163,293 @@ setTimeout(function(){
 }, 1500);
 
 console.log('[Market Block 22b] verification ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 23 — Theme Framework                     -->
+<!-- Token registry + CSS var injection + Buy/Activate/Preview    -->
+<!-- Aligned with: Blocks 1-22, SQL Batch 1-6.                     -->
+<!-- Uses Z.openSheet (not modal), local esc() (not Z.escape),     -->
+<!-- defensive avatar resolution (no Z.displayAvatar assumption).  -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixThemeFramework) return; Z.__zynixThemeFramework = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function safeAvatar(user){
+  if(typeof Z.displayAvatar === 'function'){
+    try { return Z.displayAvatar(user); } catch(e){}
+  }
+  var name = (user && (user.username || user.name)) || 'You';
+  return 'https://ui-avatars.com/api/?name=' + encodeURIComponent(name) + '&background=111827&color=34d399';
+}
+
+/* ============================================================
+   Token registry
+   ============================================================ */
+var SURFACE_TOKENS = {
+  space:   ['bg','card.surface','card.border','text.primary','text.secondary','accent','banner','avatar_frame','heading_font','body_font'],
+  lounge:  ['bg','tile.surface','tile.border','text.primary','text.secondary','accent','wallpaper'],
+  circle:  ['bg','header.bg','card.surface','text.primary','text.secondary','accent','banner'],
+  shop:    ['bg','header.bg','card.surface','text.primary','text.secondary','accent','banner'],
+  gigs:    ['bg','card.surface','text.primary','text.secondary','accent','cover'],
+  profile: ['bg','card.surface','text.primary','text.secondary','accent']
+};
+var SURFACE_VALID = Object.keys(SURFACE_TOKENS);
+
+function tokenToVar(surface, token){
+  return '--zy-' + surface + '-' + token.replace(/\./g, '-');
+}
+
+function applyThemeConfig(config){
+  if(!config || typeof config !== 'object') return;
+  var tokens = config.tokens || {};
+  var root = document.documentElement;
+  Object.keys(tokens).forEach(function(key){
+    var dot = key.indexOf('.');
+    if(dot === -1) return;
+    var surface = key.substring(0, dot);
+    var token = key.substring(dot + 1);
+    if(SURFACE_VALID.indexOf(surface) === -1) return;
+    try { root.style.setProperty(tokenToVar(surface, token), String(tokens[key])); } catch(e){}
+  });
+  try { root.setAttribute('data-zy-theme-active', config.name || 'custom'); } catch(e){}
+}
+
+function clearThemeVars(){
+  var root = document.documentElement;
+  SURFACE_VALID.forEach(function(surface){
+    SURFACE_TOKENS[surface].forEach(function(token){
+      try { root.style.removeProperty(tokenToVar(surface, token)); } catch(e){}
+    });
+  });
+  try { root.removeAttribute('data-zy-theme-active'); } catch(e){}
+}
+
+async function loadAndApplyMyThemes(){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var out = {};
+    for(var i = 0; i < SURFACE_VALID.length; i++){
+      var s = SURFACE_VALID[i];
+      var r = await c.rpc('market_get_active_theme', { p_surface: s });
+      if(!r.error && r.data){
+        out[s] = r.data;
+        applyThemeConfig(r.data);
+      }
+    }
+    Z._activeThemes = out;
+  } catch(e){}
+}
+
+/* Clear on logout (defensive — Z.logout may not exist) */
+var _prevLogout = Z.logout;
+if(typeof _prevLogout === 'function'){
+  Z.logout = async function(){
+    clearThemeVars();
+    Z._activeThemes = null;
+    return _prevLogout.apply(this, arguments);
+  };
+} else {
+  /* Fallback: expose manual clear */
+  Z.themeClear = clearThemeVars;
+}
+
+/* ============================================================
+   Buy + activate
+   ============================================================ */
+async function buyTheme(themeId, price, name){
+  var c = Z.sb && Z.sb();
+  if(!c) return false;
+  try {
+    var r = await c.rpc('market_buy_theme', { p_theme_id: themeId });
+    if(r.error) throw r.error;
+    var data = r.data || {};
+    var fromTxt = data.paid_from === 'bounty' ? 'Bounty' : 'Cash';
+    Z.toast('Theme purchased · $' + Number(data.price).toFixed(2) + ' from ' + fromTxt);
+    if(typeof Z.refreshSession === 'function'){
+      try { await Z.refreshSession(); } catch(e){}
+      try { Z.updateHeader(); } catch(e){}
+    }
+    return true;
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('insufficient_funds') !== -1) Z.toast('Not enough balance.', 'error');
+    else if(msg.indexOf('already_owned') !== -1) Z.toast('You already own this theme.', 'error');
+    else if(msg.indexOf('cannot_buy_own') !== -1) Z.toast('You cannot buy your own theme.', 'error');
+    else Z.toast('Failed: ' + msg, 'error');
+    return false;
+  }
+}
+
+async function activateTheme(themeId, surface){
+  var c = Z.sb && Z.sb();
+  if(!c) return false;
+  try {
+    var r = await c.rpc('market_activate_theme', { p_theme_id: themeId, p_surface: surface });
+    if(r.error) throw r.error;
+    Z.toast('Theme activated for ' + surface + '.');
+    await loadAndApplyMyThemes();
+    return true;
+  } catch(e){
+    Z.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+    return false;
+  }
+}
+
+/* ============================================================
+   Preview modal (uses Z.openSheet)
+   ============================================================ */
+function openThemePreview(config, themeName){
+  if(!config){ Z.toast('Preview not available.'); return; }
+
+  var me = Z.State.currentUser;
+  var name = me ? (me.name || me.username || 'You') : 'Preview';
+  var avatar = me ? safeAvatar(me) : '';
+
+  var t = config.tokens || {};
+  var bg = t['space.bg'] || '#0a0f1c';
+  var surface = t['space.card.surface'] || '#111827';
+  var border = t['space.card.border'] || '#1e293b';
+  var textPrimary = t['space.text.primary'] || '#ffffff';
+  var textSecondary = t['space.text.secondary'] || '#94a3b8';
+  var accent = t['space.accent'] || '#10b981';
+  var banner = t['space.banner'] || '';
+  var headingFont = t['space.heading_font'] || 'inherit';
+  var bodyFont = t['space.body_font'] || 'inherit';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:90vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header">';
+  h += '<h3 style="font-size:14px;font-weight:900;">Preview · ' + esc(themeName || 'Theme') + '</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+
+  /* Simulated SPACE */
+  h += '<div style="padding:12px;background:' + esc(bg) + ';border-radius:14px;">';
+  h += '<div style="border-radius:12px;overflow:hidden;border:1px solid ' + esc(border) + ';background:' + esc(surface) + ';">';
+  if(banner){
+    h += '<div style="height:90px;background-image:url(' + esc(banner) + ');background-size:cover;background-position:center;"></div>';
+  } else {
+    h += '<div style="height:50px;background:linear-gradient(135deg,' + esc(accent) + '55,transparent);"></div>';
+  }
+  h += '<div style="padding:12px;font-family:' + esc(bodyFont) + ';">';
+  h += '<div style="display:flex;gap:10px;align-items:center;">';
+  if(avatar) h += '<img src="' + esc(avatar) + '" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid ' + esc(accent) + ';">';
+  h += '<div>';
+  h += '<div style="font-family:' + esc(headingFont) + ';font-size:15px;font-weight:900;color:' + esc(textPrimary) + ';">' + esc(name) + '</div>';
+  h += '<div style="font-size:10px;color:' + esc(textSecondary) + ';">@yourhandle</div>';
+  h += '</div></div>';
+  h += '<div style="margin-top:10px;padding:8px;border-radius:8px;background:rgba(0,0,0,.25);">';
+  h += '<div style="font-size:11px;color:' + esc(textPrimary) + ';font-weight:800;">About</div>';
+  h += '<div style="font-size:10.5px;color:' + esc(textSecondary) + ';margin-top:3px;line-height:1.5;">Preview of your About block.</div>';
+  h += '</div>';
+  h += '<div style="margin-top:8px;display:inline-block;padding:6px 12px;border-radius:8px;background:' + esc(accent) + ';color:#000;font-weight:900;font-size:11px;">Follow</div>';
+  h += '</div></div></div>';
+
+  h += '<div style="margin-top:12px;padding:10px;border-radius:8px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:10.5px;color:#cbd5e1;line-height:1.5;">';
+  h += 'Preview only. This is how the theme will look on your own SPACE once applied. Current SPACE design will use these tokens natively after the redesign.';
+  h += '</div>';
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+}
+
+/* ============================================================
+   Wire theme market page Buy + Preview buttons
+   ============================================================ */
+function wireThemePageButtons(){
+  if(Z.State.currentView !== 'market-themes') return;
+  var host = document.getElementById('mk8-thm-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  host.querySelectorAll('[data-mk-theme-buy]').forEach(function(b){
+    if(b._zyThemeHooked) return;
+    b._zyThemeHooked = true;
+    b.addEventListener('click', async function(){
+      var themeId = this.getAttribute('data-mk-theme-buy');
+      var card = this.closest('.mk8-card');
+      var title = card ? ((card.querySelector('.mk8-title')||{}).textContent || 'Theme') : 'Theme';
+
+      var r = await c.from('theme_packages')
+        .select('theme_config, name').eq('id', themeId).maybeSingle();
+
+      if(r.data && r.data.theme_config && r.data.theme_config.tokens){
+        /* Show preview first, then prompt to buy inside a follow-up */
+        openThemePreview(r.data.theme_config, r.data.name || title);
+        /* Also stash a buy shortcut on window for the sheet's buy button if added */
+        Z._pendingThemeBuy = { id: themeId, name: r.data.name || title };
+      } else {
+        /* No preview data → direct buy */
+        var ok = await buyTheme(themeId, 0, title);
+        if(ok && typeof Z.showView === 'function') Z.showView('market-themes');
+      }
+    });
+  });
+}
+
+/* ============================================================
+   Boot
+   ============================================================ */
+(function boot(){
+  var tries = 0;
+  var t = setInterval(function(){
+    tries++;
+    if(Z.State.currentUser && Z.State.currentUser.id){
+      clearInterval(t);
+      setTimeout(function(){ loadAndApplyMyThemes().catch(function(){}); }, 1200);
+    } else if(tries >= 40){
+      clearInterval(t);
+    }
+  }, 500);
+})();
+
+var _prevRefresh = Z.refreshSession;
+if(typeof _prevRefresh === 'function'){
+  Z.refreshSession = async function(){
+    var r = await _prevRefresh.apply(this, arguments);
+    if(Z.State.currentUser){
+      setTimeout(function(){ loadAndApplyMyThemes().catch(function(){}); }, 400);
+    }
+    return r;
+  };
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-themes'){
+    setTimeout(wireThemePageButtons, 400);
+    setTimeout(wireThemePageButtons, 1200);
+  }
+  return r;
+};
+
+/* Public API */
+Z.themeApply        = applyThemeConfig;
+Z.themeClear        = clearThemeVars;
+Z.themeLoadMyActive = loadAndApplyMyThemes;
+Z.themeBuy          = buyTheme;
+Z.themeActivate     = activateTheme;
+Z.themePreview      = openThemePreview;
+
+console.log('[Market Block 23] theme framework ready');
 })();
 </script>     
      
