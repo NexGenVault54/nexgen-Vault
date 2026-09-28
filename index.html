@@ -24238,7 +24238,396 @@ Z.showView = function(view, param){
 
 console.log('[Market Phase 3a banner] pending lot status ready');
 })();
-</script>     
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 3b · Block 12                       -->
+<!-- Committee queue view + seller dashboard inside SPACE.         -->
+<!-- Committee: approve/reject pending market assets.              -->
+<!-- Seller: shows lots by category on own SPACE.                  -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPhase3b) return; Z.__zynixMarketPhase3b = true;
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-mkt-3b-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mkt-3b-css';
+  st.textContent = [
+    '.mk3-card{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:10px;}',
+    '.mk3-row{display:flex;gap:10px;align-items:flex-start;}',
+    '.mk3-thumb{width:64px;height:64px;border-radius:10px;background:#0f172a;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;}',
+    '.mk3-thumb img{width:100%;height:100%;object-fit:cover;}',
+    '.mk3-thumb i{color:#334155;font-size:20px;}',
+    '.mk3-meta{flex:1;min-width:0;}',
+    '.mk3-title{font-size:13px;font-weight:800;color:#fff;margin-bottom:2px;}',
+    '.mk3-sub{font-size:11px;color:#94a3b8;}',
+    '.mk3-cat{display:inline-block;font-size:9px;font-weight:900;padding:2px 8px;border-radius:10px;background:rgba(16,185,129,.12);color:#10b981;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}',
+    '.mk3-btns{display:flex;gap:6px;margin-top:10px;}',
+    '.mk3-btn-approve{flex:1;padding:9px;border-radius:9px;border:none;background:#10b981;color:#000;font-weight:900;font-size:12px;cursor:pointer;}',
+    '.mk3-btn-reject{flex:1;padding:9px;border-radius:9px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#a16262;font-weight:900;font-size:12px;cursor:pointer;}',
+    '.mk3-status-chip{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:900;padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px;}',
+    '.mk3-seller-block{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:12px;}',
+    '.mk3-seller-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}',
+    '.mk3-seller-head .ttl{font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function catLabel(key){
+  if(Z.zygSubitems && Z.zygSubitems['digital-market']){
+    var list = Z.zygSubitems['digital-market'];
+    for(var i = 0; i < list.length; i++) if(list[i].key === key) return list[i].label;
+  }
+  return key;
+}
+
+/* ============================================================
+   COMMITTEE QUEUE
+   ============================================================ */
+function renderCommitteeQueue(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-gavel" style="color:#10b981;"></i> Committee Queue</h2>';
+  h += '</div></div>';
+
+  h += '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;">';
+  h += 'Review each lot. Approve to publish it to the market. Reject with a reason — the seller sees it and can resubmit. You earn <b style="color:#10b981;">$0.10</b> per review.';
+  h += '</div>';
+
+  h += '<div id="mk3-queue-host"><div style="text-align:center;padding:40px;color:#64748b;">';
+  h += '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#10b981;"></i>';
+  h += '<div style="margin-top:10px;font-size:12px;">Loading queue…</div>';
+  h += '</div></div>';
+
+  h += '</div>';
+
+  setTimeout(loadQueue, 40);
+  return h;
+}
+
+async function loadQueue(){
+  var host = document.getElementById('mk3-queue-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c){ host.innerHTML = Z.emptyState({ icon:'fa-solid fa-plug', title:'Not connected' }); return; }
+
+  try {
+    var isM = await c.rpc('committee_is_member');
+    if(isM.error) throw isM.error;
+    if(!isM.data){
+      host.innerHTML = Z.emptyState({
+        icon:'fa-solid fa-user-lock',
+        title:'You are not a committee member.',
+      });
+      return;
+    }
+
+    var r = await c.rpc('committee_pending', { p_limit: 50 });
+    if(r.error) throw r.error;
+    var items = r.data || [];
+
+    if(!items.length){
+      host.innerHTML = '<div style="padding:30px;border-radius:12px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">' +
+        'No pending items right now. Check back later.' +
+      '</div>';
+      return;
+    }
+
+    var html = '';
+    items.forEach(function(it){
+      var thumb = it.preview_url
+        ? '<img src="' + esc(it.preview_url) + '" alt="">'
+        : '<i class="fa-solid fa-image"></i>';
+      html += '<div class="mk3-card" data-mk3-asset="' + esc(it.id) + '">';
+      html += '<div class="mk3-row">';
+      html += '<div class="mk3-thumb">' + thumb + '</div>';
+      html += '<div class="mk3-meta">';
+      html += '<span class="mk3-cat">' + esc(catLabel(it.category)) + '</span>';
+      html += '<div class="mk3-title">' + esc(it.title || 'Untitled') + '</div>';
+      html += '<div class="mk3-sub">by @' + esc(it.seller_username || 'seller') + ' · ' + timeAgo(it.created_at) + '</div>';
+      if(it.description){
+        html += '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.5;">' + esc(it.description) + '</div>';
+      }
+      html += '</div></div>';
+      html += '<div class="mk3-btns">';
+      html += '<button class="mk3-btn-approve" data-mk3-approve="' + esc(it.id) + '"><i class="fa-solid fa-check"></i> Approve</button>';
+      html += '<button class="mk3-btn-reject" data-mk3-reject="' + esc(it.id) + '"><i class="fa-solid fa-xmark"></i> Reject</button>';
+      html += '</div></div>';
+    });
+    host.innerHTML = html;
+
+    host.querySelectorAll('[data-mk3-approve]').forEach(function(b){
+      b.addEventListener('click', function(){ decide(this.getAttribute('data-mk3-approve'), 'approved', null); });
+    });
+    host.querySelectorAll('[data-mk3-reject]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var id = this.getAttribute('data-mk3-reject');
+        var reason = prompt('Reason for rejection (shown to seller):', '');
+        if(reason === null) return;
+        if(!reason.trim()){ Z.toast('Reason is required.', 'error'); return; }
+        decide(id, 'rejected', reason.trim());
+      });
+    });
+
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load queue.' });
+  }
+}
+
+async function decide(assetId, decision, reason){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc('committee_decide', {
+      p_asset_id: assetId,
+      p_decision: decision,
+      p_reason: reason
+    });
+    if(r.error) throw r.error;
+    Z.toast(decision === 'approved' ? 'Approved · $0.10 credited' : 'Rejected · reason recorded');
+    if(typeof Z.refreshSession === 'function') await Z.refreshSession();
+    loadQueue();
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('already_decided') !== -1) Z.toast('Already decided.', 'error');
+    else if(msg.indexOf('not_committee_member') !== -1) Z.toast('Not a committee member.', 'error');
+    else Z.toast('Failed: ' + msg, 'error');
+  }
+}
+
+/* ============================================================
+   SELLER DASHBOARD (inside SPACE, own profile only)
+   ============================================================ */
+async function injectSellerDashboard(userId){
+  if(Z.State.currentView !== 'public-profile') return;
+  var me = Z.State.currentUser;
+  if(!me || me.id !== userId) return;
+
+  var root = document.getElementById('space-root');
+  if(!root) return;
+  if(document.getElementById('mk3-seller-dash')) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_my_selling');
+    if(r.error) return;
+    var rows = r.data || [];
+    if(!rows.length) return;
+
+    var totalActive = 0, totalPending = 0, totalRejected = 0;
+    rows.forEach(function(x){
+      totalActive   += Number(x.active_count)   || 0;
+      totalPending  += Number(x.pending_count)  || 0;
+      totalRejected += Number(x.rejected_count) || 0;
+    });
+
+    var h = '<div class="mk3-seller-block" id="mk3-seller-dash">';
+    h += '<div class="mk3-seller-head">';
+    h += '<div class="ttl"><i class="fa-solid fa-store" style="color:#10b981;margin-right:6px;"></i>SELLING</div>';
+    h += '<button id="mk3-seller-viewall" style="background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:800;cursor:pointer;">View all ›</button>';
+    h += '</div>';
+
+    h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">';
+    h += '<div style="padding:10px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);text-align:center;">';
+    h += '<div style="font-size:9px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">LIVE</div>';
+    h += '<div style="font-size:18px;font-weight:900;color:#10b981;">' + totalActive + '</div></div>';
+    h += '<div style="padding:10px;border-radius:10px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);text-align:center;">';
+    h += '<div style="font-size:9px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">PENDING</div>';
+    h += '<div style="font-size:18px;font-weight:900;color:#a18554;">' + totalPending + '</div></div>';
+    h += '<div style="padding:10px;border-radius:10px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.35);text-align:center;">';
+    h += '<div style="font-size:9px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">REJECTED</div>';
+    h += '<div style="font-size:18px;font-weight:900;color:#a16262;">' + totalRejected + '</div></div>';
+    h += '</div>';
+
+    rows.forEach(function(x){
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);margin-bottom:6px;">';
+      h += '<div style="font-size:12px;font-weight:800;color:#fff;">' + esc(catLabel(x.category)) + '</div>';
+      h += '<div style="font-size:10px;color:#94a3b8;">';
+      if(x.active_count)   h += '<span style="color:#10b981;font-weight:800;">' + x.active_count + ' live</span> · ';
+      if(x.pending_count)  h += '<span style="color:#a18554;font-weight:800;">' + x.pending_count + ' pending</span> · ';
+      if(x.rejected_count) h += '<span style="color:#a16262;font-weight:800;">' + x.rejected_count + ' rejected</span>';
+      h += '</div></div>';
+    });
+
+    h += '<button id="mk3-seller-open-market" style="width:100%;margin-top:10px;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">';
+    h += '<i class="fa-solid fa-store"></i> Sell more on Digital Market';
+    h += '</button></div>';
+
+    var aboutBlock = document.getElementById('space-about-block');
+    if(aboutBlock && aboutBlock.parentNode === root){
+      aboutBlock.parentNode.insertBefore(
+        Object.assign(document.createElement('div'), { innerHTML: h, id: 'mk3-dash-wrap' }),
+        aboutBlock.nextSibling
+      );
+    } else {
+      root.insertBefore(
+        Object.assign(document.createElement('div'), { innerHTML: h, id: 'mk3-dash-wrap' }),
+        root.firstChild
+      );
+    }
+
+    setTimeout(function(){
+      var va = document.getElementById('mk3-seller-viewall');
+      if(va) va.addEventListener('click', function(){
+        Z.showView('market-my-selling');
+      });
+      var om = document.getElementById('mk3-seller-open-market');
+      if(om) om.addEventListener('click', function(){
+        Z.showView('galleria-cat', 'digital-market');
+      });
+    }, 30);
+
+  } catch(e){}
+}
+
+/* Full "My Selling" view */
+function renderMySelling(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;">My Selling</h2>';
+  h += '</div></div>';
+  h += '<div id="mk3-mysell-host"><div style="text-align:center;padding:40px;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:22px;"></i></div></div>';
+  h += '</div>';
+  setTimeout(loadMySelling, 40);
+  return h;
+}
+
+async function loadMySelling(){
+  var host = document.getElementById('mk3-mysell-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.from('market_assets')
+      .select('id,category,title,status,preview_url,created_at')
+      .eq('seller_id', Z.State.currentUser.id)
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    var items = r.data || [];
+    if(!items.length){
+      host.innerHTML = Z.emptyState({
+        icon:'fa-solid fa-store',
+        title:'You have not listed anything yet.',
+        cta:{ label:'Browse Digital Market', onclick:"Z.showView('galleria-cat','digital-market')" }
+      });
+      return;
+    }
+
+    var html = '';
+    items.forEach(function(it){
+      var st = it.status === 'active' ? '#10b981'
+             : it.status === 'pending_review' ? '#a18554'
+             : it.status === 'rejected' ? '#a16262'
+             : '#64748b';
+      var stLabel = it.status === 'pending_review' ? 'pending'
+                  : it.status;
+      var thumb = it.preview_url
+        ? '<img src="' + esc(it.preview_url) + '" alt="">'
+        : '<i class="fa-solid fa-image"></i>';
+      html += '<div class="mk3-card">';
+      html += '<div class="mk3-row">';
+      html += '<div class="mk3-thumb">' + thumb + '</div>';
+      html += '<div class="mk3-meta">';
+      html += '<span class="mk3-cat">' + esc(catLabel(it.category)) + '</span>';
+      html += '<div class="mk3-title">' + esc(it.title || 'Untitled') + '</div>';
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">';
+      html += '<span class="mk3-status-chip" style="background:' + st + '22;color:' + st + ';">' + esc(stLabel) + '</span>';
+      html += '<span class="mk3-sub">' + timeAgo(it.created_at) + '</span>';
+      html += '</div>';
+      html += '</div></div></div>';
+    });
+    host.innerHTML = html;
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load.' });
+  }
+}
+
+/* ============================================================
+   Router + hooks
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'committee-queue')  return renderCommitteeQueue();
+  if(view === 'market-my-selling') return renderMySelling();
+  return _prevRender.call(this, view, param);
+};
+
+/* Hook SPACE render for seller dashboard */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'public-profile'){
+    setTimeout(function(){ injectSellerDashboard(param).catch(function(){}); }, 500);
+    setTimeout(function(){ injectSellerDashboard(param).catch(function(){}); }, 1600);
+  }
+  return r;
+};
+
+/* Add committee queue entry inside the account dropdown */
+var _prevOpenDD = Z.openAccountDropdown;
+if(typeof _prevOpenDD === 'function'){
+  Z.openAccountDropdown = function(){
+    var r = _prevOpenDD.apply(this, arguments);
+    setTimeout(function(){
+      var dd = document.getElementById('zynix-account-dropdown');
+      if(!dd) return;
+      if(dd.querySelector('[data-mk3-committee-link]')) return;
+
+      /* Insert committee link before Logout (danger) row */
+      var logout = null;
+      dd.querySelectorAll('button').forEach(function(b){
+        if((b.textContent || '').indexOf('Logout') !== -1) logout = b;
+      });
+      if(!logout) return;
+
+      var btn = document.createElement('button');
+      btn.className = 'zynix-dd-item';
+      btn.setAttribute('data-mk3-committee-link','1');
+      btn.style.color = '#e2e8f0';
+      btn.innerHTML = '<i class="fa-solid fa-gavel" style="width:14px;text-align:center;color:#10b981;"></i> Committee Queue';
+      btn.addEventListener('click', function(){
+        Z.closeAccountDropdown();
+        Z.showView('committee-queue');
+      });
+      logout.parentNode.insertBefore(btn, logout);
+    }, 60);
+    return r;
+  };
+}
+
+console.log('[Galleria v2 Phase 3b · Block 12] committee queue + seller dashboard ready');
+})();
+</script>       
 </body>
 </html>
 
