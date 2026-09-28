@@ -7670,8 +7670,8 @@ function renderHeader(p, isOwner, rating){
                '</button>';
     actions += '<button class="sp5-act gear" onclick="Z.openSpaceSettings()" title="Settings"><i class="fa-solid fa-gear"></i></button>';
     actions += '<button class="sp5-act" onclick="Z.shareSpace(\'' + esc(p.id) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
-    } else {
-    /* ----- CONNECT button (friend-request style) ----- */
+     } else {
+    /* ----- CONNECT button ----- */
     var cs = (typeof Z.getConnectionState === 'function') ? Z.getConnectionState(p.id) : 'none';
     var cIcon = 'fa-solid fa-user-plus', cTitle = 'Connect', cAct = "Z.sendConnectRequest('" + esc(p.id) + "')";
     if(cs === 'connected'){ cIcon = 'fa-solid fa-user-check'; cTitle = 'Connected'; cAct = "Z.toast('Already connected')"; }
@@ -7682,22 +7682,22 @@ function renderHeader(p, isOwner, rating){
     /* ----- PING ----- */
     actions += '<button class="sp5-act" onclick="Z.pingUser(\'' + esc(p.id) + '\')" title="Ping"><i class="fa-solid fa-comment-dots"></i></button>';
 
-    /* ----- BOND button (SPACE subscription, shows rate) ----- */
+    /* ----- BOND button — data-attribute + delegated listener ----- */
     var bs = (typeof Z.getBondStateSync === 'function') ? Z.getBondStateSync(p.id) : { bonded:false, rate:0 };
-    var bLabel, bIcon, bAct, bStyle;
+    var bLabel, bIcon, bStyle, bAttr;
     if(bs.bonded){
       bLabel = '✓ Bonded';
       bIcon  = 'fa-solid fa-star';
-      bAct   = "Z.toast('Already bonded to this SPACE')";
+      bAttr  = ' data-bond-busy="1"';
       bStyle = 'background:rgba(16,185,129,.14);border-color:rgba(16,185,129,.5);color:#10b981;cursor:default;';
     } else {
       var rateTxt = bs.rate > 0 ? (' · $' + bs.rate.toFixed(2)) : '';
       bLabel = 'Bond' + rateTxt;
       bIcon  = 'fa-regular fa-star';
-      bAct   = "Z.bondUser('" + esc(p.id) + "')";
-      bStyle = 'background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;';
+      bAttr  = ' data-bond-user="' + esc(p.id) + '"';
+      bStyle = 'background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;cursor:pointer;';
     }
-    actions += '<button class="sp5-act" onclick="' + bAct + '" title="Bond" style="width:auto;padding:0 12px;font-size:11px;font-weight:900;gap:6px;display:inline-flex;align-items:center;' + bStyle + '">' +
+    actions += '<button type="button" class="sp5-act" ' + bAttr + ' title="Bond" style="width:auto;padding:0 12px;font-size:11px;font-weight:900;gap:6px;display:inline-flex;align-items:center;' + bStyle + '">' +
       '<i class="' + bIcon + '"></i> ' + bLabel +
     '</button>';
 
@@ -7707,7 +7707,7 @@ function renderHeader(p, isOwner, rating){
     /* ----- MORE ----- */
     actions += '<button class="sp5-act" onclick="Z.openSpaceMoreSheet(\'' + esc(p.id) + '\')" title="More"><i class="fa-solid fa-ellipsis"></i></button>';
 
-    /* Async-load bond state and re-render header once it arrives */
+    /* Async-load bond state */
     if(typeof Z.getBondState === 'function' && !Z._bondState[p.id]){
       Z.getBondState(p.id).then(function(){
         if(Z.State.currentView === 'public-profile' && Z.State.spaceUserId === p.id){
@@ -8906,6 +8906,65 @@ Z.renderView = function(view, param){
   return _prevRender.call(this, view, param);
 };
 
+/* ============================================================
+   BOND delegated click listener — bypasses inline onclick
+   ============================================================ */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-bond-user]');
+  if(!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  var userId = btn.getAttribute('data-bond-user');
+  if(!userId) return;
+  if(btn.getAttribute('data-bond-busy') === '1') return;
+  if(typeof Z.bondUser !== 'function'){
+    Z.toast('Bond system not loaded. Reload the page.', 'error');
+    console.error('[Bond] Z.bondUser is not defined. Check that Section 8 Part 2 pasted fully.');
+    return;
+  }
+  btn.setAttribute('data-bond-busy','1');
+  btn.style.opacity = '0.6';
+  Promise.resolve(Z.bondUser(userId)).finally(function(){
+    btn.removeAttribute('data-bond-busy');
+    btn.style.opacity = '';
+  });
+}, true);
+
+/* ============================================================
+   Bond diagnostic — run Z.bondDiag() in browser console if bond fails
+   ============================================================ */
+Z.bondDiag = async function(){
+  console.log('=== BOND DIAGNOSTIC ===');
+  console.log('Z.bondUser type:', typeof Z.bondUser);
+  console.log('Z.getBondState type:', typeof Z.getBondState);
+  console.log('Current user:', Z.State.currentUser ? Z.State.currentUser.id : null);
+  var c = Z.sb && Z.sb();
+  console.log('Supabase client:', !!c);
+  if(!c){ console.warn('Supabase not ready'); return; }
+
+  try {
+    var t1 = await c.from('space_subscriptions').select('*').limit(1);
+    console.log('[1] space_subscriptions:', t1.error ? t1.error : ('OK · ' + ((t1.data||[]).length) + ' sample rows'));
+  } catch(e){ console.log('[1] space_subscriptions error:', e); }
+
+  try {
+    var t2 = await c.from('profiles').select('bounty_settings').limit(1);
+    console.log('[2] profiles.bounty_settings:', t2.error ? t2.error : 'OK');
+  } catch(e){ console.log('[2] profiles error:', e); }
+
+  try {
+    var t3 = await c.rpc('space_bond_state', { p_creator_id: '00000000-0000-0000-0000-000000000000' });
+    console.log('[3] space_bond_state RPC:', t3.error ? t3.error : t3.data);
+  } catch(e){ console.log('[3] space_bond_state RPC error:', e); }
+
+  try {
+    var t4 = await c.rpc('space_bond_creator', { p_creator_id: '00000000-0000-0000-0000-000000000000' });
+    console.log('[4] space_bond_creator RPC (fake id, error expected):', t4.error ? t4.error : t4.data);
+  } catch(e){ console.log('[4] space_bond_creator RPC error:', e); }
+
+  console.log('=== END ===');
+};
+     
 console.log('[SPACE v6 — Part 2] overlays · sheets · settings · guide · pool meter · helpers ready');
 })(); 
 </script>     
