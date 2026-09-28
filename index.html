@@ -24134,7 +24134,111 @@ Z.showView = function(view, param){
 
 console.log('[Market Phase 3a patch] Cancel button added');
 })();
-</script>       
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX DIGITAL MARKET — Phase 3a UI patch                      -->
+<!-- Shows a "pending lot" banner on market-browse.                -->
+<!-- Button label reflects pending count.                          -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketSellBanner) return; Z.__zynixMarketSellBanner = true;
+
+async function getLotStatus(categoryKey){
+  var c = Z.sb && Z.sb();
+  if(!c) return { active: false, pendingCount: 0 };
+  try {
+    var r = await c.from('market_assets')
+      .select('status')
+      .eq('seller_id', Z.State.currentUser.id)
+      .eq('category', categoryKey);
+    var rows = r.data || [];
+    var active  = rows.some(function(x){ return x.status === 'active'; });
+    var pending = rows.filter(function(x){ return x.status === 'pending_review'; }).length;
+    return { active: active, pendingCount: pending };
+  } catch(e){
+    return { active: false, pendingCount: 0 };
+  }
+}
+
+async function patchMarketBrowse(categoryKey){
+  if(Z.State.currentView !== 'market-browse') return;
+  if(Z.State.currentParam !== categoryKey) return;
+  if(!Z.State.currentUser) return;
+
+  var host = document.getElementById('app-container');
+  if(!host) return;
+
+  var status = await getLotStatus(categoryKey);
+
+  /* Remove any previous banner */
+  var old = document.getElementById('mks-banner');
+  if(old) old.remove();
+
+  var banner = document.createElement('div');
+  banner.id = 'mks-banner';
+  banner.style.cssText = 'margin:0 0 12px 0;';
+
+  if(status.active){
+    banner.innerHTML =
+      '<div style="padding:12px 14px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);font-size:12px;color:#cbd5e1;line-height:1.55;">' +
+        '<b style="color:#10b981;"><i class="fa-solid fa-check-circle"></i> Your lot is live in this category</b><br>' +
+        'You cannot submit another lot here until a new seller joins or 30 days pass without a sale.' +
+      '</div>';
+  } else if(status.pendingCount > 0){
+    var left = 10 - status.pendingCount;
+    banner.innerHTML =
+      '<div style="padding:12px 14px;border-radius:12px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);font-size:12px;color:#cbd5e1;line-height:1.55;margin-bottom:8px;">' +
+        '<b style="color:#a18554;"><i class="fa-solid fa-hourglass-half"></i> Pending lot: ' + status.pendingCount + ' of 10 submitted</b><br>' +
+        left + ' slot' + (left === 1 ? '' : 's') + ' left before this lot is full. Awaiting committee review.' +
+      '</div>' +
+      '<button id="mks-add-to-lot" style="width:100%;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+        '<i class="fa-solid fa-plus"></i> Add more to your pending lot' +
+      '</button>';
+    setTimeout(function(){
+      var b = document.getElementById('mks-add-to-lot');
+      if(b) b.addEventListener('click', function(){ Z.showView('market-sell', categoryKey); });
+    }, 30);
+  } else {
+    banner.innerHTML =
+      '<button id="mks-open-new" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+        '<i class="fa-solid fa-cloud-arrow-up"></i> Sell in this category' +
+      '</button>';
+    setTimeout(function(){
+      var b = document.getElementById('mks-open-new');
+      if(b) b.addEventListener('click', function(){ Z.showView('market-sell', categoryKey); });
+    }, 30);
+  }
+
+  /* Insert right after the view-header row */
+  var header = host.querySelector('.view-header');
+  if(header && header.parentNode === host){
+    header.parentNode.insertBefore(banner, header.nextSibling);
+  } else {
+    host.insertBefore(banner, host.firstChild);
+  }
+
+  /* Remove the old broken sell button if it exists */
+  var oldBtn = document.getElementById('mks-open');
+  if(oldBtn && oldBtn.parentNode) oldBtn.parentNode.remove();
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-browse'){
+    setTimeout(function(){ patchMarketBrowse(param).catch(function(){}); }, 550);
+    setTimeout(function(){ patchMarketBrowse(param).catch(function(){}); }, 1500);
+  }
+  return r;
+};
+
+console.log('[Market Phase 3a banner] pending lot status ready');
+})();
+</script>     
 </body>
 </html>
 
