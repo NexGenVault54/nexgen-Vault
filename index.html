@@ -7457,9 +7457,14 @@ function renderPublicSpace(userId, isOwner){
     }, 80);
   }
 
-  /* Grid — global content. Videos have no per-creator lock in public view. */
+   /* Grid — global content. Videos have no per-creator lock in public view. */
   if(sub === 'videos'){
     h += '<div class="sp5-vgrid">' + renderVideoGrid(videos, userId, true, isOwner) + '</div>';
+    /* Aggregate rating block below the videos grid */
+    h += '<div id="sp5-videos-rating-host" style="margin-top:6px;"></div>';
+    setTimeout(function(){
+      try { Z.sp5PaintVideosRatingBlock(userId); } catch(e){}
+    }, 80);
   } else {
     h += '<div class="sp5-sgrid">' + renderSparkGrid(sparks, userId) + '</div>';
   }
@@ -7467,6 +7472,56 @@ function renderPublicSpace(userId, isOwner){
   h += '</div>';
   return h;
 }
+
+/* ============================================================
+   AGGREGATE RATING BLOCK — shown below Full Videos grid
+   ============================================================ */
+Z.sp5PaintVideosRatingBlock = async function(userId){
+  var host = document.getElementById('sp5-videos-rating-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc('space_creator_rating', { p_creator_id: userId });
+    if(r.error || !r.data || !r.data[0]){ host.innerHTML = ''; return; }
+    var d = r.data[0];
+    var avg = Number(d.avg_score) || 0;
+    var cnt = Number(d.rating_count) || 0;
+    if(cnt === 0){ host.innerHTML = ''; return; }
+    var bands = d.bands || {};
+    var total = Math.max(1, (bands.low||0) + (bands.mid||0) + (bands.high||0) + (bands.top||0));
+    var col = scoreColor(avg);
+
+    function bandRow(label, count, c2){
+      var pct = Math.round((count / total) * 100);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">' +
+        '<div style="font-size:10.5px;color:#94a3b8;font-weight:800;min-width:44px;">' + label + '</div>' +
+        '<div style="flex:1;height:6px;border-radius:3px;background:rgba(0,0,0,.35);overflow:hidden;">' +
+          '<div style="height:100%;width:' + pct + '%;background:' + c2 + ';"></div>' +
+        '</div>' +
+        '<div style="font-size:10.5px;font-weight:900;color:' + c2 + ';min-width:20px;text-align:right;">' + count + '</div>' +
+      '</div>';
+    }
+
+    var h = '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">';
+    h += '<i class="fa-solid fa-star" style="color:#fbbf24;margin-right:6px;"></i>AGGREGATE RATING (from Full Videos)</div>';
+    h += '<button onclick="Z.openSpaceRatingSummary(\'' + esc(userId) + '\')" style="background:transparent;border:none;color:#10b981;font-size:11px;font-weight:800;cursor:pointer;padding:2px 6px;">See all ›</button>';
+    h += '</div>';
+    h += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px;">';
+    h += '<div style="font-size:32px;font-weight:900;color:' + col + ';">' + avg.toFixed(1) + '</div>';
+    h += '<div style="font-size:13px;color:#94a3b8;font-weight:700;">/ 10</div>';
+    h += '<div style="margin-left:auto;font-size:10.5px;color:#64748b;">' + cnt + ' rating' + (cnt === 1 ? '' : 's') + '</div>';
+    h += '</div>';
+    h += bandRow('9 – 10', bands.top  || 0, '#10b981');
+    h += bandRow('7 – 8',  bands.high || 0, '#a18554');
+    h += bandRow('4 – 6',  bands.mid  || 0, '#a18554');
+    h += bandRow('1 – 3',  bands.low  || 0, '#a16262');
+    h += '</div>';
+    host.innerHTML = h;
+  } catch(e){ host.innerHTML = ''; }
+};
 function renderVideoGrid(videos, userId, hasAccess, isOwner){
   if(!videos.length){
     return '<div class="sp5-empty"><i class="fa-solid fa-film" style="font-size:24px;color:#334155;display:block;margin-bottom:10px;"></i>No Full Videos yet.</div>';
@@ -8640,46 +8695,67 @@ Z.openSpaceMoreSheet = function(userId){
 var FV_GUIDE = [
   { h:'What you\'re building',
     p:'Full Videos are long-form content (4 minutes to 1 hour) that live on your Public Space. They\'re the foundation of your creator business on ZYNIX. Viewers subscribe to watch them — and you earn from every subscriber.' },
+
+  { h:'Tier requirement',
+    p:'You must be on the Business tier (the maximum package) to enroll in the Full Video program and remain in it. Elite, Pro, Member, and Free do not qualify.' },
+
   { h:'How you earn',
-    p:'For every active subscriber:\n• You receive: $0.30 to your Cash wallet\n• ZYNIX invests: $0.20 to promote your SPACE on Ad TV, banners, and discover surfaces\n• Viewers pay: $0 (free forever)\n\nYou earn monthly, recurring, for as long as someone stays subscribed.' },
+    p:'For every active subscriber:\n• You receive: $0.30 to your Cash wallet\n• Platform credits: $0.20 to your Ad Wallet (ring-fenced for Ad TV promotion only)\n• Viewers pay: $0 by default\n\nYou earn monthly, recurring, for as long as someone stays subscribed.' },
+
+  { h:'Optional Premium tier',
+    p:'By default viewers pay $0. As a space owner you MAY charge a premium subscription on top, subject to Zynix rating standards and the rate formula set by the platform. Any premium tier you offer is reviewed against your monthly aggregate rating.' },
+
   { h:'Eligibility (when you start earning)',
-    p:'You begin earning from Full Video subscriptions when ALL of these are met in a month:\n\n• You\'re on Business ($349/mo) or Elite ($59/mo) tier\n• 500+ active subscribers\n• Aggregate rating 7.0 or higher (from Full Video ratings)\n• 5 or more Full Videos at 20+ minutes live\n• 60 Sparks posted this month\n• At least 1 fresh Full Video posted in last 30 days\n• Account at least 90 days old\n• No active abuse flags\n\nMiss any gate → payment pauses that month. Nothing is lost. Fix it and payment resumes next month.' },
+    p:'You begin earning from Full Video subscriptions when ALL of these are met in a month:\n\n• You\'re on the Business tier\n• 500+ active subscribers\n• Aggregate rating 7.0 or higher (from Full Video ratings)\n• 5 or more Full Videos at 20+ minutes live\n• 60 Sparks posted this month\n• At least 1 fresh Full Video posted in last 30 days\n• Account at least 90 days old\n• No active abuse flags\n\nMiss any gate → payment pauses that month. Nothing is lost. Fix it and payment resumes next month.' },
+
   { h:'Payment caps',
     p:'Maximum payout per creator per month: $4,000.\nIf pool can\'t cover everyone, all eligible creators receive proportional amounts.' },
-  { h:'Referrals vs subscriptions',
-    p:'You cannot earn both in the same month. The server pays whichever is HIGHER:\n\n• Subscription earning (subscribers × $0.30)\n• Referral earning ($1–3 per active referral)\n\nYour dashboard shows both numbers with the chosen one highlighted.' },
+
   { h:'Content requirements',
     p:'• Length: 4 min minimum, 60 min maximum\n• Upload fee: $1 for 1–10 min, +$1 per additional 10-min band\n• Format: mp4, webm, mov\n• Quality: 720p minimum (1080p recommended)\n• You must own all rights to content' },
+
   { h:'Ratings',
     p:'Each Full Video has its own 1–10 anonymous rating sheet. Your aggregate rating averages all your Full Videos. Ratings below 7.0 pause your CSF payment.\n\nRating Guardian Streak: 12 months above 7.0 → Gold Star badge. 24 months → Platinum. Breaking streak resets to 0.' },
+
   { h:'Rating bands',
     p:'9–10 excellent\n7–8 good\n4–6 fair\n1–3 poor' },
+
   { h:'Tags viewers can leave',
     p:'Well made · Original · Great value · Quick reply · Trustworthy · Engaging' },
+
   { h:'Reactions',
     p:'Full Videos get the same 6 reactions as Sparks: ❤️ Heart · 🌹 Rose · 🔥 Fire · 👏 Clap · ⭐ Star · 👎 Dislike.\nYou can freeze/unfreeze reactions on any video.' },
+
   { h:'Viewer experience',
-    p:'Subscribers see your Full Videos free. Non-subscribers see locked previews. When they tap Subscribe, they get instant access to all your Full Videos.' },
-  { h:'Promotion (ZYNIX\'s responsibility)',
-    p:'For every $0.30 you earn, ZYNIX invests $0.20 to promote your SPACE:\n• Ad TV spots\n• Home banner strip\n• Discover surfaces\n• Your creator SPACE gets priority in recommendations\n\nYou do nothing. ZYNIX manages promotion.' },
+    p:'Subscribers see your Full Videos free. Non-subscribers see locked previews. When they tap Bond, they get instant access to all your Full Videos.' },
+
+  { h:'How the $0.20 Ad Wallet works',
+    p:'For every subscriber, ZYNIX credits $0.20 into a dedicated Ad Wallet on your account.\n\nThe Ad Wallet is ring-fenced. It cannot be withdrawn. It cannot be converted to Cash. It can only be spent on hiring an AI Ad Maker from the Digital Market.\n\nThe AI Ad Maker you hire handles all Ad TV promotion for your SPACE — Ad TV spots, home banner, discover surfaces, recommendations.\n\nYou do the hiring. The maker does the rest. Nothing is deducted from your Cash or your $0.30 earnings.' },
+
   { h:'CFAR (optional — creator-funded rewards)',
     p:'You can pay viewers directly to watch your Full Videos:\n• Set reward: $0.001 – $0.010 per minute (base rate)\n• Set pool: $10 – $10,000 per video\n• Viewers earn based on their Contribution Score multiplier (Newcomer 1× → Partner 5×)\n• Cap per viewer: default 10 min\n• Daily cap across all videos: 30 min\n• Anti-fraud: activity required, background pauses earnings\n\nFunded from your Cash wallet. Separate from CSF.' },
+
   { h:'Contribution Score multipliers',
     p:'Applied to CFAR rewards: Newcomer 1.0× · Member 1.2× · Contributor 1.5× · Pro 2.0× · Expert 3.0× · Partner 5.0×' },
+
   { h:'Upgrade path',
     p:'When you exceed 20,000 subscribers, ZYNIX introduces:\n• Enterprise tier ($599/mo) = 40 premium channels\n• Business Plus ($999/mo) = unlimited' },
+
   { h:'Your dashboard',
-    p:'Creator dashboard in Earning Hub shows:\n• This month\'s subscriber count\n• This month\'s CSF earnings\n• Promotion spend (what ZYNIX invested)\n• Views generated from ads\n• Subscribers gained from ads\n• Aggregate rating + Guardian Streak status\n• Eligibility progress (each gate)\n• CFAR pools and spend' },
+    p:'Creator dashboard in Earning Hub shows:\n• This month\'s subscriber count\n• This month\'s CSF earnings\n• Ad Wallet balance and spend\n• Views generated from ads\n• Subscribers gained from ads\n• Aggregate rating + Guardian Streak status\n• Eligibility progress (each gate)\n• CFAR pools and spend' },
+
   { h:'What you own',
     p:'Your content. Your audience. Your earnings. ZYNIX never takes a cut from CSF.\n20% withdrawal fee applies once, at cash-out.' },
-  { h:'What ZYNIX asks in return',
-    p:'• Ethical, original content\n• Quality production standards\n• Premium presentation\n• Respect for community guidelines\n• Consistent upload cadence (at least 1 video / 30 days)' },
+
+  { h:'What ZYNIX wants in return',
+    p:'A soft agreement. Nothing contractual — just shared intent:\n\n• ETHICAL content\n• PREMIUM quality\n• PURPOSEFUL, useful content for the public' },
+
   { h:'What happens if you miss a gate',
     p:'Payment pauses that month. Nothing is lost. Fix the gate → payment resumes next month.' },
+
   { h:'What happens if you break guidelines',
     p:'Warning → Temporary pause → Permanent ban (in severe cases). Funds already earned remain in your wallet. Escrowed CSF (if any) resolves per committee decision.' }
 ];
-
 Z.openFullVideoCreatorGuide = function(){
   var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
   h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:90vh;">';
@@ -8798,31 +8874,42 @@ Z.openFullVideoApplication = function(){
   /* --- What we offer --- */
   h += '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.32);margin-bottom:12px;">';
   h += '<div style="font-size:12px;font-weight:900;color:#10b981;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-gift"></i> WHAT WE OFFER</div>';
-  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">';
   h += '• <b style="color:#fff;">$0.30</b> to your Cash wallet per active subscriber, every month<br>';
-  h += '• <b style="color:#fff;">ZYNIX invests $0.20</b> more per subscriber to promote your SPACE on Ad TV, banners, and discover surfaces<br>';
-  h += '• <b style="color:#fff;">Viewers pay $0</b> — subscriptions are free forever<br>';
+  h += '• <b style="color:#fff;">$0.20 credited</b> to your dedicated Ad Wallet per subscriber, every month — ring-fenced for Ad TV promotion only<br>';
+  h += '• <b style="color:#fff;">Viewers pay $0 by default</b> — subscriptions are free<br>';
+  h += '• <b style="color:#fff;">Optional Premium tier:</b> you may charge a premium subscription on top, subject to Zynix rating standards and rate formula<br>';
   h += '• <b style="color:#fff;">Minimum 500 subscribers</b> required to start earning<br>';
   h += '• <b style="color:#fff;">Aggregate rating ≥ 7.0</b> required monthly (from Full Video ratings)<br>';
   h += '• <b style="color:#fff;">Per-creator cap:</b> $4,000 per month';
   h += '</div></div>';
 
-  /* --- What we want --- */
+  /* --- What we want (soft agreement) --- */
+  h += '<div style="padding:14px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.32);margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#10b981;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-heart"></i> WHAT ZYNIX WANTS IN RETURN</div>';
+  h += '<div style="font-size:12.5px;color:#f8fafc;line-height:1.75;font-weight:700;">';
+  h += 'A soft agreement. Nothing contractual — just shared intent:<br><br>';
+  h += '<b style="color:#fff;">• ETHICAL content</b><br>';
+  h += '<b style="color:#fff;">• PREMIUM quality</b><br>';
+  h += '<b style="color:#fff;">• PURPOSEFUL, useful content for the public</b>';
+  h += '</div></div>';
+
+  /* --- T&C (hard requirements) --- */
   h += '<div style="padding:14px;border-radius:12px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);margin-bottom:12px;">';
-  h += '<div style="font-size:12px;font-weight:900;color:#a18554;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-handshake"></i> WHAT WE WANT IN RETURN</div>';
-  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
-  h += '• Minimum <b style="color:#fff;">1 fresh Full Video</b> per 30 days<br>';
-  h += '• Minimum <b style="color:#fff;">5 videos at 20+ minutes</b> live on your SPACE<br>';
-  h += '• Minimum <b style="color:#fff;">60 Sparks posted per month</b><br>';
-  h += '• Ethical, original content — you own all rights<br>';
-  h += '• 720p minimum, 1080p recommended<br>';
-  h += '• Consistent upload cadence, premium presentation';
+  h += '<div style="font-size:12px;font-weight:900;color:#a18554;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-scroll"></i> TERMS & CONDITIONS</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">';
+  h += '• Minimum <b style="color:#fff;">5 Full Videos at 20+ minutes</b> live on your SPACE<br>';
+  h += '• Minimum <b style="color:#fff;">1 fresh Full Video</b> posted per 30 days<br>';
+  h += '• Minimum <b style="color:#fff;">60 Sparks</b> posted per month<br>';
+  h += '• Account age ≥ 90 days, no active abuse flags<br>';
+  h += '• <b style="color:#fff;">Business tier required</b> (max package) to enroll and remain in the program<br>';
+  h += '• Missing any gate pauses that month. Nothing is lost. Fix it → payments resume';
   h += '</div></div>';
 
   /* --- Fee structure --- */
   h += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:12px;">';
   h += '<div style="font-size:12px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-receipt"></i> UPLOAD FEE STRUCTURE</div>';
-  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">';
   h += '• <b style="color:#fff;">$1</b> per video, 1–10 minutes<br>';
   h += '• <b style="color:#fff;">+$1</b> for each additional 10-minute band<br>';
   h += '• Max video length: 60 minutes<br>';
@@ -8830,17 +8917,19 @@ Z.openFullVideoApplication = function(){
   h += '• Formats: mp4, webm, mov';
   h += '</div></div>';
 
-  /* --- $0.20 explanation --- */
-  h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);margin-bottom:12px;">';
-  h += '<div style="font-size:12px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-bullhorn"></i> ABOUT THE $0.20 PROMOTION</div>';
-  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.7;">';
-  h += 'ZYNIX invests <b style="color:#fff;">$0.20 per subscriber per month</b> from its own budget to promote your SPACE. It funds Ad TV placements, home banners, discover surfaces, and recommendations. ';
-  h += '<b style="color:#fbbf24;">This is not deducted from your earnings.</b> ';
-  h += '<b style="color:#fbbf24;">It is not mandatory for you to spend anything.</b> ';
-  h += 'You do nothing — ZYNIX manages the promotion fully on your behalf.';
+  /* --- $0.20 Ad Wallet explanation --- */
+  h += '<div style="padding:14px;border-radius:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.32);margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-wallet"></i> HOW THE $0.20 AD WALLET WORKS</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">';
+  h += 'For every subscriber, ZYNIX credits <b style="color:#fff;">$0.20</b> into a dedicated <b style="color:#fbbf24;">Ad Wallet</b> on your account.<br><br>';
+  h += 'This Ad Wallet is <b style="color:#fff;">ring-fenced</b>. It cannot be withdrawn. It cannot be converted to Cash. ';
+  h += 'It can only be spent on hiring an <b style="color:#fbbf24;">AI Ad Maker</b> from the Digital Market.<br><br>';
+  h += 'The AI Ad Maker you hire handles <b style="color:#fff;">all Ad TV promotion</b> for your SPACE — Ad TV spots, home banner, discover surfaces, recommendations. ';
+  h += 'You do the hiring. The maker does the rest.<br><br>';
+  h += '<b style="color:#fbbf24;">Nothing is deducted from your Cash or your $0.30 earnings.</b> The Ad Wallet is funded entirely by the platform.';
   h += '</div></div>';
 
-  /* --- Shortlisting notice (bold) --- */
+  /* --- Shortlisting notice --- */
   h += '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(236,72,153,.10),rgba(161,133,84,.10));border:1px solid rgba(236,72,153,.4);margin-bottom:12px;">';
   h += '<div style="font-size:12px;font-weight:900;color:#ec4899;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-triangle-exclamation"></i> SHORTLISTING REQUIRED</div>';
   h += '<div style="font-size:12px;color:#f8fafc;line-height:1.75;font-weight:700;">';
@@ -8853,7 +8942,7 @@ Z.openFullVideoApplication = function(){
   h += '<div class="mks-copyright" style="margin-bottom:14px;">';
   h += '<label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">';
   h += '<input type="checkbox" id="sp5-fv-accept" style="margin-top:2px;flex-shrink:0;">';
-  h += '<span style="font-size:12px;color:#cbd5e1;line-height:1.65;">I have read and accept the terms above. I understand that shortlisting applies, my content will be reviewed, and approval timing depends on funds and public priority.</span>';
+  h += '<span style="font-size:12px;color:#cbd5e1;line-height:1.65;">I have read and accept the Terms & Conditions. I understand the soft-agreement expectations, that shortlisting applies, and that approval timing depends on funds and public priority.</span>';
   h += '</label>';
   h += '</div>';
 
@@ -8875,7 +8964,6 @@ Z.openFullVideoApplication = function(){
     }
   }, 40);
 };
-
 Z.submitFullVideoApplication = async function(btn){
   var me = Z.State.currentUser;
   if(!me) return;
