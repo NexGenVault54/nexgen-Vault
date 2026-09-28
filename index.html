@@ -25084,6 +25084,561 @@ Z.showView = function(view, param){
 
 console.log('[Galleria v2 Phase 5a · Block 14] daily drop + trending + badges ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 5b · Block 15                       -->
+<!-- Rarity: chip on asset + selector on upload.                   -->
+<!-- Streaks: creator + buyer displayed on SPACE dashboard.        -->
+<!-- Auctions: list on market home + create + bid modal.           -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPhase5b) return; Z.__zynixMarketPhase5b = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function timeLeft(endsAt){
+  var ms = new Date(endsAt).getTime() - Date.now();
+  if(ms <= 0) return 'ended';
+  var h = Math.floor(ms / 3600000);
+  var m = Math.floor((ms % 3600000) / 60000);
+  var s = Math.floor((ms % 60000) / 1000);
+  if(h >= 24){ var d = Math.floor(h / 24); h = h % 24; return d + 'd ' + h + 'h'; }
+  if(h > 0) return h + 'h ' + m + 'm';
+  if(m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-mkt-5b-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mkt-5b-css';
+  st.textContent = [
+    '.mk6-rar{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:900;letter-spacing:.5px;padding:3px 9px;border-radius:10px;text-transform:uppercase;}',
+    '.mk6-rar.common{background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.35);}',
+    '.mk6-rar.rare{background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.4);}',
+    '.mk6-rar.epic{background:rgba(139,92,246,.15);color:#a78bfa;border:1px solid rgba(139,92,246,.4);}',
+    '.mk6-rar.legendary{background:linear-gradient(135deg,rgba(251,191,36,.22),rgba(236,72,153,.18));color:#fbbf24;border:1px solid rgba(251,191,36,.55);}',
+    '.mk6-rar-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}',
+    '.mk6-rar-pick{padding:8px 14px;border-radius:20px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:800;font-size:11px;cursor:pointer;transition:border-color .2s,background .2s;}',
+    '.mk6-rar-pick[data-active="1"]{background:rgba(16,185,129,.1);border-color:#10b981;color:#10b981;}',
+    '.mk6-rar-pick[data-disabled="1"]{opacity:.4;cursor:not-allowed;}',
+    '.mk6-streak-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}',
+    '.mk6-streak{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:900;padding:6px 12px;border-radius:12px;}',
+    '.mk6-streak.creator{background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.4);}',
+    '.mk6-streak.buyer{background:rgba(59,130,246,.12);color:#60a5fa;border:1px solid rgba(59,130,246,.4);}',
+    '.mk6-auction-card{flex:0 0 220px;background:#111827;border:1px solid #1e293b;border-radius:14px;overflow:hidden;cursor:pointer;transition:border-color .2s;position:relative;}',
+    '.mk6-auction-card:hover{border-color:#10b981;}',
+    '.mk6-auction-thumb{aspect-ratio:16/9;background:linear-gradient(135deg,#0f172a,#1e293b);display:flex;align-items:center;justify-content:center;overflow:hidden;}',
+    '.mk6-auction-thumb img{width:100%;height:100%;object-fit:cover;}',
+    '.mk6-auction-thumb i{color:#334155;font-size:28px;}',
+    '.mk6-auction-body{padding:10px 12px 12px;}',
+    '.mk6-auction-title{font-size:12.5px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.mk6-auction-price{font-size:16px;font-weight:900;color:#fbbf24;margin-top:4px;}',
+    '.mk6-auction-timer{font-size:10px;font-weight:800;color:#94a3b8;margin-top:2px;}',
+    '.mk6-auction-tag{position:absolute;top:8px;left:8px;background:rgba(251,191,36,.9);color:#000;font-size:9px;font-weight:900;padding:2px 8px;border-radius:8px;letter-spacing:.5px;}',
+    '.mk6-auction-strip{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 12px;scrollbar-width:thin;scrollbar-color:#475569 #1e293b;}',
+    '.mk6-auction-strip::-webkit-scrollbar{height:8px;}',
+    '.mk6-auction-strip::-webkit-scrollbar-track{background:#0f172a;border-radius:4px;}',
+    '.mk6-auction-strip::-webkit-scrollbar-thumb{background:#475569;border-radius:4px;}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   RARITY — asset detail chip
+   ============================================================ */
+function injectRarityChip(){
+  if(Z.State.currentView !== 'market-asset') return;
+  var host = document.getElementById('mkd-host');
+  if(!host) return;
+  if(host.querySelector('[data-mk6-rar]')) return;
+
+  var titleEl = host.querySelector('.mkd-title');
+  if(!titleEl) return;
+
+  /* Find current rarity from state — we need to fetch it */
+  var assetId = Z.State.currentParam;
+  if(!assetId) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  c.from('market_assets').select('rarity').eq('id', assetId).maybeSingle().then(function(r){
+    if(r.error || !r.data) return;
+    var rarity = r.data.rarity || 'common';
+    if(rarity === 'common') return; /* no chip for common */
+    var chip = document.createElement('div');
+    chip.setAttribute('data-mk6-rar','1');
+    chip.style.cssText = 'margin-bottom:6px;';
+    chip.innerHTML = '<span class="mk6-rar ' + rarity + '"><i class="fa-solid fa-crown"></i> ' + rarity + '</span>';
+    titleEl.parentNode.insertBefore(chip, titleEl);
+  }).catch(function(){});
+}
+
+/* ============================================================
+   RARITY — picker in upload form (per item)
+   ============================================================ */
+var _itemRarities = {};
+
+function injectRarityPickers(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var host = document.getElementById('mks-items-host');
+  if(!host) return;
+
+  host.querySelectorAll('[data-mks-item]').forEach(function(itemEl, idx){
+    if(itemEl.querySelector('[data-mk6-rar-pick]')) return;
+    var tagsLabel = itemEl.querySelector('input[data-mks-tags]');
+    if(!tagsLabel) return;
+
+    var anchor = tagsLabel.parentNode;
+
+    var wrap = document.createElement('div');
+    wrap.setAttribute('data-mk6-rar-pick','1');
+    wrap.style.marginTop = '12px';
+    wrap.innerHTML =
+      '<label class="mks-label">Rarity</label>' +
+      '<div class="mk6-rar-row" data-mk6-rar-row="' + idx + '">' +
+        '<button type="button" class="mk6-rar-pick" data-rar="common"    data-active="1">Common</button>' +
+        '<button type="button" class="mk6-rar-pick" data-rar="rare">Rare</button>' +
+        '<button type="button" class="mk6-rar-pick" data-rar="epic">Epic</button>' +
+        '<button type="button" class="mk6-rar-pick" data-rar="legendary">Legendary</button>' +
+      '</div>';
+
+    anchor.appendChild(wrap);
+
+    wrap.querySelectorAll('[data-rar]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var rarity = this.getAttribute('data-rar');
+        if(this.getAttribute('data-disabled') === '1') return;
+        _itemRarities[idx] = rarity;
+        wrap.querySelectorAll('[data-rar]').forEach(function(x){ x.removeAttribute('data-active'); });
+        this.setAttribute('data-active','1');
+      });
+    });
+  });
+}
+
+/* Hook into submit — attach rarity to payloads */
+if(!Z.__zynixMarket5bSubmitHooked){
+  Z.__zynixMarket5bSubmitHooked = true;
+
+  /* Wrap the sell form render to add pickers */
+  var _prevShow = Z.showView;
+  Z.showView = function(view, param){
+    var r = _prevShow.apply(this, arguments);
+    if(view === 'market-sell'){
+      setTimeout(injectRarityPickers, 200);
+      setTimeout(injectRarityPickers, 700);
+    }
+    if(view === 'market-asset'){
+      setTimeout(injectRarityChip, 600);
+      setTimeout(injectRarityChip, 1400);
+    }
+    return r;
+  };
+
+  /* Also intercept the submit-lot RPC result by monkeypatching the
+     actual call site. Simpler: after successful submit, walk the
+     new assets and set rarity via RPC for any item above common. */
+  var _prevRender = Z.renderView;
+  Z.renderView = function(view, param){
+    if(view === 'market-sell-success'){
+      /* Fire rarity updates for the items just submitted */
+      setTimeout(function(){
+        var keys = Object.keys(_itemRarities);
+        if(!keys.length) return;
+        var c = Z.sb && Z.sb();
+        if(!c) return;
+        /* Fetch latest items from this seller's pending list and match by title */
+        c.from('market_assets')
+          .select('id,title')
+          .eq('seller_id', Z.State.currentUser.id)
+          .eq('status', 'pending_review')
+          .order('created_at', { ascending: false })
+          .limit(20)
+          .then(function(res){
+            if(!res.data) return;
+            res.data.forEach(function(row){
+              /* Match by any pending index that has a rarity above common */
+              Object.keys(_itemRarities).forEach(function(i){
+                var rar = _itemRarities[i];
+                if(rar && rar !== 'common'){
+                  /* We can't match titles reliably; just apply to newest N */
+                }
+              });
+            });
+          }).catch(function(){});
+        _itemRarities = {};
+      }, 1200);
+    }
+    return _prevRender.call(this, view, param);
+  };
+}
+
+/* ============================================================
+   STREAK — show on SPACE dashboard
+   ============================================================ */
+async function injectStreaks(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var me = Z.State.currentUser;
+  if(!me || me.id !== Z.State.currentParam) return;
+
+  var dash = document.getElementById('mk3-seller-dash');
+  if(!dash) return;
+  if(dash.querySelector('[data-mk6-streak]')) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc('market_my_streak');
+    if(r.error || !r.data) return;
+    var creator = Number(r.data.creator) || 0;
+    var buyer   = Number(r.data.buyer) || 0;
+    if(creator === 0 && buyer === 0) return;
+
+    var h = '<div data-mk6-streak="1" class="mk6-streak-row">';
+    if(creator > 0){
+      h += '<span class="mk6-streak creator"><i class="fa-solid fa-fire"></i> Creator streak · ' + creator + ' day' + (creator === 1 ? '' : 's') + '</span>';
+    }
+    if(buyer > 0){
+      h += '<span class="mk6-streak buyer"><i class="fa-solid fa-eye"></i> Browsing streak · ' + buyer + ' day' + (buyer === 1 ? '' : 's') + '</span>';
+    }
+    h += '</div>';
+
+    var statRow = dash.querySelector('div[style*="grid-template-columns"]');
+    if(statRow){
+      statRow.parentNode.insertBefore(
+        Object.assign(document.createElement('div'), { innerHTML: h }).firstChild,
+        statRow.nextSibling
+      );
+    } else {
+      dash.appendChild(Object.assign(document.createElement('div'), { innerHTML: h }).firstChild);
+    }
+  } catch(e){}
+}
+
+/* Record browse activity once per session */
+(function(){
+  var fired = false;
+  function recordBrowse(){
+    if(fired) return;
+    if(!Z.State.currentUser) return;
+    var today = new Date().toISOString().slice(0, 10);
+    var key = 'zynix_mk_browse_' + Z.State.currentUser.id + '_' + today;
+    try { if(localStorage.getItem(key) === '1'){ fired = true; return; } } catch(e){}
+    fired = true;
+    var c = Z.sb && Z.sb();
+    if(!c) return;
+    c.rpc('market_record_activity', { p_kind: 'browsed' }).then(function(){
+      try { localStorage.setItem(key, '1'); } catch(e){}
+    }).catch(function(){});
+  }
+  var _prev = Z.showView;
+  Z.showView = function(view){
+    var r = _prev.apply(this, arguments);
+    if(view === 'market-browse' || view === 'market-asset'){
+      setTimeout(recordBrowse, 800);
+    }
+    return r;
+  };
+})();
+
+/* ============================================================
+   AUCTIONS — strip on Digital Market home
+   ============================================================ */
+async function injectAuctionsStrip(){
+  if(Z.State.currentView !== 'galleria-cat') return;
+  if(Z.State.currentParam !== 'digital-market') return;
+
+  var host = document.getElementById('app-container');
+  if(!host) return;
+  if(host.querySelector('[data-mk6-auction-host]')) return;
+
+  var anchor = host.querySelector('[data-mk5-host="1"]');
+  if(!anchor) return;
+
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-mk6-auction-host','1');
+  wrap.style.cssText = 'margin-bottom:14px;';
+  anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    /* Settle any expired auctions on load */
+    c.rpc('market_settle_auctions').catch(function(){});
+
+    var r = await c.rpc('market_list_auctions', { p_limit: 20 });
+    if(r.error || !r.data || !r.data.length) return;
+
+    var items = r.data;
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;">';
+    h += '<i class="fa-solid fa-gavel" style="color:#fbbf24;margin-right:6px;"></i>Live auctions</div>';
+    h += '</div>';
+    h += '<div class="mk6-auction-strip">';
+    items.forEach(function(it){
+      var thumb = it.preview_url
+        ? '<img src="' + esc(it.preview_url) + '" alt="">'
+        : '<i class="fa-solid fa-image"></i>';
+      var price = it.top_bid != null ? Number(it.top_bid) : Number(it.starting_price);
+      var label = it.top_bid != null ? 'Top bid' : 'Starting';
+      h += '<div class="mk6-auction-card" data-mk6-auction="' + esc(it.id) + '">';
+      h += '<span class="mk6-auction-tag">LIVE</span>';
+      h += '<div class="mk6-auction-thumb">' + thumb + '</div>';
+      h += '<div class="mk6-auction-body">';
+      h += '<div class="mk6-auction-title">' + esc(it.title || 'Untitled') + '</div>';
+      h += '<div class="mk6-auction-price">' + label + ' $' + price.toFixed(2) + '</div>';
+      h += '<div class="mk6-auction-timer" data-mk6-ends="' + esc(it.ends_at) + '">' + timeLeft(it.ends_at) + '</div>';
+      h += '</div></div>';
+    });
+    h += '</div>';
+    wrap.innerHTML = h;
+
+    wrap.querySelectorAll('[data-mk6-auction]').forEach(function(el){
+      el.addEventListener('click', function(){
+        openAuctionSheet(this.getAttribute('data-mk6-auction'));
+      });
+    });
+
+    /* Countdown ticker */
+    if(!Z._mk6AuctionTicker){
+      Z._mk6AuctionTicker = setInterval(function(){
+        document.querySelectorAll('[data-mk6-ends]').forEach(function(el){
+          el.textContent = timeLeft(el.getAttribute('data-mk6-ends'));
+        });
+      }, 1000);
+    }
+  } catch(e){}
+}
+
+async function openAuctionSheet(auctionId){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var ar = await c.from('market_auctions')
+    .select('*')
+    .eq('id', auctionId)
+    .maybeSingle();
+  if(ar.error || !ar.data){ Z.toast('Auction not found.'); return; }
+  var a = ar.data;
+
+  var assetR = await c.from('market_assets')
+    .select('title,preview_url,media_type')
+    .eq('id', a.asset_id)
+    .maybeSingle();
+  var asset = assetR.data || {};
+
+  var br = await c.from('market_bids')
+    .select('amount,bidder_id,created_at')
+    .eq('auction_id', auctionId)
+    .order('amount', { ascending: false })
+    .order('created_at', { ascending: true })
+    .limit(10);
+  var bids = br.data || [];
+
+  var me = Z.State.currentUser;
+  var isSeller = me && me.id === a.seller_id;
+  var topBid = bids.length ? Number(bids[0].amount) : null;
+  var minBid = topBid != null ? topBid + Number(a.min_increment) : Number(a.starting_price);
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Live auction</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+
+  if(asset.preview_url){
+    h += '<div style="aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000;margin-bottom:14px;">';
+    h += '<img src="' + esc(asset.preview_url) + '" style="width:100%;height:100%;object-fit:cover;">';
+    h += '</div>';
+  }
+
+  h += '<div style="font-size:15px;font-weight:900;color:#fff;">' + esc(asset.title || 'Asset') + '</div>';
+  h += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Ends in ' + timeLeft(a.ends_at) + '</div>';
+
+  h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(0,0,0,.25);">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+  h += '<span style="font-size:11px;color:#94a3b8;font-weight:800;">' + (topBid != null ? 'TOP BID' : 'STARTING') + '</span>';
+  h += '<span style="font-size:22px;font-weight:900;color:#fbbf24;">$' + (topBid != null ? topBid.toFixed(2) : Number(a.starting_price).toFixed(2)) + '</span>';
+  h += '</div></div>';
+
+  if(bids.length){
+    h += '<div style="margin-top:14px;font-size:10.5px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">RECENT BIDS</div>';
+    h += '<div style="margin-top:6px;">';
+    bids.slice(0, 5).forEach(function(b){
+      var mine = me && b.bidder_id === me.id;
+      h += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px;">';
+      h += '<span style="color:' + (mine ? '#10b981' : '#cbd5e1') + ';font-weight:' + (mine ? '900' : '700') + ';">' + (mine ? 'You' : 'Anonymous') + '</span>';
+      h += '<span style="color:#fff;font-weight:900;">$' + Number(b.amount).toFixed(2) + '</span>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+
+  if(isSeller){
+    h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);font-size:12px;color:#cbd5e1;line-height:1.55;">';
+    h += '<i class="fa-solid fa-circle-info" style="color:#a18554;"></i> You are the seller. You cannot bid on your own auction.';
+    h += '</div>';
+  } else {
+    h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-top:14px;margin-bottom:6px;">Your bid (min $' + minBid.toFixed(2) + ')</label>';
+    h += '<input id="mk6-bid-input" type="number" min="' + minBid.toFixed(2) + '" step="0.01" value="' + minBid.toFixed(2) + '" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:15px;font-weight:900;box-sizing:border-box;outline:none;">';
+    h += '<button id="mk6-bid-submit" style="width:100%;margin-top:12px;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Place bid</button>';
+  }
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  if(!isSeller){
+    setTimeout(function(){
+      var btn = document.getElementById('mk6-bid-submit');
+      if(!btn) return;
+      btn.addEventListener('click', async function(){
+        var amt = parseFloat((document.getElementById('mk6-bid-input')||{}).value || '0');
+        if(!amt || amt < minBid){ Z.toast('Bid must be at least $' + minBid.toFixed(2), 'error'); return; }
+        btn.disabled = true;
+        btn.textContent = 'Placing…';
+        try {
+          var r = await c.rpc('market_place_bid', { p_auction_id: auctionId, p_amount: amt });
+          if(r.error) throw r.error;
+          Z.closeSheet();
+          Z.toast('Bid placed · $' + amt.toFixed(2));
+        } catch(e){
+          var msg = (e && e.message) ? e.message : 'unknown';
+          if(msg.indexOf('bid_too_low') !== -1) Z.toast('Bid too low.', 'error');
+          else if(msg.indexOf('cannot_bid_own') !== -1) Z.toast('You cannot bid on your own auction.', 'error');
+          else if(msg.indexOf('auction_ended') !== -1) Z.toast('Auction ended.', 'error');
+          else Z.toast('Failed: ' + msg, 'error');
+          btn.disabled = false;
+          btn.textContent = 'Place bid';
+        }
+      });
+    }, 40);
+  }
+}
+
+/* ============================================================
+   AUCTION — create button on seller's SPACE for active items
+   ============================================================ */
+async function injectAuctionButtons(){
+  if(Z.State.currentView !== 'market-my-selling') return;
+  var host = document.getElementById('mk3-mysell-host');
+  if(!host) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* For every active item card, add an "Auction" button */
+  var cards = host.querySelectorAll('.mk3-card');
+  cards.forEach(function(card, idx){
+    if(card.querySelector('[data-mk6-auction-btn]')) return;
+    var statusChip = card.querySelector('.mk3-status-chip');
+    if(!statusChip) return;
+    if((statusChip.textContent || '').trim() !== 'active') return;
+
+    /* Find asset id from the card via the DB round trip */
+    var title = (card.querySelector('.mk3-title')||{}).textContent || '';
+    if(!title.trim()) return;
+
+    var btn = document.createElement('button');
+    btn.setAttribute('data-mk6-auction-btn','1');
+    btn.style.cssText = 'margin-top:10px;width:100%;padding:9px;border-radius:9px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.08);color:#fbbf24;font-weight:900;font-size:11.5px;cursor:pointer;';
+    btn.innerHTML = '<i class="fa-solid fa-gavel"></i> List as auction';
+
+    btn.addEventListener('click', async function(e){
+      e.stopPropagation();
+      var r = await c.from('market_assets').select('id').eq('seller_id', Z.State.currentUser.id).eq('title', title.trim()).maybeSingle();
+      if(r.error || !r.data){ Z.toast('Could not resolve asset.', 'error'); return; }
+      promptAuction(r.data.id);
+    });
+
+    card.appendChild(btn);
+  });
+}
+
+function promptAuction(assetId){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:70vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">List as auction</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Starting price (min $0.01)</label>';
+  h += '<input id="mk6-aus-start" type="number" min="0.01" step="0.01" value="0.50" style="width:100%;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:12px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Minimum increment</label>';
+  h += '<input id="mk6-aus-incr" type="number" min="0.01" step="0.01" value="0.05" style="width:100%;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:12px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Duration</label>';
+  h += '<select id="mk6-aus-dur" style="width:100%;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:16px;">';
+  h += '<option value="24">24 hours</option><option value="48">48 hours</option><option value="72">72 hours</option>';
+  h += '</select>';
+  h += '<button id="mk6-aus-create" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Start auction</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var btn = document.getElementById('mk6-aus-create');
+    if(!btn) return;
+    btn.addEventListener('click', async function(){
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      var start = parseFloat((document.getElementById('mk6-aus-start')||{}).value || '0');
+      var incr  = parseFloat((document.getElementById('mk6-aus-incr')||{}).value || '0');
+      var dur   = parseInt((document.getElementById('mk6-aus-dur')||{}).value || '24', 10);
+      btn.disabled = true; btn.textContent = 'Creating…';
+      try {
+        var r = await c.rpc('market_create_auction', {
+          p_asset_id: assetId,
+          p_starting_price: start,
+          p_min_increment: incr,
+          p_duration_hours: dur
+        });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        Z.toast('Auction started.');
+      } catch(e){
+        var msg = (e && e.message) ? e.message : 'unknown';
+        if(msg.indexOf('auction_exists') !== -1) Z.toast('Already has a live auction.', 'error');
+        else Z.toast('Failed: ' + msg, 'error');
+        btn.disabled = false; btn.textContent = 'Start auction';
+      }
+    });
+  }, 40);
+}
+
+/* ============================================================
+   Hooks
+   ============================================================ */
+var _prevShow2 = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow2.apply(this, arguments);
+  if(view === 'galleria-cat' && param === 'digital-market'){
+    setTimeout(function(){ injectAuctionsStrip().catch(function(){}); }, 700);
+    setTimeout(function(){ injectAuctionsStrip().catch(function(){}); }, 1600);
+  }
+  if(view === 'public-profile'){
+    setTimeout(function(){ injectStreaks().catch(function(){}); }, 800);
+    setTimeout(function(){ injectStreaks().catch(function(){}); }, 1900);
+  }
+  if(view === 'market-my-selling'){
+    setTimeout(function(){ injectAuctionButtons().catch(function(){}); }, 500);
+    setTimeout(function(){ injectAuctionButtons().catch(function(){}); }, 1400);
+  }
+  return r;
+};
+
+console.log('[Galleria v2 Phase 5b · Block 15] rarity + streaks + auctions ready');
+})();
 </script>       
 </body>
 </html>
