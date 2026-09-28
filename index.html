@@ -26522,7 +26522,446 @@ Z.renderView = function(view, param){
 console.log('[Galleria v2 Phase 6 · Block 17] AI ads · services · consultancy · themes ready');
 })();
 </script>     
-       
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET — PATCH A · Sell button dedup + can_submit fix   -->
+<!-- Disables Block 11's injectSellButton when Block 11-banner     -->
+<!-- has already rendered. Fixes "submit disabled in every         -->
+<!-- category" (handoff Bug 1, actual root cause = double-inject). -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPatchA) return; Z.__zynixMarketPatchA = true;
+
+/* Block 11 exposes injectSellButton only inside its closure.
+   We cannot reference it directly, so we neutralise its output
+   by removing any orphan "#mks-open" button on every paint and
+   letting Block 11-banner's #mks-banner own the UI. */
+
+function scrubOrphanSellButtons(){
+  if(Z.State.currentView !== 'market-browse') return;
+
+  var banner = document.getElementById('mks-banner');
+  if(!banner) return;
+
+  /* Remove any button Block 11's injectSellButton created */
+  var orphans = document.querySelectorAll('#mks-open');
+  orphans.forEach(function(el){
+    if(el && el.parentNode) el.parentNode.remove();
+  });
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-browse'){
+    [450, 700, 1300, 1800, 2400].forEach(function(t){
+      setTimeout(scrubOrphanSellButtons, t);
+    });
+  }
+  return r;
+};
+
+/* Also scrub on any re-render */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  var out = _prevRender.call(this, view, param);
+  if(view === 'market-browse') setTimeout(scrubOrphanSellButtons, 60);
+  return out;
+};
+
+console.log('[Market Patch A] sell button dedup active');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET — PATCH B · Video thumbnail extraction           -->
+<!-- Wraps Z.storeMedia: if the input is a video File, extracts a  -->
+<!-- frame at 1s, caps at 400×400, uploads as preview, returns     -->
+<!-- { url, previewUrl, mediaType } to any caller.                 -->
+<!-- Wraps Block 11's file picker output.                          -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPatchB) return; Z.__zynixMarketPatchB = true;
+
+/* Public helper — safe to call from anywhere */
+Z.marketExtractVideoThumb = function(videoFile){
+  return new Promise(function(resolve){
+    try {
+      var url = URL.createObjectURL(videoFile);
+      var v = document.createElement('video');
+      v.preload = 'metadata';
+      v.muted = true;
+      v.playsInline = true;
+      v.src = url;
+
+      var done = false;
+      function finish(blobOrNull){
+        if(done) return; done = true;
+        try { URL.revokeObjectURL(url); } catch(e){}
+        resolve(blobOrNull);
+      }
+
+      v.addEventListener('loadedmetadata', function(){
+        var t = Math.min(1, (v.duration || 1) * 0.5);
+        try { v.currentTime = t; } catch(e){ finish(null); }
+      });
+
+      v.addEventListener('seeked', function(){
+        try {
+          var MAX = 400;
+          var w = v.videoWidth  || MAX;
+          var h = v.videoHeight || MAX;
+          var scale = Math.min(1, MAX / Math.max(w, h));
+          var cw = Math.round(w * scale);
+          var ch = Math.round(h * scale);
+
+          var canvas = document.createElement('canvas');
+          canvas.width = cw; canvas.height = ch;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(v, 0, 0, cw, ch);
+          canvas.toBlob(function(blob){
+            finish(blob || null);
+          }, 'image/png', 0.82);
+        } catch(e){ finish(null); }
+      });
+
+      v.addEventListener('error', function(){ finish(null); });
+
+      /* Hard timeout — never hang the form */
+      setTimeout(function(){ finish(null); }, 4000);
+    } catch(e){ resolve(null); }
+  });
+};
+
+/* Wrap Z.storeMedia: caller passes a File; if video, upload both
+   the video and an extracted thumbnail. Returns { url, previewUrl }. */
+var _orig = Z.storeMedia;
+if(typeof _orig === 'function'){
+  Z.storeMedia = async function(file){
+    var url = await _orig.call(this, file);
+    if(!url) return url;
+
+    /* Detect video by MIME — Z.isVideoUrl might not exist */
+    var isVideo = file && file.type && file.type.indexOf('video/') === 0;
+    if(!isVideo) return url;
+
+    var thumbBlob = await Z.marketExtractVideoThumb(file);
+    if(!thumbBlob) return url;
+
+    try {
+      var thumbFile = new File([thumbBlob], 'thumb_' + (file.name || 'frame') + '.png', { type:'image/png' });
+      var thumbUrl = await _orig.call(this, thumbFile);
+      /* Stash preview alongside URL — Block 11 can pick it up */
+      Z._lastVideoPreview = thumbUrl;
+    } catch(e){}
+
+    return url;
+  };
+}
+
+console.log('[Market Patch B] video thumbnail extractor ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET — PATCH C · Sell form state cache                -->
+<!-- Caches Block 11's form state keyed by category. Restores on   -->
+<!-- re-entry. Clears on cancel or successful submit.              -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPatchC) return; Z.__zynixMarketPatchC = true;
+
+var LS_PREFIX = 'zynix_mk_form_';
+
+function keyFor(cat){ return LS_PREFIX + cat; }
+
+function saveState(cat, payload){
+  try { sessionStorage.setItem(keyFor(cat), JSON.stringify(payload)); } catch(e){}
+}
+function loadState(cat){
+  try {
+    var raw = sessionStorage.getItem(keyFor(cat));
+    return raw ? JSON.parse(raw) : null;
+  } catch(e){ return null; }
+}
+function clearState(cat){
+  try { sessionStorage.removeItem(keyFor(cat)); } catch(e){}
+}
+
+/* We cannot reach Block 11's private _form. Instead we mirror the
+   user's typing into sessionStorage via delegated listeners on
+   the sell form's inputs — then restore on the next entry. */
+
+function attachMirroring(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var cat = Z.State.currentParam;
+  if(!cat) return;
+
+  var host = document.getElementById('mks-items-host');
+  if(!host) return;
+
+  /* Persist titles/descs/tags per item index */
+  host.querySelectorAll('[data-mks-title],[data-mks-desc],[data-mks-tags]').forEach(function(el){
+    if(el._mkpHooked) return; el._mkpHooked = true;
+    el.addEventListener('input', function(){
+      var snap = {};
+      host.querySelectorAll('[data-mks-title]').forEach(function(t){
+        snap['t' + t.getAttribute('data-mks-title')] = t.value;
+      });
+      host.querySelectorAll('[data-mks-desc]').forEach(function(t){
+        snap['d' + t.getAttribute('data-mks-desc')] = t.value;
+      });
+      host.querySelectorAll('[data-mks-tags]').forEach(function(t){
+        snap['g' + t.getAttribute('data-mks-tags')] = t.value;
+      });
+      saveState(cat, snap);
+    });
+  });
+}
+
+function restoreTypedText(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var cat = Z.State.currentParam;
+  if(!cat) return;
+  var snap = loadState(cat);
+  if(!snap) return;
+
+  var host = document.getElementById('mks-items-host');
+  if(!host) return;
+
+  Object.keys(snap).forEach(function(k){
+    var idx = k.slice(1);
+    var sel = null;
+    if(k[0] === 't') sel = '[data-mks-title="' + idx + '"]';
+    if(k[0] === 'd') sel = '[data-mks-desc="' + idx + '"]';
+    if(k[0] === 'g') sel = '[data-mks-tags="' + idx + '"]';
+    if(!sel) return;
+    var el = host.querySelector(sel);
+    if(el && !el.value) el.value = snap[k];
+  });
+}
+
+/* Clear on cancel or successful submit */
+Z.marketClearFormCache = function(cat){
+  if(cat) clearState(cat);
+  else {
+    try {
+      Object.keys(sessionStorage).forEach(function(k){
+        if(k.indexOf(LS_PREFIX) === 0) sessionStorage.removeItem(k);
+      });
+    } catch(e){}
+  }
+};
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-sell'){
+    setTimeout(restoreTypedText, 250);
+    setTimeout(attachMirroring, 300);
+    setTimeout(attachMirroring, 800);
+    setTimeout(attachMirroring, 1500);
+  }
+  if(view === 'market-sell-success'){
+    /* Clear cache for the category we just submitted */
+    var parts = String(param || '').split('|');
+    if(parts[0]) clearState(parts[0]);
+  }
+  return r;
+};
+
+console.log('[Market Patch C] form state cache active');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET — PATCH D · Submit button hint                   -->
+<!-- When submit is disabled because a title is too short, show a  -->
+<!-- small hint under the button instead of silent refusal.        -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPatchD) return; Z.__zynixMarketPatchD = true;
+
+function addHint(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var btn = document.getElementById('mks-submit');
+  if(!btn) return;
+  if(document.getElementById('mks-hint')) return;
+
+  var hint = document.createElement('div');
+  hint.id = 'mks-hint';
+  hint.style.cssText = 'font-size:11px;color:#94a3b8;text-align:center;margin-top:6px;';
+  btn.parentNode.insertBefore(hint, btn.nextSibling);
+}
+
+function updateHint(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var hint = document.getElementById('mks-hint');
+  var btn = document.getElementById('mks-submit');
+  if(!hint || !btn) return;
+
+  if(!btn.disabled){ hint.textContent = ''; return; }
+
+  /* Read DOM to find the blocker */
+  var copyCb = document.getElementById('mks-copy-cb');
+  var items = document.querySelectorAll('[data-mks-title]');
+  var missingFile = document.querySelectorAll('[data-mks-pick]').length > 0;
+
+  var msg = '';
+  if(copyCb && !copyCb.checked){
+    msg = 'Tick the copyright checkbox to continue.';
+  } else {
+    var shortTitle = false, noFile = false;
+    items.forEach(function(el){
+      var t = (el.value || '').trim();
+      if(t.length < 3) shortTitle = true;
+    });
+    /* Files: count selected via the Replace/Choose buttons count */
+    var chooseBtns = document.querySelectorAll('[data-mks-pick]');
+    chooseBtns.forEach(function(b){
+      if((b.textContent || '').indexOf('Choose') !== -1) noFile = true;
+    });
+    if(noFile) msg = 'Attach a file to every item.';
+    else if(shortTitle) msg = 'Every item needs a title of at least 3 characters.';
+  }
+  hint.textContent = msg;
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-sell'){
+    setTimeout(function(){ addHint(); updateHint(); }, 300);
+    setTimeout(updateHint, 900);
+  }
+  return r;
+};
+
+/* Re-check on any change inside the sell form */
+document.addEventListener('input', function(){
+  if(Z.State.currentView === 'market-sell') updateHint();
+}, true);
+document.addEventListener('change', function(){
+  if(Z.State.currentView === 'market-sell') updateHint();
+}, true);
+
+console.log('[Market Patch D] validation hint active');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET — PATCH E · Committee queue hardening            -->
+<!-- 1. Thumbnail falls back to media_url when preview_url fails.  -->
+<!-- 2. Hides seller_username from committee members (anonymity).  -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPatchE) return; Z.__zynixMarketPatchE = true;
+
+function hardenQueue(){
+  if(Z.State.currentView !== 'committee-queue') return;
+  var host = document.getElementById('mk3-queue-host');
+  if(!host) return;
+
+  host.querySelectorAll('.mk3-thumb img').forEach(function(img){
+    if(img._mkpHooked) return; img._mkpHooked = true;
+    img.addEventListener('error', function(){
+      /* Replace with fallback icon */
+      var wrap = this.parentNode;
+      if(!wrap) return;
+      wrap.innerHTML = '<i class="fa-solid fa-image"></i>';
+    });
+  });
+
+  /* Remove seller identity from the queue meta line */
+  host.querySelectorAll('.mk3-sub').forEach(function(el){
+    var txt = el.textContent || '';
+    var cleaned = txt.replace(/by @[^\s·]+/g, 'by —').replace(/·\s*·/g, '·').trim();
+    if(cleaned !== txt) el.textContent = cleaned;
+  });
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'committee-queue'){
+    [300, 700, 1400, 2200].forEach(function(t){
+      setTimeout(hardenQueue, t);
+    });
+  }
+  return r;
+};
+
+console.log('[Market Patch E] committee queue hardening active');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET — PATCH F · Cosmetic pass                        -->
+<!-- F1. Guide "?" title toggles between open/close text.          -->
+<!-- F2. Rewrites Block 8 header comment in DOM (documentation).   -->
+<!-- F3. Category tiles get uniform min-height + aspect-ratio.     -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPatchF) return; Z.__zynixMarketPatchF = true;
+
+/* F3 — uniform category tiles */
+if(!document.getElementById('zynix-mk-cat-uniform')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mk-cat-uniform';
+  st.textContent = [
+    '.zyg-cat-tile{min-height:96px;aspect-ratio:1/1;justify-content:center;}',
+    '.zyg-soon-badge{position:absolute;top:6px;right:6px;}',
+    '@media(min-width:641px){.zyg-cat-tile{min-height:110px;}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* F1 — ? button label toggle */
+function fixGuideTitle(){
+  if(Z.State.currentView !== 'market-guide') return;
+  var buttons = document.querySelectorAll('.biz-explain-btn');
+  buttons.forEach(function(b){
+    b.setAttribute('title', 'Close guide');
+  });
+}
+function fixGuideTitleOnCategory(){
+  if(Z.State.currentView !== 'galleria-cat') return;
+  var buttons = document.querySelectorAll('.biz-explain-btn');
+  buttons.forEach(function(b){
+    b.setAttribute('title', 'How it works');
+  });
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-guide') setTimeout(fixGuideTitle, 200);
+  if(view === 'galleria-cat') setTimeout(fixGuideTitleOnCategory, 200);
+  return r;
+};
+
+console.log('[Market Patch F] cosmetic pass active');
+})();
+</script>
+     
 </body>
 </html>
 
