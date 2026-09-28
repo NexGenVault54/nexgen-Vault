@@ -28587,7 +28587,1412 @@ Z.marketTestMediaUrl = async function(){
 
 console.log('[Market Block 17] form-loss guard + avatar cleanup + seller guard + retry');
 })();
-</script>    
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 18 — Seller enhancements                 -->
+<!-- · Earnings meter per lot in My Selling                        -->
+<!-- · Tier progress bar in seller dashboard                       -->
+<!-- · 7-day sales sparkline in seller dashboard                   -->
+<!-- Additive. No existing DOM destroyed.                          -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketTier2a) return; Z.__zynixMarketTier2a = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n) || 0).toFixed(2); }
+function shortTime(ts){
+  if(!ts) return '—';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+/* ============================================================
+   1. Earnings meter on My Selling cards
+   ============================================================ */
+async function injectLotEarnings(){
+  if(Z.State.currentView !== 'market-my-selling') return;
+  var host = document.getElementById('mk3-mysell-host');
+  if(!host) return;
+  if(host.querySelector('[data-mk-earn]')) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var earningsMap = {};
+  try {
+    var r = await c.rpc('market_lot_earnings', { p_seller_id: Z.State.currentUser.id });
+    if(!r.error && r.data){
+      r.data.forEach(function(row){
+        if(row.lot_id) earningsMap[row.lot_id] = row;
+      });
+    }
+  } catch(e){}
+
+  /* First fetch lot_id for each card */
+  var cards = host.querySelectorAll('.mk3-card[data-mk3-item]');
+  for(var i = 0; i < cards.length; i++){
+    var card = cards[i];
+    if(card.querySelector('[data-mk-earn]')) continue;
+
+    var assetId = card.getAttribute('data-mk3-item');
+    var lotId = null;
+    try {
+      var q = await c.from('market_assets').select('lot_id').eq('id', assetId).maybeSingle();
+      if(!q.error && q.data) lotId = q.data.lot_id;
+    } catch(e){}
+    if(!lotId) continue;
+
+    var e = earningsMap[lotId] || { earned: 0, sales_count: 0, last_sale: null };
+
+    var div = document.createElement('div');
+    div.setAttribute('data-mk-earn','1');
+    div.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.25);display:flex;justify-content:space-between;align-items:center;font-size:11px;';
+    div.innerHTML =
+      '<span style="color:#10b981;font-weight:900;">💰 ' + money(e.earned) + '</span>' +
+      '<span style="color:#94a3b8;">📦 ' + (Number(e.sales_count)||0) + ' sale' + (e.sales_count === 1 ? '' : 's') + '</span>' +
+      '<span style="color:#64748b;">' + shortTime(e.last_sale) + '</span>';
+    card.appendChild(div);
+  }
+}
+
+/* ============================================================
+   2. Tier progress + sales sparkline in seller dashboard
+   ============================================================ */
+async function injectSellerEnhancements(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var me = Z.State.currentUser;
+  if(!me || me.id !== Z.State.currentParam) return;
+
+  var dash = document.getElementById('mk3-seller-dash');
+  if(!dash) return;
+  if(dash.querySelector('[data-mk-tier]')) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* Tier progress */
+  var tierData = null;
+  try {
+    var tr = await c.rpc('market_tier_progress');
+    if(!tr.error) tierData = tr.data;
+  } catch(e){}
+
+  if(tierData){
+    var pct = tierData.limit > 0
+      ? Math.min(100, Math.round((tierData.used / tierData.limit) * 100))
+      : 0;
+    var tierBar = document.createElement('div');
+    tierBar.setAttribute('data-mk-tier','1');
+    tierBar.style.cssText = 'margin-top:10px;padding:10px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);';
+    tierBar.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<span style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">' +
+          tierData.tier.toUpperCase() + ' TIER</span>' +
+        '<span style="font-size:10px;color:#60a5fa;font-weight:900;">' +
+          tierData.used + ' / ' + tierData.limit + ' categories</span>' +
+      '</div>' +
+      '<div style="height:6px;border-radius:3px;background:rgba(0,0,0,.35);overflow:hidden;">' +
+        '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#10b981,#3b82f6);transition:width .4s;"></div>' +
+      '</div>';
+    var statRow = dash.querySelector('div[style*="grid-template-columns"]');
+    if(statRow && statRow.parentNode){
+      statRow.parentNode.insertBefore(tierBar, statRow.nextSibling);
+    } else {
+      dash.appendChild(tierBar);
+    }
+  }
+
+  /* Sales sparkline */
+  try {
+    var sr = await c.rpc('market_sales_sparkline', { p_days: 7 });
+    if(!sr.error && sr.data && sr.data.length){
+      var maxVal = Math.max.apply(null, sr.data.map(function(d){ return Number(d.earnings) || 0; }));
+      if(maxVal <= 0) maxVal = 1;
+
+      var spark = document.createElement('div');
+      spark.setAttribute('data-mk-spark','1');
+      spark.style.cssText = 'margin-top:10px;padding:10px;border-radius:10px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.28);';
+      var barsHTML = '';
+      sr.data.forEach(function(d){
+        var h = Math.max(4, Math.round(((Number(d.earnings) || 0) / maxVal) * 36));
+        barsHTML += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">' +
+          '<div style="width:100%;height:' + h + 'px;background:linear-gradient(180deg,#8b5cf6,#3b82f6);border-radius:2px;"></div>' +
+          '<div style="font-size:8px;color:#64748b;font-weight:800;">' +
+            new Date(d.day).toLocaleDateString(undefined,{weekday:'short'}).slice(0,2) +
+          '</div>' +
+        '</div>';
+      });
+
+      var totalEarn = sr.data.reduce(function(sum, d){ return sum + (Number(d.earnings) || 0); }, 0);
+      var totalSales = sr.data.reduce(function(sum, d){ return sum + (Number(d.sales_count) || 0); }, 0);
+
+      spark.innerHTML =
+        '<div style="display:flex;justify-content:space-between;margin-bottom:8px;">' +
+          '<span style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">LAST 7 DAYS</span>' +
+          '<span style="font-size:10px;color:#a78bfa;font-weight:900;">' + money(totalEarn) + ' · ' + totalSales + ' sales</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:4px;align-items:flex-end;height:52px;">' + barsHTML + '</div>';
+
+      var existingTier = dash.querySelector('[data-mk-tier]');
+      if(existingTier && existingTier.parentNode){
+        existingTier.parentNode.insertBefore(spark, existingTier.nextSibling);
+      } else {
+        dash.appendChild(spark);
+      }
+    }
+  } catch(e){}
+}
+
+/* ============================================================
+   Hooks
+   ============================================================ */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-my-selling'){
+    setTimeout(function(){ injectLotEarnings().catch(function(){}); }, 600);
+    setTimeout(function(){ injectLotEarnings().catch(function(){}); }, 1600);
+  }
+  if(view === 'public-profile'){
+    setTimeout(function(){ injectSellerEnhancements().catch(function(){}); }, 900);
+    setTimeout(function(){ injectSellerEnhancements().catch(function(){}); }, 2000);
+  }
+  return r;
+};
+
+console.log('[Market Block 18] seller enhancements ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 19 — Ledgers                             -->
+<!-- Personal ledger + Committee ledger views.                     -->
+<!-- Access: small link below ops bar (Ledger) + inside committee. -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketLedgers) return; Z.__zynixMarketLedgers = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + Math.abs(Number(n) || 0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+/* ============================================================
+   Personal ledger view
+   ============================================================ */
+function renderPersonalLedger(){
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-receipt" style="color:#10b981;"></i> My Ledger</h2>';
+  h += '</div></div>';
+
+  /* Summary */
+  h += '<div id="mkldg-summary"></div>';
+
+  /* Filter chips */
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+  [['all','All'],['credit','Earnings'],['debit','Spending']].forEach(function(p,i){
+    h += '<button class="mkt-sort-btn" data-mkldg-filter="' + p[0] + '" ' + (i === 0 ? 'data-active="1"' : '') + '>' + p[1] + '</button>';
+  });
+  h += '</div>';
+
+  /* List */
+  h += '<div id="mkldg-list"><div style="text-align:center;padding:30px;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;"></i></div></div>';
+
+  h += '</div>';
+  setTimeout(loadPersonalLedger, 40);
+  return h;
+}
+
+async function loadPersonalLedger(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var summary = document.getElementById('mkldg-summary');
+  var list = document.getElementById('mkldg-list');
+
+  try {
+    var r = await c.rpc('market_personal_ledger', { p_limit: 100, p_offset: 0 });
+    if(r.error) throw r.error;
+    var rows = r.data || [];
+
+    /* Summary */
+    var totalIn = 0, totalOut = 0;
+    rows.forEach(function(x){
+      if(x.direction === 'credit') totalIn  += Number(x.amount) || 0;
+      if(x.direction === 'debit')  totalOut += Number(x.amount) || 0;
+    });
+    summary.innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);">' +
+          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">EARNED</div>' +
+          '<div style="font-size:18px;font-weight:900;color:#10b981;">' + money(totalIn) + '</div>' +
+        '</div>' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(161,98,98,.08);border:1px solid rgba(161,98,98,.3);">' +
+          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">SPENT</div>' +
+          '<div style="font-size:18px;font-weight:900;color:#a16262;">' + money(totalOut) + '</div>' +
+        '</div>' +
+      '</div>';
+
+    paintLedger(rows, list);
+  } catch(e){
+    list.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load ledger.' });
+  }
+}
+
+function paintLedger(rows, host){
+  if(!rows.length){
+    host.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No transactions yet.</div>';
+    return;
+  }
+
+  var h = '';
+  var labels = {
+    rental_24h: 'Rental',
+    rental_renewal: 'Renewal',
+    permanent: 'Purchase',
+    committee_fee: 'Committee fee',
+    upload_fee: 'Upload fee',
+    service_order: 'Service order'
+  };
+
+  rows.forEach(function(x){
+    var isCredit = x.direction === 'credit';
+    var isDebit  = x.direction === 'debit';
+    var col = isCredit ? '#10b981' : (isDebit ? '#a16262' : '#94a3b8');
+    var sign = isCredit ? '+' : (isDebit ? '−' : '');
+    var label = labels[x.kind] || x.kind;
+
+    h += '<div style="padding:12px;border-radius:10px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;">';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:12.5px;font-weight:900;color:#fff;">' + esc(label) + '</div>';
+    h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+         (x.asset_title ? esc(x.asset_title) + ' · ' : '') + esc(x.counterparty || '') + '</div>';
+    h += '</div>';
+    h += '<div style="text-align:right;flex-shrink:0;">';
+    h += '<div style="font-size:14px;font-weight:900;color:' + col + ';">' + sign + money(x.amount) + '</div>';
+    h += '<div style="font-size:9.5px;color:#64748b;">' + timeAgo(x.created_at) + '</div>';
+    h += '</div></div>';
+  });
+  host.innerHTML = h;
+}
+
+/* Filter wiring */
+document.addEventListener('click', function(e){
+  var b = e.target.closest('[data-mkldg-filter]');
+  if(!b) return;
+  if(Z.State.currentView !== 'market-ledger') return;
+  document.querySelectorAll('[data-mkldg-filter]').forEach(function(x){ x.removeAttribute('data-active'); });
+  b.setAttribute('data-active','1');
+  var mode = b.getAttribute('data-mkldg-filter');
+  /* Client-side filter using cached rows */
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  c.rpc('market_personal_ledger', { p_limit: 100, p_offset: 0 }).then(function(r){
+    if(r.error) return;
+    var rows = r.data || [];
+    if(mode !== 'all') rows = rows.filter(function(x){ return x.direction === mode; });
+    var host = document.getElementById('mkldg-list');
+    if(host) paintLedger(rows, host);
+  });
+});
+
+/* ============================================================
+   Committee ledger view
+   ============================================================ */
+function renderCommitteeLedger(){
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-gavel" style="color:#10b981;"></i> Committee Earnings</h2>';
+  h += '</div></div>';
+
+  h += '<div id="mkcm-summary"></div>';
+  h += '<div id="mkcm-list"><div style="text-align:center;padding:30px;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;"></i></div></div>';
+
+  h += '</div>';
+  setTimeout(loadCommitteeLedger, 40);
+  return h;
+}
+
+async function loadCommitteeLedger(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var summary = document.getElementById('mkcm-summary');
+  var list = document.getElementById('mkcm-list');
+
+  try {
+    var r = await c.rpc('market_committee_ledger', { p_limit: 100, p_offset: 0 });
+    if(r.error){
+      if(String(r.error.message).indexOf('not_committee_member') !== -1){
+        list.innerHTML = Z.emptyState({ icon:'fa-solid fa-user-lock', title:'Committee members only.' });
+        return;
+      }
+      throw r.error;
+    }
+    var rows = r.data || [];
+
+    var total = 0;
+    var thisWeek = 0;
+    var weekAgo = Date.now() - 7*24*60*60*1000;
+    rows.forEach(function(x){
+      var amt = Number(x.amount) || 0;
+      total += amt;
+      if(new Date(x.created_at).getTime() > weekAgo) thisWeek += amt;
+    });
+
+    summary.innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);">' +
+          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">THIS WEEK</div>' +
+          '<div style="font-size:18px;font-weight:900;color:#10b981;">' + money(thisWeek) + '</div>' +
+        '</div>' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);">' +
+          '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">ALL TIME</div>' +
+          '<div style="font-size:18px;font-weight:900;color:#60a5fa;">' + money(total) + '</div>' +
+        '</div>' +
+      '</div>';
+
+    if(!rows.length){
+      list.innerHTML = '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No approvals yet.</div>';
+      return;
+    }
+
+    var h = '';
+    rows.forEach(function(x){
+      h += '<div style="padding:12px;border-radius:10px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">';
+      h += '<div style="font-size:12px;color:#cbd5e1;">Approved lot</div>';
+      h += '<div style="text-align:right;">';
+      h += '<div style="font-size:14px;font-weight:900;color:#10b981;">+ ' + money(x.amount) + '</div>';
+      h += '<div style="font-size:9.5px;color:#64748b;">' + timeAgo(x.created_at) + '</div>';
+      h += '</div></div>';
+    });
+    list.innerHTML = h;
+  } catch(e){
+    list.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load.' });
+  }
+}
+
+/* ============================================================
+   Ledger links — small row under ops bar
+   ============================================================ */
+async function injectLedgerLink(){
+  if(Z.State.currentView !== 'galleria-cat') return;
+  if(Z.State.currentParam !== 'digital-market') return;
+
+  var opsSlot = document.getElementById('mkh2-ops-slot');
+  if(!opsSlot) return;
+  if(opsSlot.querySelector('[data-mkldg-link]')) return;
+
+  var me = Z.State.currentUser;
+  if(!me) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var isCommittee = false;
+  try {
+    var r = await c.rpc('committee_is_member');
+    if(!r.error) isCommittee = !!r.data;
+  } catch(e){}
+
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-mkldg-link','1');
+  wrap.style.cssText = 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;';
+
+  var h = '<button id="mkldg-open" style="padding:8px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:900;cursor:pointer;">' +
+          '<i class="fa-solid fa-receipt"></i> My Ledger</button>';
+
+  if(isCommittee){
+    h += '<button id="mkcm-open" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fbbf24;font-size:11px;font-weight:900;cursor:pointer;">' +
+         '<i class="fa-solid fa-gavel"></i> Committee Earnings</button>';
+  }
+
+  wrap.innerHTML = h;
+  opsSlot.appendChild(wrap);
+
+  setTimeout(function(){
+    var lo = document.getElementById('mkldg-open');
+    if(lo) lo.addEventListener('click', function(){ Z.showView('market-ledger'); });
+    var co = document.getElementById('mkcm-open');
+    if(co) co.addEventListener('click', function(){ Z.showView('market-committee-ledger'); });
+  }, 30);
+}
+
+/* ============================================================
+   Router + hooks
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'market-ledger')           return renderPersonalLedger();
+  if(view === 'market-committee-ledger') return renderCommitteeLedger();
+  return _prevRender.call(this, view, param);
+};
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'galleria-cat' && param === 'digital-market'){
+    setTimeout(function(){ injectLedgerLink().catch(function(){}); }, 700);
+    setTimeout(function(){ injectLedgerLink().catch(function(){}); }, 1800);
+  }
+  return r;
+};
+
+console.log('[Market Block 19] ledgers ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 20 — Retention                           -->
+<!-- · Auto-renew prompts (2h before rental expiry)                -->
+<!-- · Weekly seller digest (Sundays)                              -->
+<!-- · Buyer streak reward (7-day browsing)                        -->
+<!-- · Market notification badge on Galleria icon                  -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketRetention) return; Z.__zynixMarketRetention = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n) || 0).toFixed(2); }
+
+/* ============================================================
+   1. AUTO-RENEW PROMPTS
+   Checked once per session on app open.
+   ============================================================ */
+async function checkAutoRenewPrompts(){
+  if(!Z.State.currentUser) return;
+  var today = new Date().toISOString().slice(0, 10);
+  var seenKey = 'zynix_market_autorenew_seen_' + today;
+  try { if(localStorage.getItem(seenKey) === '1') return; } catch(e){}
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_auto_renew_prompts');
+    if(r.error || !r.data || !r.data.length) return;
+
+    try { localStorage.setItem(seenKey, '1'); } catch(e){}
+
+    var items = r.data;
+    /* Show first prompt; queue rest would require more UX. Keep simple. */
+    var it = items[0];
+
+    var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+    h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:70vh;">';
+    h += '<div class="sheet-handle"></div>';
+    h += '<div class="sheet-header">';
+    h += '<h3 style="font-size:14px;font-weight:900;">Keep it for one more day?</h3>';
+    h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+    h += '</div>';
+    h += '<div class="sheet-body" style="padding:16px;">';
+
+    if(it.preview_url){
+      h += '<div style="aspect-ratio:1;max-width:180px;margin:0 auto 12px;border-radius:12px;overflow:hidden;background:#000;">';
+      h += '<img src="' + esc(it.preview_url) + '" style="width:100%;height:100%;object-fit:cover;">';
+      h += '</div>';
+    }
+
+    h += '<div style="text-align:center;font-size:13px;font-weight:800;color:#fff;margin-bottom:6px;">' + esc(it.title || 'Your rental') + '</div>';
+    h += '<div style="text-align:center;font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">';
+    h += 'Expires in ' + Math.max(0, Math.round(Number(it.hours_left) * 60)) + ' minutes.<br>';
+    h += 'Extend for <b style="color:#10b981;">$0.01</b> for another 24 hours.';
+    h += '</div>';
+
+    h += '<button id="mkar-keep" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Keep it · $0.01</button>';
+    h += '<button id="mkar-letgo" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Let it expire</button>';
+    h += '</div></div></div>';
+    Z.openSheet(h);
+
+    setTimeout(function(){
+      var keep = document.getElementById('mkar-keep');
+      var letgo = document.getElementById('mkar-letgo');
+      if(keep) keep.addEventListener('click', async function(){
+        keep.disabled = true; keep.textContent = 'Extending…';
+        try {
+          var rr = await c.rpc('market_renew', { p_asset_id: it.asset_id, p_tier: 'rental_24h' });
+          if(rr.error) throw rr.error;
+          Z.closeSheet();
+          Z.toast('Extended · $0.01');
+          if(typeof Z.refreshSession === 'function'){ try { await Z.refreshSession(); } catch(e){} }
+        } catch(e){
+          Z.toast('Failed: ' + (e.message || 'unknown'), 'error');
+          keep.disabled = false; keep.textContent = 'Keep it · $0.01';
+        }
+      });
+      if(letgo) letgo.addEventListener('click', function(){ Z.closeSheet(); });
+    }, 40);
+  } catch(e){}
+}
+
+/* ============================================================
+   2. WEEKLY SELLER DIGEST (Sundays)
+   ============================================================ */
+async function checkWeeklyDigest(){
+  if(!Z.State.currentUser) return;
+  var today = new Date();
+  if(today.getDay() !== 0) return; /* 0 = Sunday */
+
+  var week = today.toISOString().slice(0, 10);
+  var key = 'zynix_market_digest_' + week;
+  try { if(localStorage.getItem(key) === '1') return; } catch(e){}
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_sales_sparkline', { p_days: 7 });
+    if(r.error || !r.data || !r.data.length) return;
+
+    var totalEarn = r.data.reduce(function(s, d){ return s + (Number(d.earnings) || 0); }, 0);
+    var totalSales = r.data.reduce(function(s, d){ return s + (Number(d.sales_count) || 0); }, 0);
+
+    if(totalSales === 0 && totalEarn === 0) return;
+
+    try { localStorage.setItem(key, '1'); } catch(e){}
+
+    var h = '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">';
+    h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">YOUR WEEK</div>';
+    h += '<div style="font-size:15px;font-weight:900;color:#fff;margin-top:6px;line-height:1.4;">';
+    h += 'You made <b style="color:#10b981;">' + money(totalEarn) + '</b> from ';
+    h += '<b>' + totalSales + '</b> sale' + (totalSales === 1 ? '' : 's') + ' this week.';
+    h += '</div>';
+    h += '<button onclick="this.parentNode.remove()" style="margin-top:10px;background:transparent;border:none;color:#60a5fa;font-size:11px;font-weight:900;cursor:pointer;padding:0;">Dismiss</button>';
+    h += '</div>';
+
+    /* Inject at top of Galleria */
+    setTimeout(function(){
+      if(Z.State.currentView !== 'galleria') return;
+      var root = document.querySelector('.zyg-root');
+      if(!root) return;
+      var wrap = document.createElement('div');
+      wrap.setAttribute('data-mk-digest','1');
+      wrap.style.marginBottom = '14px';
+      wrap.innerHTML = h;
+      root.insertBefore(wrap.firstChild, root.firstChild);
+    }, 500);
+  } catch(e){}
+}
+
+/* ============================================================
+   3. BUYER STREAK REWARD (7-day browsing)
+   ============================================================ */
+function trackBrowseStreak(){
+  if(!Z.State.currentUser) return;
+  var uid = Z.State.currentUser.id;
+  var today = new Date().toISOString().slice(0, 10);
+  var key = 'zynix_mkt_streak_' + uid;
+
+  var data = {};
+  try { data = JSON.parse(localStorage.getItem(key) || '{}'); } catch(e){}
+
+  var lastDate = data.last || '';
+  var count = Number(data.count) || 0;
+
+  if(lastDate === today) return;
+
+  /* If last was yesterday, increment */
+  var yesterday = new Date(Date.now() - 24*60*60*1000).toISOString().slice(0, 10);
+  if(lastDate === yesterday){
+    count = count + 1;
+  } else {
+    count = 1;
+  }
+
+  data.last = today;
+  data.count = count;
+  data.rewarded = data.rewarded || '';
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch(e){}
+
+  /* 7-day milestone — show reward once per streak window */
+  if(count >= 7 && data.rewarded !== today.slice(0, 7)){
+    data.rewarded = today.slice(0, 7);
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch(e){}
+    setTimeout(function(){
+      var h = '<div style="padding:14px;border-radius:12px;background:linear-gradient(135deg,rgba(251,191,36,.14),rgba(236,72,153,.10));border:1px solid rgba(251,191,36,.45);">';
+      h += '<div style="font-size:11px;font-weight:900;color:#fbbf24;letter-spacing:.5px;">7-DAY STREAK UNLOCKED</div>';
+      h += '<div style="font-size:14px;font-weight:900;color:#fff;margin-top:6px;line-height:1.4;">';
+      h += 'You browsed the market 7 days in a row. Free rental of any $0.01 asset added to your next purchase.';
+      h += '</div>';
+      h += '<button onclick="this.parentNode.remove()" style="margin-top:10px;background:transparent;border:none;color:#fbbf24;font-size:11px;font-weight:900;cursor:pointer;padding:0;">Claimed</button>';
+      h += '</div>';
+      if(Z.openSheet){
+        Z.openSheet('<div style="padding:16px;">' + h + '</div>');
+      }
+    }, 1500);
+  }
+}
+
+/* ============================================================
+   4. MARKET NOTIFICATION BADGE ON GALLERIA
+   Small dot on Digital Market category tile if user has updates
+   ============================================================ */
+async function updateMarketBadge(){
+  if(!Z.State.currentUser) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var has = false;
+
+  try {
+    var sp = await c.rpc('market_auto_renew_prompts');
+    if(!sp.error && sp.data && sp.data.length) has = true;
+  } catch(e){}
+
+  try {
+    var ms = await c.rpc('market_my_selling');
+    if(!ms.error && ms.data){
+      var pending = ms.data.reduce(function(s, x){ return s + (Number(x.pending_count) || 0); }, 0);
+      if(pending > 0) has = true;
+    }
+  } catch(e){}
+
+  if(!has) return;
+
+  /* Find the Digital Market tile in Galleria and add a dot */
+  setTimeout(function(){
+    if(Z.State.currentView !== 'galleria') return;
+    var tile = document.querySelector('[data-zyg-cat="digital-market"]');
+    if(!tile) return;
+    if(tile.querySelector('[data-mk-dot]')) return;
+    var dot = document.createElement('span');
+    dot.setAttribute('data-mk-dot','1');
+    dot.style.cssText = 'position:absolute;top:8px;left:8px;width:8px;height:8px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 2px #111827;';
+    tile.style.position = 'relative';
+    tile.appendChild(dot);
+  }, 600);
+}
+
+/* ============================================================
+   Hooks
+   ============================================================ */
+function runOnLogin(){
+  if(!Z.State.currentUser) return;
+  setTimeout(checkAutoRenewPrompts, 800);
+  setTimeout(checkWeeklyDigest, 1400);
+  setTimeout(function(){ trackBrowseStreak(); }, 2000);
+  setTimeout(updateMarketBadge, 2600);
+}
+
+/* Trigger on app ready + view changes */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'galleria'){
+    setTimeout(function(){ updateMarketBadge().catch(function(){}); }, 700);
+  }
+  return r;
+};
+
+/* First-load run */
+setTimeout(runOnLogin, 2000);
+
+console.log('[Market Block 20] retention ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 21 — Wishlist + Follow + Dupe hints      -->
+<!-- · Wishlist button on asset detail + wishlist view             -->
+<!-- · Follow seller button + followed sellers row on home         -->
+<!-- · Duplicate title warning in sell form                        -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketSocial) return; Z.__zynixMarketSocial = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n) || 0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+/* ============================================================
+   1. WISHLIST + FOLLOW buttons on asset detail
+   ============================================================ */
+async function injectAssetSocial(){
+  if(Z.State.currentView !== 'market-asset') return;
+  var host = document.getElementById('mkd-host');
+  if(!host) return;
+  if(host.querySelector('[data-mk-social]')) return;
+
+  var me = Z.State.currentUser;
+  if(!me) return;
+
+  var assetId = Z.State.currentParam;
+  if(!assetId) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* Fetch asset + seller */
+  var asset = null;
+  try {
+    var ar = await c.from('market_assets').select('seller_id').eq('id', assetId).maybeSingle();
+    if(!ar.error && ar.data) asset = ar.data;
+  } catch(e){}
+  if(!asset) return;
+
+  var isOwner = asset.seller_id === me.id;
+
+  /* Check wishlist + follow state */
+  var wishlisted = false;
+  var following = false;
+  try {
+    var wr = await c.from('market_wishlist').select('id').eq('user_id', me.id).eq('asset_id', assetId).maybeSingle();
+    if(!wr.error && wr.data) wishlisted = true;
+  } catch(e){}
+  try {
+    var fr = await c.from('market_seller_follows').select('id').eq('follower_id', me.id).eq('seller_id', asset.seller_id).maybeSingle();
+    if(!fr.error && fr.data) following = true;
+  } catch(e){}
+
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-mk-social','1');
+  wrap.style.cssText = 'display:flex;gap:8px;margin-top:10px;';
+
+  var h = '<button id="mk-wish" style="flex:1;padding:10px;border-radius:10px;border:1px solid ' + (wishlisted ? '#ec4899' : '#1e293b') + ';background:' + (wishlisted ? 'rgba(236,72,153,.12)' : '#0f172a') + ';color:' + (wishlisted ? '#ec4899' : '#cbd5e1') + ';font-weight:900;font-size:12px;cursor:pointer;">' +
+          '<i class="fa-' + (wishlisted ? 'solid' : 'regular') + ' fa-heart"></i> ' +
+          (wishlisted ? 'Wishlisted' : 'Wishlist') + '</button>';
+
+  if(!isOwner){
+    h += '<button id="mk-follow" style="flex:1;padding:10px;border-radius:10px;border:1px solid ' + (following ? '#10b981' : '#1e293b') + ';background:' + (following ? 'rgba(16,185,129,.12)' : '#0f172a') + ';color:' + (following ? '#10b981' : '#cbd5e1') + ';font-weight:900;font-size:12px;cursor:pointer;">' +
+         '<i class="fa-solid fa-user-' + (following ? 'check' : 'plus') + '"></i> ' +
+         (following ? 'Following' : 'Follow') + '</button>';
+  }
+
+  wrap.innerHTML = h;
+
+  /* Insert after seller row */
+  var sellerRow = host.querySelector('[data-mkd-seller]');
+  if(sellerRow && sellerRow.parentNode){
+    sellerRow.parentNode.insertBefore(wrap, sellerRow.nextSibling);
+  } else {
+    host.appendChild(wrap);
+  }
+
+  setTimeout(function(){
+    var wb = document.getElementById('mk-wish');
+    if(wb) wb.addEventListener('click', async function(){
+      wb.disabled = true;
+      try {
+        var r = await c.rpc('market_toggle_wishlist', { p_asset_id: assetId });
+        if(r.error) throw r.error;
+        var on = r.data && r.data.wishlisted;
+        wb.style.borderColor = on ? '#ec4899' : '#1e293b';
+        wb.style.background  = on ? 'rgba(236,72,153,.12)' : '#0f172a';
+        wb.style.color       = on ? '#ec4899' : '#cbd5e1';
+        wb.innerHTML = '<i class="fa-' + (on ? 'solid' : 'regular') + ' fa-heart"></i> ' + (on ? 'Wishlisted' : 'Wishlist');
+        Z.toast(on ? 'Added to wishlist' : 'Removed from wishlist');
+      } catch(e){ Z.toast('Failed.', 'error'); }
+      wb.disabled = false;
+    });
+
+    var fb = document.getElementById('mk-follow');
+    if(fb) fb.addEventListener('click', async function(){
+      fb.disabled = true;
+      try {
+        var r = await c.rpc('market_toggle_follow', { p_seller_id: asset.seller_id });
+        if(r.error) throw r.error;
+        var on = r.data && r.data.following;
+        fb.style.borderColor = on ? '#10b981' : '#1e293b';
+        fb.style.background  = on ? 'rgba(16,185,129,.12)' : '#0f172a';
+        fb.style.color       = on ? '#10b981' : '#cbd5e1';
+        fb.innerHTML = '<i class="fa-solid fa-user-' + (on ? 'check' : 'plus') + '"></i> ' + (on ? 'Following' : 'Follow');
+        Z.toast(on ? 'Following seller' : 'Unfollowed');
+      } catch(e){ Z.toast('Failed.', 'error'); }
+      fb.disabled = false;
+    });
+  }, 40);
+}
+
+/* ============================================================
+   2. WISHLIST VIEW
+   ============================================================ */
+function renderWishlist(){
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-heart" style="color:#ec4899;"></i> Wishlist</h2>';
+  h += '</div></div>';
+
+  h += '<div id="mkwl-host"><div style="text-align:center;padding:30px;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#ec4899;"></i></div></div>';
+  h += '</div>';
+  setTimeout(loadWishlist, 40);
+  return h;
+}
+
+async function loadWishlist(){
+  var host = document.getElementById('mkwl-host');
+  if(!host) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.from('market_wishlist')
+      .select('asset_id, created_at, market_assets(id,title,preview_url,media_url,rating_avg,rating_count,category,status)')
+      .eq('user_id', Z.State.currentUser.id)
+      .order('created_at', { ascending: false });
+
+    var rows = (r.data || []).filter(function(x){ return x.market_assets && x.market_assets.status === 'active'; });
+
+    if(!rows.length){
+      host.innerHTML = Z.emptyState({
+        icon:'fa-regular fa-heart',
+        title:'Nothing in your wishlist yet.',
+        cta:{ label:'Browse market', onclick:"Z.showView('galleria-cat','digital-market')" }
+      });
+      return;
+    }
+
+    var h = '<div class="mkt-grid">';
+    rows.forEach(function(row){
+      var a = row.market_assets;
+      var thumb = a.preview_url
+        ? '<img src="' + esc(a.preview_url) + '" alt="">'
+        : '<i class="fa-solid fa-image placeholder-icon"></i>';
+      var rating = Number(a.rating_avg) || 0;
+      var cnt = Number(a.rating_count) || 0;
+      var ratingTxt = cnt > 0 ? (rating.toFixed(1) + ' · ' + cnt) : 'New';
+      h += '<div class="mkt-asset-card" data-mkwl-open="' + esc(a.id) + '">' +
+        '<div class="mkt-asset-thumb">' + thumb + '</div>' +
+        '<div class="mkt-asset-body">' +
+          '<div class="mkt-asset-title">' + esc(a.title) + '</div>' +
+          '<div class="mkt-asset-meta"><i class="fa-solid fa-star star"></i><span>' + ratingTxt + '</span></div>' +
+        '</div>' +
+      '</div>';
+    });
+    h += '</div>';
+    host.innerHTML = h;
+
+    host.querySelectorAll('[data-mkwl-open]').forEach(function(el){
+      el.addEventListener('click', function(){
+        if(typeof Z.openMarketAsset === 'function') Z.openMarketAsset(this.getAttribute('data-mkwl-open'));
+      });
+    });
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load wishlist.' });
+  }
+}
+
+/* ============================================================
+   3. FOLLOWED SELLERS ROW on market home
+   ============================================================ */
+async function injectFollowedRow(){
+  if(Z.State.currentView !== 'galleria-cat') return;
+  if(Z.State.currentParam !== 'digital-market') return;
+
+  var me = Z.State.currentUser;
+  if(!me) return;
+
+  var slot = document.getElementById('mkh2-default');
+  if(!slot) return;
+  if(slot.querySelector('[data-mk-followed]')) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var fr = await c.from('market_seller_follows')
+      .select('seller_id').eq('follower_id', me.id).limit(20);
+    var sellers = (fr.data || []).map(function(x){ return x.seller_id; });
+    if(!sellers.length) return;
+
+    var ar = await c.from('market_assets')
+      .select('id,title,preview_url,category,created_at')
+      .in('seller_id', sellers)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(8);
+
+    if(ar.error || !ar.data || !ar.data.length) return;
+
+    var wrap = document.createElement('div');
+    wrap.setAttribute('data-mk-followed','1');
+    var inner = '<div class="mkh2-row-head">';
+    inner += '<div class="mkh2-row-title"><i class="fa-solid fa-user-check" style="color:#10b981;margin-right:6px;"></i>From sellers you follow</div>';
+    inner += '</div>';
+    inner += '<div class="mkh2-strip">';
+    ar.data.forEach(function(it){
+      var thumb = it.preview_url
+        ? '<img src="' + esc(it.preview_url) + '" alt="" loading="lazy">'
+        : '<i class="fa-solid fa-image ph"></i>';
+      inner += '<div class="mkh2-card" data-mk-followed-open="' + esc(it.id) + '">' +
+        '<div class="mkh2-card-thumb">' + thumb + '</div>' +
+        '<div class="mkh2-card-body">' +
+          '<div class="mkh2-card-title">' + esc(it.title || 'Untitled') + '</div>' +
+          '<div class="mkh2-card-meta">' + timeAgo(it.created_at) + '</div>' +
+        '</div>' +
+      '</div>';
+    });
+    inner += '</div>';
+    wrap.innerHTML = inner;
+
+    slot.insertBefore(wrap, slot.firstChild);
+
+    wrap.querySelectorAll('[data-mk-followed-open]').forEach(function(el){
+      el.addEventListener('click', function(){
+        if(typeof Z.openMarketAsset === 'function') Z.openMarketAsset(this.getAttribute('data-mk-followed-open'));
+      });
+    });
+  } catch(e){}
+}
+
+/* ============================================================
+   4. DUPLICATE TITLE HINT in sell form
+   ============================================================ */
+function injectDupeHint(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var host = document.getElementById('mks-items-host');
+  if(!host) return;
+
+  var category = Z.State.currentParam;
+  if(!category) return;
+
+  host.querySelectorAll('[data-mks-title]').forEach(function(inp){
+    if(inp._mkDupeHooked) return; inp._mkDupeHooked = true;
+
+    var idx = inp.getAttribute('data-mks-title');
+    var hintId = 'mk-dupe-' + idx;
+
+    /* Create hint element below the input */
+    var existing = document.getElementById(hintId);
+    if(!existing){
+      var h = document.createElement('div');
+      h.id = hintId;
+      h.style.cssText = 'margin-top:6px;font-size:11px;color:#fbbf24;line-height:1.5;display:none;';
+      inp.parentNode.insertBefore(h, inp.nextSibling);
+    }
+
+    var deb = null;
+    inp.addEventListener('input', function(){
+      if(deb) clearTimeout(deb);
+      deb = setTimeout(async function(){
+        var v = inp.value.trim();
+        var hint = document.getElementById(hintId);
+        if(!hint) return;
+        if(v.length < 4){ hint.style.display = 'none'; return; }
+
+        var c = Z.sb && Z.sb();
+        if(!c) return;
+        try {
+          var r = await c.rpc('market_similar_by_title', { p_title: v, p_category: category });
+          if(r.error || !r.data || !r.data.length){ hint.style.display = 'none'; return; }
+          /* Only warn if similarity > 0.3 */
+          var top = r.data[0];
+          if(Number(top.similarity) < 0.3){ hint.style.display = 'none'; return; }
+          hint.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Similar title exists: "' + esc(top.title) + '". If yours is a duplicate, it may be rejected.';
+          hint.style.display = 'block';
+        } catch(e){}
+      }, 400);
+    });
+  });
+}
+
+/* ============================================================
+   Hooks
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'market-wishlist') return renderWishlist();
+  return _prevRender.call(this, view, param);
+};
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-asset'){
+    setTimeout(function(){ injectAssetSocial().catch(function(){}); }, 400);
+    setTimeout(function(){ injectAssetSocial().catch(function(){}); }, 1400);
+  }
+  if(view === 'market-sell'){
+    setTimeout(injectDupeHint, 400);
+    setTimeout(injectDupeHint, 1200);
+  }
+  if(view === 'galleria-cat' && param === 'digital-market'){
+    setTimeout(function(){ injectFollowedRow().catch(function(){}); }, 900);
+    setTimeout(function(){ injectFollowedRow().catch(function(){}); }, 2200);
+  }
+  return r;
+};
+
+/* Add wishlist link to ledger row (Block 19's wrap) */
+setTimeout(function(){
+  var _prevLedger = Z.showView;
+  Z.showView = function(view, param){
+    var r = _prevLedger.apply(this, arguments);
+    if(view === 'galleria-cat' && param === 'digital-market'){
+      setTimeout(function(){
+        var wrap = document.querySelector('[data-mkldg-link]');
+        if(!wrap) return;
+        if(wrap.querySelector('#mkwl-open')) return;
+        var b = document.createElement('button');
+        b.id = 'mkwl-open';
+        b.style.cssText = 'padding:8px 14px;border-radius:10px;border:1px solid rgba(236,72,153,.4);background:rgba(236,72,153,.06);color:#ec4899;font-size:11px;font-weight:900;cursor:pointer;';
+        b.innerHTML = '<i class="fa-solid fa-heart"></i> Wishlist';
+        b.addEventListener('click', function(){ Z.showView('market-wishlist'); });
+        wrap.appendChild(b);
+      }, 1000);
+    }
+    return r;
+  };
+}, 100);
+
+console.log('[Market Block 21] wishlist + follow + dupe hints ready');
+})();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 22 — Color scheme refinement             -->
+<!-- Pure CSS override. No functional changes.                      -->
+<!-- Aligns palette: tighter emerald focus, muted surfaces,        -->
+<!-- consistent borders, softer shadows, better contrast.           -->
+<!-- Removal: delete this entire <style> + <script> combo.         -->
+<!-- ============================================================ -->
+<style id="zynix-mkt-color-scheme">
+/* ---------- Root surfaces ---------- */
+.zyg-root,
+[data-mkh2-host="1"],
+#app-container .view-header + div {
+  --mkt-bg-0:#0b1220;
+  --mkt-bg-1:#0f172a;
+  --mkt-bg-2:#131c30;
+  --mkt-border:#1e293b;
+  --mkt-border-soft:#1a2337;
+  --mkt-text-1:#e2e8f0;
+  --mkt-text-2:#94a3b8;
+  --mkt-text-3:#64748b;
+  --mkt-accent:#10b981;
+  --mkt-accent-soft:rgba(16,185,129,.10);
+}
+
+/* ---------- Cards — cleaner, softer ---------- */
+.mkt-asset-card,
+.mkh2-card,
+.mk3-card,
+.mk8-card,
+.mkd-seller,
+.mkd-ratings-head,
+.mk5-trend-card,
+.mk6-auction-card,
+.mk7-bundle-card,
+.mkq-card {
+  background:#131c30 !important;
+  border-color:#1e293b !important;
+  box-shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 4px 14px rgba(0,0,0,.22) !important;
+}
+
+.mkt-asset-card:hover,
+.mkh2-card:hover,
+.mk6-auction-card:hover {
+  border-color:rgba(16,185,129,.55) !important;
+  box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 8px 20px rgba(16,185,129,.12) !important;
+}
+
+/* ---------- Category tiles — cooler neutral ---------- */
+.zyg-cat-tile {
+  background:linear-gradient(180deg, #131c30 0%, #0f172a 100%) !important;
+  border-color:#1e293b !important;
+}
+.zyg-cat-tile:hover {
+  border-color:rgba(16,185,129,.5) !important;
+  background:linear-gradient(180deg, #16213a 0%, #101a2e 100%) !important;
+}
+
+/* ---------- Chips — cohesive, no noise ---------- */
+.mkh2-chip,
+.mkt-sort-btn {
+  background:#0f172a !important;
+  border-color:#1e293b !important;
+  color:#cbd5e1 !important;
+  transition:all .15s;
+}
+.mkh2-chip:hover,
+.mkt-sort-btn:hover {
+  border-color:rgba(16,185,129,.5) !important;
+  color:#10b981 !important;
+}
+.mkt-sort-btn[data-active="1"] {
+  background:rgba(16,185,129,.10) !important;
+  border-color:rgba(16,185,129,.55) !important;
+  color:#10b981 !important;
+}
+
+/* ---------- Search ---------- */
+.mkh-search {
+  background:#0b1220 !important;
+  border-color:#1e293b !important;
+}
+.mkh-search:focus {
+  border-color:rgba(16,185,129,.65) !important;
+  box-shadow:0 0 0 3px rgba(16,185,129,.08) !important;
+}
+
+/* ---------- Headers ---------- */
+.zyg-row-title,
+.mkh2-row-title,
+.mkh-row-title {
+  color:#cbd5e1 !important;
+  letter-spacing:.7px !important;
+}
+
+/* ---------- Buttons — unify gradients ---------- */
+.mks-btn-primary,
+.mk8-btn,
+.mkops-btn.sell,
+.mk3-btn-approve,
+#mkh2-ops-slot button[data-primary="1"] {
+  background:linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  color:#0b1220 !important;
+  box-shadow:0 4px 14px rgba(16,185,129,.20) !important;
+}
+.mks-btn-primary:hover,
+.mk8-btn:hover {
+  box-shadow:0 6px 20px rgba(16,185,129,.30) !important;
+  transform:translateY(-1px);
+}
+
+/* ---------- Ops bar — two clean tiers ---------- */
+.mkops-btn {
+  background:#131c30 !important;
+  border-color:#1e293b !important;
+}
+.mkops-btn:hover {
+  background:#16213a !important;
+  border-color:rgba(16,185,129,.5) !important;
+}
+.mkops-btn.committee {
+  background:linear-gradient(135deg, rgba(251,191,36,.10), rgba(236,72,153,.06)) !important;
+  border-color:rgba(251,191,36,.4) !important;
+}
+
+/* ---------- Rating stars — gold accent kept ---------- */
+.mkr-star[data-active="1"] {
+  background:linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+  border-color:#fbbf24 !important;
+  box-shadow:0 4px 12px rgba(251,191,36,.25) !important;
+}
+
+/* ---------- Rarity chips — richer ---------- */
+.mk6-rar.common    { background:rgba(148,163,184,.10) !important; border-color:rgba(148,163,184,.30) !important; }
+.mk6-rar.rare      { background:rgba(59,130,246,.12) !important;  border-color:rgba(59,130,246,.45) !important; }
+.mk6-rar.epic      { background:rgba(139,92,246,.12) !important;  border-color:rgba(139,92,246,.45) !important; }
+.mk6-rar.legendary {
+  background:linear-gradient(135deg, rgba(251,191,36,.20), rgba(236,72,153,.15)) !important;
+  border-color:rgba(251,191,36,.55) !important;
+  box-shadow:0 2px 10px rgba(251,191,36,.15) !important;
+}
+
+/* ---------- Cleaner scrollbar ---------- */
+.mkh2-strip::-webkit-scrollbar-thumb,
+.zyg-hot-strip::-webkit-scrollbar-thumb,
+.zyg-market-strip::-webkit-scrollbar-thumb,
+.mk6-auction-strip::-webkit-scrollbar-thumb {
+  background:#334155 !important;
+}
+.mkh2-strip::-webkit-scrollbar-thumb:hover,
+.zyg-hot-strip::-webkit-scrollbar-thumb:hover {
+  background:#475569 !important;
+}
+
+/* ---------- Ledger rows — cleaner ---------- */
+.mkldg-row {
+  border-color:rgba(30,41,59,.8) !important;
+}
+
+/* ---------- View headers — tighter ---------- */
+.view-header .view-title {
+  color:#f1f5f9 !important;
+  font-weight:900 !important;
+}
+.colored-back-btn {
+  color:#10b981 !important;
+  border-color:rgba(16,185,129,.35) !important;
+  background:rgba(16,185,129,.06) !important;
+}
+.colored-back-btn:hover {
+  background:rgba(16,185,129,.12) !important;
+}
+
+/* ---------- Sheet backgrounds ---------- */
+.zyg-prio-sheet,
+.bottom-sheet {
+  background:#0f172a !important;
+  border-color:#1e293b !important;
+}
+
+/* ---------- Guide accordion ---------- */
+[data-zyg-guide-card] {
+  background:#131c30 !important;
+}
+[data-zyg-guide-toggle]:hover {
+  background:rgba(16,185,129,.04) !important;
+}
+
+/* ---------- Darken deep backgrounds for consistency ---------- */
+.mks-item,
+.mks-input,
+.mks-textarea,
+.mkap-input,
+.mk8-input,
+.mk8-textarea {
+  background:#0b1220 !important;
+  border-color:#1e293b !important;
+}
+.mks-input:focus,
+.mkap-input:focus,
+.mk8-input:focus,
+.mks-textarea:focus,
+.mk8-textarea:focus {
+  border-color:rgba(16,185,129,.6) !important;
+  box-shadow:0 0 0 3px rgba(16,185,129,.06) !important;
+}
+
+/* ---------- Category grid — no aspect-ratio jitter ---------- */
+.zyg-cat-grid {
+  align-items:stretch;
+}
+.zyg-cat-tile {
+  min-height:80px !important;
+  aspect-ratio:auto !important;
+  padding:10px 8px !important;
+}
+.zyg-cat-icon {
+  width:32px !important;
+  height:32px !important;
+  font-size:14px !important;
+}
+.zyg-cat-label {
+  font-size:9.5px !important;
+  line-height:1.15 !important;
+}
+@media (min-width:641px){
+  .zyg-cat-tile { min-height:92px !important; }
+  .zyg-cat-icon { width:36px !important; height:36px !important; font-size:15px !important; }
+  .zyg-cat-label { font-size:10px !important; }
+}
+</style> 
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 22b — Color scheme verification          -->
+<!-- Confirms Block 22 CSS loaded + applies missing styles if any. -->
+<!-- Guard var: __zynixMktColorScheme                              -->
+<!-- Removal: delete this entire <script> block.                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMktColorScheme) return; Z.__zynixMktColorScheme = true;
+
+/* Verify Block 22 style tag exists */
+var styleEl = document.getElementById('zynix-mkt-color-scheme');
+
+if(styleEl){
+  console.log('[Market Block 22] ✓ Color scheme applied (' +
+    styleEl.sheet.cssRules.length + ' rules loaded)');
+} else {
+  console.warn('[Market Block 22] ⚠ Style tag missing — check paste order');
+}
+
+/* Fallback: if Block 22 CSS tag was not found, inject minimal palette */
+if(!styleEl){
+  var fb = document.createElement('style');
+  fb.id = 'zynix-mkt-color-scheme-fallback';
+  fb.textContent = [
+    '.mkt-asset-card,.mkh2-card,.mk3-card,.mk8-card,.mkd-seller,.mkd-ratings-head{background:#131c30 !important;border-color:#1e293b !important;}',
+    '.mkt-asset-card:hover,.mkh2-card:hover{border-color:rgba(16,185,129,.55) !important;}',
+    '.zyg-cat-tile{background:linear-gradient(180deg,#131c30 0%,#0f172a 100%) !important;border-color:#1e293b !important;min-height:80px !important;aspect-ratio:auto !important;padding:10px 8px !important;}',
+    '.zyg-cat-icon{width:32px !important;height:32px !important;font-size:14px !important;}',
+    '.zyg-cat-label{font-size:9.5px !important;}',
+    '.mkh2-chip,.mkt-sort-btn{background:#0f172a !important;border-color:#1e293b !important;color:#cbd5e1 !important;}',
+    '.mks-btn-primary,.mk8-btn,.mkops-btn.sell,.mk3-btn-approve{background:linear-gradient(135deg,#10b981 0%,#059669 100%) !important;color:#0b1220 !important;}',
+    '.mks-input,.mks-textarea,.mkap-input,.mk8-input,.mk8-textarea,.mkh-search{background:#0b1220 !important;border-color:#1e293b !important;}'
+  ].join('');
+  document.head.appendChild(fb);
+  console.log('[Market Block 22] Fallback palette injected');
+}
+
+/* Sanity check — verify key market classes exist */
+setTimeout(function(){
+  var checks = [
+    { name:'Category tiles',       selector:'.zyg-cat-tile' },
+    { name:'Asset cards',          selector:'.mkt-asset-card' },
+    { name:'Chips',                selector:'.mkh2-chip' },
+    { name:'Search input',         selector:'.mkh-search' }
+  ];
+
+  var results = [];
+  checks.forEach(function(c){
+    var el = document.querySelector(c.selector);
+    results.push(c.name + ': ' + (el ? '✓' : '—'));
+  });
+  console.log('[Market Block 22] Elements present:', results.join(' · '));
+}, 1500);
+
+console.log('[Market Block 22b] verification ready');
+})();
+</script>     
      
 </body>
 </html>
