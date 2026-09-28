@@ -30451,7 +30451,374 @@ Z.themePreview      = openThemePreview;
 
 console.log('[Market Block 23] theme framework ready');
 })();
-</script>     
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX MARKET · BLOCK 24 — Service Orders (Fix 3 UI)           -->
+<!-- Buyer + Provider view of service/consultancy orders.           -->
+<!-- Tabs: Active · Completed · Disputed · Cancelled                -->
+<!-- Role-based actions: deliver / accept / dispute / refund /     -->
+<!-- cancel. All wallet routing via SQL Batch 7 RPCs.              -->
+<!-- Adds "My Orders" button to market home ledger row.            -->
+<!-- Removal: delete this entire <script> block.                    -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixServiceLoop) return; Z.__zynixServiceLoop = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n) || 0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function initials(name){
+  if(!name) return 'U';
+  return String(name).charAt(0).toUpperCase();
+}
+
+/* ============================================================
+   State
+   ============================================================ */
+var _filter = 'active';
+
+var TABS = [
+  { key:'active',    label:'Active',    icon:'fa-solid fa-hourglass-half' },
+  { key:'completed', label:'Completed', icon:'fa-solid fa-circle-check' },
+  { key:'disputed',  label:'Disputed',  icon:'fa-solid fa-triangle-exclamation' },
+  { key:'cancelled', label:'Cancelled', icon:'fa-solid fa-ban' }
+];
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-mkord-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mkord-css';
+  st.textContent = [
+    '.mkord-tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none;}',
+    '.mkord-tabs::-webkit-scrollbar{display:none;}',
+    '.mkord-tab{flex:0 0 auto;padding:8px 14px;border-radius:18px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11.5px;font-weight:900;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;}',
+    '.mkord-tab[data-active="1"]{background:rgba(16,185,129,.10);border-color:rgba(16,185,129,.5);color:#10b981;}',
+    '.mkord-card{background:#131c30;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:10px;}',
+    '.mkord-row{display:flex;gap:10px;align-items:flex-start;}',
+    '.mkord-avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;color:#000;font-weight:900;font-size:16px;flex-shrink:0;}',
+    '.mkord-title{font-size:13.5px;font-weight:900;color:#fff;margin-bottom:2px;}',
+    '.mkord-meta{font-size:11px;color:#94a3b8;}',
+    '.mkord-body{font-size:11.5px;color:#cbd5e1;line-height:1.55;margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.22);}',
+    '.mkord-status{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:900;padding:3px 10px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;}',
+    '.mkord-actions{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;}',
+    '.mkord-act{flex:1;min-width:110px;padding:10px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:900;font-size:11.5px;cursor:pointer;}',
+    '.mkord-act:hover{border-color:#10b981;color:#10b981;}',
+    '.mkord-act.primary{background:linear-gradient(135deg,#10b981,#059669);border:none;color:#0b1220;}',
+    '.mkord-act.danger{border-color:rgba(161,98,98,.5);color:#c9a5a5;}',
+    '.mkord-act.danger:hover{border-color:#a16262;color:#fff;}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   Render
+   ============================================================ */
+function renderOrders(){
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-briefcase" style="color:#10b981;"></i> My Orders</h2>';
+  h += '</div></div>';
+
+  h += '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;">';
+  h += 'As a buyer: cancel before delivery, accept or dispute after. As a provider: mark delivered when the work is done. Funds are held in escrow until the buyer accepts.';
+  h += '</div>';
+
+  h += '<div class="mkord-tabs" id="mkord-tabs">';
+  TABS.forEach(function(t){
+    h += '<button class="mkord-tab" data-mkord-tab="' + t.key + '" ' +
+         (_filter === t.key ? 'data-active="1"' : '') + '>' +
+         '<i class="' + t.icon + '"></i> ' + t.label + '</button>';
+  });
+  h += '</div>';
+
+  h += '<div id="mkord-host"><div style="text-align:center;padding:30px;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;"></i></div></div>';
+
+  h += '</div>';
+  setTimeout(function(){ wireTabs(); loadOrders(); }, 40);
+  return h;
+}
+
+function wireTabs(){
+  document.querySelectorAll('[data-mkord-tab]').forEach(function(b){
+    if(b._mkordHooked) return; b._mkordHooked = true;
+    b.addEventListener('click', function(){
+      _filter = this.getAttribute('data-mkord-tab');
+      document.querySelectorAll('[data-mkord-tab]').forEach(function(x){ x.removeAttribute('data-active'); });
+      this.setAttribute('data-active','1');
+      loadOrders();
+    });
+  });
+}
+
+/* ============================================================
+   Load + paint
+   ============================================================ */
+async function loadOrders(){
+  var host = document.getElementById('mkord-host');
+  if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;"></i></div>';
+
+  var c = Z.sb && Z.sb();
+  if(!c){ host.innerHTML = Z.emptyState({ icon:'fa-solid fa-plug', title:'Not connected' }); return; }
+
+  try {
+    var r = await c.rpc('market_my_orders', { p_filter: _filter });
+    if(r.error) throw r.error;
+    var rows = r.data || [];
+
+    if(!rows.length){
+      host.innerHTML = '<div style="padding:30px;border-radius:12px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">' +
+        'No orders in this tab.' +
+      '</div>';
+      return;
+    }
+
+    var html = '';
+    rows.forEach(function(o){ html += orderCardHTML(o); });
+    host.innerHTML = html;
+    wireOrderActions(host);
+  } catch(e){
+    host.innerHTML = Z.emptyState({ icon:'fa-solid fa-triangle-exclamation', title:'Could not load orders.' });
+  }
+}
+
+function orderCardHTML(o){
+  var statusMap = {
+    pending:   { col:'#a18554', label:'Pending delivery' },
+    delivered: { col:'#60a5fa', label:'Delivered · awaiting accept' },
+    accepted:  { col:'#10b981', label:'Completed' },
+    disputed:  { col:'#fbbf24', label:'Disputed' },
+    refunded:  { col:'#a16262', label:'Refunded' },
+    cancelled: { col:'#64748b', label:'Cancelled' }
+  };
+  var s = statusMap[o.status] || { col:'#94a3b8', label: o.status };
+
+  var roleLabel = o.role === 'provider' ? 'You are providing' : 'You ordered from';
+  var cpName = o.counterparty_username || 'user';
+  var ini = initials(cpName);
+
+  var h = '<div class="mkord-card">';
+  h += '<div class="mkord-row">';
+  h += '<div class="mkord-avatar">' + esc(ini) + '</div>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div class="mkord-title">' + esc(o.offer_title || 'Service') + '</div>';
+  h += '<div class="mkord-meta">' + esc(roleLabel) + ' @' + esc(cpName) + ' · ' + timeAgo(o.created_at) + '</div>';
+  h += '<div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+  h += '<span class="mkord-status" style="background:' + s.col + '22;color:' + s.col + ';">' + esc(s.label) + '</span>';
+  h += '<span style="font-size:15px;font-weight:900;color:#10b981;">' + money(o.price) + '</span>';
+  h += '</div>';
+  h += '</div></div>';
+
+  if(o.brief){
+    h += '<div class="mkord-body"><b style="color:#94a3b8;">Brief:</b> ' + esc(o.brief) + '</div>';
+  }
+  if(o.delivery_notes && (o.status === 'delivered' || o.status === 'accepted')){
+    h += '<div class="mkord-body" style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.25);"><b style="color:#10b981;">Delivery notes:</b> ' + esc(o.delivery_notes) + '</div>';
+  }
+  if(o.dispute_reason){
+    h += '<div class="mkord-body" style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.3);"><b style="color:#fbbf24;">Dispute reason:</b> ' + esc(o.dispute_reason) + '</div>';
+  }
+
+  /* Actions — role + status driven */
+  var acts = [];
+  if(o.role === 'provider'){
+    if(o.status === 'pending')   acts.push({ k:'deliver', label:'Mark delivered', style:'primary' });
+  } else {
+    if(o.status === 'pending')   acts.push({ k:'cancel',  label:'Cancel order', style:'danger' });
+    if(o.status === 'delivered') acts.push(
+      { k:'accept',  label:'Accept & release', style:'primary' },
+      { k:'dispute', label:'Dispute',           style:'danger' }
+    );
+  }
+  if(acts.length){
+    h += '<div class="mkord-actions">';
+    acts.forEach(function(a){
+      h += '<button class="mkord-act ' + (a.style || '') + '" ' +
+           'data-mkord-act="' + a.k + '" data-mkord-id="' + esc(o.id) + '">' +
+           esc(a.label) + '</button>';
+    });
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function wireOrderActions(host){
+  host.querySelectorAll('[data-mkord-act]').forEach(function(b){
+    if(b._mkordHooked) return; b._mkordHooked = true;
+    b.addEventListener('click', function(){
+      var act = this.getAttribute('data-mkord-act');
+      var id  = this.getAttribute('data-mkord-id');
+      if(act === 'deliver') deliverOrder(id);
+      else if(act === 'accept')  acceptOrder(id);
+      else if(act === 'dispute') disputeOrder(id);
+      else if(act === 'cancel')  cancelOrder(id);
+    });
+  });
+}
+
+/* ============================================================
+   Actions
+   ============================================================ */
+function openDeliverSheet(orderId){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:70vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Mark delivered</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:12px;">Once you mark this order delivered, the buyer has 24 hours to accept or dispute. Funds release on accept.</div>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Delivery notes (optional)</label>';
+  h += '<textarea id="mkord-notes" class="mks-textarea" maxlength="500" placeholder="Links, files, delivery details."></textarea>';
+  h += '<button id="mkord-deliver-go" class="mks-btn-primary" style="margin-top:12px;">Confirm delivery</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var b = document.getElementById('mkord-deliver-go');
+    if(!b) return;
+    b.addEventListener('click', async function(){
+      var notes = (document.getElementById('mkord-notes')||{}).value || '';
+      b.disabled = true; b.textContent = 'Marking…';
+      await _doRpc('market_service_deliver', { p_order_id: orderId, p_notes: notes.trim() || null },
+        'Marked delivered. Buyer will be notified.');
+    });
+  }, 40);
+}
+
+async function deliverOrder(id){ openDeliverSheet(id); }
+
+async function acceptOrder(id){
+  if(!confirm('Accept this delivery?\n\nFunds will be released to the provider (80%) and platform (20%). This cannot be undone.')) return;
+  await _doRpc('market_service_accept', { p_order_id: id }, 'Order accepted. Funds released.');
+}
+
+async function disputeOrder(id){
+  var reason = prompt('Reason for dispute (min 3 characters):', '');
+  if(reason === null) return;
+  if(!reason.trim() || reason.trim().length < 3){
+    Z.toast('Reason is required.', 'error');
+    return;
+  }
+  await _doRpc('market_service_dispute', { p_order_id: id, p_reason: reason.trim() }, 'Dispute filed. Committee will review.');
+}
+
+async function cancelOrder(id){
+  if(!confirm('Cancel this order?\n\nFunds will be returned to your wallet.')) return;
+  await _doRpc('market_service_cancel', { p_order_id: id }, 'Order cancelled. Funds refunded.');
+}
+
+async function _doRpc(fn, params, successMsg){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc(fn, params);
+    if(r.error) throw r.error;
+    Z.closeSheet();
+    Z.toast(successMsg);
+    if(typeof Z.refreshSession === 'function'){ try { await Z.refreshSession(); } catch(e){} }
+    loadOrders();
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('not_provider') !== -1) Z.toast('Only the provider can do that.', 'error');
+    else if(msg.indexOf('not_buyer') !== -1)   Z.toast('Only the buyer can do that.', 'error');
+    else if(msg.indexOf('invalid_state') !== -1) Z.toast('Order is not in a state that allows this.', 'error');
+    else if(msg.indexOf('not_committee_member') !== -1) Z.toast('Committee only.', 'error');
+    else Z.toast('Failed: ' + msg, 'error');
+  }
+}
+
+/* ============================================================
+   Add "My Orders" link to market home ledger row
+   ============================================================ */
+function injectOrdersLink(){
+  if(Z.State.currentView !== 'galleria-cat') return;
+  if(Z.State.currentParam !== 'digital-market') return;
+  var wrap = document.querySelector('[data-mkldg-link]');
+  if(!wrap) return;
+  if(wrap.querySelector('#mkord-open')) return;
+
+  var b = document.createElement('button');
+  b.id = 'mkord-open';
+  b.style.cssText = 'padding:8px 14px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.06);color:#60a5fa;font-size:11px;font-weight:900;cursor:pointer;';
+  b.innerHTML = '<i class="fa-solid fa-briefcase"></i> My Orders';
+  b.addEventListener('click', function(){ Z.showView('market-orders'); });
+  wrap.appendChild(b);
+}
+
+/* ============================================================
+   Also add an inline "My Orders" button on services pages
+   ============================================================ */
+function injectServicesOrdersBtn(){
+  if(Z.State.currentView !== 'market-services') return;
+  var host = document.getElementById('app-container');
+  if(!host) return;
+  if(host.querySelector('#mkord-services-btn')) return;
+  var header = host.querySelector('.view-header');
+  if(!header) return;
+
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'margin-top:12px;';
+  wrap.innerHTML = '<button id="mkord-services-btn" style="width:100%;padding:11px;border-radius:10px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.06);color:#60a5fa;font-weight:900;font-size:12px;cursor:pointer;">' +
+    '<i class="fa-solid fa-briefcase"></i> View my orders</button>';
+  header.parentNode.insertBefore(wrap, header.nextSibling);
+
+  setTimeout(function(){
+    var b = document.getElementById('mkord-services-btn');
+    if(b) b.addEventListener('click', function(){ Z.showView('market-orders'); });
+  }, 30);
+}
+
+/* ============================================================
+   Router + hooks
+   ============================================================ */
+var _prevRender = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'market-orders') return renderOrders();
+  return _prevRender.call(this, view, param);
+};
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'galleria-cat' && param === 'digital-market'){
+    setTimeout(injectOrdersLink, 1200);
+    setTimeout(injectOrdersLink, 2200);
+  }
+  if(view === 'market-services'){
+    setTimeout(injectServicesOrdersBtn, 300);
+    setTimeout(injectServicesOrdersBtn, 1000);
+  }
+  return r;
+};
+
+console.log('[Market Block 24] service orders + Fix 3 UI ready');
+})();
+</script>       
      
 </body>
 </html>
