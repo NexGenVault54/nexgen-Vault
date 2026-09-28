@@ -25639,6 +25639,340 @@ Z.showView = function(view, param){
 
 console.log('[Galleria v2 Phase 5b · Block 15] rarity + streaks + auctions ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- ZYNIX GALLERIA v2 — Phase 5c · Block 16                       -->
+<!-- Top Reviewer badge · Tip button · Rarity cap UI · Bundles.    -->
+<!-- Add-only. Removal: delete this entire <script> block.         -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMarketPhase5c) return; Z.__zynixMarketPhase5c = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+/* ============================================================
+   CSS
+   ============================================================ */
+if(!document.getElementById('zynix-mkt-5c-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-mkt-5c-css';
+  st.textContent = [
+    '.mk7-tip-btn{width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fbbf24;font-weight:900;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;}',
+    '.mk7-tip-btn:hover{background:rgba(251,191,36,.12);}',
+    '.mk7-tip-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;}',
+    '.mk7-tip-grid button{padding:12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-weight:900;font-size:14px;cursor:pointer;}',
+    '.mk7-tip-grid button[data-active="1"]{background:rgba(251,191,36,.15);border-color:#fbbf24;color:#fbbf24;}',
+    '.mk7-badge-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}',
+    '.mk7-badge{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:900;padding:4px 10px;border-radius:12px;letter-spacing:.3px;}',
+    '.mk7-badge.reviewer{background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(236,72,153,.14));color:#fbbf24;border:1px solid rgba(251,191,36,.5);}',
+    '.mk7-bundles{margin-bottom:14px;}',
+    '.mk7-bundle-card{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:12px;margin-bottom:8px;}',
+    '.mk7-bundle-title{font-size:13px;font-weight:900;color:#fff;}',
+    '.mk7-bundle-sub{font-size:11px;color:#94a3b8;margin-top:2px;}',
+    '.mk7-bundle-price{margin-top:8px;display:flex;align-items:baseline;gap:8px;}',
+    '.mk7-bundle-price .now{font-size:17px;font-weight:900;color:#10b981;}',
+    '.mk7-bundle-price .was{font-size:12px;color:#94a3b8;text-decoration:line-through;}',
+    '.mk7-bundle-price .pct{margin-left:auto;font-size:10px;font-weight:900;color:#fbbf24;padding:2px 8px;border-radius:8px;background:rgba(251,191,36,.15);}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/* ============================================================
+   TIP BUTTON on asset detail
+   ============================================================ */
+function injectTipButton(){
+  if(Z.State.currentView !== 'market-asset') return;
+  var host = document.getElementById('mkd-host');
+  if(!host) return;
+  if(host.querySelector('[data-mk7-tip]')) return;
+
+  var sellerRow = host.querySelector('[data-mkd-seller]');
+  if(!sellerRow) return;
+  var sellerId = sellerRow.getAttribute('data-mkd-seller');
+  if(!sellerId) return;
+
+  var me = Z.State.currentUser;
+  if(!me || me.id === sellerId) return;   /* don't tip yourself */
+
+  var assetId = Z.State.currentParam;
+
+  var btn = document.createElement('button');
+  btn.setAttribute('data-mk7-tip','1');
+  btn.className = 'mk7-tip-btn';
+  btn.innerHTML = '<i class="fa-solid fa-hand-holding-dollar"></i> Send a tip to this creator';
+  btn.addEventListener('click', function(){ openTipModal(sellerId, assetId); });
+  sellerRow.parentNode.insertBefore(btn, sellerRow.nextSibling);
+}
+
+function openTipModal(sellerId, assetId){
+  var amounts = [1, 2, 5];
+  var selected = 1;
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:70vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Send a tip</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">80% goes to the creator. 20% to platform. Tips are separate from purchases.</div>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Amount</label>';
+  h += '<div class="mk7-tip-grid" id="mk7-tip-grid">';
+  amounts.forEach(function(v, i){
+    h += '<button data-mk7-amt="' + v + '" ' + (i === 0 ? 'data-active="1"' : '') + '>$' + v + '</button>';
+  });
+  h += '</div>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Or custom ($0.10 – $100)</label>';
+  h += '<input id="mk7-tip-custom" type="number" min="0.10" max="100" step="0.10" placeholder="Custom amount" style="width:100%;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:16px;">';
+  h += '<button id="mk7-tip-send" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Send · $1.00</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var grid = document.getElementById('mk7-tip-grid');
+    var sendBtn = document.getElementById('mk7-tip-send');
+    var custom = document.getElementById('mk7-tip-custom');
+
+    function refreshSend(){
+      var txt = (custom && custom.value) ? ('Send · $' + parseFloat(custom.value || '0').toFixed(2)) : ('Send · $' + selected.toFixed(2));
+      sendBtn.textContent = txt;
+    }
+
+    grid.querySelectorAll('[data-mk7-amt]').forEach(function(b){
+      b.addEventListener('click', function(){
+        selected = parseFloat(this.getAttribute('data-mk7-amt'));
+        grid.querySelectorAll('[data-mk7-amt]').forEach(function(x){ x.removeAttribute('data-active'); });
+        this.setAttribute('data-active','1');
+        if(custom) custom.value = '';
+        refreshSend();
+      });
+    });
+
+    if(custom){
+      custom.addEventListener('input', function(){
+        grid.querySelectorAll('[data-mk7-amt]').forEach(function(x){ x.removeAttribute('data-active'); });
+        refreshSend();
+      });
+    }
+
+    sendBtn.addEventListener('click', async function(){
+      var amt = (custom && custom.value) ? parseFloat(custom.value) : selected;
+      if(!amt || amt < 0.10 || amt > 100){ Z.toast('Amount must be $0.10 – $100.', 'error'); return; }
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending…';
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var r = await c.rpc('market_send_tip', {
+          p_to_user: sellerId,
+          p_amount: amt,
+          p_asset_id: assetId
+        });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        Z.toast('Tip sent · $' + amt.toFixed(2));
+        if(typeof Z.refreshSession === 'function'){
+          try { await Z.refreshSession(); } catch(e){}
+          try { Z.updateHeader(); } catch(e){}
+        }
+      } catch(e){
+        var msg = (e && e.message) ? e.message : 'unknown';
+        if(msg.indexOf('insufficient_funds') !== -1) Z.toast('Not enough balance.', 'error');
+        else if(msg.indexOf('cannot_tip_self') !== -1) Z.toast('You cannot tip yourself.', 'error');
+        else if(msg.indexOf('amount_too_low') !== -1) Z.toast('Minimum tip is $0.10.', 'error');
+        else Z.toast('Failed: ' + msg, 'error');
+        sendBtn.disabled = false;
+        refreshSend();
+      }
+    });
+  }, 40);
+}
+
+/* ============================================================
+   TOP REVIEWER badge on SPACE
+   ============================================================ */
+async function injectReviewerBadge(userId){
+  if(Z.State.currentView !== 'public-profile') return;
+  if(!userId) return;
+  var root = document.getElementById('space-root');
+  if(!root) return;
+  if(root.querySelector('[data-mk7-reviewer]')) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_user_reviewer_badges', { p_user_id: userId });
+    if(r.error || !r.data) return;
+    var wins = Number(r.data.total_wins) || 0;
+    var rank = r.data.last_week_rank;
+    if(wins === 0) return;
+
+    var h = '<div data-mk7-reviewer="1" class="mk7-badge-row">';
+    h += '<span class="mk7-badge reviewer"><i class="fa-solid fa-star"></i> Top Reviewer · ' + wins + ' week' + (wins === 1 ? '' : 's') + '</span>';
+    if(rank && rank <= 10){
+      h += '<span class="mk7-badge reviewer"><i class="fa-solid fa-trophy"></i> #' + rank + ' this week</span>';
+    }
+    h += '</div>';
+
+    var identity = root.querySelector('#space-identity');
+    if(identity && identity.parentNode === root){
+      var wrap = document.createElement('div');
+      wrap.innerHTML = h;
+      identity.parentNode.insertBefore(wrap.firstChild, identity.nextSibling);
+    }
+  } catch(e){}
+}
+
+/* ============================================================
+   RARITY CAP UI — disable Legendary button when cap reached
+   ============================================================ */
+async function refreshRarityCap(){
+  if(Z.State.currentView !== 'market-sell') return;
+  var rows = document.querySelectorAll('[data-mk6-rar-row]');
+  if(!rows.length) return;
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_rarity_availability');
+    if(r.error || !r.data) return;
+    var left = Number(r.data.legendary_left) || 0;
+    rows.forEach(function(row){
+      var lg = row.querySelector('[data-rar="legendary"]');
+      if(!lg) return;
+      if(left <= 0){
+        lg.setAttribute('data-disabled','1');
+        lg.title = 'Legendary cap reached (100 across market)';
+      } else {
+        lg.removeAttribute('data-disabled');
+        lg.title = left + ' Legendary slot' + (left === 1 ? '' : 's') + ' left';
+      }
+    });
+  } catch(e){}
+}
+
+/* ============================================================
+   BUNDLES — strip on Digital Market home
+   ============================================================ */
+async function injectBundlesStrip(){
+  if(Z.State.currentView !== 'galleria-cat') return;
+  if(Z.State.currentParam !== 'digital-market') return;
+
+  var host = document.getElementById('app-container');
+  if(!host) return;
+  if(host.querySelector('[data-mk7-bundles]')) return;
+
+  var anchor = host.querySelector('[data-mk6-auction-host]') || host.querySelector('[data-mk5-host="1"]');
+  if(!anchor) return;
+
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-mk7-bundles','1');
+  wrap.className = 'mk7-bundles';
+  anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('market_list_bundles', { p_limit: 10 });
+    if(r.error || !r.data || !r.data.length) return;
+
+    var items = r.data;
+    var h = '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">';
+    h += '<i class="fa-solid fa-box-open" style="color:#10b981;margin-right:6px;"></i>Bundles</div>';
+
+    items.forEach(function(b){
+      h += '<div class="mk7-bundle-card">';
+      h += '<div class="mk7-bundle-title">' + esc(b.title || 'Bundle') + '</div>';
+      h += '<div class="mk7-bundle-sub">' + b.asset_count + ' items · by @' + esc(b.seller_username || 'seller') + '</div>';
+      if(b.description){
+        h += '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.5;">' + esc(b.description) + '</div>';
+      }
+      h += '<div class="mk7-bundle-price">';
+      h += '<span class="now">$' + Number(b.bundle_price).toFixed(2) + '</span>';
+      h += '<span class="was">$' + Number(b.total_price).toFixed(2) + '</span>';
+      h += '<span class="pct">−' + b.discount_pct + '%</span>';
+      h += '</div></div>';
+    });
+
+    wrap.innerHTML = h;
+  } catch(e){}
+}
+
+/* ============================================================
+   Hooks
+   ============================================================ */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'market-asset'){
+    setTimeout(injectTipButton, 700);
+    setTimeout(injectTipButton, 1600);
+  }
+  if(view === 'public-profile'){
+    setTimeout(function(){ injectReviewerBadge(param).catch(function(){}); }, 900);
+    setTimeout(function(){ injectReviewerBadge(param).catch(function(){}); }, 2000);
+  }
+  if(view === 'market-sell'){
+    setTimeout(function(){ refreshRarityCap().catch(function(){}); }, 500);
+    setTimeout(function(){ refreshRarityCap().catch(function(){}); }, 1400);
+  }
+  if(view === 'galleria-cat' && param === 'digital-market'){
+    setTimeout(function(){ injectBundlesStrip().catch(function(){}); }, 900);
+    setTimeout(function(){ injectBundlesStrip().catch(function(){}); }, 2000);
+  }
+  return r;
+};
+
+/* Run top reviewer compute once per session on Galleria open */
+(function(){
+  var fired = false;
+  function computeOnce(){
+    if(fired) return;
+    if(!Z.State.currentUser) return;
+    fired = true;
+    var c = Z.sb && Z.sb();
+    if(!c) return;
+    var today = new Date().toISOString().slice(0, 10);
+    var key = 'zynix_mk_toprev_' + today;
+    try { if(localStorage.getItem(key) === '1') return; } catch(e){}
+    c.rpc('market_compute_top_reviewers').then(function(){
+      try { localStorage.setItem(key, '1'); } catch(e){}
+    }).catch(function(){});
+  }
+  var _p = Z.showView;
+  Z.showView = function(view){
+    var r = _p.apply(this, arguments);
+    if(view === 'galleria' || view === 'galleria-cat') setTimeout(computeOnce, 1500);
+    return r;
+  };
+})();
+
+/* Public API for future use */
+Z.marketCreateBundle = async function(title, desc, discountPct, assetIds){
+  var c = Z.sb && Z.sb();
+  if(!c) return null;
+  var r = await c.rpc('market_create_bundle', {
+    p_title: title,
+    p_description: desc || '',
+    p_discount_pct: discountPct,
+    p_asset_ids: assetIds
+  });
+  if(r.error) throw r.error;
+  return r.data;
+};
+
+console.log('[Galleria v2 Phase 5c · Block 16] reviewer + tips + rarity cap + bundles ready');
+})();
 </script>       
 </body>
 </html>
