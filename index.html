@@ -11856,87 +11856,6 @@ function ago(ts){
   return Math.floor(s/86400) + 'd ago';
 }
 
-/* ============================================================
-   FIX 4a — Video autoplay control on SPACE page
-   Only ONE video plays. Only on user tap. Blocks all other play.
-   ============================================================ */
-var _spaceGridVideoPlaying = null;
-
-function setupSpaceVideoControl(){
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-  var vids = host.querySelectorAll('video');
-  if(!vids.length) return;
-
-  vids.forEach(function(v){
-    if(v._spaceVideoHooked) return;
-    v._spaceVideoHooked = true;
-
-    /* Force NO autoplay. Force mute. Force pause. */
-    try { v.autoplay = false; } catch(e){}
-    try { v.removeAttribute('autoplay'); } catch(e){}
-    v.muted = true;
-    v.loop = true;
-    try { v.pause(); } catch(e){}
-
-    /* Block non-user-initiated plays */
-    v.addEventListener('play', function(){
-      if(!v._spaceUserIntent){
-        try { v.pause(); } catch(e){}
-        return;
-      }
-    });
-
-    /* Click to play this one — pause all others */
-    v.addEventListener('click', function(e){
-      e.stopPropagation();
-      if(_spaceGridVideoPlaying && _spaceGridVideoPlaying !== v){
-        try { _spaceGridVideoPlaying._spaceUserIntent = false; _spaceGridVideoPlaying.pause(); } catch(err){}
-      }
-      v._spaceUserIntent = true;
-      try { v.play().catch(function(){}); } catch(err){}
-      _spaceGridVideoPlaying = v;
-      setTimeout(function(){ v._spaceUserIntent = false; }, 1200);
-    });
-
-    /* Pause when user taps the card (opens video page) */
-    v.addEventListener('pause', function(){
-      if(_spaceGridVideoPlaying === v) _spaceGridVideoPlaying = null;
-    });
-  });
-}
-
-/* Call after every content render */
-var _prevRenderContent4a = Z.sp5RenderContent;
-if(typeof _prevRenderContent4a === 'function'){
-  Z.sp5RenderContent = function(){
-    var r = _prevRenderContent4a.apply(this, arguments);
-    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 120);
-    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 600);
-    return r;
-  };
-}
-
-/* Also intercept sp5Load */
-var _prevSp5Load4a = Z.sp5Load;
-if(typeof _prevSp5Load4a === 'function'){
-  Z.sp5Load = async function(){
-    var r = await _prevSp5Load4a.apply(this, arguments);
-    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 200);
-    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 900);
-    return r;
-  };
-}
-
-/* Kill any stray playing video when leaving the space */
-var _prevShow4a = Z.showView;
-Z.showView = function(view){
-  if(view !== 'public-profile' && _spaceGridVideoPlaying){
-    try { _spaceGridVideoPlaying.pause(); _spaceGridVideoPlaying = null; } catch(e){}
-  }
-  var r = _prevShow4a.apply(this, arguments);
-  return r;
-};
 
 /* ============================================================
    FIX 4b — Owner More button + SPACE name + rating chip fix
@@ -12241,68 +12160,6 @@ function fmtDur(sec){
   return m+':'+(s<10?'0':'')+s;
 }
 
-/* ============================================================
-   FIX 4-v2-A · Grid videos are pure thumbnails
-   No autoplay. No click interception. Pass-through to card.
-   Watchdog pauses any that sneakily start.
-   ============================================================ */
-function tameGridVideos(){
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-  host.querySelectorAll('video').forEach(function(v){
-    /* Force static thumbnail behavior */
-    try { v.autoplay = false; } catch(e){}
-    try { v.removeAttribute('autoplay'); } catch(e){}
-    try { v.removeAttribute('loop'); } catch(e){}
-    try { v.removeAttribute('controls'); } catch(e){}
-    v.muted = true;
-    v.setAttribute('preload','metadata');
-    v.setAttribute('playsinline','');
-    /* CRITICAL: let clicks fall through to the parent card */
-    v.style.pointerEvents = 'none';
-
-    if(!v._spaceTamed){
-      v._spaceTamed = true;
-      try { v.pause(); } catch(e){}
-      v.addEventListener('loadeddata', function(){ try { v.pause(); } catch(e){} });
-      v.addEventListener('play', function(){
-        if(!v._spaceAllowPlay){ try { v.pause(); } catch(e){} }
-      });
-    }
-  });
-}
-
-/* Watchdog every 2 seconds while on a SPACE page */
-setInterval(function(){
-  if(Z.State.currentView !== 'public-profile') return;
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-  host.querySelectorAll('video').forEach(function(v){
-    if(!v.paused && !v._spaceAllowPlay){
-      try { v.pause(); } catch(e){}
-    }
-  });
-}, 2000);
-
-var _prevRenderContentTame = Z.sp5RenderContent;
-if(typeof _prevRenderContentTame === 'function'){
-  Z.sp5RenderContent = function(){
-    var r = _prevRenderContentTame.apply(this, arguments);
-    setTimeout(tameGridVideos, 100);
-    setTimeout(tameGridVideos, 500);
-    setTimeout(tameGridVideos, 1500);
-    return r;
-  };
-}
-var _prevLoadTame = Z.sp5Load;
-if(typeof _prevLoadTame === 'function'){
-  Z.sp5Load = async function(){
-    var r = await _prevLoadTame.apply(this, arguments);
-    setTimeout(tameGridVideos, 150);
-    setTimeout(tameGridVideos, 800);
-    return r;
-  };
-}
 
 /* ============================================================
    FIX 4-v2-B · SPACE Rating public view — SAME for owner + visitor
@@ -12603,14 +12460,15 @@ console.log('[SPACE v7 — Fix 4 v2] grid thumbnails · public rating · silent 
 })();
 </script>
 <!-- ============================================================ -->
-<!-- SPACE v7 — FIX 5 (REPLACEMENT)                                -->
-<!-- Post videos interactive + 70% autoplay · grids stay static    -->
+<!-- SPACE v7 — FIX 5 FINAL                                        -->
+<!-- Single controller: grid videos static · post videos          -->
+<!-- auto-play at 70% · user control respected · no watchdogs     -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixSpaceV7Fix5r) return; Z.__zynixSpaceV7Fix5r = true;
+if(Z.__zynixSpaceV7Fix5Final) return; Z.__zynixSpaceV7Fix5Final = true;
 
 function isPostVideo(v){
   if(!v || v.tagName !== 'VIDEO') return false;
@@ -12622,30 +12480,61 @@ function isPostVideo(v){
   return false;
 }
 
-function unlockPostVideos(){
+function tameGridVideo(v){
+  try { v.autoplay = false; } catch(e){}
+  try { v.removeAttribute('autoplay'); } catch(e){}
+  try { v.removeAttribute('controls'); } catch(e){}
+  try { v.removeAttribute('loop'); } catch(e){}
+  v.muted = true;
+  v.setAttribute('preload','metadata');
+  v.setAttribute('playsinline','');
+  v.style.pointerEvents = 'none';
+  try { v.pause(); } catch(e){}
+  if(!v._spaceGridTamed){
+    v._spaceGridTamed = true;
+    v.addEventListener('loadeddata', function(){ try { v.pause(); } catch(e){} });
+    v.addEventListener('play', function(){ try { v.pause(); } catch(e){} });
+  }
+}
+
+function unlockPostVideo(v){
+  v.style.pointerEvents = '';
+  if(!v.hasAttribute('controls')) v.setAttribute('controls','');
+  if(!v.hasAttribute('playsinline')) v.setAttribute('playsinline','');
+  if(!v.hasAttribute('loop')) v.setAttribute('loop','');
+
+  if(!v._spacePostInit){
+    v._spacePostInit = true;
+    v.muted = true;
+    var markTouch = function(){ v._spaceUserTouched = Date.now(); };
+    ['play','pause','seeking','volumechange','click','touchstart','seeking'].forEach(function(evt){
+      v.addEventListener(evt, markTouch, evt === 'touchstart' ? {passive:true} : false);
+    });
+  }
+}
+
+function scanVideos(){
+  if(Z.State.currentView !== 'public-profile') return;
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
+
+  host.querySelectorAll('video[data-space-spark="1"]').forEach(function(v){
+    if(!v._spaceGridTamed) tameGridVideo(v);
+  });
+
   host.querySelectorAll('video').forEach(function(v){
     if(!isPostVideo(v)) return;
-    v._spaceAllowPlay = true;
-    v._spaceTamed = true;
-    v.style.pointerEvents = '';
-    try { v.setAttribute('controls',''); } catch(e){}
-    try { v.setAttribute('loop',''); } catch(e){}
-    try { v.setAttribute('playsinline',''); } catch(e){}
-    try { v.setAttribute('preload','metadata'); } catch(e){}
-    if(!v.muted) v.muted = true;
+    unlockPostVideo(v);
   });
 }
 
-Z._spacePostPlaying = null;
-
 Z.spaceRecomputePostPlayback = function(){
   if(Z.State.currentView !== 'public-profile') return;
-  var vids = document.querySelectorAll(
-    '#sp5-content-host .post-card video, #sp5-content-host .sp5-posts-window video, #sp5-content-host .post-media video'
-  );
-  if(!vids.length){ Z._spacePostPlaying = null; return; }
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+
+  var vids = host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video');
+  if(!vids.length) return;
 
   var vh = window.innerHeight, best = null, bestRatio = 0;
   vids.forEach(function(v){
@@ -12660,26 +12549,28 @@ Z.spaceRecomputePostPlayback = function(){
 
   vids.forEach(function(v){
     if(!isPostVideo(v)) return;
+    /* Respect user interaction within last 8 seconds */
+    if(v._spaceUserTouched && (Date.now() - v._spaceUserTouched) < 8000){
+      return;
+    }
     if(shouldPlay && v === best){
-      v._spaceAllowPlay = true;
       if(v.paused){
         try { v.play().catch(function(){}); } catch(e){}
       }
-      Z._spacePostPlaying = v;
     } else {
       if(!v.paused){ try { v.pause(); } catch(e){} }
-      if(v === best) Z._spacePostPlaying = null;
     }
   });
 };
 
-if(!Z._spacePostScrollHooked){
-  Z._spacePostScrollHooked = true;
+if(!Z._spaceVideoScrollHooked){
+  Z._spaceVideoScrollHooked = true;
   var _raf = null;
   var _schedule = function(){
     if(_raf) return;
     _raf = requestAnimationFrame(function(){
       _raf = null;
+      try { scanVideos(); } catch(e){}
       try { Z.spaceRecomputePostPlayback(); } catch(e){}
     });
   };
@@ -12692,46 +12583,39 @@ if(!Z._spacePostScrollHooked){
   }, {passive:true, capture:true});
 }
 
-setInterval(function(){
-  if(Z.State.currentView !== 'public-profile') return;
-  unlockPostVideos();
-  try { Z.spaceRecomputePostPlayback(); } catch(e){}
-}, 400);
-
-var _prevRC5r = Z.sp5RenderContent;
-if(typeof _prevRC5r === 'function'){
+var _prevRenderContentFinal = Z.sp5RenderContent;
+if(typeof _prevRenderContentFinal === 'function'){
   Z.sp5RenderContent = function(){
-    var r = _prevRC5r.apply(this, arguments);
-    [50, 200, 600, 1200].forEach(function(ms){
+    var r = _prevRenderContentFinal.apply(this, arguments);
+    [80, 300, 800, 1500].forEach(function(ms){
       setTimeout(function(){
-        try { unlockPostVideos(); } catch(e){}
+        try { scanVideos(); } catch(e){}
         try { Z.spaceRecomputePostPlayback(); } catch(e){}
       }, ms);
     });
     return r;
   };
 }
-var _prevLoad5r = Z.sp5Load;
-if(typeof _prevLoad5r === 'function'){
+var _prevLoadFinal = Z.sp5Load;
+if(typeof _prevLoadFinal === 'function'){
   Z.sp5Load = async function(){
-    var r = await _prevLoad5r.apply(this, arguments);
-    [100, 400, 900, 1600].forEach(function(ms){
+    var r = await _prevLoadFinal.apply(this, arguments);
+    [120, 500, 1000, 1800].forEach(function(ms){
       setTimeout(function(){
-        try { unlockPostVideos(); } catch(e){}
+        try { scanVideos(); } catch(e){}
         try { Z.spaceRecomputePostPlayback(); } catch(e){}
       }, ms);
     });
     return r;
   };
 }
-
-var _prevSwitchMySub5r = Z.sp5SwitchMySub;
-if(typeof _prevSwitchMySub5r === 'function'){
+var _prevSubFinal = Z.sp5SwitchMySub;
+if(typeof _prevSubFinal === 'function'){
   Z.sp5SwitchMySub = function(){
-    var r = _prevSwitchMySub5r.apply(this, arguments);
-    [100, 400, 900].forEach(function(ms){
+    var r = _prevSubFinal.apply(this, arguments);
+    [80, 300, 800].forEach(function(ms){
       setTimeout(function(){
-        try { unlockPostVideos(); } catch(e){}
+        try { scanVideos(); } catch(e){}
         try { Z.spaceRecomputePostPlayback(); } catch(e){}
       }, ms);
     });
@@ -12739,15 +12623,19 @@ if(typeof _prevSwitchMySub5r === 'function'){
   };
 }
 
-var _prevShow5r = Z.showView;
+var _prevShowFinal = Z.showView;
 Z.showView = function(view){
-  if(view !== 'public-profile' && Z._spacePostPlaying){
-    try { Z._spacePostPlaying.pause(); Z._spacePostPlaying = null; } catch(e){}
+  if(view !== 'public-profile'){
+    try {
+      document.querySelectorAll('#sp5-content-host video').forEach(function(v){
+        if(!v.paused) v.pause();
+      });
+    } catch(e){}
   }
-  return _prevShow5r.apply(this, arguments);
+  return _prevShowFinal.apply(this, arguments);
 };
 
-console.log('[SPACE v7 — Fix 5 REPLACEMENT] post videos unlocked · 70% autoplay active');
+console.log('[SPACE v7 — Fix 5 FINAL] single controller · no watchdogs · user control respected');
 })();
 </script>
 <!-- ============================================================
