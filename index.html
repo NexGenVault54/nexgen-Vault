@@ -6122,6 +6122,12 @@ Z.openCreateFullVideoModal = function(){
         '<input type="text" id="fv-url" class="form-input" placeholder="https://...">' +
         '<label class="form-label">Share Bounty</label>' +
         '<select id="fv-share-bounty" class="form-select">' + Z.shareBountyOptions(0) + '</select>' +
+        '<label class="form-label" style="margin-top:8px;">Total share budget <span style="color:#64748b;font-weight:500;">(0 = off)</span></label>' +
+        '<select id="fv-share-budget" class="form-select">' +
+          [0, 0.5, 1, 5, 10, 25, 50, 100].map(function(v){
+            return '<option value="' + v + '">$' + v.toFixed(2) + (v === 0 ? ' (off)' : '') + '</option>';
+          }).join('') +
+        '</select>' +
         '<button class="btn-primary" onclick="Z.submitFullVideo()">Upload Video</button>' +
       '</div>' +
     '</div>'
@@ -6265,6 +6271,12 @@ Z.submitFullVideo = async function(){
   var fi = document.getElementById('fv-file');
   var url = ((document.getElementById('fv-url')||{}).value||'').trim();
   var sb_ = parseFloat((document.getElementById('fv-share-bounty')||{}).value || '0') || 0;
+  var cap_ = parseFloat((document.getElementById('fv-share-budget')||{}).value || '0') || 0;
+  /* Zero budget means zero bounty. Warn + zero out before publish. */
+  if(sb_ > 0 && cap_ <= 0){
+    Z.toast('Set a budget to enable share rewards — bounty reset to $0.', 'error');
+    sb_ = 0;
+  }
   if(!title){ Z.toast('Enter a title.'); return; }
 
   var cached = Z._mediaCache.fv;
@@ -6276,14 +6288,13 @@ Z.submitFullVideo = async function(){
   var fvId = Z.uuid();
   var optimistic = {
     id: fvId, author_id: me.id, title: title, caption: desc, video_url: localUrl,
-    type: 'long_video', tags: [], share_bounty: sb_,
+    type: 'long_video', tags: [], share_bounty: sb_, share_budget_cap: cap_,
     created_at: new Date().toISOString(), views: 0, shares: 0,
     _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
     _optimistic: true
   };
   Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
 
-  /* Save to recovery queue BEFORE user can refresh */
   if(fileObj){
     Z.uploadQueue.add({
       id: fvId,
@@ -6298,7 +6309,8 @@ Z.submitFullVideo = async function(){
         caption: desc,
         type: 'long_video',
         tags: [],
-        share_bounty: sb_
+        share_bounty: sb_,
+        share_budget_cap: cap_
       },
       createdAt: Date.now()
     }).catch(function(){});
@@ -6313,7 +6325,7 @@ Z.submitFullVideo = async function(){
     var vu = url;
     try {
       if(fileObj) vu = await Z.storeMedia(fileObj);
-       } catch(err){
+    } catch(err){
       Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== fvId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z.toast('Upload failed — video not uploaded.', 'error');
@@ -6323,7 +6335,8 @@ Z.submitFullVideo = async function(){
     var sp = await Z.DB.createSpark({
       id: fvId,
       author_id: me.id, title: title, caption: desc, video_url: vu,
-      type: 'long_video', tags: [], share_bounty: sb_
+      type: 'long_video', tags: [], share_bounty: sb_,
+      share_budget_cap: cap_
     });
     var arr = Z.State.allSparks || [];
     var idx = -1;
@@ -6333,13 +6346,11 @@ Z.submitFullVideo = async function(){
         var real = Object.assign({}, sp, {_reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0});
         arr[idx] = real;
       }
-           if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._mediaCache.fv = null;
       try { Z.saveSnapshot(); } catch(e){}
       Z.toast('Video uploaded!');
-      /* Success: remove from recovery queue */
       if(fileObj){ Z.uploadQueue.remove(fvId).catch(function(){}); }
-      /* No re-render — optimistic item is already on screen. */
     } else {
       Z.State.allSparks = arr.filter(function(x){ return x.id !== fvId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
@@ -16786,7 +16797,8 @@ Z.recoverPendingUploads = async function(){
           video_url: url,
           tags: item.payload.tags || [],
           type: 'long_video',
-          share_bounty: item.payload.share_bounty || 0
+          share_bounty: item.payload.share_bounty || 0,
+          share_budget_cap: item.payload.share_budget_cap || 0
         });
       } else if(item.kind === 'status'){
         await c.from('statuses').insert({
