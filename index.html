@@ -12204,7 +12204,404 @@ Z._toggleBlock = async function(userId, isCurrentlyBlocked){
 
 console.log('[SPACE v7 — Fix 4] autoplay control · owner More · name · public rating · block no-blink ready');
 })();
-</script>       
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — FIX 4 v2                                           -->
+<!-- Grid thumbnails · block no-close · public SPACE rating same   -->
+<!-- for everyone · no owner mute · name/More intact               -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Fix4v2) return; Z.__zynixSpaceV7Fix4v2 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+function scoreColor(s){ s = Number(s)||0; if(s>=8) return '#10b981'; if(s>=4) return '#a18554'; return '#a16262'; }
+function scoreBg(s){ s = Number(s)||0; if(s>=8) return 'rgba(16,185,129,.12)'; if(s>=4) return 'rgba(161,133,84,.14)'; return 'rgba(161,98,98,.14)'; }
+function ago(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function fmtDur(sec){
+  if(!sec) return '';
+  sec = Math.round(sec);
+  var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  if(h>0) return h+':'+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+  return m+':'+(s<10?'0':'')+s;
+}
+
+/* ============================================================
+   FIX 4-v2-A · Grid videos are pure thumbnails
+   No autoplay. No click interception. Pass-through to card.
+   Watchdog pauses any that sneakily start.
+   ============================================================ */
+function tameGridVideos(){
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+  host.querySelectorAll('video').forEach(function(v){
+    /* Force static thumbnail behavior */
+    try { v.autoplay = false; } catch(e){}
+    try { v.removeAttribute('autoplay'); } catch(e){}
+    try { v.removeAttribute('loop'); } catch(e){}
+    try { v.removeAttribute('controls'); } catch(e){}
+    v.muted = true;
+    v.setAttribute('preload','metadata');
+    v.setAttribute('playsinline','');
+    /* CRITICAL: let clicks fall through to the parent card */
+    v.style.pointerEvents = 'none';
+
+    if(!v._spaceTamed){
+      v._spaceTamed = true;
+      try { v.pause(); } catch(e){}
+      v.addEventListener('loadeddata', function(){ try { v.pause(); } catch(e){} });
+      v.addEventListener('play', function(){
+        if(!v._spaceAllowPlay){ try { v.pause(); } catch(e){} }
+      });
+    }
+  });
+}
+
+/* Watchdog every 2 seconds while on a SPACE page */
+setInterval(function(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+  host.querySelectorAll('video').forEach(function(v){
+    if(!v.paused && !v._spaceAllowPlay){
+      try { v.pause(); } catch(e){}
+    }
+  });
+}, 2000);
+
+var _prevRenderContentTame = Z.sp5RenderContent;
+if(typeof _prevRenderContentTame === 'function'){
+  Z.sp5RenderContent = function(){
+    var r = _prevRenderContentTame.apply(this, arguments);
+    setTimeout(tameGridVideos, 100);
+    setTimeout(tameGridVideos, 500);
+    setTimeout(tameGridVideos, 1500);
+    return r;
+  };
+}
+var _prevLoadTame = Z.sp5Load;
+if(typeof _prevLoadTame === 'function'){
+  Z.sp5Load = async function(){
+    var r = await _prevLoadTame.apply(this, arguments);
+    setTimeout(tameGridVideos, 150);
+    setTimeout(tameGridVideos, 800);
+    return r;
+  };
+}
+
+/* ============================================================
+   FIX 4-v2-B · SPACE Rating public view — SAME for owner + visitor
+   Aggregate · bands · anonymous reviews. Public can rate.
+   ============================================================ */
+Z.openSpaceRatingPublicView = async function(userId){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var me = Z.State.currentUser;
+  var isOwner = !!(me && me.id === userId);
+
+  var r = await c.rpc('space_space_rating', { p_space_id: userId });
+  if(r.error){
+    toast('Could not load ratings.'); return;
+  }
+  var d = (r.data && r.data[0]) ? r.data[0] : { avg_score:0, rating_count:0, bands:{} };
+  var avg = Number(d.avg_score) || 0;
+  var cnt = Number(d.rating_count) || 0;
+  var bands = d.bands || {};
+  var total = Math.max(1, (bands.low||0) + (bands.mid||0) + (bands.high||0) + (bands.top||0));
+
+  var reviews = [];
+  try {
+    var rv = await c.from('space_ratings')
+      .select('score, comment, created_at')
+      .eq('space_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(80);
+    reviews = rv.data || [];
+  } catch(e){}
+
+  var activeBand = null;
+
+  function bandRow(bandKey, label, count, col){
+    var pct = Math.round((count / total) * 100);
+    var active = activeBand === bandKey;
+    return '<button data-sp5-pub-band="' + bandKey + '" ' + (active ? 'data-active="1"' : '') + ' style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;width:100%;background:' + (active ? 'rgba(16,185,129,.08)' : 'transparent') + ';border:1px solid ' + (active ? 'rgba(16,185,129,.35)' : 'transparent') + ';cursor:pointer;text-align:left;">' +
+      '<div style="font-size:11px;color:#94a3b8;font-weight:800;min-width:52px;">' + label + '</div>' +
+      '<div style="flex:1;height:8px;border-radius:4px;background:rgba(0,0,0,.35);overflow:hidden;">' +
+        '<div style="height:100%;width:' + pct + '%;background:' + col + ';"></div>' +
+      '</div>' +
+      '<div style="font-size:11px;font-weight:900;color:' + col + ';min-width:22px;text-align:right;">' + count + '</div>' +
+    '</button>';
+  }
+
+  function reviewsHtml(){
+    var list = reviews.slice();
+    if(activeBand){
+      list = list.filter(function(rv){
+        var s = Number(rv.score) || 0;
+        if(activeBand === 'top')  return s >= 9;
+        if(activeBand === 'high') return s >= 7 && s <= 8;
+        if(activeBand === 'mid')  return s >= 4 && s <= 6;
+        if(activeBand === 'low')  return s >= 1 && s <= 3;
+        return true;
+      });
+    }
+    if(!list.length){
+      return '<div style="text-align:center;color:#64748b;font-size:12px;padding:24px;">' +
+        (activeBand ? 'No reviews in this band.' : 'No SPACE ratings yet.') + '</div>';
+    }
+    var out = '';
+    list.slice(0, 30).forEach(function(rv){
+      var s = Number(rv.score) || 0;
+      out += '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.05);">';
+      out += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+      out += '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:12px;background:' + scoreBg(s) + ';color:' + scoreColor(s) + ';font-weight:900;font-size:13px;">';
+      out += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + s + ' / 10</span>';
+      out += '<span style="font-size:10px;color:#64748b;font-weight:700;">' + ago(rv.created_at) + '</span>';
+      out += '</div>';
+      if(rv.comment) out += '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.55;font-style:italic;">"' + esc(rv.comment) + '"</div>';
+      out += '</div>';
+    });
+    out += '<div style="padding:12px 0;text-align:center;font-size:10.5px;color:#64748b;line-height:1.5;">Ratings are anonymous. Only score and comment are shown.</div>';
+    return out;
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">SPACE Ratings</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+  h += '<div style="display:flex;align-items:baseline;gap:8px;justify-content:center;margin-bottom:16px;">';
+  h += '<div style="font-size:42px;font-weight:900;color:' + scoreColor(avg) + ';">' + (cnt > 0 ? avg.toFixed(1) : '—') + '</div>';
+  h += '<div style="font-size:14px;color:#94a3b8;font-weight:700;">/ 10</div>';
+  h += '</div>';
+  h += '<div style="text-align:center;font-size:11px;color:#94a3b8;margin-bottom:16px;">' + cnt + ' rating' + (cnt === 1 ? '' : 's') + '</div>';
+  h += '<div id="sp5-pub-bands" style="margin-bottom:14px;">';
+  h += bandRow('top',  '9 – 10', bands.top  || 0, '#10b981');
+  h += bandRow('high', '7 – 8',  bands.high || 0, '#a18554');
+  h += bandRow('mid',  '4 – 6',  bands.mid  || 0, '#a18554');
+  h += bandRow('low',  '1 – 3',  bands.low  || 0, '#a16262');
+  h += '</div>';
+  h += '<div id="sp5-pub-clear"></div>';
+  h += '<div id="sp5-pub-reviews" style="border-radius:12px;background:#111827;border:1px solid #1e293b;padding:0 14px;">' + reviewsHtml() + '</div>';
+
+  if(!isOwner){
+    h += '<button id="sp5-pub-rate-btn" style="width:100%;margin-top:16px;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-star"></i> Rate this SPACE</button>';
+  }
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var bandsWrap = document.getElementById('sp5-pub-bands');
+    var clearHost = document.getElementById('sp5-pub-clear');
+    var listHost = document.getElementById('sp5-pub-reviews');
+    if(!bandsWrap) return;
+
+    function repaint(){
+      bandsWrap.querySelectorAll('[data-sp5-pub-band]').forEach(function(b){
+        var key = b.getAttribute('data-sp5-pub-band');
+        var on = (key === activeBand);
+        if(on){ b.setAttribute('data-active','1'); b.style.background = 'rgba(16,185,129,.08)'; b.style.borderColor = 'rgba(16,185,129,.35)'; }
+        else { b.removeAttribute('data-active'); b.style.background = 'transparent'; b.style.borderColor = 'transparent'; }
+      });
+      if(clearHost){
+        if(activeBand){
+          var lbl = activeBand === 'top' ? '9 – 10' : activeBand === 'high' ? '7 – 8' : activeBand === 'mid' ? '4 – 6' : '1 – 3';
+          clearHost.style.display = 'block';
+          clearHost.innerHTML = '<button id="sp5-pub-clear-btn" style="width:100%;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;margin-bottom:10px;">Showing ' + lbl + ' only · Clear filter</button>';
+          var cb = document.getElementById('sp5-pub-clear-btn');
+          if(cb) cb.onclick = function(){ activeBand = null; repaint(); };
+        } else {
+          clearHost.style.display = 'none';
+          clearHost.innerHTML = '';
+        }
+      }
+      if(listHost) listHost.innerHTML = reviewsHtml();
+    }
+
+    bandsWrap.querySelectorAll('[data-sp5-pub-band]').forEach(function(b){
+      b.onclick = function(){
+        var key = this.getAttribute('data-sp5-pub-band');
+        activeBand = (activeBand === key) ? null : key;
+        repaint();
+      };
+    });
+
+    var rateBtn = document.getElementById('sp5-pub-rate-btn');
+    if(rateBtn){
+      rateBtn.onclick = function(){
+        Z.closeSheet();
+        setTimeout(function(){ Z.openSpaceRatingSheet(userId); }, 200);
+      };
+    }
+  }, 40);
+};
+
+/* Chip click → public view for everyone */
+setInterval(function(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var chip = head.querySelector('[data-space-chip="1"]');
+  if(!chip) return;
+  var uid = Z.State.spaceUserId;
+  if(!uid) return;
+  chip.setAttribute('onclick', 'Z.openSpaceRatingPublicView(\'' + esc(uid) + '\')');
+  chip.style.cursor = 'pointer';
+}, 800);
+
+/* ============================================================
+   FIX 4-v2-C · Block — no sheet close, no reload, silent
+   ============================================================ */
+Z._toggleBlock = async function(userId, isCurrentlyBlocked){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc(isCurrentlyBlocked ? 'unblock_user' : 'block_user', { p_blocked_id: userId });
+    if(r.error) throw r.error;
+    toast(isCurrentlyBlocked ? 'User unblocked.' : 'User blocked.');
+    /* Silent local update — no sheet close, no reload, no navigation. */
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('cannot_block_self') !== -1) toast('You cannot block yourself.', 'error');
+    else toast('Failed: ' + msg, 'error');
+  }
+};
+
+/* ============================================================
+   FIX 4-v2-D · Owner more sheet — no mute, same ratings views
+   ============================================================ */
+Z.openSpaceMoreSheet = async function(userId){
+  var me = Z.State.currentUser;
+  var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
+  var sd = p.space_data || {};
+  if(me && me.id === userId && Z.State.currentUser){
+    sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
+  }
+  var uname = p.username || 'user';
+  var isOwner = !!(me && me.id === userId);
+  var displayName = (sd.name || '').trim() || p.name || 'SPACE';
+
+  var isBlocked = false;
+  if(!isOwner && me){
+    var c = Z.sb && Z.sb();
+    if(c){
+      try {
+        var br = await c.rpc('is_blocked', { p_user_id: userId });
+        if(!br.error) isBlocked = !!br.data;
+      } catch(e){}
+    }
+  }
+
+  var rows = [];
+
+  /* Description */
+  var desc = (sd.description || '').trim();
+  if(desc){
+    rows.push({ icon:'fa-solid fa-circle-info', label:'About ' + displayName, action:'Z.closeSheet();Z._openSpaceDescView(\'' + esc(userId) + '\')' });
+  }
+
+  /* Ratings */
+  rows.push({ icon:'fa-solid fa-star-half-stroke', label:'SPACE ratings', action:'Z.closeSheet();setTimeout(function(){Z.openSpaceRatingPublicView(\'' + esc(userId) + '\')},200)' });
+  if(isOwner){
+    rows.push({ icon:'fa-solid fa-film', label:'Video ratings (private)', action:'Z.closeSheet();Z.openSpaceRatingSummary(\'' + esc(userId) + '\')' });
+  }
+
+  /* Engagement (mute only for non-owner) */
+  rows.push({ icon:'fa-solid fa-hand-holding-dollar', label:'Send a tip', action:'Z.closeSheet();Z.toast(\'Tips coming soon\')' });
+  rows.push({ icon:'fa-regular fa-bookmark', label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
+  rows.push({ icon:'fa-solid fa-copy', label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
+
+  if(!isOwner){
+    var muted = (function(){
+      try {
+        var u = Z.State.currentUser;
+        if(!u) return false;
+        return localStorage.getItem('zynix_space_mute_' + u.id + '_' + userId) === '1';
+      } catch(e){ return false; }
+    })();
+    rows.push({
+      icon: muted ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark',
+      label: muted ? 'Unmute' : 'Mute',
+      action: 'Z._toggleSpaceMute(\'' + esc(userId) + '\')'
+    });
+    if(isBlocked){
+      rows.push({ icon:'fa-solid fa-circle-check', label:'Unblock user', action:'Z._toggleBlock(\'' + esc(userId) + '\', true)' });
+    } else {
+      rows.push({ icon:'fa-solid fa-ban', label:'Block user', action:'Z._toggleBlock(\'' + esc(userId) + '\', false)' });
+    }
+    rows.push({ icon:'fa-solid fa-flag', label:'Report user', action:'Z._openReportSheet(\'' + esc(userId) + '\')' });
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">More</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:8px;">';
+  rows.forEach(function(it){
+    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
+    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:#10b981;flex-shrink:0;"></i>';
+    h += '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.label) + '</span>';
+    h += '</button>';
+  });
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+Z._toggleSpaceMute = function(userId){
+  try {
+    var u = Z.State.currentUser;
+    if(!u) return;
+    var k = 'zynix_space_mute_' + u.id + '_' + userId;
+    var cur = localStorage.getItem(k) === '1';
+    if(cur){ localStorage.removeItem(k); toast('Unmuted this SPACE.'); }
+    else { localStorage.setItem(k, '1'); toast('Muted this SPACE.'); }
+    Z.closeSheet();
+    setTimeout(function(){ Z.openSpaceMoreSheet(userId); }, 200);
+  } catch(e){}
+};
+
+Z._openSpaceDescView = function(userId){
+  var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
+  var sd = p.space_data || {};
+  if(Z.State.currentUser && Z.State.currentUser.id === userId){
+    sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
+  }
+  var desc = (sd.description || '').trim();
+  if(!desc){ toast('No description yet.'); return; }
+  var displayName = (sd.name || '').trim() || p.name || 'SPACE';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">About ' + esc(displayName) + '</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div style="font-size:13px;color:#e2e8f0;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(desc) + '</div>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+console.log('[SPACE v7 — Fix 4 v2] grid thumbnails · public rating · silent block · no owner mute');
+})();
+</script>     
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
