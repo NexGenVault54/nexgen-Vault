@@ -8202,11 +8202,27 @@ Z._renderVideoPageReactionRow = function(video){
 };
 
 Z.sp5OpenVideo = async function(videoId){
-  /* Look in BOTH the current space's videos AND the global public pool.
-     This is the "video not found" bug fix. */
+  /* Look in BOTH the current space's videos AND the global public pool. */
   var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
   if(!v) v = (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
-  if(!v){ Z.toast('Video not found.'); return; }
+
+  /* DB fallback — video may not be in memory yet (boot, refresh, deep-link) */
+  if(!v){
+    var _c = Z.sb && Z.sb();
+    if(_c){
+      try {
+        var _r = await _c.from('sparks').select('*').eq('id', videoId).eq('type','long_video').maybeSingle();
+        if(_r && _r.data) v = _r.data;
+      } catch(e){}
+    }
+  }
+
+  if(!v){
+    /* Truly gone — clean up the marker so we don't toast on every refresh */
+    try { sessionStorage.removeItem('zynix_open_video_id'); } catch(e){}
+    Z.toast('Video not found.');
+    return;
+  }
 
     /* Ensure the SAME object reference is used in allSparks AND local v.
      This is the fix for "reaction counts reset to 0 on click". */
