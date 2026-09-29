@@ -7224,19 +7224,38 @@ Z.renderPublicProfile = function(userId){
   Z.State._spaceLandingPublicSub = null;
   Z.State._spaceLandingMySub     = null;
 
-  var sameUser = (Z.State.spaceUserId === userId);
+    var sameUser = (Z.State.spaceUserId === userId);
   var isOwner  = !!(me && me.id === userId);
 
   if(landingTab){
     Z.State.spaceTab       = landingTab;
     Z.State.spacePublicTab = landingPublicSub || 'sparks';
     Z.State.spaceMySub     = landingMySub || 'default';
-  } else if(!sameUser){
-    /* Avatar click (visitor) → user B's personal space
-       Bottom SPACE button (owner, sets landingTab) → public view */
-   Z.State.spaceTab = 'my';
-    Z.State.spacePublicTab = 'sparks';
-    Z.State.spaceMySub     = 'default';
+  } else {
+    /* Try to restore from sessionStorage if user was on this same page */
+    var restored = false;
+    try {
+      var lastView  = localStorage.getItem('zynix_last_view') || '';
+      var lastParam = localStorage.getItem('zynix_last_param') || '';
+      if(lastView === 'public-profile' && lastParam === userId){
+        var sTab = sessionStorage.getItem('zynix_space_tab') || '';
+        var sPub = sessionStorage.getItem('zynix_space_public_sub') || '';
+        var sMy  = sessionStorage.getItem('zynix_space_my_sub') || '';
+        if(sTab){
+          Z.State.spaceTab       = sTab;
+          Z.State.spacePublicTab = sPub || 'sparks';
+          Z.State.spaceMySub     = sMy  || 'default';
+          restored = true;
+        }
+      }
+    } catch(e){}
+
+    if(!restored && !sameUser){
+      /* Fresh avatar click → My Space view */
+      Z.State.spaceTab       = 'my';
+      Z.State.spacePublicTab = 'sparks';
+      Z.State.spaceMySub     = 'default';
+    }
   }
 
   Z.State.spaceUserId = userId;
@@ -7996,7 +8015,7 @@ console.log('[SPACE v6 — Part 1] core structure ready — send Part 2 before c
 <!-- ============================================================ -->
 <style id="zynix-space-v6-p2-css">
 /* ---------- Video detail overlay ---------- */
-.sp5-vd{position:fixed;inset:0;z-index:10001;background:#0a0f1c;overflow-y:auto;overflow-x:hidden;padding-bottom:60px}
+.sp5-vd{position:fixed;inset:0;z-index:9997;background:#0a0f1c;overflow-y:auto;overflow-x:hidden;padding-bottom:60px}
 .sp5-vd-head{position:sticky;top:0;z-index:10;background:rgba(10,15,28,.96);backdrop-filter:blur(12px);border-bottom:1px solid #1e293b;padding:10px 14px;display:flex;align-items:center;gap:10px}
 .sp5-vd-close{width:36px;height:36px;border-radius:50%;border:1px solid #1e293b;background:rgba(15,23,42,.85);color:#cbd5e1;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .sp5-vd-close:hover{border-color:#10b981;color:#10b981}
@@ -8383,10 +8402,11 @@ Z.sp5OpenVideo = async function(videoId){
   h += '</div>';
   h += '</div>';
 
-  var existing = document.getElementById('sp5-vd-host');
+   var existing = document.getElementById('sp5-vd-host');
   if(existing) existing.remove();
   document.body.insertAdjacentHTML('beforeend', h);
   document.body.style.overflow = 'hidden';
+  try { sessionStorage.setItem('zynix_open_video_id', videoId); } catch(e){}
 
   setTimeout(function(){
     try { Z.observeFreezeDots(); } catch(e){}
@@ -8424,6 +8444,7 @@ Z.sp5CloseVideo = function(){
     el.remove();
   }
   document.body.style.overflow = '';
+  try { sessionStorage.removeItem('zynix_open_video_id'); } catch(e){}
 };
 
 Z.sp5ToggleFullscreen = function(){
@@ -8492,7 +8513,27 @@ document.addEventListener('click', function(e){
   if(reactionType === 'dislike') return;
   if(btn.classList.contains('active')) return;
 
-  if(!Z.isUnfrozen(videoId)){
+    if(!Z.isUnfrozen(videoId)){
+    /* Force inline blink — direct, guaranteed visible */
+    var dot = document.querySelector('.freeze-dot[data-freeze-id="' + videoId + '"]');
+    if(dot){
+      try {
+        dot.animate([
+          { transform: 'scale(1)',    opacity: 1 },
+          { transform: 'scale(1.4)',  opacity: 0.35 },
+          { transform: 'scale(1)',    opacity: 1 }
+        ], { duration: 350, iterations: 3, easing: 'ease' });
+      } catch(err){
+        dot.style.transition = 'none';
+        dot.style.transform = 'scale(1.4)';
+        dot.style.opacity = '0.35';
+        setTimeout(function(){
+          dot.style.transition = 'transform .3s ease, opacity .3s ease';
+          dot.style.transform = 'scale(1)';
+          dot.style.opacity = '1';
+        }, 220);
+      }
+    }
     if(typeof Z.showFreezeTooltip === 'function') Z.showFreezeTooltip(videoId);
     Z.toast('Unfreeze reactions first', 'freeze');
     return;
@@ -8753,34 +8794,58 @@ Z.renderSpaceSettings = function(){
   h += '<button class="sp5-settings-cta" onclick="Z.showView(\'market-themes\')"><i class="fa-solid fa-store"></i> Browse themes in Market</button>';
   h += '</div>';
 
-  /* Full Video Access */
-  var fvEnabled = !!sd.full_video_enabled;
+  /* Full Video Access — status only, no toggle */
   h += '<div class="sp5-settings-group">';
   h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><i class="fa-solid fa-film" style="color:#10b981;font-size:14px;"></i><div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">FULL VIDEO ACCESS</div></div>';
-  h += '<div class="sp5-settings-row"><div class="lbl">Status</div><div class="val">' + (fvEnabled ? 'Enabled' : 'Disabled') + '</div></div>';
   h += '<div class="sp5-settings-row"><div class="lbl">You earn</div><div class="val">$0.30 / subscriber / month</div></div>';
-  h += '<div class="sp5-settings-row"><div class="lbl">Promotion</div><div class="val">ZYNIX invests $0.20 / subscriber</div></div>';
-  h += '<button class="sp5-settings-cta" onclick="' + (fvEnabled ? 'Z.toggleFullVideoAccess()' : 'Z.toggleFullVideoAccess()') + '">' +
-        '<i class="fa-solid fa-power-off"></i> ' + (fvEnabled ? 'Disable Full Video Access' : 'Enable Full Video Access') + '</button>';
+  h += '<div class="sp5-settings-row"><div class="lbl">Ad Wallet</div><div class="val">$0.20 / subscriber / month (ring-fenced)</div></div>';
+  h += '<div id="sp5-settings-fv-status" style="margin-top:12px;">' +
+         '<div style="text-align:center;color:#64748b;font-size:11px;padding:8px;">Loading status…</div>' +
+       '</div>';
   h += '<button class="sp5-settings-cta" onclick="Z.openFullVideoCreatorGuide()" style="margin-top:8px;border-color:rgba(59,130,246,.35);background:rgba(59,130,246,.06);color:#60a5fa;"><i class="fa-solid fa-circle-question"></i> How it works (Creator Guide)</button>';
   h += '</div>';
 
   /* Logout */
-  h += '<button class="sp5-settings-cta danger" onclick="Z.logout()" style="margin-top:6px;"><i class="fa-solid fa-power-off"></i> Log out</button>';
+   h += '<button class="sp5-settings-cta danger" onclick="Z.logout()" style="margin-top:6px;"><i class="fa-solid fa-power-off"></i> Log out</button>';
 
   h += '</div>';
+  setTimeout(function(){ Z._paintSettingsFvStatus(); }, 60);
   return h;
 };
 
-Z.toggleFullVideoAccess = async function(){
-  var me = Z.State.currentUser; if(!me) return;
-  var sd = Object.assign({}, me.space_data || {});
-  sd.full_video_enabled = !sd.full_video_enabled;
-  var res = await Z.DB.updateProfile(me.id, { space_data: sd });
-  if(!res){ Z.toast('Failed.', 'error'); return; }
-  try { await Z.refreshSession(); } catch(e){}
-  Z.toast(sd.full_video_enabled ? 'Full Video Access enabled' : 'Full Video Access disabled');
-  Z.showView('space-settings');
+Z._paintSettingsFvStatus = async function(){
+  var host = document.getElementById('sp5-settings-fv-status');
+  if(!host) return;
+  var me = Z.State.currentUser;
+  if(!me){ host.innerHTML = ''; return; }
+  var app = await Z.fetchFullVideoApp(me.id);
+  if(!app){
+    host.innerHTML = '<button onclick="Z.openFullVideoApplication()" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">' +
+      '<i class="fa-solid fa-star"></i> Apply for Full Video Access</button>';
+    return;
+  }
+  if(app.status === 'approved'){
+    host.innerHTML = '<div style="padding:12px;border-radius:10px;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.4);">' +
+      '<div style="font-size:12px;font-weight:900;color:#10b981;">✓ Approved · Full Video Creator</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;line-height:1.5;">Your application was approved. Videos earn per subscriber.</div>' +
+    '</div>';
+    return;
+  }
+  if(app.status === 'pending'){
+    host.innerHTML = '<div style="padding:12px;border-radius:10px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);">' +
+      '<div style="font-size:12px;font-weight:900;color:#a18554;">⏳ Application under review</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;line-height:1.5;">Shortlisting in progress. You will be notified when a decision is made.</div>' +
+    '</div>';
+    return;
+  }
+  if(app.status === 'rejected'){
+    host.innerHTML = '<div style="padding:12px;border-radius:10px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.35);">' +
+      '<div style="font-size:12px;font-weight:900;color:#c9a5a5;">Application not approved</div>' +
+      '<button onclick="Z.openFullVideoApplication()" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:transparent;color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;">Reapply</button>' +
+    '</div>';
+    return;
+  }
+  host.innerHTML = '';
 };
 
 /* ============================================================
@@ -8906,7 +8971,7 @@ Z.bondUser = async function(userId){
         try { Z.updateHeader(); } catch(e){}
       }
     }
-    /* Re-render header to update button label */
+        /* Re-render header to update button label */
     if(Z.State.currentView === 'public-profile' && Z.State.spaceProfile){
       var head = document.getElementById('sp5-head-host');
       if(head && typeof renderHeader === 'function'){
@@ -8918,6 +8983,10 @@ Z.bondUser = async function(userId){
         );
       }
     }
+    /* Also flip the bond button on the Full Video detail page (if open) */
+    try { Z._refreshBondButtons(userId); } catch(e){}
+    /* And on any visible Spark slide */
+    try { Z._refreshBondButtonsOnSparks(userId); } catch(e){}
   } catch(e){
     var msg = (e && e.message) ? e.message : 'unknown';
     if(msg.indexOf('cannot_bond_self') !== -1) Z.toast('You cannot bond your own SPACE.', 'error');
@@ -9326,25 +9395,25 @@ Z.openPoolHealthMeter = async function(){
   h += '</div>';
   h += '<div class="sheet-body" style="padding:16px;">';
 
-  /* Global card */
+  /* Global CSF card */
   h += '<div class="sp5-pool-card">';
   h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
   h += '<div style="flex:1;min-width:0;">';
-  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.6px;">COMMUNITY POOL · GLOBAL</div>';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.6px;">CREATOR SUPPORT FUND · POOL</div>';
   h += '<div style="font-size:26px;font-weight:900;color:#10b981;margin-top:4px;">$' + pool.balance.toFixed(2) + '</div>';
-  h += '<div style="font-size:10px;color:#64748b;margin-top:4px;">Weekly rate: <b style="color:#a18554;">' + (pool.rate > 0 ? ('~$' + pool.rate.toFixed(3) + ' / pt') : 'building') + '</b></div>';
+  h += '<div style="font-size:10px;color:#64748b;margin-top:4px;">Funded by 10% of platform net profit monthly</div>';
   h += '</div>';
-  h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-shield-heart" style="color:#10b981;font-size:15px;"></i></div>';
+  h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-hand-holding-heart" style="color:#10b981;font-size:15px;"></i></div>';
   h += '</div>';
   h += '<div style="margin-top:12px;padding:10px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;color:#cbd5e1;line-height:1.55;">';
-  h += 'Every Monday, the pool pays out to everyone who earned points that week. Bigger pool → higher rate for everyone.';
+  h += 'Distributed monthly to every eligible Full Video creator. Eligibility requires: Business tier, 500+ subscribers, aggregate rating ≥ 7.0, 5+ long videos, 60 Sparks this month, and a fresh video every 30 days.';
   h += '</div></div>';
 
-  /* Creator-projected card */
+   /* Creator-projected card */
   h += '<div class="sp5-pool-card" style="margin-top:14px;background:linear-gradient(135deg,rgba(59,130,246,.10),rgba(139,92,246,.06));border-color:rgba(59,130,246,.35);">';
-  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.6px;">YOUR PROJECTED EARNINGS</div>';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.6px;">YOUR PROJECTED CSF PAYOUT</div>';
   h += '<div style="font-size:26px;font-weight:900;color:#60a5fa;margin-top:4px;">$' + monthlyProjected.toFixed(2) + ' / mo</div>';
-  h += '<div class="sp5-pool-grid">';
+ h += '<div class="sp5-pool-grid">';
   h += '<div class="sp5-pool-stat"><div class="lbl">Subscribers</div><div class="val">' + subs + '</div><div class="sub">active this month</div></div>';
   h += '<div class="sp5-pool-stat"><div class="lbl">Per subscriber</div><div class="val">$0.30</div><div class="sub">to your Cash wallet</div></div>';
   h += '</div>';
@@ -9577,10 +9646,145 @@ Z.bondDiag = async function(){
 
   console.log('=== END ===');
 };
-     
+Z._refreshBondButtons = function(userId){
+  var nb = Z._bondState[userId];
+  if(!nb || !nb.bonded) return;
+
+  /* Full Video detail page header row */
+  var vdRow = document.querySelector('.sp5-vd-header-row');
+  if(vdRow){
+    var vdBtn = vdRow.querySelector('[data-bond-user="' + userId + '"]');
+    if(vdBtn){
+      var newVd = '<button type="button" data-bond-busy="1" style="padding:6px 12px;border-radius:18px;border:1px solid rgba(16,185,129,.5);background:rgba(16,185,129,.14);color:#10b981;font-weight:900;font-size:11.5px;cursor:default;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><i class="fa-solid fa-star" style="font-size:9px;"></i> Bonded</button>';
+      var tmp = document.createElement('div');
+      tmp.innerHTML = newVd;
+      vdBtn.parentNode.replaceChild(tmp.firstChild, vdBtn);
+    }
+  }
+
+  /* SPACE header */
+  var headAct = document.querySelector('.sp5-head .sp5-actions [data-bond-user="' + userId + '"]');
+  if(headAct){
+    var newHead = '<button class="sp5-act sub" style="background:rgba(16,185,129,.14);border-color:rgba(16,185,129,.5);color:#10b981;cursor:default;width:auto;padding:0 12px;font-size:11px;font-weight:900;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-star"></i> Bonded</button>';
+    var tmpH = document.createElement('div');
+    tmpH.innerHTML = newHead;
+    headAct.parentNode.replaceChild(tmpH.firstChild, headAct);
+  }
+};
+
+Z._refreshBondButtonsOnSparks = function(userId){
+  var nb = Z._bondState[userId];
+  if(!nb || !nb.bonded) return;
+  document.querySelectorAll('.spark-actions-stack [data-bond-user="' + userId + '"]').forEach(function(btn){
+    var iconEl = btn.querySelector('.spark-action-icon');
+    var cntEl = btn.querySelector('.spark-action-count');
+    if(iconEl){
+      iconEl.style.background = 'rgba(16,185,129,.35)';
+      iconEl.style.borderColor = 'rgba(16,185,129,.6)';
+      iconEl.innerHTML = '<i class="fa-solid fa-star" style="color:#10b981;"></i>';
+    }
+    if(cntEl){ cntEl.textContent = 'Bonded'; cntEl.style.color = '#10b981'; }
+    btn.removeAttribute('data-bond-user');
+    btn.setAttribute('data-bond-busy','1');
+  });
+};     
+/* ============================================================
+   DEEP LINK HANDLER — restores state after refresh / from share link
+   #spark-<id> → Spark feed at that spark
+   #video-<id> → Full Video detail page
+   #space-<id> → that user's SPACE
+   ============================================================ */
+(function(){
+  function _applyHash(){
+    try {
+      var h = String(window.location.hash || '');
+      if(h.indexOf('#spark-') === 0){
+        var sid = decodeURIComponent(h.substring(7));
+        if(sid && typeof Z.openSparkInFeed === 'function'){ Z.openSparkInFeed(sid); return true; }
+      }
+      if(h.indexOf('#video-') === 0){
+        var vid = decodeURIComponent(h.substring(7));
+        if(vid && typeof Z.sp5OpenVideo === 'function'){ Z.sp5OpenVideo(vid); return true; }
+      }
+      if(h.indexOf('#space-') === 0){
+        var uid = decodeURIComponent(h.substring(7));
+        if(uid && Z.showView){ Z.showView('public-profile', uid); return true; }
+      }
+    } catch(e){}
+    return false;
+  }
+
+  var tries = 0;
+  var t = setInterval(function(){
+    tries++;
+    if(Z.State && Z.State.bootCompleted){
+      clearInterval(t);
+      var applied = _applyHash();
+      if(!applied){
+        try {
+          var openVid = sessionStorage.getItem('zynix_open_video_id');
+          if(openVid && typeof Z.sp5OpenVideo === 'function'){
+            setTimeout(function(){ Z.sp5OpenVideo(openVid); }, 800);
+          }
+        } catch(e){}
+      }
+    } else if(tries >= 40){
+      clearInterval(t);
+    }
+  }, 500);
+
+  window.addEventListener('hashchange', function(){ _applyHash(); });
+})();
+
+/* ============================================================
+   SPACE REFRESH STATE — remember which tab user was on
+   ============================================================ */
+(function(){
+  var _prevGoMy = Z.sp5GoMySpaceView;
+  var _prevGoPub = Z.sp5GoPublicView;
+
+  if(typeof _prevGoMy === 'function'){
+    Z.sp5GoMySpaceView = function(){
+      var r = _prevGoMy.apply(this, arguments);
+      try {
+        sessionStorage.setItem('zynix_space_tab', 'my');
+        sessionStorage.setItem('zynix_space_my_sub', Z.State.spaceMySub || 'default');
+      } catch(e){}
+      return r;
+    };
+  }
+  if(typeof _prevGoPub === 'function'){
+    Z.sp5GoPublicView = function(){
+      var r = _prevGoPub.apply(this, arguments);
+      try {
+        sessionStorage.setItem('zynix_space_tab', 'public');
+        sessionStorage.setItem('zynix_space_public_sub', Z.State.spacePublicTab || 'sparks');
+      } catch(e){}
+      return r;
+    };
+  }
+
+  var _prevSwitchPub = Z.sp5SwitchPublicTab;
+  if(typeof _prevSwitchPub === 'function'){
+    Z.sp5SwitchPublicTab = function(sub){
+      var r = _prevSwitchPub.apply(this, arguments);
+      try { sessionStorage.setItem('zynix_space_public_sub', sub); } catch(e){}
+      return r;
+    };
+  }
+  var _prevSwitchMy = Z.sp5SwitchMySub;
+  if(typeof _prevSwitchMy === 'function'){
+    Z.sp5SwitchMySub = function(sub){
+      var r = _prevSwitchMy.apply(this, arguments);
+      try { sessionStorage.setItem('zynix_space_my_sub', sub); } catch(e){}
+      return r;
+    };
+  }
+})();
+
 console.log('[SPACE v6 — Part 2] overlays · sheets · settings · guide · pool meter · helpers ready');
 })(); 
-</script>     
+</script>
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
