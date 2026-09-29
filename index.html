@@ -12603,118 +12603,153 @@ console.log('[SPACE v7 — Fix 4 v2] grid thumbnails · public rating · silent 
 })();
 </script>
 <!-- ============================================================ -->
-<!-- SPACE v7 — FIX 5                                              -->
-<!-- Post-card videos stay interactive. Grid videos stay tamed.    -->
+<!-- SPACE v7 — FIX 5 (REPLACEMENT)                                -->
+<!-- Post videos interactive + 70% autoplay · grids stay static    -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixSpaceV7Fix5) return; Z.__zynixSpaceV7Fix5 = true;
+if(Z.__zynixSpaceV7Fix5r) return; Z.__zynixSpaceV7Fix5r = true;
 
-function tameGridVideosOnly(){
+function isPostVideo(v){
+  if(!v || v.tagName !== 'VIDEO') return false;
+  if(v.hasAttribute('data-space-spark')) return false;
+  if(v.hasAttribute('data-spark-id')) return false;
+  if(v.closest('.post-card')) return true;
+  if(v.closest('.sp5-posts-window')) return true;
+  if(v.closest('.post-media')) return true;
+  return false;
+}
+
+function unlockPostVideos(){
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
-
-  /* Only videos inside the grids/strips carry data-space-spark.
-     Post-card videos (Section 4) do NOT — leave them alone. */
-  host.querySelectorAll('video[data-space-spark="1"]').forEach(function(v){
-    try { v.autoplay = false; } catch(e){}
-    try { v.removeAttribute('autoplay'); } catch(e){}
-    try { v.removeAttribute('loop'); } catch(e){}
-    try { v.removeAttribute('controls'); } catch(e){}
-    v.muted = true;
-    v.setAttribute('preload','metadata');
-    v.setAttribute('playsinline','');
-    v.style.pointerEvents = 'none';
-
-    if(!v._spaceTamed){
-      v._spaceTamed = true;
-      try { v.pause(); } catch(e){}
-      v.addEventListener('loadeddata', function(){ try { v.pause(); } catch(e){} });
-      v.addEventListener('play', function(){
-        if(!v._spaceAllowPlay){ try { v.pause(); } catch(e){} }
-      });
-    }
+  host.querySelectorAll('video').forEach(function(v){
+    if(!isPostVideo(v)) return;
+    v._spaceAllowPlay = true;
+    v._spaceTamed = true;
+    v.style.pointerEvents = '';
+    try { v.setAttribute('controls',''); } catch(e){}
+    try { v.setAttribute('loop',''); } catch(e){}
+    try { v.setAttribute('playsinline',''); } catch(e){}
+    try { v.setAttribute('preload','metadata'); } catch(e){}
+    if(!v.muted) v.muted = true;
   });
 }
 
-/* Watchdog — only touches grid videos */
+Z._spacePostPlaying = null;
+
+Z.spaceRecomputePostPlayback = function(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var vids = document.querySelectorAll(
+    '#sp5-content-host .post-card video, #sp5-content-host .sp5-posts-window video, #sp5-content-host .post-media video'
+  );
+  if(!vids.length){ Z._spacePostPlaying = null; return; }
+
+  var vh = window.innerHeight, best = null, bestRatio = 0;
+  vids.forEach(function(v){
+    if(!isPostVideo(v)) return;
+    var r = v.getBoundingClientRect();
+    var visible = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
+    var ratio = r.height > 0 ? visible / r.height : 0;
+    if(ratio > bestRatio){ bestRatio = ratio; best = v; }
+  });
+
+  var shouldPlay = best && bestRatio >= 0.70;
+
+  vids.forEach(function(v){
+    if(!isPostVideo(v)) return;
+    if(shouldPlay && v === best){
+      v._spaceAllowPlay = true;
+      if(v.paused){
+        try { v.play().catch(function(){}); } catch(e){}
+      }
+      Z._spacePostPlaying = v;
+    } else {
+      if(!v.paused){ try { v.pause(); } catch(e){} }
+      if(v === best) Z._spacePostPlaying = null;
+    }
+  });
+};
+
+if(!Z._spacePostScrollHooked){
+  Z._spacePostScrollHooked = true;
+  var _raf = null;
+  var _schedule = function(){
+    if(_raf) return;
+    _raf = requestAnimationFrame(function(){
+      _raf = null;
+      try { Z.spaceRecomputePostPlayback(); } catch(e){}
+    });
+  };
+  window.addEventListener('scroll', _schedule, {passive:true});
+  window.addEventListener('resize', _schedule, {passive:true});
+  document.addEventListener('scroll', function(e){
+    if(e.target && e.target.classList && e.target.classList.contains('sp5-posts-window')){
+      _schedule();
+    }
+  }, {passive:true, capture:true});
+}
+
 setInterval(function(){
   if(Z.State.currentView !== 'public-profile') return;
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-  host.querySelectorAll('video[data-space-spark="1"]').forEach(function(v){
-    if(!v.paused && !v._spaceAllowPlay){
-      try { v.pause(); } catch(e){}
-    }
-  });
-}, 2000);
+  unlockPostVideos();
+  try { Z.spaceRecomputePostPlayback(); } catch(e){}
+}, 400);
 
-/* Re-run tamer on renders */
-var _prevRC5 = Z.sp5RenderContent;
-if(typeof _prevRC5 === 'function'){
+var _prevRC5r = Z.sp5RenderContent;
+if(typeof _prevRC5r === 'function'){
   Z.sp5RenderContent = function(){
-    var r = _prevRC5.apply(this, arguments);
-    setTimeout(tameGridVideosOnly, 100);
-    setTimeout(tameGridVideosOnly, 600);
-    setTimeout(tameGridVideosOnly, 1500);
+    var r = _prevRC5r.apply(this, arguments);
+    [50, 200, 600, 1200].forEach(function(ms){
+      setTimeout(function(){
+        try { unlockPostVideos(); } catch(e){}
+        try { Z.spaceRecomputePostPlayback(); } catch(e){}
+      }, ms);
+    });
     return r;
   };
 }
-var _prevLoad5 = Z.sp5Load;
-if(typeof _prevLoad5 === 'function'){
+var _prevLoad5r = Z.sp5Load;
+if(typeof _prevLoad5r === 'function'){
   Z.sp5Load = async function(){
-    var r = await _prevLoad5.apply(this, arguments);
-    setTimeout(tameGridVideosOnly, 150);
-    setTimeout(tameGridVideosOnly, 800);
+    var r = await _prevLoad5r.apply(this, arguments);
+    [100, 400, 900, 1600].forEach(function(ms){
+      setTimeout(function(){
+        try { unlockPostVideos(); } catch(e){}
+        try { Z.spaceRecomputePostPlayback(); } catch(e){}
+      }, ms);
+    });
     return r;
   };
 }
 
-/* Restore interactivity for any post-card video that Fix 4 already broke */
-function restorePostVideos(){
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-  host.querySelectorAll('.post-card video, .sp5-posts-window video').forEach(function(v){
-    if(!v.hasAttribute('data-space-spark')){
-      v.style.pointerEvents = '';
-      try { v.setAttribute('controls',''); } catch(e){}
-      try { v.setAttribute('loop',''); } catch(e){}
-      try { v.setAttribute('playsinline',''); } catch(e){}
-      try { v.setAttribute('preload','metadata'); } catch(e){}
-      v.muted = true;
-    }
-  });
-}
-
-var _prevRC5b = Z.sp5RenderContent;
-setTimeout(restorePostVideos, 300);
-setTimeout(restorePostVideos, 1000);
-var _prevLoad5b = Z.sp5Load;
-if(typeof _prevLoad5b === 'function'){
-  Z.sp5Load = async function(){
-    var r = await _prevLoad5b.apply(this, arguments);
-    setTimeout(restorePostVideos, 200);
-    setTimeout(restorePostVideos, 900);
-    return r;
-  };
-}
-
-/* Also run on Full View (posts-all mode) */
-var _prevSwitchMySub5 = Z.sp5SwitchMySub;
-if(typeof _prevSwitchMySub5 === 'function'){
+var _prevSwitchMySub5r = Z.sp5SwitchMySub;
+if(typeof _prevSwitchMySub5r === 'function'){
   Z.sp5SwitchMySub = function(){
-    var r = _prevSwitchMySub5.apply(this, arguments);
-    setTimeout(restorePostVideos, 200);
-    setTimeout(restorePostVideos, 900);
+    var r = _prevSwitchMySub5r.apply(this, arguments);
+    [100, 400, 900].forEach(function(ms){
+      setTimeout(function(){
+        try { unlockPostVideos(); } catch(e){}
+        try { Z.spaceRecomputePostPlayback(); } catch(e){}
+      }, ms);
+    });
     return r;
   };
 }
 
-console.log('[SPACE v7 — Fix 5] post videos restored, grid taming narrowed to data-space-spark only');
+var _prevShow5r = Z.showView;
+Z.showView = function(view){
+  if(view !== 'public-profile' && Z._spacePostPlaying){
+    try { Z._spacePostPlaying.pause(); Z._spacePostPlaying = null; } catch(e){}
+  }
+  return _prevShow5r.apply(this, arguments);
+};
+
+console.log('[SPACE v7 — Fix 5 REPLACEMENT] post videos unlocked · 70% autoplay active');
 })();
-</script>       
+</script>
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
