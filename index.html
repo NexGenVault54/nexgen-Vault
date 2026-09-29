@@ -7250,13 +7250,20 @@ Z.renderPublicProfile = function(userId){
       }
     } catch(e){}
 
-    if(!restored && !sameUser){
+        if(!restored && !sameUser){
       /* Fresh avatar click → My Space view */
       Z.State.spaceTab       = 'my';
       Z.State.spacePublicTab = 'sparks';
       Z.State.spaceMySub     = 'default';
     }
   }
+
+  /* Persist tab state so first refresh preserves it */
+  try {
+    sessionStorage.setItem('zynix_space_tab', Z.State.spaceTab || 'my');
+    sessionStorage.setItem('zynix_space_public_sub', Z.State.spacePublicTab || 'sparks');
+    sessionStorage.setItem('zynix_space_my_sub', Z.State.spaceMySub || 'default');
+  } catch(e){}
 
   Z.State.spaceUserId = userId;
 
@@ -8289,7 +8296,14 @@ Z.sp5OpenVideo = async function(videoId){
     }
   } catch(e){}
 
-  /* Related videos */
+   /* Ensure global pool is loaded for related videos */
+  if(!(Z.State.publicVideosAll && Z.State.publicVideosAll.length)){
+    try {
+      if(typeof Z.sp5FetchGlobalContent === 'function'){ await Z.sp5FetchGlobalContent(); }
+    } catch(e){}
+  }
+
+  /* Related videos — more from this creator first, then global */
   var related = [];
   try {
     var pool = (Z.State.publicVideosAll || []).filter(function(x){ return x.id !== videoId && x.video_url; });
@@ -8375,10 +8389,10 @@ Z.sp5OpenVideo = async function(videoId){
   h += '<div class="sp5-vd-header-row">';
   h += '<img src="' + esc(safeAvatar(author)) + '" onclick="Z.sp5CloseVideo();Z.showView(\'public-profile\',\'' + esc(v.author_id) + '\')" class="sp5-vd-avatar" alt="">';
   h += bondBtnHtml;
-  h += '<button class="sp5-vd-chip-btn" onclick="Z.openVideoRatingSheet(\'' + esc(videoId) + '\')" title="Rate"><i class="fa-solid fa-star"></i> rate</button>';
+  h += '<button type="button" class="sp5-vd-chip-btn" data-sp5-open-rate="' + esc(videoId) + '" title="Rate"><i class="fa-solid fa-star"></i> rate</button>';
   h += '<button class="sp5-vd-chip-btn" onclick="Z.openSparkShare && Z.openSparkShare(\'' + esc(videoId) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
   if(shareRateTxt || shareBudgetTxt){
-    h += '<span class="sp5-vd-share-meta">' + shareRateTxt + shareBudgetTxt + '</span>';
+  h += '<span class="sp5-vd-share-meta">' + shareRateTxt + shareBudgetTxt + '</span>';
   }
   h += '</div>';
 
@@ -8422,7 +8436,7 @@ Z.sp5OpenVideo = async function(videoId){
   if(existing) existing.remove();
   document.body.insertAdjacentHTML('beforeend', h);
   document.body.style.overflow = 'hidden';
-  try { sessionStorage.setItem('zynix_open_video_id', videoId); } catch(e){}
+    try { history.replaceState(null, '', '#video-' + videoId); } catch(e){}
 
   setTimeout(function(){
     try { Z.observeFreezeDots(); } catch(e){}
@@ -8460,7 +8474,7 @@ Z.sp5CloseVideo = function(){
     el.remove();
   }
   document.body.style.overflow = '';
-  try { sessionStorage.removeItem('zynix_open_video_id'); } catch(e){}
+   try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e){}
 };
 
 Z.sp5ToggleFullscreen = function(){
@@ -9797,6 +9811,16 @@ Z._refreshBondButtonsOnSparks = function(userId){
     };
   }
 })();
+/* Rate chip click handler on video page */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-sp5-open-rate]');
+  if(!btn) return;
+  var vid = btn.getAttribute('data-sp5-open-rate');
+  if(!vid) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if(typeof Z.openVideoRatingSheet === 'function') Z.openVideoRatingSheet(vid);
+}, true);     
 
 console.log('[SPACE v6 — Part 2] overlays · sheets · settings · guide · pool meter · helpers ready');
 })(); 
