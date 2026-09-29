@@ -10630,6 +10630,396 @@ if(typeof _prevLogoutV7P4 === 'function'){
 
 console.log('[SPACE v7 — Part 4] settings · avatar · guides · application · bond · helpers ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — SURGICAL FIX 1 (spark routing · ring · scroll ·    -->
+<!-- space rating · parallel load). No edits to Parts 1-4 needed.  -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Fix1) return; Z.__zynixSpaceV7Fix1 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   FIX 1 — Public Sparks grid click → GLOBAL spark feed
+   My Space strip click → scoped (kept as-is).
+   Detection: currentView=public-profile AND spaceTab=public
+              AND spacePublicTab=sparks.
+   ============================================================ */
+Z.sp5OpenPublicSpark = function(sparkId){
+  var list = (Z.State.publicSparksAll && Z.State.publicSparksAll.length)
+    ? Z.State.publicSparksAll.slice()
+    : (Z.State.allSparks || []).slice();
+
+  if(!list.length){
+    toast('Sparks still loading…');
+    return;
+  }
+
+  /* Save where we came from so the ring can return */
+  try {
+    sessionStorage.setItem('zynix_spark_source', JSON.stringify({
+      userId: Z.State.spaceUserId || (Z.State.currentUser && Z.State.currentUser.id) || null,
+      ts: Date.now()
+    }));
+  } catch(e){}
+
+  /* Make sure we're not carrying a leftover scoped list */
+  Z._spaceFeedScopedTo = null;
+  Z._prevAllSparksForScope = null;
+
+  Z.State.allSparks = list;
+
+  var idx = 0;
+  for(var i = 0; i < list.length; i++){
+    if(list[i].id === sparkId){ idx = i; break; }
+  }
+  Z.State.sparkSlideIndex = idx;
+
+  /* Show the return-to-space ring */
+  document.body.classList.add('zy-spark-ring-on');
+
+  Z.showView('spark');
+};
+
+/* Wrap the original open function to branch on context */
+var _origSp5OpenUserSpark = Z.sp5OpenUserSpark;
+if(typeof _origSp5OpenUserSpark === 'function'){
+  Z.sp5OpenUserSpark = function(sparkId, userId){
+    /* Public Sparks grid context → global */
+    if(Z.State.currentView === 'public-profile'
+       && Z.State.spaceTab === 'public'
+       && Z.State.spacePublicTab === 'sparks'){
+      return Z.sp5OpenPublicSpark(sparkId);
+    }
+    /* Otherwise (My Space strip, scoped flows) → original behaviour */
+    return _origSp5OpenUserSpark.apply(this, arguments);
+  };
+}
+
+/* Also: any ring-add class should be cleared when leaving spark */
+var _prevShowForRing = Z.showView;
+Z.showView = function(view){
+  var r = _prevShowForRing.apply(this, arguments);
+  if(view !== 'spark'){
+    document.body.classList.remove('zy-spark-ring-on');
+  }
+  return r;
+};
+
+/* ============================================================
+   FIX 2 — Floating SPACE ring (small, mobile friendly, correct route)
+   ============================================================ */
+/* Remove old ring if any */
+(function(){
+  var old = document.getElementById('zy-scoped-space-ring');
+  if(old && old.parentNode) old.parentNode.removeChild(old);
+})();
+
+/* Inject new ring CSS */
+if(!document.getElementById('zynix-space-ring-v7-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-space-ring-v7-css';
+  st.textContent = [
+    '.zy-space-back-ring{',
+      'position:fixed;',
+      'top:14px;',
+      'right:56px;',
+      'width:28px;',
+      'height:28px;',
+      'border-radius:50%;',
+      'background:rgba(15,23,42,.85);',
+      'backdrop-filter:blur(8px);',
+      '-webkit-backdrop-filter:blur(8px);',
+      'border:1.5px solid rgba(16,185,129,.6);',
+      'color:#10b981;',
+      'font-size:6.5px;',
+      'font-weight:900;',
+      'letter-spacing:.2px;',
+      'cursor:pointer;',
+      'display:none;',
+      'align-items:center;',
+      'justify-content:center;',
+      'z-index:50;',
+      'box-shadow:0 2px 8px rgba(0,0,0,.55);',
+      'padding:0;',
+      'line-height:1;',
+      'transition:background .15s,color .15s,transform .12s;',
+    '}',
+    '.zy-space-back-ring:hover{background:rgba(16,185,129,.25);color:#fff;transform:scale(1.08)}',
+    '.zy-space-back-ring:active{transform:scale(.92)}',
+    'body.zy-spark-ring-on .zy-space-back-ring{display:flex}',
+    '@media(max-width:640px){.zy-space-back-ring{top:12px;right:52px;width:26px;height:26px;font-size:6px}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+(function(){
+  function ensureRing(){
+    if(document.getElementById('zy-space-back-ring')) return;
+    var ring = document.createElement('button');
+    ring.id = 'zy-space-back-ring';
+    ring.className = 'zy-space-back-ring';
+    ring.title = 'Back to Public Sparks';
+    ring.innerHTML = 'SPACE';
+    ring.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      var src = null;
+      try { src = JSON.parse(sessionStorage.getItem('zynix_spark_source') || 'null'); } catch(err){}
+      var uid = (src && src.userId)
+        || Z.State.spaceUserId
+        || (Z.State.currentUser && Z.State.currentUser.id)
+        || null;
+      /* Always route back to Public Sparks of the source space */
+      Z.State._spaceLandingTab = 'public';
+      Z.State._spaceLandingPublicSub = 'sparks';
+      Z.State._spaceLandingMySub = 'default';
+      Z._spaceFeedScopedTo = null;
+      Z._prevAllSparksForScope = null;
+      document.body.classList.remove('zy-spark-ring-on');
+      if(!uid){ Z.showView('home'); return; }
+      Z.showView('public-profile', uid);
+    });
+    document.body.appendChild(ring);
+  }
+  ensureRing();
+  /* Belt and braces — in case DOM not fully ready */
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', ensureRing);
+  }
+})();
+
+/* ============================================================
+   FIX 3 — Drag-to-scroll on horizontal strips
+   ============================================================ */
+(function(){
+  var SEL = '.sp5-strip, .sp5-cards, .mkh2-strip, .mkq-similar-strip, .zyg-hot-strip, .zyg-market-strip, .mk5-trend-strip, .mk6-auction-strip, .home-discover-scroll, .space-scroll-h';
+  var _drag = null, _x0 = 0, _s0 = 0, _moved = false;
+
+  document.addEventListener('mousedown', function(e){
+    var el = e.target.closest(SEL);
+    if(!el) return;
+    if(el.scrollWidth <= el.clientWidth) return;
+    _drag = el;
+    _x0 = e.pageX;
+    _s0 = el.scrollLeft;
+    _moved = false;
+    el.style.cursor = 'grabbing';
+    el.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', function(e){
+    if(!_drag) return;
+    var dx = e.pageX - _x0;
+    if(Math.abs(dx) > 4) _moved = true;
+    _drag.scrollLeft = _s0 - dx;
+  });
+
+  document.addEventListener('mouseup', function(){
+    if(!_drag) return;
+    _drag.style.cursor = '';
+    _drag.style.userSelect = '';
+    if(_moved){
+      /* Swallow the next click so drag doesn't trigger card tap */
+      var swallow = function(ev){ ev.stopPropagation(); ev.preventDefault(); };
+      document.addEventListener('click', swallow, true);
+      setTimeout(function(){ document.removeEventListener('click', swallow, true); }, 0);
+    }
+    _drag = null;
+  });
+
+  /* Touch: existing native scroll is fine — nothing to do */
+})();
+
+/* ============================================================
+   FIX 4 — SPACE rating — working "Rate this SPACE" in More sheet
+   Kept English labels consistent with the rest.
+   ============================================================ */
+function _muteKey(targetId){
+  var u = Z.State.currentUser;
+  return u ? ('zynix_space_mute_' + u.id + '_' + targetId) : '';
+}
+function _isMuted(targetId){
+  var k = _muteKey(targetId);
+  if(!k) return false;
+  try { return localStorage.getItem(k) === '1'; } catch(e){ return false; }
+}
+function _setMuted(targetId, on){
+  var k = _muteKey(targetId);
+  if(!k) return;
+  try {
+    if(on) localStorage.setItem(k, '1');
+    else localStorage.removeItem(k);
+  } catch(e){}
+}
+
+Z._toggleSpaceMute = function(userId){
+  var wasMuted = _isMuted(userId);
+  _setMuted(userId, !wasMuted);
+  toast(wasMuted ? 'Unmuted this SPACE.' : 'Muted this SPACE.');
+  try { Z.closeSheet(); } catch(e){}
+  setTimeout(function(){ Z.openSpaceMoreSheet(userId); }, 200);
+};
+
+Z.openSpaceMoreSheet = function(userId){
+  var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
+  var uname = p.username || 'user';
+  var muted = _isMuted(userId);
+  var me = Z.State.currentUser;
+  var isOwner = me && me.id === userId;
+
+  var items = [];
+  items.push({ icon:'fa-solid fa-star',              label:'View video ratings',  action:'Z.closeSheet();Z.openSpaceRatingSummary(\'' + esc(userId) + '\')' });
+  if(!isOwner){
+    items.push({ icon:'fa-solid fa-star-half-stroke', label:'Rate this SPACE',     action:'Z.closeSheet();Z.openSpaceRatingSheet(\'' + esc(userId) + '\')' });
+  } else {
+    items.push({ icon:'fa-solid fa-star-half-stroke', label:'View SPACE ratings',  action:'Z.closeSheet();Z.openSpaceSpaceRatingSummary(\'' + esc(userId) + '\')' });
+  }
+  items.push({ icon:'fa-solid fa-hand-holding-dollar', label:'Send a tip', action:'Z.closeSheet();Z.toast(\'Tips coming soon\')' });
+  items.push({ icon:'fa-regular fa-bookmark', label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
+  items.push({ icon:'fa-solid fa-copy', label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
+  items.push({ icon: muted ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark', label: muted ? 'Unmute' : 'Mute', action:'Z._toggleSpaceMute(\'' + esc(userId) + '\')' });
+  items.push({ icon:'fa-solid fa-flag', label:'Report', action:'Z.closeSheet();Z.toast(\'Report submitted\')', danger:true });
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">More</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<div class="sheet-body" style="padding:8px;">';
+  items.forEach(function(it){
+    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:' + (it.danger ? '#c9a5a5' : '#e2e8f0') + ';font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
+    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:' + (it.danger ? '#a16262' : '#10b981') + ';"></i>';
+    h += esc(it.label);
+    h += '</button>';
+  });
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ============================================================
+   FIX 5 — Parallel load + prewarm
+   sp5Load: fetch profile + rating + content SIMULTANEOUSLY.
+   Prewarm: fire sp5FetchGlobalContent 3s after boot, when idle.
+   ============================================================ */
+var _origSp5LoadV7 = Z.sp5Load;
+Z.sp5Load = async function(userId, isOwner){
+  var c = Z.sb && Z.sb();
+  var me = Z.State.currentUser;
+
+  /* --- Fire three requests in parallel --- */
+  var profileP = (async function(){
+    try {
+      if(c && c.rpc){
+        var r = await c.rpc('get_public_space', { p_user_id: userId });
+        if(!r.error && Array.isArray(r.data) && r.data.length) return r.data[0];
+      }
+    } catch(e){}
+    var local = Z.getProfileById ? Z.getProfileById(userId) : null;
+    if(local){
+      return Object.assign({}, local, {
+        connection_count:0, posts_count:0, sparks_count:0,
+        videos_count:0, circles_count:0,
+        avg_rating:0, rating_count:0, subscriber_count:0
+      });
+    }
+    return null;
+  })();
+
+  var ratingP = (async function(){
+    try {
+      if(c && c.rpc){
+        var rr = await c.rpc('space_creator_rating', { p_creator_id: userId });
+        if(!rr.error && rr.data && rr.data[0]) return rr.data[0];
+      }
+    } catch(e){}
+    return { avg_score:0, rating_count:0, bands:{} };
+  })();
+
+  var contentP = Z.sp5FetchContent({ id: userId });
+
+  /* Subscriber check runs in background — not awaited */
+  if(!isOwner && typeof Z.State.spaceSubscriber[userId] === 'undefined'){
+    try {
+      if(c && c.rpc){
+        c.rpc('space_has_access', { p_creator_id: userId }).then(function(sr){
+          if(!sr.error) Z.State.spaceSubscriber[userId] = !!sr.data;
+        }).catch(function(){});
+      }
+    } catch(e){}
+  }
+
+  var results = await Promise.all([profileP, ratingP]);
+  var profile = results[0];
+  var ratingData = results[1];
+
+  if(!profile){
+    var hh = document.getElementById('sp5-head-host');
+    if(hh) hh.innerHTML = Z.emptyState({ icon:'fa-solid fa-user-slash', title:'User not found.' });
+    return;
+  }
+
+  /* Cache profile into state */
+  var arr = Z.State.allProfiles || [];
+  var found = false;
+  for(var i = 0; i < arr.length; i++){
+    if(arr[i].id === profile.id){
+      arr[i] = Object.assign({}, arr[i], profile);
+      found = true; break;
+    }
+  }
+  if(!found) arr.push(profile);
+  Z.State.allProfiles = arr;
+  Z.State.spaceProfile = profile;
+  Z.State.spaceRating = ratingData;
+
+  /* Wait for content (already running in parallel) */
+  await contentP;
+
+  /* Render both header and content together */
+  Z.sp5RenderContent(userId, isOwner);
+};
+
+/* --- Prewarm global spark/video pool 3s after boot, when idle --- */
+(function(){
+  var done = false;
+  function prewarm(){
+    if(done) return;
+    if(!Z.State.currentUser) return;
+    if(!Z.State.bootCompleted) return;
+    done = true;
+    try {
+      if(typeof Z.sp5FetchGlobalContent === 'function'){
+        Z.sp5FetchGlobalContent().catch(function(){});
+      }
+    } catch(e){}
+  }
+  var t = setInterval(function(){
+    if(Z.State.bootCompleted && Z.State.currentUser){
+      clearInterval(t);
+      if(typeof requestIdleCallback === 'function'){
+        try { requestIdleCallback(prewarm, {timeout: 5000}); }
+        catch(e){ setTimeout(prewarm, 3000); }
+      } else {
+        setTimeout(prewarm, 3000);
+      }
+    }
+  }, 500);
+})();
+
+console.log('[SPACE v7 — Fix 1] spark routing · ring · drag-scroll · space rating · parallel load ready');
+})();
 </script>     
 <!-- ============================================================
      SECTION 9 — CIRCLES
