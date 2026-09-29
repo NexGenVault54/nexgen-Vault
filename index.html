@@ -12460,26 +12460,25 @@ console.log('[SPACE v7 — Fix 4 v2] grid thumbnails · public rating · silent 
 })();
 </script>
 <!-- ============================================================ -->
-<!-- SPACE v7 — FIX 5 FINAL                                        -->
-<!-- Single controller: grid videos static · post videos          -->
-<!-- auto-play at 70% · user control respected · no watchdogs     -->
+<!-- SPACE v7 — FIX 5 FINAL v2                                     -->
+<!-- Matches Home behavior exactly. One controller. No grace.      -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixSpaceV7Fix5Final) return; Z.__zynixSpaceV7Fix5Final = true;
+if(Z.__zynixSpaceV7Fix5FinalV2) return; Z.__zynixSpaceV7Fix5FinalV2 = true;
 
+function isGridVideo(v){
+  return v.hasAttribute('data-space-spark') || v.hasAttribute('data-spark-id');
+}
 function isPostVideo(v){
   if(!v || v.tagName !== 'VIDEO') return false;
-  if(v.hasAttribute('data-space-spark')) return false;
-  if(v.hasAttribute('data-spark-id')) return false;
-  if(v.closest('.post-card')) return true;
-  if(v.closest('.sp5-posts-window')) return true;
-  if(v.closest('.post-media')) return true;
-  return false;
+  if(isGridVideo(v)) return false;
+  return !!(v.closest('.post-card') || v.closest('.sp5-posts-window') || v.closest('.post-media'));
 }
 
+/* Static thumbnails for grid */
 function tameGridVideo(v){
   try { v.autoplay = false; } catch(e){}
   try { v.removeAttribute('autoplay'); } catch(e){}
@@ -12502,13 +12501,12 @@ function unlockPostVideo(v){
   if(!v.hasAttribute('controls')) v.setAttribute('controls','');
   if(!v.hasAttribute('playsinline')) v.setAttribute('playsinline','');
   if(!v.hasAttribute('loop')) v.setAttribute('loop','');
-
   if(!v._spacePostInit){
     v._spacePostInit = true;
     v.muted = true;
-    var markTouch = function(){ v._spaceUserTouched = Date.now(); };
-    ['play','pause','seeking','volumechange','click','touchstart','seeking'].forEach(function(evt){
-      v.addEventListener(evt, markTouch, evt === 'touchstart' ? {passive:true} : false);
+    /* When user unmutes, propagate to the currently playing one only */
+    v.addEventListener('volumechange', function(){
+      if(!v.muted) Z._spacePostPlaying = v;
     });
   }
 }
@@ -12517,54 +12515,92 @@ function scanVideos(){
   if(Z.State.currentView !== 'public-profile') return;
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
-
   host.querySelectorAll('video[data-space-spark="1"]').forEach(function(v){
     if(!v._spaceGridTamed) tameGridVideo(v);
   });
-
   host.querySelectorAll('video').forEach(function(v){
-    if(!isPostVideo(v)) return;
-    unlockPostVideo(v);
+    if(isPostVideo(v)) unlockPostVideo(v);
   });
 }
 
+/* Effective visible ratio — accounts for internal scroll containers */
+function effectiveRatio(v){
+  var rect = v.getBoundingClientRect();
+  var clipTop = 0, clipBottom = window.innerHeight;
+  var el = v.parentElement;
+  while(el && el !== document.body){
+    var st;
+    try { st = window.getComputedStyle(el); } catch(e){ st = null; }
+    if(st){
+      var ov = st.overflowY || st.overflow;
+      if(ov === 'auto' || ov === 'hidden' || ov === 'scroll'){
+        var cr = el.getBoundingClientRect();
+        if(cr.top > clipTop) clipTop = cr.top;
+        if(cr.bottom < clipBottom) clipBottom = cr.bottom;
+      }
+    }
+    el = el.parentElement;
+  }
+  var visibleTop = Math.max(clipTop, rect.top);
+  var visibleBottom = Math.min(clipBottom, rect.bottom);
+  var visible = Math.max(0, visibleBottom - visibleTop);
+  return rect.height > 0 ? (visible / rect.height) : 0;
+}
+
+/* The single controller — mirrors Home exactly */
 Z.spaceRecomputePostPlayback = function(){
   if(Z.State.currentView !== 'public-profile') return;
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
 
-  var vids = host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video');
-  if(!vids.length) return;
+  var vids = [];
+  host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video').forEach(function(v){
+    if(isGridVideo(v)) return;
+    vids.push(v);
+  });
+  if(!vids.length){ Z._spacePostPlaying = null; return; }
 
-  var vh = window.innerHeight, best = null, bestRatio = 0;
+  var best = null, bestRatio = 0;
   vids.forEach(function(v){
-    if(!isPostVideo(v)) return;
-    var r = v.getBoundingClientRect();
-    var visible = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
-    var ratio = r.height > 0 ? visible / r.height : 0;
+    var ratio = effectiveRatio(v);
     if(ratio > bestRatio){ bestRatio = ratio; best = v; }
   });
 
-  var shouldPlay = best && bestRatio >= 0.70;
+  var shouldPlay = !!(best && bestRatio >= 0.75);
+  var current = Z._spacePostPlaying;
 
+  /* Fast path: same video, still visible */
+  if(current && current.isConnected && current === best && shouldPlay){
+    if(current.paused){
+      try { current.play().catch(function(){}); } catch(e){}
+    }
+    /* Hard-pause every other video — no exceptions */
+    vids.forEach(function(v){
+      if(v !== current && !v.paused){ try { v.pause(); } catch(e){} }
+    });
+    return;
+  }
+
+  /* Pause every video, then play the new best if eligible */
   vids.forEach(function(v){
-    if(!isPostVideo(v)) return;
-    /* Respect user interaction within last 8 seconds */
-    if(v._spaceUserTouched && (Date.now() - v._spaceUserTouched) < 8000){
-      return;
-    }
-    if(shouldPlay && v === best){
-      if(v.paused){
-        try { v.play().catch(function(){}); } catch(e){}
-      }
-    } else {
-      if(!v.paused){ try { v.pause(); } catch(e){} }
-    }
+    if(!v.paused){ try { v.pause(); } catch(e){} }
   });
+
+  if(shouldPlay){
+    try {
+      best.play().catch(function(){
+        try { best.muted = true; best.play().catch(function(){}); } catch(e){}
+      });
+      Z._spacePostPlaying = best;
+    } catch(e){ Z._spacePostPlaying = null; }
+  } else {
+    Z._spacePostPlaying = null;
+  }
 };
 
-if(!Z._spaceVideoScrollHooked){
-  Z._spaceVideoScrollHooked = true;
+/* Scroll / resize — rAF-throttled */
+if(!Z._spaceVideoScrollHookV2){
+  Z._spaceVideoScrollHookV2 = true;
   var _raf = null;
   var _schedule = function(){
     if(_raf) return;
@@ -12576,18 +12612,16 @@ if(!Z._spaceVideoScrollHooked){
   };
   window.addEventListener('scroll', _schedule, {passive:true});
   window.addEventListener('resize', _schedule, {passive:true});
-  document.addEventListener('scroll', function(e){
-    if(e.target && e.target.classList && e.target.classList.contains('sp5-posts-window')){
-      _schedule();
-    }
-  }, {passive:true, capture:true});
+  /* Catch scroll inside .sp5-posts-window */
+  document.addEventListener('scroll', _schedule, {passive:true, capture:true});
 }
 
-var _prevRenderContentFinal = Z.sp5RenderContent;
-if(typeof _prevRenderContentFinal === 'function'){
+/* Trigger after every render */
+var _prevRCV2 = Z.sp5RenderContent;
+if(typeof _prevRCV2 === 'function'){
   Z.sp5RenderContent = function(){
-    var r = _prevRenderContentFinal.apply(this, arguments);
-    [80, 300, 800, 1500].forEach(function(ms){
+    var r = _prevRCV2.apply(this, arguments);
+    [60, 250, 700, 1400].forEach(function(ms){
       setTimeout(function(){
         try { scanVideos(); } catch(e){}
         try { Z.spaceRecomputePostPlayback(); } catch(e){}
@@ -12596,11 +12630,11 @@ if(typeof _prevRenderContentFinal === 'function'){
     return r;
   };
 }
-var _prevLoadFinal = Z.sp5Load;
-if(typeof _prevLoadFinal === 'function'){
+var _prevLoadV2 = Z.sp5Load;
+if(typeof _prevLoadV2 === 'function'){
   Z.sp5Load = async function(){
-    var r = await _prevLoadFinal.apply(this, arguments);
-    [120, 500, 1000, 1800].forEach(function(ms){
+    var r = await _prevLoadV2.apply(this, arguments);
+    [100, 450, 1000, 1800].forEach(function(ms){
       setTimeout(function(){
         try { scanVideos(); } catch(e){}
         try { Z.spaceRecomputePostPlayback(); } catch(e){}
@@ -12609,10 +12643,10 @@ if(typeof _prevLoadFinal === 'function'){
     return r;
   };
 }
-var _prevSubFinal = Z.sp5SwitchMySub;
-if(typeof _prevSubFinal === 'function'){
+var _prevSubV2 = Z.sp5SwitchMySub;
+if(typeof _prevSubV2 === 'function'){
   Z.sp5SwitchMySub = function(){
-    var r = _prevSubFinal.apply(this, arguments);
+    var r = _prevSubV2.apply(this, arguments);
     [80, 300, 800].forEach(function(ms){
       setTimeout(function(){
         try { scanVideos(); } catch(e){}
@@ -12623,19 +12657,21 @@ if(typeof _prevSubFinal === 'function'){
   };
 }
 
-var _prevShowFinal = Z.showView;
+/* Pause everything on leave */
+var _prevShowV2 = Z.showView;
 Z.showView = function(view){
   if(view !== 'public-profile'){
     try {
       document.querySelectorAll('#sp5-content-host video').forEach(function(v){
         if(!v.paused) v.pause();
       });
+      Z._spacePostPlaying = null;
     } catch(e){}
   }
-  return _prevShowFinal.apply(this, arguments);
+  return _prevShowV2.apply(this, arguments);
 };
 
-console.log('[SPACE v7 — Fix 5 FINAL] single controller · no watchdogs · user control respected');
+console.log('[SPACE v7 — Fix 5 FINAL v2] single controller · hard pause-all · 75% threshold');
 })();
 </script>
 <!-- ============================================================
