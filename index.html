@@ -11466,7 +11466,367 @@ if(typeof _prevOpenFVModal === 'function'){
 
 console.log('[SPACE v7 — Fix 2] rating chip · subs · description · CFAR dropdown · block · report ready');
 })();
-</script>     
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — FIX 3                                              -->
+<!-- SPACE name on header · bond count · desc → More sheet ·       -->
+<!-- block no-navigate · rate chip live refresh                    -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Fix3) return; Z.__zynixSpaceV7Fix3 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+function formatSubs(n){
+  n = Number(n) || 0;
+  if(n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if(n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+async function fetchSpaceRating(userId){
+  var c = Z.sb && Z.sb();
+  if(!c) return { avg: 0, cnt: 0 };
+  try {
+    var r = await c.rpc('space_space_rating', { p_space_id: userId });
+    if(!r.error && r.data && r.data[0]){
+      return {
+        avg: Number(r.data[0].avg_score) || 0,
+        cnt: Number(r.data[0].rating_count) || 0
+      };
+    }
+  } catch(e){}
+  return { avg: 0, cnt: 0 };
+}
+
+async function fetchBondCount(userId){
+  var c = Z.sb && Z.sb();
+  if(!c) return 0;
+  try {
+    var r = await c.rpc('space_bond_count', { p_creator_id: userId });
+    if(!r.error && r.data != null) return Number(r.data) || 0;
+  } catch(e){}
+  return 0;
+}
+
+/* ============================================================
+   FIX 3a — Header rewrite: SPACE name + bond count + clean chips
+   Runs after sp5RenderContent paints.
+   ============================================================ */
+async function enhanceHeader3(userId, isOwner){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+  var sd = profile.space_data || {};
+
+  /* --- 1. Name: prefer SPACE name from settings --- */
+  var nameEl = head.querySelector('.sp5-name');
+  var spaceName = (sd.name || '').trim();
+  if(nameEl && spaceName && nameEl.textContent !== spaceName){
+    nameEl.textContent = spaceName;
+  }
+
+  /* --- 2. Subscriber count (bond count) --- */
+  var nameRow = head.querySelector('.sp5-name-row');
+  if(nameRow){
+    var pill = nameRow.querySelector('[data-subs-pill]');
+    if(!pill){
+      pill = document.createElement('span');
+      pill.setAttribute('data-subs-pill','1');
+      pill.style.cssText = 'font-size:11px;font-weight:700;color:#94a3b8;margin-left:2px;';
+      pill.textContent = '· ···';
+      nameRow.appendChild(pill);
+    }
+    var n = await fetchBondCount(userId);
+    pill.textContent = '· ' + (n > 0 ? (formatSubs(n) + ' Subs') : 'New SPACE');
+  }
+
+  /* --- 3. Remove any old description block injected by Fix 2 --- */
+  var oldDesc = head.querySelector('[data-space-desc]');
+  if(oldDesc && oldDesc.parentNode) oldDesc.parentNode.removeChild(oldDesc);
+
+  /* --- 4. Rating chip: ensure it reflects SPACE rating --- */
+  var chipsRow = head.querySelector('.sp5-chips');
+  var chip = chipsRow ? chipsRow.querySelector('[data-space-chip="1"]') : null;
+  if(!chip && chipsRow){
+    /* Was not injected — insert */
+    var placeholder = '<span class="sp5-chip rate" data-space-chip="1" style="cursor:pointer;"><i class="fa-regular fa-star"></i> ···</span>';
+    var tmp = document.createElement('div');
+    tmp.innerHTML = placeholder;
+    var oldRate = chipsRow.querySelector('.sp5-chip.rate');
+    if(oldRate) oldRate.parentNode.replaceChild(tmp.firstChild, oldRate);
+    else chipsRow.appendChild(tmp.firstChild);
+    chip = chipsRow.querySelector('[data-space-chip="1"]');
+  }
+
+  if(chip){
+    var sr = await fetchSpaceRating(userId);
+    if(sr.cnt > 0){
+      chip.innerHTML = '<i class="fa-solid fa-star"></i>' + sr.avg.toFixed(1) +
+                       ' <span style="opacity:.7;">(' + sr.cnt + ')</span>';
+      if(isOwner){
+        chip.setAttribute('onclick', 'Z.openSpaceSpaceRatingSummary(\'' + esc(userId) + '\')');
+      } else {
+        chip.setAttribute('onclick', 'Z.openSpaceRatingSheet(\'' + esc(userId) + '\')');
+      }
+      chip.style.cursor = 'pointer';
+    } else {
+      if(isOwner){
+        chip.innerHTML = '<i class="fa-regular fa-star"></i> New SPACE';
+        chip.setAttribute('onclick', 'Z.toast(\'No SPACE ratings yet — invite viewers to rate you.\')');
+      } else {
+        chip.innerHTML = '<i class="fa-regular fa-star"></i> Rate SPACE';
+        chip.setAttribute('onclick', 'Z.openSpaceRatingSheet(\'' + esc(userId) + '\')');
+      }
+      chip.style.cursor = 'pointer';
+    }
+  }
+}
+
+/* Update the existing sp5RenderContent wrapper from Fix 2 to call enhanceHeader3 */
+var _prevSp5RenderContent3 = Z.sp5RenderContent;
+if(typeof _prevSp5RenderContent3 === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevSp5RenderContent3.apply(this, arguments);
+    setTimeout(function(){ try { enhanceHeader3(userId, isOwner); } catch(e){} }, 60);
+    setTimeout(function(){ try { enhanceHeader3(userId, isOwner); } catch(e){} }, 500);
+    setTimeout(function(){ try { enhanceHeader3(userId, isOwner); } catch(e){} }, 1500);
+    return r;
+  };
+}
+
+/* Also refresh on sp5Load complete (fresh page) */
+var _prevSp5Load3 = Z.sp5Load;
+if(typeof _prevSp5Load3 === 'function'){
+  Z.sp5Load = async function(userId, isOwner){
+    var r = await _prevSp5Load3.apply(this, arguments);
+    setTimeout(function(){ try { enhanceHeader3(userId, isOwner); } catch(e){} }, 100);
+    setTimeout(function(){ try { enhanceHeader3(userId, isOwner); } catch(e){} }, 800);
+    return r;
+  };
+}
+
+/* ============================================================
+   FIX 3b — More sheet (rebuilt with: description · both aggregates
+   inline for owner · block/report · working block that does NOT
+   navigate)
+   ============================================================ */
+function _muteKey(targetId){
+  var u = Z.State.currentUser;
+  return u ? ('zynix_space_mute_' + u.id + '_' + targetId) : '';
+}
+function _isMuted(targetId){
+  var k = _muteKey(targetId);
+  if(!k) return false;
+  try { return localStorage.getItem(k) === '1'; } catch(e){ return false; }
+}
+function _setMuted(targetId, on){
+  var k = _muteKey(targetId);
+  if(!k) return;
+  try {
+    if(on) localStorage.setItem(k, '1');
+    else localStorage.removeItem(k);
+  } catch(e){}
+}
+
+Z._toggleSpaceMute = function(userId){
+  var wasMuted = _isMuted(userId);
+  _setMuted(userId, !wasMuted);
+  toast(wasMuted ? 'Unmuted this SPACE.' : 'Muted this SPACE.');
+  try { Z.closeSheet(); } catch(e){}
+  setTimeout(function(){ Z.openSpaceMoreSheet(userId); }, 200);
+};
+
+Z.openSpaceMoreSheet = async function(userId){
+  var me = Z.State.currentUser;
+  var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
+  var sd = p.space_data || {};
+  var uname = p.username || 'user';
+  var isOwner = !!(me && me.id === userId);
+  var muted = _isMuted(userId);
+  var spaceDisplayName = (sd.name || '').trim() || p.name || 'SPACE';
+
+  var isBlocked = false;
+  if(!isOwner && me){
+    var c = Z.sb && Z.sb();
+    if(c){
+      try {
+        var br = await c.rpc('is_blocked', { p_user_id: userId });
+        if(!br.error) isBlocked = !!br.data;
+      } catch(e){}
+    }
+  }
+
+  var rows = [];
+
+  /* --- About / description --- */
+  var desc = (sd.description || '').trim();
+  if(desc){
+    rows.push({
+      icon:'fa-solid fa-circle-info',
+      label:'About ' + spaceDisplayName,
+      action:'Z.closeSheet();Z._openSpaceDescView(\'' + esc(userId) + '\')'
+    });
+  }
+
+  /* --- Ratings --- */
+  if(isOwner){
+    var c2 = Z.sb && Z.sb();
+    var videoAgg = '—';
+    var spaceAgg = '—';
+    try {
+      var vr = await c2.rpc('space_creator_rating', { p_creator_id: userId });
+      if(!vr.error && vr.data && vr.data[0]){
+        var va = Number(vr.data[0].avg_score) || 0;
+        var vc = Number(vr.data[0].rating_count) || 0;
+        videoAgg = vc > 0 ? (va.toFixed(1) + ' · ' + vc + ' rating' + (vc === 1 ? '' : 's')) : 'No ratings yet';
+      }
+    } catch(e){}
+    try {
+      var sr = await c2.rpc('space_space_rating', { p_space_id: userId });
+      if(!sr.error && sr.data && sr.data[0]){
+        var sa = Number(sr.data[0].avg_score) || 0;
+        var sc = Number(sr.data[0].rating_count) || 0;
+        spaceAgg = sc > 0 ? (sa.toFixed(1) + ' · ' + sc + ' rating' + (sc === 1 ? '' : 's')) : 'No ratings yet';
+      }
+    } catch(e){}
+
+    rows.push({
+      icon:'fa-solid fa-film',
+      label:'Video ratings · ' + videoAgg,
+      action:'Z.closeSheet();Z.openSpaceRatingSummary(\'' + esc(userId) + '\')'
+    });
+    rows.push({
+      icon:'fa-solid fa-star-half-stroke',
+      label:'SPACE ratings · ' + spaceAgg,
+      action:'Z.closeSheet();Z.openSpaceSpaceRatingSummary(\'' + esc(userId) + '\')'
+    });
+  } else {
+    rows.push({
+      icon:'fa-solid fa-star-half-stroke',
+      label:'Rate this SPACE',
+      action:'Z.closeSheet();Z.openSpaceRatingSheet(\'' + esc(userId) + '\')'
+    });
+  }
+
+  /* --- Standard --- */
+  rows.push({ icon:'fa-solid fa-hand-holding-dollar', label:'Send a tip', action:'Z.closeSheet();Z.toast(\'Tips coming soon\')' });
+  rows.push({ icon:'fa-regular fa-bookmark',          label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
+  rows.push({ icon:'fa-solid fa-copy',                label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
+  rows.push({ icon: muted ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark', label: muted ? 'Unmute' : 'Mute', action:'Z._toggleSpaceMute(\'' + esc(userId) + '\')' });
+
+  if(!isOwner){
+    if(isBlocked){
+      rows.push({ icon:'fa-solid fa-circle-check', label:'Unblock user', action:'Z._toggleBlock(\'' + esc(userId) + '\', true)' });
+    } else {
+      rows.push({ icon:'fa-solid fa-ban', label:'Block user', action:'Z._toggleBlock(\'' + esc(userId) + '\', false)' });
+    }
+    rows.push({ icon:'fa-solid fa-flag', label:'Report user', action:'Z._openReportSheet(\'' + esc(userId) + '\')' });
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">More</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:8px;">';
+  rows.forEach(function(it){
+    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
+    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:#10b981;flex-shrink:0;"></i>';
+    h += '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.label) + '</span>';
+    h += '</button>';
+  });
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* Description viewer */
+Z._openSpaceDescView = function(userId){
+  var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
+  var sd = p.space_data || {};
+  var desc = (sd.description || '').trim();
+  if(!desc){ toast('No description yet.'); return; }
+  var displayName = (sd.name || '').trim() || p.name || 'SPACE';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">About ' + esc(displayName) + '</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div style="font-size:13px;color:#e2e8f0;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(desc) + '</div>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ============================================================
+   FIX 3c — Block/Unblock does NOT navigate
+   ============================================================ */
+Z._toggleBlock = async function(userId, isCurrentlyBlocked){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc(isCurrentlyBlocked ? 'unblock_user' : 'block_user', { p_blocked_id: userId });
+    if(r.error) throw r.error;
+    Z.closeSheet();
+    toast(isCurrentlyBlocked ? 'User unblocked.' : 'User blocked.');
+
+    /* Reload data so their content is hidden from YOUR home feed.
+       Do NOT navigate — user stays where they are. */
+    try { await Z.reloadData(); } catch(e){}
+
+    if(Z.State.currentView === 'home'){
+      try { Z.softRefresh(); } catch(e){}
+    }
+    /* If they're viewing the blocked user's SPACE, they keep seeing it —
+       that's fine, they can go back manually. */
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('cannot_block_self') !== -1) toast('You cannot block yourself.', 'error');
+    else toast('Failed: ' + msg, 'error');
+  }
+};
+
+/* ============================================================
+   FIX 3d — Rate chip refresh after submit
+   Hook Z.toast to detect the success messages from the sheet.
+   ============================================================ */
+var _origToast3 = Z.toast;
+Z.toast = function(msg, type){
+  var r = _origToast3.apply(this, arguments);
+  if(typeof msg === 'string'){
+    if(msg === 'SPACE rating submitted.' || msg === 'SPACE rating updated.'){
+      var userId = Z.State.spaceUserId;
+      if(userId){
+        setTimeout(function(){
+          try { enhanceHeader3(userId, false); } catch(e){}
+        }, 250);
+      }
+    }
+  }
+  return r;
+};
+
+/* ============================================================
+   FIX 3e — Also inject "Rate SPACE" chip tap into video page
+   (when the video owner is different from current user, they
+   can rate the SPACE from there too)
+   ============================================================ */
+/* Not needed for now — video page chip removed. */
+
+console.log('[SPACE v7 — Fix 3] space name · bond count · desc in more · block no-nav · chip live ready');
+})();
+</script>       
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
