@@ -11020,6 +11020,452 @@ Z.sp5Load = async function(userId, isOwner){
 
 console.log('[SPACE v7 — Fix 1] spark routing · ring · drag-scroll · space rating · parallel load ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — FIX 2                                              -->
+<!-- Rating chip (SPACE only) · hidden video aggregate for public  -->
+<!-- Subscriber count pill · SPACE description Show More           -->
+<!-- CFAR dropdowns · Block user · Report user                     -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Fix2) return; Z.__zynixSpaceV7Fix2 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function formatSubs(n){
+  n = Number(n) || 0;
+  if(n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if(n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+async function fetchSpaceRating(userId){
+  var c = Z.sb && Z.sb();
+  if(!c) return { avg: 0, cnt: 0 };
+  try {
+    var r = await c.rpc('space_space_rating', { p_space_id: userId });
+    if(!r.error && r.data && r.data[0]){
+      return {
+        avg: Number(r.data[0].avg_score) || 0,
+        cnt: Number(r.data[0].rating_count) || 0
+      };
+    }
+  } catch(e){}
+  return { avg: 0, cnt: 0 };
+}
+
+function extractAuthorIdFromVideoHeader(){
+  var headerRow = document.querySelector('.sp5-vd-header-row');
+  if(!headerRow) return null;
+  var avatar = headerRow.querySelector('.sp5-vd-avatar');
+  if(!avatar) return null;
+  var oc = avatar.getAttribute('onclick') || '';
+  var m = oc.match(/public-profile[^,]*,\s*['"]([a-f0-9-]+)['"]/);
+  return m ? m[1] : null;
+}
+
+/* ============================================================
+   FIX 2a — Header enhancement: SPACE rating chip · subs pill · description
+   Runs after sp5RenderContent paints the header.
+   ============================================================ */
+async function enhanceHeader(userId, isOwner){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+  var sd = profile.space_data || {};
+
+  /* --- 1. Replace rating chip with SPACE rating (never video) --- */
+  var chipsRow = head.querySelector('.sp5-chips');
+  var rateChip = chipsRow ? chipsRow.querySelector('.sp5-chip.rate') : null;
+  if(rateChip){
+    /* Immediate placeholder so wrong number never shows */
+    var placeholder = isOwner
+      ? '<span class="sp5-chip rate" data-space-chip="1" style="cursor:default;"><i class="fa-regular fa-star"></i> ···</span>'
+      : '<span class="sp5-chip rate" data-space-chip="1" onclick="Z.openSpaceRatingSheet(\'' + esc(userId) + '\')" style="cursor:pointer;"><i class="fa-regular fa-star"></i> Rate SPACE</span>';
+    var tmp = document.createElement('div');
+    tmp.innerHTML = placeholder;
+    rateChip.parentNode.replaceChild(tmp.firstChild, rateChip);
+  }
+
+  /* Async update with real aggregate */
+  fetchSpaceRating(userId).then(function(sr){
+    var chip = head.querySelector('[data-space-chip="1"]');
+    if(!chip) return;
+    if(sr.cnt > 0){
+      chip.innerHTML = '<i class="fa-solid fa-star"></i>' + sr.avg.toFixed(1) +
+                       ' <span style="opacity:.7;">(' + sr.cnt + ')</span>';
+      if(isOwner){
+        chip.setAttribute('onclick', 'Z.openSpaceSpaceRatingSummary(\'' + esc(userId) + '\')');
+        chip.style.cursor = 'pointer';
+      } else {
+        chip.setAttribute('onclick', 'Z.openSpaceRatingSheet(\'' + esc(userId) + '\')');
+        chip.style.cursor = 'pointer';
+      }
+    } else {
+      if(isOwner){
+        chip.innerHTML = '<i class="fa-regular fa-star"></i> New SPACE';
+        chip.setAttribute('onclick', 'Z.toast(\'No SPACE ratings yet — invite viewers to rate you.\')');
+      } else {
+        chip.innerHTML = '<i class="fa-regular fa-star"></i> Rate SPACE';
+        chip.setAttribute('onclick', 'Z.openSpaceRatingSheet(\'' + esc(userId) + '\')');
+      }
+      chip.style.cursor = 'pointer';
+    }
+  });
+
+  /* --- 2. Subscriber count pill next to name --- */
+  var nameRow = head.querySelector('.sp5-name-row');
+  if(nameRow && !nameRow.querySelector('[data-subs-pill]')){
+    var subs = Number(profile.subscriber_count) || 0;
+    var subsTxt = subs > 0 ? (formatSubs(subs) + ' Subs') : 'New SPACE';
+    var pill = document.createElement('span');
+    pill.setAttribute('data-subs-pill','1');
+    pill.style.cssText = 'font-size:11px;font-weight:700;color:#94a3b8;margin-left:2px;';
+    pill.textContent = '· ' + subsTxt;
+    nameRow.appendChild(pill);
+  }
+
+  /* --- 3. Description with Show More --- */
+  var desc = (sd.description || '').trim();
+  if(desc && !head.querySelector('[data-space-desc]')){
+    var descWrap = document.createElement('div');
+    descWrap.setAttribute('data-space-desc','1');
+    descWrap.style.cssText = 'margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid #1e293b;font-size:12px;color:#cbd5e1;line-height:1.6;';
+    var isLong = desc.length > 180;
+    if(isLong){
+      descWrap.innerHTML =
+        '<div data-desc-text="1" style="display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word;">' + esc(desc) + '</div>' +
+        '<button data-desc-toggle="1" style="background:transparent;border:none;color:#10b981;font-size:11px;font-weight:800;cursor:pointer;padding:4px 0;margin-top:4px;">Show more</button>';
+    } else {
+      descWrap.innerHTML = '<div style="white-space:pre-wrap;word-break:break-word;">' + esc(desc) + '</div>';
+    }
+    var headTop = head.querySelector('.sp5-head-top');
+    if(headTop && headTop.parentNode){
+      headTop.parentNode.insertBefore(descWrap, headTop.nextSibling);
+    }
+    var btn = descWrap.querySelector('[data-desc-toggle]');
+    if(btn){
+      btn.addEventListener('click', function(){
+        var t = descWrap.querySelector('[data-desc-text]');
+        if(!t) return;
+        var isOpen = t.style.webkitLineClamp === 'unset';
+        if(isOpen){
+          t.style.display = '-webkit-box';
+          t.style.webkitLineClamp = '4';
+          btn.textContent = 'Show more';
+        } else {
+          t.style.display = 'block';
+          t.style.webkitLineClamp = 'unset';
+          btn.textContent = 'Show less';
+        }
+      });
+    }
+  }
+}
+
+/* Wrap sp5RenderContent to enhance header after each render */
+var _prevSp5RenderContent = Z.sp5RenderContent;
+if(typeof _prevSp5RenderContent === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevSp5RenderContent.apply(this, arguments);
+    setTimeout(function(){
+      try { enhanceHeader(userId, isOwner); } catch(e){}
+    }, 40);
+    setTimeout(function(){
+      try { enhanceHeader(userId, isOwner); } catch(e){}
+    }, 400);
+    return r;
+  };
+}
+
+/* ============================================================
+   FIX 2b — Hide video rating aggregate from public video page
+   Owner still sees it.
+   ============================================================ */
+function hideVideoRatingFromPublic(){
+  var metaLine = document.querySelector('.sp5-vd-meta-line');
+  if(!metaLine) return;
+  var authorId = extractAuthorIdFromVideoHeader();
+  if(!authorId) return;
+  var me = Z.State.currentUser;
+  if(me && me.id === authorId) return; /* owner keeps rating */
+
+  var spans = metaLine.querySelectorAll('span');
+  spans.forEach(function(s){
+    var t = s.textContent || '';
+    if(t.indexOf('★') !== -1 || t.indexOf('No ratings') !== -1){
+      var prev = s.previousElementSibling;
+      if(prev && prev.textContent && prev.textContent.trim() === '·'){
+        prev.style.display = 'none';
+      }
+      s.style.display = 'none';
+    }
+  });
+}
+
+var _prevSp5OpenVideo = Z.sp5OpenVideo;
+if(typeof _prevSp5OpenVideo === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevSp5OpenVideo.apply(this, arguments);
+    setTimeout(function(){ try { hideVideoRatingFromPublic(); } catch(e){} }, 100);
+    setTimeout(function(){ try { hideVideoRatingFromPublic(); } catch(e){} }, 500);
+    return r;
+  };
+}
+
+/* ============================================================
+   FIX 2c — More sheet clean rewrite (ratings + safety rows)
+   ============================================================ */
+function _muteKey(targetId){
+  var u = Z.State.currentUser;
+  return u ? ('zynix_space_mute_' + u.id + '_' + targetId) : '';
+}
+function _isMuted(targetId){
+  var k = _muteKey(targetId);
+  if(!k) return false;
+  try { return localStorage.getItem(k) === '1'; } catch(e){ return false; }
+}
+function _setMuted(targetId, on){
+  var k = _muteKey(targetId);
+  if(!k) return;
+  try {
+    if(on) localStorage.setItem(k, '1');
+    else localStorage.removeItem(k);
+  } catch(e){}
+}
+
+Z._toggleSpaceMute = function(userId){
+  var wasMuted = _isMuted(userId);
+  _setMuted(userId, !wasMuted);
+  toast(wasMuted ? 'Unmuted this SPACE.' : 'Muted this SPACE.');
+  try { Z.closeSheet(); } catch(e){}
+  setTimeout(function(){ Z.openSpaceMoreSheet(userId); }, 200);
+};
+
+Z.openSpaceMoreSheet = async function(userId){
+  var me = Z.State.currentUser;
+  var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
+  var uname = p.username || 'user';
+  var isOwner = me && me.id === userId;
+  var muted = _isMuted(userId);
+
+  var isBlocked = false;
+  if(!isOwner && me){
+    var c = Z.sb && Z.sb();
+    try {
+      var br = await c.rpc('is_blocked', { p_user_id: userId });
+      if(!br.error) isBlocked = !!br.data;
+    } catch(e){}
+  }
+
+  var rows = [];
+
+  /* --- Ratings --- */
+  if(isOwner){
+    rows.push({ icon:'fa-solid fa-film',              label:'View video ratings',  action:'Z.closeSheet();Z.openSpaceRatingSummary(\'' + esc(userId) + '\')' });
+    rows.push({ icon:'fa-solid fa-star-half-stroke',  label:'View SPACE ratings',  action:'Z.closeSheet();Z.openSpaceSpaceRatingSummary(\'' + esc(userId) + '\')' });
+  } else {
+    rows.push({ icon:'fa-solid fa-star-half-stroke',  label:'Rate this SPACE',     action:'Z.closeSheet();Z.openSpaceRatingSheet(\'' + esc(userId) + '\')' });
+  }
+
+  /* --- Engagement --- */
+  rows.push({ icon:'fa-solid fa-hand-holding-dollar', label:'Send a tip',          action:'Z.closeSheet();Z.toast(\'Tips coming soon\')' });
+  rows.push({ icon:'fa-regular fa-bookmark',          label:'Save SPACE',          action:'Z.closeSheet();Z.toast(\'Saved\')' });
+  rows.push({ icon:'fa-solid fa-copy',                label:'Copy handle',         action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
+  rows.push({ icon: muted ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark', label: muted ? 'Unmute' : 'Mute', action:'Z._toggleSpaceMute(\'' + esc(userId) + '\')' });
+
+  /* --- Safety --- */
+  if(!isOwner){
+    if(isBlocked){
+      rows.push({ icon:'fa-solid fa-circle-check',      label:'Unblock',         action:'Z._toggleBlock(\'' + esc(userId) + '\', true)' });
+    } else {
+      rows.push({ icon:'fa-solid fa-ban',               label:'Block user',      action:'Z._toggleBlock(\'' + esc(userId) + '\', false)' });
+    }
+    rows.push({ icon:'fa-solid fa-flag',                label:'Report user',     action:'Z._openReportSheet(\'' + esc(userId) + '\')' });
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">More</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:8px;">';
+  rows.forEach(function(it){
+    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
+    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:#10b981;"></i>';
+    h += esc(it.label);
+    h += '</button>';
+  });
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ============================================================
+   FIX 2d — Block + Report actions
+   ============================================================ */
+Z._toggleBlock = async function(userId, isCurrentlyBlocked){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc(isCurrentlyBlocked ? 'unblock_user' : 'block_user', { p_blocked_id: userId });
+    if(r.error) throw r.error;
+    Z.closeSheet();
+    toast(isCurrentlyBlocked ? 'User unblocked.' : 'User blocked.');
+    try { await Z.reloadData(); } catch(e){}
+    if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
+    else if(Z.State.currentView === 'spark'){ try { Z.showView('spark'); } catch(e){} }
+    else if(Z.State.currentView === 'public-profile'){ try { Z.goBack(); } catch(e){} }
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('cannot_block_self') !== -1) toast('You cannot block yourself.', 'error');
+    else toast('Failed: ' + msg, 'error');
+  }
+};
+
+Z._openReportSheet = function(userId){
+  var reasons = [
+    { key:'spam',          label:'Spam or scam' },
+    { key:'inappropriate', label:'Inappropriate content' },
+    { key:'harassment',    label:'Harassment or bullying' },
+    { key:'copyright',     label:'Copyright violation' },
+    { key:'impersonation', label:'Impersonation' },
+    { key:'other',         label:'Other' }
+  ];
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:82vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Report user</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+  h += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.6;margin-bottom:12px;">Choose a reason. Reports go to the moderation committee. Your identity stays anonymous to the reported user.</div>';
+
+  reasons.forEach(function(r){
+    h += '<button data-report-reason="' + r.key + '" style="width:100%;padding:12px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;text-align:left;margin-bottom:6px;">' + esc(r.label) + '</button>';
+  });
+
+  h += '<div id="sp5-report-details-wrap" style="display:none;margin-top:8px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Details (optional)</label>';
+  h += '<textarea id="sp5-report-details" class="form-textarea" maxlength="400" placeholder="Anything that would help the committee."></textarea>';
+  h += '</div>';
+
+  h += '<button id="sp5-report-submit" style="width:100%;margin-top:14px;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#a16262,#7a4949);color:#fff;font-weight:900;font-size:13px;cursor:pointer;opacity:.5;" disabled>Submit report</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  var chosenReason = null;
+  setTimeout(function(){
+    var detailWrap = document.getElementById('sp5-report-details-wrap');
+    var submit = document.getElementById('sp5-report-submit');
+
+    document.querySelectorAll('[data-report-reason]').forEach(function(b){
+      b.addEventListener('click', function(){
+        chosenReason = this.getAttribute('data-report-reason');
+        document.querySelectorAll('[data-report-reason]').forEach(function(x){
+          x.style.borderColor = '#1e293b';
+          x.style.background = '#0f172a';
+        });
+        this.style.borderColor = '#a16262';
+        this.style.background = 'rgba(161,98,98,.12)';
+        detailWrap.style.display = 'block';
+        submit.disabled = false;
+        submit.style.opacity = '1';
+      });
+    });
+
+    submit.addEventListener('click', async function(){
+      if(!chosenReason){ toast('Pick a reason.', 'error'); return; }
+      var details = ((document.getElementById('sp5-report-details')||{}).value || '').trim() || null;
+      submit.disabled = true; submit.textContent = 'Submitting…';
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var r = await c.rpc('report_user', {
+          p_reported_id: userId,
+          p_reason: chosenReason,
+          p_details: details
+        });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        toast('Report submitted. Thank you.');
+      } catch(e){
+        var msg = (e && e.message) ? e.message : 'unknown';
+        if(msg.indexOf('cannot_report_self') !== -1) toast('You cannot report yourself.', 'error');
+        else if(msg.indexOf('reason_required') !== -1) toast('Reason required.', 'error');
+        else toast('Failed: ' + msg, 'error');
+        submit.disabled = false; submit.textContent = 'Submit report';
+      }
+    });
+  }, 40);
+};
+
+/* ============================================================
+   FIX 2e — CFAR dropdowns (replace number inputs in publish modal)
+   ============================================================ */
+function upgradeCfarFields(){
+  var rateInput = document.getElementById('fv-cfar-rate');
+  var budgetInput = document.getElementById('fv-cfar-budget');
+  if(!rateInput || !budgetInput) return;
+  if(rateInput.getAttribute('data-upgraded') === '1') return;
+  rateInput.setAttribute('data-upgraded','1');
+  budgetInput.setAttribute('data-upgraded','1');
+
+  /* Rate: 0, 0.001..0.010 */
+  var rateSel = document.createElement('select');
+  rateSel.id = 'fv-cfar-rate';
+  rateSel.className = 'form-select';
+  rateSel.style.cssText = 'margin-bottom:10px;';
+  rateSel.innerHTML = '<option value="0">Off (no viewer reward)</option>' +
+    '<option value="0.001">$0.001 / min</option>' +
+    '<option value="0.002">$0.002 / min</option>' +
+    '<option value="0.003">$0.003 / min</option>' +
+    '<option value="0.004">$0.004 / min</option>' +
+    '<option value="0.005">$0.005 / min</option>' +
+    '<option value="0.006">$0.006 / min</option>' +
+    '<option value="0.007">$0.007 / min</option>' +
+    '<option value="0.008">$0.008 / min</option>' +
+    '<option value="0.009">$0.009 / min</option>' +
+    '<option value="0.010">$0.010 / min</option>';
+  rateInput.parentNode.replaceChild(rateSel, rateInput);
+
+  /* Budget tiers */
+  var budgetSel = document.createElement('select');
+  budgetSel.id = 'fv-cfar-budget';
+  budgetSel.className = 'form-select';
+  budgetSel.style.cssText = 'margin-bottom:10px;';
+  var opts = [0, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+  budgetSel.innerHTML = opts.map(function(v){
+    return '<option value="' + v + '">' + (v === 0 ? 'Off (no viewer reward)' : '$' + v.toLocaleString()) + '</option>';
+  }).join('');
+  budgetInput.parentNode.replaceChild(budgetSel, budgetInput);
+}
+
+var _prevOpenFVModal = Z.openCreateFullVideoModal;
+if(typeof _prevOpenFVModal === 'function'){
+  Z.openCreateFullVideoModal = function(){
+    var r = _prevOpenFVModal.apply(this, arguments);
+    setTimeout(upgradeCfarFields, 250);
+    setTimeout(upgradeCfarFields, 600);
+    return r;
+  };
+}
+
+console.log('[SPACE v7 — Fix 2] rating chip · subs · description · CFAR dropdown · block · report ready');
+})();
 </script>     
 <!-- ============================================================
      SECTION 9 — CIRCLES
