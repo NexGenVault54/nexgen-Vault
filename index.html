@@ -11826,6 +11826,384 @@ Z.toast = function(msg, type){
 
 console.log('[SPACE v7 — Fix 3] space name · bond count · desc in more · block no-nav · chip live ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — FIX 4                                              -->
+<!-- Video autoplay control · owner More button · SPACE name fix   -->
+<!-- public rating view · block no-blink                           -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Fix4) return; Z.__zynixSpaceV7Fix4 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+function scoreColor(s){ s = Number(s)||0; if(s>=8) return '#10b981'; if(s>=4) return '#a18554'; return '#a16262'; }
+function scoreBg(s){ s = Number(s)||0; if(s>=8) return 'rgba(16,185,129,.12)'; if(s>=4) return 'rgba(161,133,84,.14)'; return 'rgba(161,98,98,.14)'; }
+function ago(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+/* ============================================================
+   FIX 4a — Video autoplay control on SPACE page
+   Only ONE video plays. Only on user tap. Blocks all other play.
+   ============================================================ */
+var _spaceGridVideoPlaying = null;
+
+function setupSpaceVideoControl(){
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+  var vids = host.querySelectorAll('video');
+  if(!vids.length) return;
+
+  vids.forEach(function(v){
+    if(v._spaceVideoHooked) return;
+    v._spaceVideoHooked = true;
+
+    /* Force NO autoplay. Force mute. Force pause. */
+    try { v.autoplay = false; } catch(e){}
+    try { v.removeAttribute('autoplay'); } catch(e){}
+    v.muted = true;
+    v.loop = true;
+    try { v.pause(); } catch(e){}
+
+    /* Block non-user-initiated plays */
+    v.addEventListener('play', function(){
+      if(!v._spaceUserIntent){
+        try { v.pause(); } catch(e){}
+        return;
+      }
+    });
+
+    /* Click to play this one — pause all others */
+    v.addEventListener('click', function(e){
+      e.stopPropagation();
+      if(_spaceGridVideoPlaying && _spaceGridVideoPlaying !== v){
+        try { _spaceGridVideoPlaying._spaceUserIntent = false; _spaceGridVideoPlaying.pause(); } catch(err){}
+      }
+      v._spaceUserIntent = true;
+      try { v.play().catch(function(){}); } catch(err){}
+      _spaceGridVideoPlaying = v;
+      setTimeout(function(){ v._spaceUserIntent = false; }, 1200);
+    });
+
+    /* Pause when user taps the card (opens video page) */
+    v.addEventListener('pause', function(){
+      if(_spaceGridVideoPlaying === v) _spaceGridVideoPlaying = null;
+    });
+  });
+}
+
+/* Call after every content render */
+var _prevRenderContent4a = Z.sp5RenderContent;
+if(typeof _prevRenderContent4a === 'function'){
+  Z.sp5RenderContent = function(){
+    var r = _prevRenderContent4a.apply(this, arguments);
+    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 120);
+    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 600);
+    return r;
+  };
+}
+
+/* Also intercept sp5Load */
+var _prevSp5Load4a = Z.sp5Load;
+if(typeof _prevSp5Load4a === 'function'){
+  Z.sp5Load = async function(){
+    var r = await _prevSp5Load4a.apply(this, arguments);
+    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 200);
+    setTimeout(function(){ try { setupSpaceVideoControl(); } catch(e){} }, 900);
+    return r;
+  };
+}
+
+/* Kill any stray playing video when leaving the space */
+var _prevShow4a = Z.showView;
+Z.showView = function(view){
+  if(view !== 'public-profile' && _spaceGridVideoPlaying){
+    try { _spaceGridVideoPlaying.pause(); _spaceGridVideoPlaying = null; } catch(e){}
+  }
+  var r = _prevShow4a.apply(this, arguments);
+  return r;
+};
+
+/* ============================================================
+   FIX 4b — Owner More button + SPACE name + rating chip fix
+   Runs on every header render.
+   ============================================================ */
+function enhanceHeader4(userId, isOwner){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+
+  /* --- SPACE name (own space: read from currentUser) --- */
+  var sd = profile.space_data || {};
+  if(isOwner && Z.State.currentUser){
+    sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
+  }
+  var spaceName = (sd.name || '').trim();
+  var nameEl = head.querySelector('.sp5-name');
+  if(nameEl && spaceName && nameEl.textContent !== spaceName){
+    nameEl.textContent = spaceName;
+  }
+
+  /* --- Owner: add ⋮ More button --- */
+  if(isOwner){
+    var actions = head.querySelector('.sp5-actions');
+    if(actions && !actions.querySelector('[data-owner-more]')){
+      var moreBtn = document.createElement('button');
+      moreBtn.className = 'sp5-act';
+      moreBtn.setAttribute('data-owner-more','1');
+      moreBtn.setAttribute('title','More');
+      moreBtn.innerHTML = '<i class="fa-solid fa-ellipsis"></i>';
+      moreBtn.addEventListener('click', function(){
+        Z.openSpaceMoreSheet(userId);
+      });
+      actions.appendChild(moreBtn);
+    }
+  }
+}
+
+var _prevRenderContent4b = Z.sp5RenderContent;
+if(typeof _prevRenderContent4b === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevRenderContent4b.apply(this, arguments);
+    setTimeout(function(){ try { enhanceHeader4(userId, isOwner); } catch(e){} }, 80);
+    setTimeout(function(){ try { enhanceHeader4(userId, isOwner); } catch(e){} }, 500);
+    return r;
+  };
+}
+
+/* Also call enhanceHeader4 after sp5Load to catch first paint */
+setTimeout(function(){
+  if(Z.State.currentView === 'public-profile' && Z.State.spaceUserId){
+    var me = Z.State.currentUser;
+    try { enhanceHeader4(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId)); } catch(e){}
+  }
+}, 2000);
+
+/* ============================================================
+   FIX 4c — Public rating view for SPACE chip
+   Everyone can see aggregate + bands + anonymous reviews.
+   Non-owners get a "Rate this SPACE" button.
+   ============================================================ */
+Z.openSpaceRatingPublicView = async function(userId){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var me = Z.State.currentUser;
+  var isOwner = !!(me && me.id === userId);
+
+  var r = await c.rpc('space_space_rating', { p_space_id: userId });
+  if(r.error || !r.data || !r.data[0]){
+    toast('No SPACE ratings yet.'); return;
+  }
+  var d = r.data[0];
+  var avg = Number(d.avg_score) || 0;
+  var cnt = Number(d.rating_count) || 0;
+  var bands = d.bands || {};
+  var total = Math.max(1, (bands.low||0) + (bands.mid||0) + (bands.high||0) + (bands.top||0));
+
+  /* Fetch individual ratings */
+  var reviews = [];
+  try {
+    var rv = await c.from('space_ratings')
+      .select('score, comment, created_at')
+      .eq('space_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(80);
+    reviews = rv.data || [];
+  } catch(e){}
+
+  var activeBand = null;
+
+  function bandRow(bandKey, label, count, col){
+    var pct = Math.round((count / total) * 100);
+    var active = activeBand === bandKey;
+    return '<button data-sp5-pub-band="' + bandKey + '" ' + (active ? 'data-active="1"' : '') + ' style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;width:100%;background:' + (active ? 'rgba(16,185,129,.08)' : 'transparent') + ';border:1px solid ' + (active ? 'rgba(16,185,129,.35)' : 'transparent') + ';cursor:pointer;text-align:left;">' +
+      '<div style="font-size:11px;color:#94a3b8;font-weight:800;min-width:52px;">' + label + '</div>' +
+      '<div style="flex:1;height:8px;border-radius:4px;background:rgba(0,0,0,.35);overflow:hidden;">' +
+        '<div style="height:100%;width:' + pct + '%;background:' + col + ';"></div>' +
+      '</div>' +
+      '<div style="font-size:11px;font-weight:900;color:' + col + ';min-width:22px;text-align:right;">' + count + '</div>' +
+    '</button>';
+  }
+
+  function reviewsHtml(){
+    var list = reviews.slice();
+    if(activeBand){
+      list = list.filter(function(rv){
+        var s = Number(rv.score) || 0;
+        if(activeBand === 'top')  return s >= 9;
+        if(activeBand === 'high') return s >= 7 && s <= 8;
+        if(activeBand === 'mid')  return s >= 4 && s <= 6;
+        if(activeBand === 'low')  return s >= 1 && s <= 3;
+        return true;
+      });
+    }
+    if(!list.length){
+      return '<div style="text-align:center;color:#64748b;font-size:12px;padding:24px;">' +
+        (activeBand ? 'No reviews in this band.' : 'No reviews yet.') + '</div>';
+    }
+    var out = '';
+    list.slice(0, 30).forEach(function(rv){
+      var s = Number(rv.score) || 0;
+      out += '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.05);">';
+      out += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+      out += '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:12px;background:' + scoreBg(s) + ';color:' + scoreColor(s) + ';font-weight:900;font-size:13px;">';
+      out += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + s + ' / 10</span>';
+      out += '<span style="font-size:10px;color:#64748b;font-weight:700;">' + ago(rv.created_at) + '</span>';
+      out += '</div>';
+      if(rv.comment) out += '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.55;font-style:italic;">"' + esc(rv.comment) + '"</div>';
+      out += '</div>';
+    });
+    out += '<div style="padding:12px 0;text-align:center;font-size:10.5px;color:#64748b;line-height:1.5;">Ratings are anonymous.</div>';
+    return out;
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">SPACE Ratings</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+  h += '<div style="display:flex;align-items:baseline;gap:8px;justify-content:center;margin-bottom:16px;">';
+  h += '<div style="font-size:42px;font-weight:900;color:' + scoreColor(avg) + ';">' + avg.toFixed(1) + '</div>';
+  h += '<div style="font-size:14px;color:#94a3b8;font-weight:700;">/ 10</div>';
+  h += '</div>';
+  h += '<div style="text-align:center;font-size:11px;color:#94a3b8;margin-bottom:16px;">' + cnt + ' rating' + (cnt === 1 ? '' : 's') + '</div>';
+  h += '<div id="sp5-pub-bands" style="margin-bottom:14px;">';
+  h += bandRow('top',  '9 – 10', bands.top  || 0, '#10b981');
+  h += bandRow('high', '7 – 8',  bands.high || 0, '#a18554');
+  h += bandRow('mid',  '4 – 6',  bands.mid  || 0, '#a18554');
+  h += bandRow('low',  '1 – 3',  bands.low  || 0, '#a16262');
+  h += '</div>';
+  h += '<div id="sp5-pub-clear"></div>';
+  h += '<div id="sp5-pub-reviews" style="border-radius:12px;background:#111827;border:1px solid #1e293b;padding:0 14px;">' + reviewsHtml() + '</div>';
+
+  if(!isOwner){
+    h += '<button id="sp5-pub-rate-btn" style="width:100%;margin-top:16px;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-star"></i> Rate this SPACE</button>';
+  }
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var bandsWrap = document.getElementById('sp5-pub-bands');
+    var clearHost = document.getElementById('sp5-pub-clear');
+    var listHost = document.getElementById('sp5-pub-reviews');
+    if(!bandsWrap) return;
+
+    function repaint(){
+      bandsWrap.querySelectorAll('[data-sp5-pub-band]').forEach(function(b){
+        var key = b.getAttribute('data-sp5-pub-band');
+        var on = (key === activeBand);
+        if(on){ b.setAttribute('data-active','1'); b.style.background = 'rgba(16,185,129,.08)'; b.style.borderColor = 'rgba(16,185,129,.35)'; }
+        else { b.removeAttribute('data-active'); b.style.background = 'transparent'; b.style.borderColor = 'transparent'; }
+      });
+      if(clearHost){
+        if(activeBand){
+          var lbl = activeBand === 'top' ? '9 – 10' : activeBand === 'high' ? '7 – 8' : activeBand === 'mid' ? '4 – 6' : '1 – 3';
+          clearHost.style.display = 'block';
+          clearHost.innerHTML = '<button id="sp5-pub-clear-btn" style="width:100%;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;margin-bottom:10px;">Showing ' + lbl + ' only · Clear filter</button>';
+          var cb = document.getElementById('sp5-pub-clear-btn');
+          if(cb) cb.onclick = function(){ activeBand = null; repaint(); };
+        } else {
+          clearHost.style.display = 'none';
+          clearHost.innerHTML = '';
+        }
+      }
+      if(listHost) listHost.innerHTML = reviewsHtml();
+    }
+
+    bandsWrap.querySelectorAll('[data-sp5-pub-band]').forEach(function(b){
+      b.onclick = function(){
+        var key = this.getAttribute('data-sp5-pub-band');
+        activeBand = (activeBand === key) ? null : key;
+        repaint();
+      };
+    });
+
+    var rateBtn = document.getElementById('sp5-pub-rate-btn');
+    if(rateBtn){
+      rateBtn.onclick = function(){
+        Z.closeSheet();
+        setTimeout(function(){ Z.openSpaceRatingSheet(userId); }, 200);
+      };
+    }
+  }, 40);
+};
+
+/* Chip routes to public view */
+var _prevEnhanceHeader4 = enhanceHeader4;
+/* Replace chip click binding: everything goes to public view */
+function rebindChipClicks(userId, isOwner){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var chip = head.querySelector('[data-space-chip="1"]');
+  if(!chip) return;
+  chip.setAttribute('onclick', 'Z.openSpaceRatingPublicView(\'' + esc(userId) + '\')');
+  chip.style.cursor = 'pointer';
+}
+
+/* Re-run chip binding after Fix 3's enhanceHeader3 */
+var _prevEnhanceHeader3 = Z.openSpaceMoreSheet; /* dummy to hold reference */
+setTimeout(function(){
+  /* Hook into every render via a small observer */
+  var t = setInterval(function(){
+    if(Z.State.currentView !== 'public-profile') return;
+    var head = document.getElementById('sp5-head-host');
+    if(!head) return;
+    var chip = head.querySelector('[data-space-chip="1"]');
+    if(!chip) return;
+    if(chip._spaceChipBound) return;
+    chip._spaceChipBound = true;
+    var me = Z.State.currentUser;
+    var isOwner = !!(me && me.id === Z.State.spaceUserId);
+    chip.setAttribute('onclick', 'Z.openSpaceRatingPublicView(\'' + esc(Z.State.spaceUserId) + '\')');
+    chip.style.cursor = 'pointer';
+  }, 500);
+  /* Never stop the interval — it's cheap */
+}, 100);
+
+/* ============================================================
+   FIX 4d — Block no-blink (remove reloadData call)
+   ============================================================ */
+Z._toggleBlock = async function(userId, isCurrentlyBlocked){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc(isCurrentlyBlocked ? 'unblock_user' : 'block_user', { p_blocked_id: userId });
+    if(r.error) throw r.error;
+    Z.closeSheet();
+    toast(isCurrentlyBlocked ? 'User unblocked.' : 'User blocked.');
+    /* Silent local update — no navigation, no reload. */
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'unknown';
+    if(msg.indexOf('cannot_block_self') !== -1) toast('You cannot block yourself.', 'error');
+    else toast('Failed: ' + msg, 'error');
+  }
+};
+
+/* ============================================================
+   FIX 4e — Description view also reachable via top-right of header
+   (already in More sheet — no extra work; just ensuring More button
+   for owner is in place)
+   ============================================================ */
+
+console.log('[SPACE v7 — Fix 4] autoplay control · owner More · name · public rating · block no-blink ready');
+})();
 </script>       
 <!-- ============================================================
      SECTION 9 — CIRCLES
