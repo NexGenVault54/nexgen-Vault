@@ -7104,6 +7104,44 @@ Z.closeStatusViewer = function(){
 .sp5-empty{padding:28px 20px;border-radius:14px;background:#131c30;border:1px dashed #1e293b;text-align:center;font-size:12px;color:#94a3b8;grid-column:1/-1}
 
 @media(min-width:641px){.sp5-card{flex:0 0 148px;height:210px}}
+
+/* ---------- Mobile header: 3 rows max, avatar spans 2 ---------- */
+@media(max-width:640px){
+  .sp5-head-top{
+    display:grid;
+    grid-template-columns:62px 1fr;
+    gap:8px 12px;
+    align-items:start;
+  }
+  .sp5-avatar-wrap{grid-column:1;grid-row:1 / span 2;align-self:start;}
+  .sp5-info{display:contents;}
+  .sp5-name-row{grid-column:2;grid-row:1;align-self:center;min-width:0;}
+  .sp5-chips{
+    grid-column:2;grid-row:2;
+    margin-top:0;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;
+    padding-bottom:2px;
+  }
+  .sp5-chips::-webkit-scrollbar{display:none;}
+  .sp5-chip{flex-shrink:0;}
+  .sp5-actions{
+    grid-column:1 / -1;grid-row:3;
+    max-width:none;
+    justify-content:flex-start;
+    margin-top:10px;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    scrollbar-width:none;
+    padding-bottom:2px;
+  }
+  .sp5-actions::-webkit-scrollbar{display:none;}
+  .sp5-actions > *{flex-shrink:0;}
+  .sp5-name{font-size:16px;}
+  .sp5-head{padding:14px;}
+}
 </style>
 
 <script>
@@ -8039,6 +8077,19 @@ console.log('[SPACE v6 — Part 1] core structure ready — send Part 2 before c
 /* ---------- Meta line under title ---------- */
 .sp5-vd-meta-line{display:flex;align-items:center;gap:8px;font-size:12px;color:#94a3b8;margin-top:8px;flex-wrap:wrap;font-weight:700}
 .sp5-vd-meta-line span:first-child{color:#cbd5e1;font-weight:900}
+.sp5-vd-share-meta{display:inline-flex;gap:8px;align-items:center;padding:5px 12px;border-radius:18px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.25);flex-shrink:0;}
+.sp5-vd-share-meta span+span::before{content:"·";color:#475569;margin-right:6px;font-weight:900;}
+.sp5-vd-react{padding:4px 8px;border-radius:14px;font-size:14px;background:transparent;border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:3px;color:#fff;transition:all .15s;position:relative}
+.sp5-vd-react:hover{background:#1e293b}
+.sp5-vd-react.active{background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.3);cursor:default}
+.sp5-vd-react.active:hover{background:rgba(16,185,129,.15)}
+.sp5-vd-react.disabled-reaction{opacity:.35;cursor:not-allowed}
+.sp5-vd-react.disabled-reaction:hover{background:transparent}
+.sp5-vd-react.frozen-reaction{cursor:pointer;opacity:.55}
+.sp5-vd-react.frozen-reaction:hover{background:#1e293b;opacity:.85}
+.sp5-vd-react .count{font-size:10px;color:#64748b;font-weight:700;line-height:1}
+.sp5-vd-react.active .count{color:#10b981}
+.sp5-vd-react .bounty{font-size:9px;color:#10b981;font-weight:700;line-height:1;margin-left:1px}
 </style>
 
 <script>
@@ -8111,12 +8162,12 @@ Z._renderVideoPageReactionRow = function(video){
     var act = !!myR[k];
     var dis = (k === 'dislike');
     var cssClass = r.cssClass ? ' class="' + r.cssClass + '"' : '';
-    var cls = Z._reactionClassFor('react-btn', {
-      active: act, isDislike: dis, hasBounty: hasBounty,
-      hasDislike: hasDislike, isOwner: isMine,
-      frozenApplies: true, unfrozen: unfrozen
-    });
-    var onclick = ' onclick="Z.sp5VideoReact(\'' + esc(video.id) + '\',\'' + k + '\')"';
+      var cls = Z._reactionClassFor('sp5-vd-react', {
+    active: act, isDislike: dis, hasBounty: hasBounty,
+    hasDislike: hasDislike, isOwner: isMine,
+    frozenApplies: true, unfrozen: unfrozen
+  });
+     var onclick = ' data-sp5-vd-rx="' + esc(video.id) + '" onclick="Z.sp5VideoReact(\'' + esc(video.id) + '\',\'' + k + '\')"';
     var bountyHtml = dis
       ? '<span class="bounty" style="color:#64748b;">—</span>'
       : '<span class="bounty">$' + r.reward.toFixed(2) + '</span>';
@@ -8138,8 +8189,20 @@ Z.sp5OpenVideo = async function(videoId){
   if(!v) v = (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
   if(!v){ Z.toast('Video not found.'); return; }
 
-  var inAll = (Z.State.allSparks || []).some(function(x){ return x.id === v.id; });
-  if(!inAll) Z.State.allSparks = [v].concat(Z.State.allSparks || []);
+    /* Ensure the SAME object reference is used in allSparks AND local v.
+     This is the fix for "reaction counts reset to 0 on click". */
+  var _allArr = Z.State.allSparks || [];
+  var _existingIdx = -1;
+  for(var _ai = 0; _ai < _allArr.length; _ai++){
+    if(_allArr[_ai].id === v.id){ _existingIdx = _ai; break; }
+  }
+  if(_existingIdx === -1){
+    _allArr = [v].concat(_allArr);
+  } else {
+    Object.assign(_allArr[_existingIdx], v);
+    v = _allArr[_existingIdx];
+  }
+  Z.State.allSparks = _allArr;
 
   var c = Z.sb && Z.sb();
   var me = Z.State.currentUser;
@@ -8215,36 +8278,25 @@ Z.sp5OpenVideo = async function(videoId){
     return '<div class="comment-color-dot c-' + short + ' ' + (Z.State.commentColor===cc?'selected':'') + '" data-color="' + cc + '" onclick="Z.setCommentColor(\'' + cc + '\')"></div>';
   }).join('') + '</div>';
 
-  /* --- Header row: avatar · Bond · rate · share icon --- */
+   /* --- Header row: avatar · Bond · rate · share-icon(+rate+budget) --- */
   var bs = (typeof Z.getBondStateSync === 'function') ? Z.getBondStateSync(v.author_id) : { bonded:false, rate:0 };
   var bondBtnHtml = '';
   if(!isOwner){
     if(bs.bonded){
-      bondBtnHtml = '<button type="button" data-bond-busy="1" style="padding:7px 14px;border-radius:20px;border:1px solid rgba(16,185,129,.5);background:rgba(16,185,129,.14);color:#10b981;font-weight:900;font-size:12px;cursor:default;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><i class="fa-solid fa-star" style="font-size:10px;"></i> Bonded</button>';
+      bondBtnHtml = '<button type="button" data-bond-busy="1" style="padding:6px 12px;border-radius:18px;border:1px solid rgba(16,185,129,.5);background:rgba(16,185,129,.14);color:#10b981;font-weight:900;font-size:11.5px;cursor:default;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><i class="fa-solid fa-star" style="font-size:9px;"></i> Bonded</button>';
     } else {
       var rateTxt = bs.rate > 0 ? (' · $' + bs.rate.toFixed(2)) : '';
-      bondBtnHtml = '<button type="button" data-bond-user="' + esc(v.author_id) + '" style="padding:7px 14px;border-radius:20px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><i class="fa-regular fa-star" style="font-size:10px;"></i> Bond' + rateTxt + '</button>';
+      bondBtnHtml = '<button type="button" data-bond-user="' + esc(v.author_id) + '" style="padding:6px 12px;border-radius:18px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><i class="fa-regular fa-star" style="font-size:9px;"></i> Bond' + rateTxt + '</button>';
     }
   }
 
-  /* Share bounty chips — only when creator set a rate + budget */
-  var shareRateChip = '';
+  /* Share bounty — compact numbers next to share icon */
   var sbRate = Number(v.share_bounty) || 0;
   var sbCap  = Number(v.share_budget_cap) || 0;
   var sbPaid = Number(v.share_bounty_paid) || 0;
   var sbRem  = Math.max(0, sbCap - sbPaid);
-  if(sbRate > 0 && sbCap > 0){
-    var remCol = sbRem > 0 ? '#10b981' : '#a16262';
-    shareRateChip = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">' +
-      '<span style="font-size:10.5px;font-weight:900;color:#10b981;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);padding:3px 9px;border-radius:12px;display:inline-flex;align-items:center;gap:4px;">' +
-        '<i class="fa-solid fa-share-nodes" style="font-size:9px;"></i> $' + sbRate.toFixed(2) + ' per share' +
-      '</span>' +
-      '<span style="font-size:10.5px;font-weight:900;color:' + remCol + ';background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:3px 9px;border-radius:12px;display:inline-flex;align-items:center;gap:4px;">' +
-        '<i class="fa-solid fa-wallet" style="font-size:9px;"></i> $' + sbRem.toFixed(2) + ' / $' + sbCap.toFixed(2) + ' budget left' +
-      '</span>' +
-    '</div>';
-  }
-
+  var shareRateTxt = sbRate > 0 ? ('<span style="font-size:11.5px;font-weight:900;color:#10b981;">$' + sbRate.toFixed(2) + '</span>') : '';
+  var shareBudgetTxt = (sbCap > 0) ? ('<span style="font-size:11.5px;font-weight:900;color:' + (sbRem > 0 ? '#10b981' : '#a16262') + ';">' + sbRem.toFixed(2) + '/' + sbCap.toFixed(2) + '</span>') : '';
   /* Rating star line for the meta row */
   var ratingStar = (ratingCnt > 0) ? (ratingAvg.toFixed(1) + ' ★') : 'No ratings';
 
@@ -8284,12 +8336,15 @@ Z.sp5OpenVideo = async function(videoId){
   /* Player */
   h += '<div class="sp5-vd-player" id="sp5-vd-player"><video src="' + esc(v.video_url) + '" controls playsinline preload="metadata" id="sp5-vd-video"></video></div>';
 
-  /* Header row — avatar · Bond · rate · share */
+  /* Header row — avatar · Bond · rate · share(+rate+budget) */
   h += '<div class="sp5-vd-header-row">';
   h += '<img src="' + esc(safeAvatar(author)) + '" onclick="Z.sp5CloseVideo();Z.showView(\'public-profile\',\'' + esc(v.author_id) + '\')" class="sp5-vd-avatar" alt="">';
   h += bondBtnHtml;
   h += '<button class="sp5-vd-chip-btn" onclick="Z.openVideoRatingSheet(\'' + esc(videoId) + '\')" title="Rate"><i class="fa-solid fa-star"></i> rate</button>';
   h += '<button class="sp5-vd-chip-btn" onclick="Z.openSparkShare && Z.openSparkShare(\'' + esc(videoId) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
+  if(shareRateTxt || shareBudgetTxt){
+    h += '<span class="sp5-vd-share-meta">' + shareRateTxt + shareBudgetTxt + '</span>';
+  }
   h += '</div>';
 
   /* Title */
@@ -8303,9 +8358,6 @@ Z.sp5OpenVideo = async function(videoId){
   h += '<span>·</span><span><i class="fa-solid fa-star" style="color:#fbbf24;"></i> ' + ratingStar + '</span>';
   if(v.duration_seconds) h += '<span>·</span><span>' + fmtDur(v.duration_seconds) + '</span>';
   h += '</div>';
-
-  /* Share bounty chips */
-  if(shareRateChip) h += shareRateChip;
 
   /* Description */
   if(v.caption) h += '<div class="sp5-vd-desc">' + esc(v.caption) + '</div>';
@@ -8394,9 +8446,13 @@ Z.sp5AddComment = async function(videoId){
   var newId = Z.uuid();
   var color = Z.State.commentColor || 'light-green';
   var optimistic = { id:newId, spark_id:videoId, author_id:me.id, text:txt, color:color, _reactionCounts:{}, _myReactions:{}, _replies:[] };
+    /* Look in BOTH spaceVideos and publicVideosAll — the video may
+     have been opened from the global public pool. */
   var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
+  if(!v) v = (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
   if(v){ if(!v._comments) v._comments = []; v._comments.push(optimistic); v._commentsCount = (v._commentsCount || 0) + 1; }
-  var container = document.querySelector('.sp5-vd-comments');
+     
+    var container = document.querySelector('.sp5-vd-comments');
   if(container){
     var cp = container.querySelector('.comment-color-picker');
     var temp = document.createElement('div');
@@ -8407,22 +8463,74 @@ Z.sp5AddComment = async function(videoId){
     if(head && v) head.textContent = v._commentsCount || 0;
   }
   Z.haptic(8);
-  var r = await c.from('comments').insert({ id:newId, spark_id:videoId, author_id:me.id, text:txt, color:color });
+    var r = await c.from('comments').insert({ id:newId, spark_id:videoId, author_id:me.id, text:txt, color:color });
   if(r.error){
     if(v && v._comments) v._comments = v._comments.filter(function(x){ return x.id !== newId; });
     if(v) v._commentsCount = Math.max(0, (v._commentsCount || 1) - 1);
     var domEl = document.querySelector('[data-spark-comment-id="' + newId + '"]');
     if(domEl && domEl.parentNode) domEl.parentNode.remove();
-    Z.toast('Failed.', 'error');
+    Z.toast('Comment failed: ' + (r.error.message || 'unknown'), 'error');
+    return;
   }
+  /* Update the header counter on the page */
+  var headCnt = document.querySelector('.sp5-vd-comments-head .cnt');
+  if(headCnt && v) headCnt.textContent = v._commentsCount || 0;
 };
 
 /* Reaction on video detail — also refresh the visible reaction row */
-Z.sp5VideoReact = async function(videoId, reactionType){
+
+  /* Video page reaction handler — freeze check + animation */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-sp5-vd-rx]');
+  if(!btn) return;
+  var videoId = btn.getAttribute('data-sp5-vd-rx');
+  if(!videoId) return;
+  var onclickAttr = btn.getAttribute('onclick') || '';
+  var match = onclickAttr.match(/'([a-z]+)'\)\s*$/);
+  if(!match) return;
+  var reactionType = match[1];
+  if(reactionType === 'dislike') return;
+  if(btn.classList.contains('active')) return;
+
+  if(!Z.isUnfrozen(videoId)){
+    if(typeof Z.showFreezeTooltip === 'function') Z.showFreezeTooltip(videoId);
+    Z.toast('Unfreeze reactions first', 'freeze');
+    return;
+  }
+
+  try {
+    var rect = btn.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var r = Z.Reactions[reactionType];
+    if(r){
+      var heart = document.createElement('div');
+      heart.className = 'zynix-heart-rise';
+      heart.textContent = r.symbol;
+      heart.style.left = (cx - 20) + 'px';
+      heart.style.top = (cy - 20) + 'px';
+      document.body.appendChild(heart);
+      if(r.reward > 0){
+        var amt = document.createElement('div');
+        amt.className = 'zynix-heart-amount';
+        amt.textContent = '+~$' + r.reward.toFixed(2);
+        amt.style.left = cx + 'px';
+        amt.style.top = (cy - 30) + 'px';
+        amt.style.transform = 'translateX(-50%)';
+        document.body.appendChild(amt);
+        setTimeout(function(){ amt.remove(); }, 750);
+      }
+      setTimeout(function(){ heart.remove(); }, 750);
+    }
+  } catch(err){}
+}, true);   
+  Z.sp5VideoReact = async function(videoId, reactionType){
   if(typeof Z.sparkReact !== 'function') return;
   await Z.sparkReact(videoId, reactionType);
-  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
-  if(!v && Z.State.allSparks) v = Z.State.allSparks.find(function(x){ return x.id === videoId; });
+   /* Look in allSparks FIRST — that's the object sparkReact mutates. */
+  var v = (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+  if(!v) v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
+  if(!v) v = (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
   if(!v) return;
   var row = document.querySelector('.sp5-vd-rx');
   if(row){
@@ -25574,15 +25682,6 @@ function openRatingSheet(a, existing){
 
   h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-top:12px;margin-bottom:6px;">Comment (optional)</label>';
   h += '<textarea id="mkr-comment" class="mks-textarea" maxlength="300" placeholder="What stood out? Any issue other buyers should know?">' + esc(existing && existing.comment ? existing.comment : '') + '</textarea>';
-
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-top:12px;margin-bottom:6px;">Tags (optional)</label>';
-  h += '<div class="mkr-tag-row" id="mkr-tags">';
-  TAGS.forEach(function(t){
-    var active = selectedTags.indexOf(t) !== -1;
-    h += '<button class="mkr-tag" data-mkr-tag="' + esc(t) + '" ' + (active ? 'data-active="1"' : '') + '>' + esc(t) + '</button>';
-  });
-  h += '</div>';
-
   h += '<button id="mkr-submit" style="width:100%;margin-top:16px;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Submit rating</button>';
   h += '</div></div></div>';
   Z.openSheet(h);
