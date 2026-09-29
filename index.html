@@ -5185,8 +5185,38 @@ Z.renderSparkSlide = function(spark, index){
   stack += '<div class="spark-action-reactions">';
   stack += Z.renderSparkReactionButtons(spark);
   stack += '</div>';
-  stack += '<button class="spark-action-btn" data-spark-comments-btn="' + Z.escape(spark.id) + '" onclick="event.stopPropagation();Z.openSparkComments(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-regular fa-comment"></i></div><div class="spark-action-count">' + ((spark._commentsCount)||0) + '</div></button>';
+   stack += '<button class="spark-action-btn" data-spark-comments-btn="' + Z.escape(spark.id) + '" onclick="event.stopPropagation();Z.openSparkComments(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-regular fa-comment"></i></div><div class="spark-action-count">' + ((spark._commentsCount)||0) + '</div></button>';
   stack += '<button class="spark-action-btn" onclick="event.stopPropagation();Z.openSparkShare(\'' + Z.escape(spark.id) + '\')"><div class="spark-action-icon"><i class="fa-solid fa-share-nodes"></i></div><div class="spark-action-count">' + (spark.shares||0) + '</div></button>';
+
+  /* Bond button — only if not the author */
+  if(me && me.id !== spark.author_id){
+    var bs = (typeof Z.getBondStateSync === 'function') ? Z.getBondStateSync(spark.author_id) : { bonded:false, rate:0 };
+    if(bs.bonded){
+      stack += '<button class="spark-action-btn" data-bond-busy="1" onclick="event.stopPropagation()"><div class="spark-action-icon" style="background:rgba(16,185,129,.35);border-color:rgba(16,185,129,.6);"><i class="fa-solid fa-star" style="color:#10b981;"></i></div><div class="spark-action-count" style="color:#10b981;">Bonded</div></button>';
+    } else {
+      var rateTxt = bs.rate > 0 ? ('$' + bs.rate.toFixed(2)) : 'Bond';
+      stack += '<button class="spark-action-btn" data-bond-user="' + Z.escape(spark.author_id) + '" onclick="event.stopPropagation()"><div class="spark-action-icon" style="background:linear-gradient(135deg,#10b981,#3b82f6);border:none;"><i class="fa-regular fa-star" style="color:#000;"></i></div><div class="spark-action-count" style="color:#10b981;">' + rateTxt + '</div></button>';
+    }
+    /* Async fetch bond state, then update visual if needed */
+    if(typeof Z.getBondState === 'function' && !Z._bondState[spark.author_id]){
+      Z.getBondState(spark.author_id).then(function(){
+        var btn = document.querySelector('[data-bond-user="' + spark.author_id + '"]');
+        if(!btn) return;
+        var nb = Z.getBondStateSync(spark.author_id);
+        var iconEl = btn.querySelector('.spark-action-icon');
+        var cntEl = btn.querySelector('.spark-action-count');
+        if(nb.bonded){
+          btn.removeAttribute('data-bond-user');
+          btn.setAttribute('data-bond-busy','1');
+          if(iconEl){ iconEl.style.background = 'rgba(16,185,129,.35)'; iconEl.style.borderColor = 'rgba(16,185,129,.6)'; iconEl.innerHTML = '<i class="fa-solid fa-star" style="color:#10b981;"></i>'; }
+          if(cntEl){ cntEl.textContent = 'Bonded'; cntEl.style.color = '#10b981'; }
+        } else if(nb.rate > 0 && cntEl){
+          cntEl.textContent = '$' + nb.rate.toFixed(2);
+        }
+      }).catch(function(){});
+    }
+  }
+
   stack += '</div>';
 
   var captionHtml = '';
@@ -7967,6 +7997,26 @@ console.log('[SPACE v6 — Part 1] core structure ready — send Part 2 before c
 .sp5-settings-row .val{font-size:12px;color:#94a3b8;font-weight:700;max-width:55%;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sp5-settings-cta{width:100%;margin-top:10px;padding:11px;border-radius:10px;border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.06);color:#10b981;font-weight:800;font-size:12px;cursor:pointer}
 .sp5-settings-cta.danger{border-color:rgba(161,98,98,.4);background:rgba(161,98,98,.06);color:#c9a5a5}
+
+/* ---------- YouTube-style video page layout ---------- */
+.sp5-vd-main{max-width:1400px;margin:0 auto;padding:0 14px 40px;display:grid;grid-template-columns:1fr;gap:20px}
+@media(min-width:900px){
+  .sp5-vd-main{grid-template-columns:minmax(0,1fr) 340px;gap:24px;align-items:start}
+}
+.sp5-vd-primary{min-width:0}
+.sp5-vd-related{min-width:0}
+.sp5-vd-related-item{display:flex;gap:10px;padding:8px;border-radius:10px;cursor:pointer;transition:background .15s;align-items:flex-start}
+.sp5-vd-related-item:hover{background:rgba(255,255,255,.03)}
+.sp5-vd-related-thumb{position:relative;flex:0 0 140px;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden}
+.sp5-vd-related-thumb video{width:100%;height:100%;object-fit:cover;display:block}
+.sp5-vd-related-dur{position:absolute;bottom:4px;right:4px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.85);color:#fff;font-size:9.5px;font-weight:800}
+.sp5-vd-related-body{flex:1;min-width:0}
+.sp5-vd-related-title{font-size:12.5px;font-weight:800;color:#fff;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px}
+.sp5-vd-related-meta{font-size:10.5px;color:#94a3b8}
+@media(max-width:899px){
+  .sp5-vd-related-thumb{flex:0 0 42%}
+  .sp5-vd-related{border-top:1px solid #1e293b;padding-top:16px;margin-top:8px}
+}
 </style>
 
 <script>
@@ -8060,10 +8110,14 @@ Z._renderVideoPageReactionRow = function(video){
 };
 
 Z.sp5OpenVideo = async function(videoId){
+  /* Look in BOTH the current space's videos AND the global public pool.
+     This is the bug fix — the public grid renders publicVideosAll, so
+     videos from other creators must be found there. */
   var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
+  if(!v) v = (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
   if(!v){ Z.toast('Video not found.'); return; }
 
-  /* Ensure video is in allSparks so sparkReact can find it */
+  /* Ensure it's in allSparks so sparkReact can find it */
   var inAll = (Z.State.allSparks || []).some(function(x){ return x.id === v.id; });
   if(!inAll) Z.State.allSparks = [v].concat(Z.State.allSparks || []);
 
@@ -8117,8 +8171,19 @@ Z.sp5OpenVideo = async function(videoId){
     }
   } catch(e){}
 
+  /* Related videos — more from this creator first, then global */
+  var related = [];
+  try {
+    var pool = (Z.State.publicVideosAll || []).filter(function(x){ return x.id !== videoId && x.video_url; });
+    var fromCreator = pool.filter(function(x){ return x.author_id === v.author_id; }).slice(0, 4);
+    var fromOthers  = pool.filter(function(x){ return x.author_id !== v.author_id; }).slice(0, 10);
+    related = fromCreator.concat(fromOthers).slice(0, 12);
+  } catch(e){}
+
+  /* Reaction row */
   var rxHtml = Z._renderVideoPageReactionRow(v);
 
+  /* Comments HTML */
   var commentsHtml = comments.length
     ? comments.map(function(cm){ return Z.renderSparkComment(cm, v, false); }).join('')
     : '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
@@ -8132,47 +8197,97 @@ Z.sp5OpenVideo = async function(videoId){
     return '<div class="comment-color-dot c-' + short + ' ' + (Z.State.commentColor===cc?'selected':'') + '" data-color="' + cc + '" onclick="Z.setCommentColor(\'' + cc + '\')"></div>';
   }).join('') + '</div>';
 
-  var bondBtn = '';
+  /* Bond button (only if not owner) */
+  var bs = (typeof Z.getBondStateSync === 'function') ? Z.getBondStateSync(v.author_id) : { bonded:false, rate:0 };
+  var bondBtnHtml = '';
   if(!isOwner){
-    var cs = (typeof Z.getConnectionState === 'function') ? Z.getConnectionState(v.author_id) : 'none';
-    if(cs === 'connected') bondBtn = '<button class="sp5-vd-act sub bonded" disabled><i class="fa-solid fa-check"></i> Bonded</button>';
-    else if(cs === 'connecting_out') bondBtn = '<button class="sp5-vd-act sub bonded" disabled><i class="fa-solid fa-hourglass-half"></i> Pending</button>';
-    else if(cs === 'connecting_in') bondBtn = '<button class="sp5-vd-act sub" onclick="Z.acceptIncomingBond(\'' + esc(v.author_id) + '\')"><i class="fa-solid fa-handshake"></i> Accept Bond</button>';
-    else bondBtn = '<button class="sp5-vd-act sub" onclick="Z.sendConnectRequest(\'' + esc(v.author_id) + '\')"><i class="fa-solid fa-handshake"></i> Bond</button>';
+    if(bs.bonded){
+      bondBtnHtml = '<button type="button" data-bond-busy="1" style="padding:8px 16px;border-radius:10px;border:1px solid rgba(16,185,129,.5);background:rgba(16,185,129,.14);color:#10b981;font-weight:900;font-size:12px;cursor:default;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-star"></i> ✓ Bonded</button>';
+    } else {
+      var rateTxt = bs.rate > 0 ? (' · $' + bs.rate.toFixed(2)) : '';
+      bondBtnHtml = '<button type="button" data-bond-user="' + esc(v.author_id) + '" style="padding:8px 16px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-regular fa-star"></i> Bond' + rateTxt + '</button>';
+    }
+  }
+
+  /* Related videos HTML (mobile: card rows, desktop: sidebar cards) */
+  var relatedHtml = '';
+  if(related.length){
+    related.forEach(function(rv){
+      var ra = Z.getProfileById(rv.author_id) || { name: 'User', username: 'user' };
+      relatedHtml += '<div class="sp5-vd-related-item" onclick="Z.sp5OpenVideo(\'' + esc(rv.id) + '\')">' +
+        '<div class="sp5-vd-related-thumb">' +
+          '<video src="' + esc(rv.video_url) + '" preload="metadata" playsinline muted></video>' +
+          (rv.duration_seconds ? '<div class="sp5-vd-related-dur">' + fmtDur(rv.duration_seconds) + '</div>' : '') +
+        '</div>' +
+        '<div class="sp5-vd-related-body">' +
+          '<div class="sp5-vd-related-title">' + esc(rv.title || rv.caption || 'Untitled') + '</div>' +
+          '<div class="sp5-vd-related-meta">' + esc(ra.name || 'User') + ' · ' + (rv.views || 0) + ' views</div>' +
+        '</div>' +
+      '</div>';
+    });
+  } else {
+    relatedHtml = '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px;">No related videos yet.</div>';
   }
 
   var ratingStar = (ratingCnt > 0) ? (ratingAvg.toFixed(1) + ' ★ (' + ratingCnt + ')') : 'No ratings';
 
   var h = '<div class="sp5-vd" id="sp5-vd-host">';
+
+  /* Sticky header */
   h += '<div class="sp5-vd-head">';
   h += '<button class="sp5-vd-close" onclick="Z.sp5CloseVideo()"><i class="fa-solid fa-arrow-left"></i></button>';
   h += '<div style="font-size:12px;font-weight:800;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">' + esc(v.title || 'Full Video') + '</div>';
   h += '<button class="sp5-vd-close" onclick="Z.openVideoRatingSheet(\'' + esc(videoId) + '\')" title="Rate"><i class="fa-solid fa-star" style="color:#fbbf24;"></i></button>';
   h += '</div>';
-  h += '<div class="sp5-vd-body">';
+
+  /* Main container: desktop 2-col, mobile stacked */
+  h += '<div class="sp5-vd-main">';
+
+  /* LEFT column (or top on mobile): player + info */
+  h += '<div class="sp5-vd-primary">';
+
   h += '<div class="sp5-vd-player" id="sp5-vd-player"><video src="' + esc(v.video_url) + '" controls playsinline preload="metadata" id="sp5-vd-video"></video></div>';
+
   h += '<div class="sp5-vd-title">' + esc(v.title || v.caption || 'Untitled') + '</div>';
   h += '<div class="sp5-vd-meta">';
   h += '<span><i class="fa-regular fa-eye"></i> ' + (v.views || 0) + '</span><span>·</span><span>' + ago(v.created_at) + '</span><span>·</span><span><i class="fa-solid fa-star" style="color:#fbbf24;"></i> ' + ratingStar + '</span>';
   if(v.duration_seconds) h += '<span>·</span><span>' + fmtDur(v.duration_seconds) + '</span>';
   h += '</div>';
+
+  /* Author row with Bond button */
   h += '<div class="sp5-vd-author">';
   h += '<img src="' + esc(safeAvatar(author)) + '" onclick="Z.sp5CloseVideo();Z.showView(\'public-profile\',\'' + esc(v.author_id) + '\')" alt="">';
   h += '<div style="flex:1;min-width:0;"><div class="sp5-vd-author-name" onclick="Z.sp5CloseVideo();Z.showView(\'public-profile\',\'' + esc(v.author_id) + '\')">' + esc(author.name || 'User') + '</div><div class="sp5-vd-author-sub">@' + esc(author.username || 'user') + '</div></div>';
-  h += bondBtn;
+  h += bondBtnHtml;
   h += '</div>';
+
+  /* Actions */
   h += '<div class="sp5-vd-actions">';
   h += '<button class="sp5-vd-act rate" onclick="Z.openVideoRatingSheet(\'' + esc(videoId) + '\')"><i class="fa-solid fa-star"></i> Rate this video</button>';
   h += '<button class="sp5-vd-act" onclick="Z.openSparkShare && Z.openSparkShare(\'' + esc(videoId) + '\')"><i class="fa-solid fa-share-nodes"></i> Share</button>';
   h += '<button class="sp5-vd-act fs" onclick="Z.sp5ToggleFullscreen()"><i class="fa-solid fa-expand"></i> Fullscreen</button>';
   h += '</div>';
+
   if(v.caption) h += '<div class="sp5-vd-desc">' + esc(v.caption) + '</div>';
   h += '<div class="sp5-vd-rx">' + rxHtml + '</div>';
+
+  /* Comments */
   h += '<div class="sp5-vd-comments">';
   h += '<div class="sp5-vd-comments-head"><i class="fa-regular fa-comment" style="color:#10b981;"></i> Comments <span class="cnt">' + totalComments + '</span></div>';
   h += commentsHtml + cp + inputHtml;
   h += '</div>';
-  h += '</div></div>';
+
+  h += '</div>'; /* end primary */
+
+  /* RIGHT column (or below on mobile): related videos */
+  h += '<div class="sp5-vd-related">';
+  h += '<div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;padding:0 4px;">';
+  h += '<i class="fa-solid fa-list" style="color:#10b981;margin-right:6px;"></i>Related videos</div>';
+  h += relatedHtml;
+  h += '</div>';
+
+  h += '</div>'; /* end main */
+  h += '</div>'; /* end vd-host */
 
   var existing = document.getElementById('sp5-vd-host');
   if(existing) existing.remove();
@@ -8184,9 +8299,29 @@ Z.sp5OpenVideo = async function(videoId){
     try { Z._tagMediaContainers(); } catch(e){}
     var vid = document.getElementById('sp5-vd-video');
     if(vid){ try { vid.play().catch(function(){}); } catch(e){} }
+
+    /* Async-load bond state and refresh the author-row button */
+    if(!isOwner && typeof Z.getBondState === 'function'){
+      Z.getBondState(v.author_id).then(function(){
+        var row = document.querySelector('.sp5-vd-author');
+        if(!row) return;
+        var oldBtn = row.querySelector('[data-bond-user],[data-bond-busy]');
+        if(!oldBtn) return;
+        var nb = Z.getBondStateSync(v.author_id);
+        var newHtml;
+        if(nb.bonded){
+          newHtml = '<button type="button" data-bond-busy="1" style="padding:8px 16px;border-radius:10px;border:1px solid rgba(16,185,129,.5);background:rgba(16,185,129,.14);color:#10b981;font-weight:900;font-size:12px;cursor:default;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-star"></i> ✓ Bonded</button>';
+        } else {
+          var rt = nb.rate > 0 ? (' · $' + nb.rate.toFixed(2)) : '';
+          newHtml = '<button type="button" data-bond-user="' + esc(v.author_id) + '" style="padding:8px 16px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-regular fa-star"></i> Bond' + rt + '</button>';
+        }
+        var tmp = document.createElement('div');
+        tmp.innerHTML = newHtml;
+        oldBtn.parentNode.replaceChild(tmp.firstChild, oldBtn);
+      }).catch(function(){});
+    }
   }, 80);
 };
-
 Z.sp5CloseVideo = function(){
   var el = document.getElementById('sp5-vd-host');
   if(el){
