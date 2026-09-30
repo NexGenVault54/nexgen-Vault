@@ -13718,15 +13718,16 @@ console.log('[SPACE v7 — Part 2] age gate · warnings · comment sort · block
 })();
 </script>
 <!-- ============================================================ -->
-<!-- SPACE v7 — FINAL CONSOLIDATION                                -->
-<!-- Owns: publish card · CFAR chip · fee dedupe · avatar · ⋮ menu -->
-<!-- · spark filter · badge/trending single-instance · mobile rows -->
+<!-- SPACE v7 — FINAL v3 (corrected)                               -->
+<!-- Owns: publish · CFAR (creator + viewer) · spark modal ·       -->
+<!-- avatar · ⋮ menus · spark filter · comments · blocked · legal  -->
+<!-- hub + sub-page back · mobile rows · dupe killer               -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixSpaceFinal) return; Z.__zynixSpaceFinal = true;
+if(Z.__zynixSpaceFinalV3) return; Z.__zynixSpaceFinalV3 = true;
 
 function esc(s){
   if(s == null) return '';
@@ -13735,62 +13736,40 @@ function esc(s){
   });
 }
 function toast(m,t){ if(Z.toast) Z.toast(m,t); }
-function fmtCfarRate(r){
-  r = Number(r) || 0;
-  if(r <= 0) return '';
-  return '$' + r.toFixed(3);
+function fmtRate(r){ r = Number(r)||0; return r > 0 ? ('$' + r.toFixed(3)) : ''; }
+function findSpark(id){
+  return (Z.State.spaceVideos||[]).find(function(x){ return x.id===id; })
+      || (Z.State.publicVideosAll||[]).find(function(x){ return x.id===id; })
+      || (Z.State.allSparks||[]).find(function(x){ return x.id===id; });
 }
 
 /* ============================================================
-   1. FEE DEDUPE — RPC interceptor (blocks double-charge at source)
+   1. DOUBLE-CHARGE KILL — DOM click lock
    ============================================================ */
 (function(){
-  var recent = [];
-  function wrap(){
-    var c = Z.sb && Z.sb();
-    if(!c || c.__feeDedupeWrapped) return;
-    c.__feeDedupeWrapped = true;
-    var origRpc = c.rpc.bind(c);
-    c.rpc = function(fn, args){
-      if(fn === 'space_deduct_upload_fee' && args && Number(args.p_amount) > 0){
-        var key = JSON.stringify({ a: Number(args.p_amount), r: args.p_reason || '' });
-        var now = Date.now();
-        recent = recent.filter(function(x){ return (now - x.ts) < 3500; });
-        var hit = null;
-        for(var i = 0; i < recent.length; i++){
-          if(recent[i].key === key){ hit = recent[i]; break; }
-        }
-        if(hit){
-          console.warn('[Fee Dedupe] Blocked duplicate charge $' + args.p_amount);
-          return Promise.resolve({ data: hit.data, error: null });
-        }
-        var p = origRpc(fn, args);
-        Promise.resolve(p).then(function(res){
-          if(res && !res.error){
-            recent.push({ key: key, ts: Date.now(), data: res.data });
-          }
-        }).catch(function(){});
-        return p;
-      }
-      return origRpc(fn, args);
-    };
-  }
-  wrap();
-  setInterval(wrap, 1500);
+  var lock = 0;
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest('#modal-container button');
+    if(!btn) return;
+    var t = (btn.textContent||'').toLowerCase();
+    if(t.indexOf('upload video') === -1 && t.indexOf('publish') === -1) return;
+    if(t.indexOf('cancel') !== -1 || t.indexOf('close') !== -1) return;
+    var now = Date.now();
+    if(now < lock){ e.stopImmediatePropagation(); e.preventDefault(); return; }
+    lock = now + 6000;
+  }, true);
 })();
 
 /* ============================================================
-   2. PUBLISH CARD — CFAR · fee display · 18+ · warning
+   2. PUBLISH MODAL — Full Video CFAR + fee + 18+
    ============================================================ */
-function injectPublishCard(){
+function injectFVModalExtras(){
   var modal = document.getElementById('modal-container');
   if(!modal) return;
-  var titleInp = document.getElementById('fv-title');
-  if(!titleInp) return;
-
+  if(!document.getElementById('fv-title')) return;
   var submitBtn = null;
   modal.querySelectorAll('button.btn-primary').forEach(function(b){
-    var t = (b.textContent || '').toLowerCase();
+    var t = (b.textContent||'').toLowerCase();
     if(t.indexOf('upload') !== -1 || t.indexOf('publish') !== -1) submitBtn = b;
   });
   if(!submitBtn) return;
@@ -13806,58 +13785,38 @@ function injectPublishCard(){
       '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Viewer rate (per minute)</label>' +
       '<select id="fv-cfar-rate" class="form-select" style="margin-bottom:10px;">' +
         '<option value="0">Off (no viewer reward)</option>' +
-        '<option value="0.001">$0.001 / min</option>' +
-        '<option value="0.002">$0.002 / min</option>' +
-        '<option value="0.003">$0.003 / min</option>' +
-        '<option value="0.004">$0.004 / min</option>' +
-        '<option value="0.005">$0.005 / min</option>' +
-        '<option value="0.006">$0.006 / min</option>' +
-        '<option value="0.007">$0.007 / min</option>' +
-        '<option value="0.008">$0.008 / min</option>' +
-        '<option value="0.009">$0.009 / min</option>' +
-        '<option value="0.010">$0.010 / min</option>' +
+        [0.001,0.002,0.003,0.004,0.005,0.006,0.007,0.008,0.009,0.010].map(function(v){
+          return '<option value="'+v+'">$'+v.toFixed(3)+' / min</option>';
+        }).join('') +
       '</select>' +
       '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">View budget</label>' +
       '<select id="fv-cfar-budget" class="form-select" style="margin-bottom:10px;">' +
         '<option value="0">Off (no viewer reward)</option>' +
-        '<option value="10">$10</option>' +
-        '<option value="25">$25</option>' +
-        '<option value="50">$50</option>' +
-        '<option value="100">$100</option>' +
-        '<option value="250">$250</option>' +
-        '<option value="500">$500</option>' +
-        '<option value="1000">$1,000</option>' +
-        '<option value="2500">$2,500</option>' +
-        '<option value="5000">$5,000</option>' +
-        '<option value="10000">$10,000</option>' +
+        [10,25,50,100,250,500,1000,2500,5000,10000].map(function(v){ return '<option value="'+v+'">$'+v.toLocaleString()+'</option>'; }).join('') +
       '</select>' +
       '<div id="fv-duration-info" style="padding:10px 12px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;color:#cbd5e1;line-height:1.55;">' +
         '<div id="fv-duration-text">Select a video to see duration and upload fee.</div>' +
       '</div>';
     wrapper.insertBefore(cfar, submitBtn);
   }
-
   if(!document.getElementById('fv-age-block')){
-    var ageBlock = document.createElement('div');
-    ageBlock.id = 'fv-age-block';
-    ageBlock.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
-    ageBlock.innerHTML =
+    var ag = document.createElement('div');
+    ag.id = 'fv-age-block';
+    ag.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
+    ag.innerHTML =
       '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">' +
-        '<input type="checkbox" id="fv-age-gate" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)' +
-      '</label>' +
+        '<input type="checkbox" id="fv-age-gate" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)</label>' +
       '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Content warning (optional)</label>' +
       '<input type="text" id="fv-content-warning" maxlength="80" placeholder="e.g. flashing lights, loud audio" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">' +
       '<div style="font-size:10.5px;color:#64748b;margin-top:6px;line-height:1.5;">Strictly prohibited: adult content, alcohol/smoking promotion, illegal activity, vulgarity.</div>';
     var cf = document.getElementById('fv-cfar-block');
-    if(cf && cf.parentNode) cf.parentNode.insertBefore(ageBlock, cf.nextSibling);
-    else wrapper.insertBefore(ageBlock, submitBtn);
+    if(cf && cf.parentNode) cf.parentNode.insertBefore(ag, cf.nextSibling);
+    else wrapper.insertBefore(ag, submitBtn);
   }
-
-  /* Duration capture */
-  var fileInp = document.getElementById('fv-file');
-  if(fileInp && !fileInp._durHooked){
-    fileInp._durHooked = true;
-    fileInp.addEventListener('change', function(){
+  var fi = document.getElementById('fv-file');
+  if(fi && !fi._durHooked){
+    fi._durHooked = true;
+    fi.addEventListener('change', function(){
       setTimeout(function(){
         var prev = document.getElementById('fv-preview');
         var v = prev ? prev.querySelector('video') : null;
@@ -13869,15 +13828,13 @@ function injectPublishCard(){
     });
   }
 }
-
 function updateFeeDisplay(){
   var el = document.getElementById('fv-duration-text');
   if(!el) return;
   var d = Z._fvPendingDuration || 0;
   if(d <= 0){ el.textContent = 'Select a video to see duration and upload fee.'; return; }
   var min = Math.max(1, Math.ceil(d / 60));
-  var bands = Math.max(1, Math.ceil(min / 10));
-  var fee = bands;
+  var fee = Math.max(1, Math.ceil(min / 10));
   var warn = min > 10
     ? '<div style="color:#fbbf24;font-weight:800;margin-top:6px;"><i class="fa-solid fa-triangle-exclamation"></i> Over 10 minutes — requires Full Video Access approval.</div>'
     : '';
@@ -13887,17 +13844,18 @@ function updateFeeDisplay(){
 }
 
 /* ============================================================
-   3. SINGLE PUBLISH HANDLER
+   3. SUBMIT FULL VIDEO — single wrapper, single fee
    ============================================================ */
-var _publishInFlight = false;
-var _origSubmit = Z.submitFullVideo;
+var _publishLock = 0;
+var _origSubmitV3 = Z.submitFullVideo;
 
 Z.submitFullVideo = async function(){
-  if(_publishInFlight){ toast('Publishing already in progress…'); return; }
+  var now = Date.now();
+  if(now < _publishLock){ toast('Please wait a moment.'); return; }
   var u = Z.State.currentUser;
-  if(!u) return _origSubmit.apply(this, arguments);
+  if(!u) return _origSubmitV3.apply(this, arguments);
   var c = Z.sb && Z.sb();
-  if(!c) return _origSubmit.apply(this, arguments);
+  if(!c) return _origSubmitV3.apply(this, arguments);
 
   var title = ((document.getElementById('fv-title')||{}).value || '').trim();
   if(!title){ toast('Enter a title first.', 'error'); return; }
@@ -13905,17 +13863,14 @@ Z.submitFullVideo = async function(){
   var fileEl = document.getElementById('fv-file');
   var urlEl  = document.getElementById('fv-url');
   var hasFile = !!(fileEl && fileEl.files && fileEl.files[0]);
-  var hasUrl  = !!(urlEl && (urlEl.value || '').trim());
-  var cachedFV = Z._mediaCache && Z._mediaCache.fv;
-  var hasCachedFV = !!(cachedFV && cachedFV.blob);
-  if(!hasFile && !hasUrl && !hasCachedFV){ toast('Attach a video first.', 'error'); return; }
+  var hasUrl  = !!(urlEl && (urlEl.value||'').trim());
+  var cached = Z._mediaCache && Z._mediaCache.fv;
+  if(!hasFile && !hasUrl && !(cached && cached.blob)){
+    toast('Attach a video first.', 'error'); return;
+  }
 
-  var rateEl = document.getElementById('fv-cfar-rate');
-  var budEl  = document.getElementById('fv-cfar-budget');
-  var rate   = rateEl ? parseFloat(rateEl.value) : 0;
-  var budget = budEl  ? parseFloat(budEl.value)  : 0;
-  if(isNaN(rate))   rate = 0;
-  if(isNaN(budget)) budget = 0;
+  var rate = parseFloat((document.getElementById('fv-cfar-rate')||{}).value || '0') || 0;
+  var budget = parseFloat((document.getElementById('fv-cfar-budget')||{}).value || '0') || 0;
 
   var d = Z._fvPendingDuration || 0;
   var min = Math.max(1, Math.ceil(d / 60));
@@ -13923,16 +13878,14 @@ Z.submitFullVideo = async function(){
     try {
       var acc = await c.rpc('space_fv_access_state', { p_user_id: u.id });
       if(!acc.error && acc.data && !acc.data.approved){
-        toast('Videos over 10 minutes require Full Video Access approval.', 'error');
-        return;
+        toast('Videos over 10 minutes require Full Video Access approval.', 'error'); return;
       }
     } catch(e){}
   }
 
-  var bands = Math.max(1, Math.ceil(min / 10));
-  var fee = bands;
+  var fee = Math.max(1, Math.ceil(min / 10));
+  _publishLock = Date.now() + 8000;
 
-  _publishInFlight = true;
   try {
     var ded = await c.rpc('space_deduct_upload_fee', {
       p_amount: fee, p_reason: 'full_video_upload_fee', p_video_id: null
@@ -13941,16 +13894,15 @@ Z.submitFullVideo = async function(){
       var dm = ded.error.message || '';
       if(dm.indexOf('insufficient_funds') !== -1){
         toast('Not enough Cash to cover the $' + fee.toFixed(2) + ' upload fee.', 'error');
-        _publishInFlight = false;
         return;
       }
       throw ded.error;
     }
-    toast('$' + fee.toFixed(2) + ' upload fee deducted from Cash.');
+    toast('$' + fee.toFixed(2) + ' upload fee deducted.');
     try { await Z.refreshSession(); } catch(e){}
     try { Z.updateHeader(); } catch(e){}
 
-    var result = await _origSubmit.apply(this, arguments);
+    var result = await _origSubmitV3.apply(this, arguments);
 
     if(rate > 0 || budget > 0 || Z._pendingAgeGate || Z._pendingContentWarning){
       setTimeout(async function(){
@@ -13964,57 +13916,179 @@ Z.submitFullVideo = async function(){
             if(budget > 0) patch.cfar_view_budget = budget;
             if(Z._pendingAgeGate != null) patch.is_age_gated = !!Z._pendingAgeGate;
             if(Z._pendingContentWarning) patch.content_warning = Z._pendingContentWarning;
-            if(Object.keys(patch).length){
-              await c.from('sparks').update(patch).eq('id', latest.data.id);
-            }
+            if(Object.keys(patch).length) await c.from('sparks').update(patch).eq('id', latest.data.id);
           }
         } catch(e){}
-      }, 1200);
+      }, 900);
     }
-
     Z._fvPendingDuration = 0;
     Z._pendingAgeGate = null;
     Z._pendingContentWarning = null;
     return result;
   } catch(e){
-    toast('Publish failed: ' + (e.message || 'unknown'), 'error');
+    toast('Publish failed: ' + (e.message||'unknown'), 'error');
     throw e;
-  } finally {
-    _publishInFlight = false;
   }
 };
 
-/* Install modal injector wrapper (idempotent) */
-var _origOpenFVModal = Z.openCreateFullVideoModal;
-if(typeof _origOpenFVModal === 'function'){
+var _origOpenFVModalV3 = Z.openCreateFullVideoModal;
+if(typeof _origOpenFVModalV3 === 'function'){
   Z.openCreateFullVideoModal = function(){
     Z._fvPendingDuration = 0;
-    var r = _origOpenFVModal.apply(this, arguments);
-    setTimeout(injectPublishCard, 60);
-    setTimeout(injectPublishCard, 250);
+    var r = _origOpenFVModalV3.apply(this, arguments);
+    setTimeout(injectFVModalExtras, 60);
+    setTimeout(injectFVModalExtras, 250);
     setTimeout(updateFeeDisplay, 500);
     return r;
   };
 }
 
 /* ============================================================
-   4. AVATAR — SPACE-only, cross-device safe
+   4. SPARK MODAL — same CFAR block
+   ============================================================ */
+function injectSparkModalExtras(){
+  var modal = document.getElementById('modal-container');
+  if(!modal) return;
+  if(!document.getElementById('spark-caption')) return;
+  if(document.getElementById('spark-cfar-block')) return;
+  var sb = document.getElementById('spark-share-budget');
+  if(!sb) return;
+  var cfar = document.createElement('div');
+  cfar.id = 'spark-cfar-block';
+  cfar.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);';
+  cfar.innerHTML =
+    '<div style="font-size:11px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-coins"></i> CFAR — VIEWER REWARDS (optional)</div>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Viewer rate (per minute)</label>' +
+    '<select id="spark-cfar-rate" class="form-select" style="margin-bottom:10px;">' +
+      '<option value="0">Off</option>' +
+      [0.001,0.002,0.003,0.004,0.005,0.006,0.007,0.008,0.009,0.010].map(function(v){ return '<option value="'+v+'">$'+v.toFixed(3)+' / min</option>'; }).join('') +
+    '</select>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">View budget</label>' +
+    '<select id="spark-cfar-budget" class="form-select">' +
+      '<option value="0">Off</option>' +
+      [10,25,50,100,250,500,1000,2500,5000,10000].map(function(v){ return '<option value="'+v+'">$'+v.toLocaleString()+'</option>'; }).join('') +
+    '</select>';
+  sb.parentNode.insertBefore(cfar, sb.nextSibling);
+}
+var _origOpenSparkV3 = Z.openCreateSparkModal;
+if(typeof _origOpenSparkV3 === 'function'){
+  Z.openCreateSparkModal = function(){
+    var r = _origOpenSparkV3.apply(this, arguments);
+    setTimeout(injectSparkModalExtras, 60);
+    setTimeout(injectSparkModalExtras, 250);
+    return r;
+  };
+}
+var _origSubmitSparkV3 = Z.submitSpark;
+if(typeof _origSubmitSparkV3 === 'function'){
+  var _sparkLock = 0;
+  Z.submitSpark = function(force){
+    var now = Date.now();
+    if(now < _sparkLock){ toast('Please wait.'); return; }
+    _sparkLock = now + 6000;
+    var r = _origSubmitSparkV3.apply(this, arguments);
+    var rate = parseFloat((document.getElementById('spark-cfar-rate')||{}).value || '0') || 0;
+    var budget = parseFloat((document.getElementById('spark-cfar-budget')||{}).value || '0') || 0;
+    if(rate > 0 || budget > 0){
+      var u = Z.State.currentUser;
+      var c = Z.sb && Z.sb();
+      if(u && c){
+        setTimeout(async function(){
+          try {
+            var latest = await c.from('sparks').select('id')
+              .eq('author_id', u.id).eq('type','spark')
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if(latest.data && latest.data.id){
+              var patch = {};
+              if(rate > 0) patch.cfar_rate_per_minute = rate;
+              if(budget > 0) patch.cfar_view_budget = budget;
+              if(Object.keys(patch).length) await c.from('sparks').update(patch).eq('id', latest.data.id);
+            }
+          } catch(e){}
+        }, 800);
+      }
+    }
+    return r;
+  };
+}
+
+/* ============================================================
+   5. CFAR VIEWER EARNING — live watch tracker
+   ============================================================ */
+(function(){
+  if(Z._cfarTrackerInstalled) return;
+  Z._cfarTrackerInstalled = true;
+  function attach(el, sparkId){
+    if(!el || el._cfarAttached) return;
+    var spark = findSpark(sparkId);
+    if(!spark) return;
+    var rate = Number(spark.cfar_rate_per_minute) || 0;
+    var budget = Number(spark.cfar_view_budget) || 0;
+    if(rate <= 0 || budget <= 0) return;
+    el._cfarAttached = true;
+    el._cfarClaimed = el._cfarClaimed || {};
+    el.addEventListener('timeupdate', async function(){
+      if(el.paused) return;
+      var slot = Math.floor((el.currentTime||0) / 60);
+      if(slot < 1 || slot > 10) return;
+      if(el._cfarClaimed[slot]) return;
+      el._cfarClaimed[slot] = true;
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var r = await c.rpc('cfar_claim_view', { p_spark_id: sparkId, p_minute_slot: slot });
+        if(r.error || !r.data || !r.data.ok) return;
+        spark.cfar_budget_spent = Number(r.data.spent) || 0;
+        toast('+' + Number(r.data.earned).toFixed(4) + ' · from watching');
+        try { await Z.refreshSession(); Z.updateHeader(); } catch(e){}
+        updateCfarChip(sparkId);
+      } catch(e){}
+    });
+  }
+  function scan(){
+    var vp = document.getElementById('sp5-vd-video');
+    if(vp){
+      var hash = (window.location.hash||'').match(/^#video-(.+)$/);
+      var id = hash ? decodeURIComponent(hash[1]) : null;
+      if(id) attach(vp, id);
+    }
+    document.querySelectorAll('video[data-spark-id]').forEach(function(v){
+      var id = v.getAttribute('data-spark-id');
+      if(id) attach(v, id);
+    });
+  }
+  setInterval(scan, 1500);
+})();
+
+function updateCfarChip(sparkId){
+  var chips = document.querySelectorAll('[data-cfar-chip="' + sparkId + '"]');
+  if(!chips.length) return;
+  var spark = findSpark(sparkId);
+  if(!spark) return;
+  var rate = Number(spark.cfar_rate_per_minute) || 0;
+  var budget = Number(spark.cfar_view_budget) || 0;
+  var spent = Number(spark.cfar_budget_spent) || 0;
+  var rateTxt = rate > 0 ? '<span style="color:#60a5fa;font-weight:900;">' + fmtRate(rate) + '</span>' : '';
+  var budTxt = budget > 0 ? ('<span style="color:#60a5fa;font-weight:900;">' + spent.toFixed(2) + '/' + budget.toFixed(0) + '</span>') : '';
+  chips.forEach(function(c){
+    c.innerHTML = '<i class="fa-regular fa-eye" style="font-size:10px;color:#60a5fa;"></i>' + rateTxt + budTxt;
+  });
+}
+
+/* ============================================================
+   6. AVATAR — SPACE picker + cross-device safe fallback
    ============================================================ */
 Z.openAvatarPicker = function(){
   var u = Z.State.currentUser;
   if(!u){ toast('Login first.'); return; }
   var sd = u.space_data || {};
-
   var preview = '';
-  if(sd.avatar_image && sd.avatar_image.indexOf('http') === 0){
-    preview = '<img src="' + esc(sd.avatar_image) + '" style="width:100%;height:100%;object-fit:cover;">';
-  } else if(sd.avatar_video && sd.avatar_video.indexOf('http') === 0){
-    preview = '<video src="' + esc(sd.avatar_video) + '" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:cover;"></video>';
-  } else if(u.avatar){
-    preview = '<img src="' + esc(u.avatar) + '" style="width:100%;height:100%;object-fit:cover;opacity:.55;">';
-  } else {
-    preview = '<img src="https://ui-avatars.com/api/?name=' + encodeURIComponent(u.name || 'U') + '&background=111827&color=34d399" style="width:100%;height:100%;object-fit:cover;">';
-  }
+  var validImg = sd.avatar_image && typeof sd.avatar_image === 'string' && sd.avatar_image.indexOf('http') === 0;
+  var validVid = sd.avatar_video && typeof sd.avatar_video === 'string' && sd.avatar_video.indexOf('http') === 0;
+  if(validImg) preview = '<img src="' + esc(sd.avatar_image) + '" style="width:100%;height:100%;object-fit:cover;">';
+  else if(validVid) preview = '<video src="' + esc(sd.avatar_video) + '" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:cover;"></video>';
+  else if(u.avatar) preview = '<img src="' + esc(u.avatar) + '" style="width:100%;height:100%;object-fit:cover;opacity:.55;">';
+  else preview = '<img src="https://ui-avatars.com/api/?name=' + encodeURIComponent(u.name||'U') + '&background=111827&color=34d399" style="width:100%;height:100%;object-fit:cover;">';
 
   var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
   h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:82vh;">';
@@ -14023,15 +14097,14 @@ Z.openAvatarPicker = function(){
   h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
   h += '<div class="sheet-body" style="padding:16px;">';
   h += '<div style="display:flex;justify-content:center;margin-bottom:14px;"><div style="width:120px;height:120px;border-radius:50%;overflow:hidden;background:#0b1220;border:2px solid #10b981;">' + preview + '</div></div>';
-  h += '<div style="padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">This avatar shows only on your SPACE. Your Home feed avatar is managed separately in ZYNIX account settings.</div>';
+  h += '<div style="padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">This avatar shows only on your SPACE.</div>';
   h += '<input type="file" id="sp5-av-file" accept="image/*,video/*" style="display:none;">';
   h += '<button id="sp5-av-pick" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-cloud-arrow-up"></i> Choose from device</button>';
-  if(sd.avatar_image || sd.avatar_video){
+  if(validImg || validVid){
     h += '<button id="sp5-av-clear" style="width:100%;margin-top:10px;padding:11px;border-radius:11px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-trash"></i> Remove SPACE avatar</button>';
   }
   h += '</div></div></div>';
   Z.openSheet(h);
-
   setTimeout(function(){
     var pick = document.getElementById('sp5-av-pick');
     var file = document.getElementById('sp5-av-file');
@@ -14039,7 +14112,7 @@ Z.openAvatarPicker = function(){
     if(pick && file) pick.addEventListener('click', function(){ file.click(); });
     if(file) file.addEventListener('change', function(){
       var f = file.files && file.files[0];
-      if(f) handleAvatar(f);
+      if(f) handleAvatarUpload(f);
     });
     if(clear) clear.addEventListener('click', async function(){
       var sd2 = Object.assign({}, Z.State.currentUser.space_data || {});
@@ -14055,22 +14128,22 @@ Z.openAvatarPicker = function(){
   }, 40);
 };
 
-async function handleAvatar(f){
+async function handleAvatarUpload(f){
   var isVid = (f.type && f.type.indexOf('video/') === 0);
   if(isVid){
-    var url = URL.createObjectURL(f);
+    var u1 = URL.createObjectURL(f);
     var v = document.createElement('video');
-    v.preload = 'metadata'; v.src = url; v.muted = true;
+    v.preload = 'metadata'; v.src = u1; v.muted = true;
     await new Promise(function(res){ v.onloadedmetadata = res; setTimeout(res, 2500); });
-    if(v.duration && v.duration > 10.5){ URL.revokeObjectURL(url); toast('Video must be 10 seconds or shorter.', 'error'); return; }
-    URL.revokeObjectURL(url);
+    if(v.duration && v.duration > 10.5){ URL.revokeObjectURL(u1); toast('Video must be 10 seconds or shorter.', 'error'); return; }
+    URL.revokeObjectURL(u1);
   }
-  if(f.size > 15 * 1024 * 1024){ toast('Max 15 MB.', 'error'); return; }
+  if(f.size > 15*1024*1024){ toast('Max 15 MB.', 'error'); return; }
   toast('Uploading…');
   try {
     var url2 = await Z.storeMedia(f);
-    if(!url2 || url2.indexOf('http') !== 0){
-      toast('Upload did not return a permanent URL.', 'error');
+    if(!url2 || typeof url2 !== 'string' || url2.indexOf('http') !== 0){
+      toast('Upload did not return a permanent URL. Try again.', 'error');
       return;
     }
     var u = Z.State.currentUser;
@@ -14080,15 +14153,14 @@ async function handleAvatar(f){
     var res = await Z.DB.updateProfile(u.id, { space_data: sd });
     if(!res){ toast('Save failed.', 'error'); return; }
     if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
-    Z.closeSheet();
-    toast('SPACE avatar updated.');
+    Z.closeSheet(); toast('SPACE avatar updated.');
     try { await Z.refreshSession(); } catch(e){}
     Z.showView('public-profile', u.id);
-  } catch(e){ toast('Failed: ' + (e.message || 'unknown'), 'error'); }
+  } catch(e){ toast('Failed: ' + (e.message||'unknown'), 'error'); }
 }
 
-/* Enforce correct SPACE avatar after render — with URL validation */
-function enforceSpaceAvatar(){
+/* Cross-device-safe enforce — image first, then profile, then letter */
+function enforceSpaceAvatarSafe(){
   if(Z.State.currentView !== 'public-profile') return;
   var head = document.getElementById('sp5-head-host');
   if(!head) return;
@@ -14100,131 +14172,102 @@ function enforceSpaceAvatar(){
   if(Z.State.currentUser && Z.State.currentUser.id === p.id){
     sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
   }
+  function validHttp(u){ return !!(u && typeof u === 'string' && u.indexOf('http') === 0); }
+  var imgUrl = validHttp(sd.avatar_image) ? sd.avatar_image : null;
+  var vidUrl = validHttp(sd.avatar_video) ? sd.avatar_video : null;
+  var profileUrl = validHttp(p.avatar) ? p.avatar : null;
+  var fallbackLetter = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name||'U') + '&background=111827&color=34d399';
 
-  /* Validate: only use https:// URLs. Anything else falls back. */
-  function validUrl(u){ return !!(u && typeof u === 'string' && u.indexOf('http') === 0); }
-  var videoUrl = validUrl(sd.avatar_video) ? sd.avatar_video : null;
-  var imageUrl = validUrl(sd.avatar_image) ? sd.avatar_image : null;
-  var profileUrl = validUrl(p.avatar) ? p.avatar : null;
+  var wantUrl = imgUrl || vidUrl || profileUrl || fallbackLetter;
+  var wantVideo = !!(vidUrl && !imgUrl);
 
-  var fallback = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name || 'U') + '&background=111827&color=34d399';
-  var wantVideo = !!videoUrl;
-  var wantUrl = videoUrl || imageUrl || profileUrl || fallback;
-
-  var existing = btn.querySelector('img, video');
   var editEl = btn.querySelector('.sp5-avatar-edit');
   var editHtml = editEl ? editEl.outerHTML : '';
 
-  var needs = false;
-  if(!existing) needs = true;
-  else {
+  /* Already has the right element AND src? Leave alone. */
+  var existing = btn.querySelector('img, video');
+  if(existing){
     var curSrc = existing.getAttribute('src') || '';
-    if(curSrc !== wantUrl) needs = true;
-    else if(wantVideo && existing.tagName !== 'VIDEO') needs = true;
-    else if(!wantVideo && existing.tagName !== 'IMG') needs = true;
-  }
-
-  if(needs){
-    var inner;
-    if(wantVideo){
-      inner = '<video src="' + esc(wantUrl) + '" autoplay muted loop playsinline preload="metadata"></video>';
-    } else {
-      inner = '<img src="' + esc(wantUrl) + '" alt="" onerror="this.onerror=null;this.src=\'' + esc(fallback) + '\';">';
+    if(curSrc === wantUrl){
+      /* Same src — but if image was already attempted, don't reset */
+      return;
     }
-    btn.innerHTML = inner + editHtml;
+    if(wantVideo && existing.tagName === 'VIDEO') return;
+    if(!wantVideo && existing.tagName === 'IMG') return;
   }
+
+  var inner;
+  if(wantVideo){
+    inner = '<video src="' + esc(wantUrl) + '" autoplay muted loop playsinline preload="metadata"></video>';
+  } else {
+    inner = '<img src="' + esc(wantUrl) + '" alt="" onerror="(function(img){img.onerror=null;img.src=\'' + esc(profileUrl || fallbackLetter) + '\';})(this);">';
+  }
+  btn.innerHTML = inner + editHtml;
 }
 
-/* Run enforce on every render + periodically */
 setInterval(function(){
-  if(Z.State.currentView === 'public-profile') enforceSpaceAvatar();
-}, 1000);
-
-var _prevRC = Z.sp5RenderContent;
-if(typeof _prevRC === 'function'){
-  Z.sp5RenderContent = function(userId, isOwner){
-    var r = _prevRC.apply(this, arguments);
-    [80, 300, 800, 1600].forEach(function(ms){
-      setTimeout(function(){ try { enforceSpaceAvatar(); } catch(e){} }, ms);
-    });
-    return r;
-  };
-}
+  if(Z.State.currentView === 'public-profile') enforceSpaceAvatarSafe();
+}, 1500);
 
 /* ============================================================
-   5. VIDEO HEADER — strip inline pin/save/report · add CFAR chip · add ⋮
+   7. VIDEO HEADER POLISH
    ============================================================ */
-var _origOpenVideo = Z.sp5OpenVideo;
-if(typeof _origOpenVideo === 'function'){
+var _origOpenVideoV3 = Z.sp5OpenVideo;
+if(typeof _origOpenVideoV3 === 'function'){
   Z.sp5OpenVideo = async function(videoId){
-    var r = await _origOpenVideo.apply(this, arguments);
-    setTimeout(function(){ polishVideoHeader(videoId); }, 200);
+    var r = await _origOpenVideoV3.apply(this, arguments);
+    setTimeout(function(){ polishVideoHeader(videoId); }, 220);
     setTimeout(function(){ polishVideoHeader(videoId); }, 700);
     return r;
   };
 }
-
 function polishVideoHeader(videoId){
   var head = document.querySelector('.sp5-vd-head');
   var row = document.querySelector('.sp5-vd-header-row');
-  if(!row) return;
-
-  /* 1. Remove inline pin/save/report buttons */
-  row.querySelectorAll('[data-vd-pin],[data-vd-save],[data-vd-report],[data-vd-ni]').forEach(function(el){ el.remove(); });
-  if(head){
-    head.querySelectorAll('[data-vd-pin],[data-vd-save],[data-vd-report],[data-vd-ni]').forEach(function(el){
-      /* Keep the ⋮ but remove the rest */
-      if(el.getAttribute('data-vd-more') === '1') return;
-      el.remove();
-    });
-  }
-
-  /* 2. Add CFAR chip after share-bounty meta if not already there */
-  var u = Z.State.currentUser;
-  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
-       || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
-       || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+  if(!head || !row) return;
+  head.querySelectorAll('[data-vd-pin],[data-vd-save],[data-vd-report],[data-vd-ni]').forEach(function(el){
+    if(el.getAttribute('data-vd-more') === '1') return;
+    el.remove();
+  });
+  var v = findSpark(videoId);
   if(!v) return;
-
   var rate = Number(v.cfar_rate_per_minute) || 0;
   var budget = Number(v.cfar_view_budget) || 0;
+  var spent = Number(v.cfar_budget_spent) || 0;
   if((rate > 0 || budget > 0) && !row.querySelector('[data-cfar-chip]')){
     var chip = document.createElement('span');
-    chip.setAttribute('data-cfar-chip','1');
+    chip.setAttribute('data-cfar-chip', videoId);
     chip.className = 'sp5-vd-share-meta';
     chip.style.cssText = 'background:rgba(96,165,250,.08);border-color:rgba(96,165,250,.35);color:#60a5fa;';
-    var rateTxt = rate > 0 ? '<span style="color:#60a5fa;font-weight:900;">' + fmtCfarRate(rate) + '</span>' : '';
-    var budTxt = budget > 0 ? '<span style="color:#60a5fa;font-weight:900;">$' + budget.toLocaleString() + '</span>' : '';
+    var rateTxt = rate > 0 ? '<span style="color:#60a5fa;font-weight:900;">' + fmtRate(rate) + '</span>' : '';
+    var budTxt = budget > 0 ? ('<span style="color:#60a5fa;font-weight:900;">' + spent.toFixed(2) + '/' + budget.toFixed(0) + '</span>') : '';
     chip.innerHTML = '<i class="fa-regular fa-eye" style="font-size:10px;color:#60a5fa;"></i>' + rateTxt + budTxt;
-    chip.title = 'Creator-funded viewer reward';
     row.appendChild(chip);
   }
-
-  /* 3. Ensure ⋮ menu is at the far right of header (not the row) */
-  if(head && !head.querySelector('[data-vd-more]')){
-    var moreBtn = document.createElement('button');
-    moreBtn.setAttribute('data-vd-more','1');
-    moreBtn.title = 'More';
-    moreBtn.style.cssText = 'background:rgba(30,41,59,.7);border:1px solid #1e293b;color:#cbd5e1;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    moreBtn.innerHTML = '<i class="fa-solid fa-ellipsis-vertical"></i>';
-    moreBtn.addEventListener('click', function(e){
+  if(!head.querySelector('[data-vd-more]')){
+    var u = Z.State.currentUser;
+    var isMine = u && u.id === v.author_id;
+    var btn = document.createElement('button');
+    btn.setAttribute('data-vd-more','1');
+    btn.title = 'More';
+    btn.style.cssText = 'background:rgba(30,41,59,.7);border:1px solid #1e293b;color:#cbd5e1;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    btn.innerHTML = '<i class="fa-solid fa-ellipsis-vertical"></i>';
+    btn.addEventListener('click', function(e){
       e.stopPropagation();
-      var isMine = u && u.id === v.author_id;
       Z._openVideoMoreMenu(videoId, isMine, v);
     });
-    head.appendChild(moreBtn);
+    head.appendChild(btn);
   }
 }
-
 Z._openVideoMoreMenu = function(videoId, isMine, video){
   var rows = [];
   if(isMine){
-    rows.push({ icon:'fa-solid fa-pen',      label:'Edit title & description', action:'Z.closeSheet();setTimeout(function(){Z.editFullVideo(\'' + esc(videoId) + '\')},200)' });
-    rows.push({ icon:'fa-solid fa-thumbtack', label: video.is_pinned ? 'Unpin from SPACE' : 'Pin to SPACE', action:'Z.closeSheet();Z.pinVideo(\'' + esc(videoId) + '\',' + (video.is_pinned ? 'true' : 'false') + ')' });
-    rows.push({ icon:'fa-regular fa-bookmark', label: (Z.State._savedVideos||[]).indexOf(videoId) !== -1 ? 'Remove from Watch Later' : 'Save to Watch Later', action:'Z.closeSheet();Z.toggleVideoSave(\'' + esc(videoId) + '\')' });
-    rows.push({ icon:'fa-solid fa-trash',     label:'Delete video', action:'Z.closeSheet();setTimeout(function(){Z.deleteFullVideo(\'' + esc(videoId) + '\')},200)', danger:true });
+    rows.push({ icon:'fa-solid fa-pen', label:'Edit title & description', action:'Z.closeSheet();setTimeout(function(){Z.editFullVideo(\'' + esc(videoId) + '\')},200)' });
+    rows.push({ icon:'fa-solid fa-thumbtack', label: video.is_pinned ? 'Unpin' : 'Pin to SPACE', action:'Z.closeSheet();Z.pinVideo(\'' + esc(videoId) + '\',' + (video.is_pinned?'true':'false') + ')' });
+    rows.push({ icon:'fa-regular fa-bookmark', label:'Watch Later', action:'Z.closeSheet();Z.toggleVideoSave(\'' + esc(videoId) + '\')' });
+    rows.push({ icon:'fa-solid fa-trash', label:'Delete video', action:'Z.closeSheet();setTimeout(function(){Z.deleteFullVideo(\'' + esc(videoId) + '\')},200)', danger:true });
   } else {
-    rows.push({ icon:'fa-regular fa-bookmark', label: (Z.State._savedVideos||[]).indexOf(videoId) !== -1 ? 'Remove from Watch Later' : 'Save to Watch Later', action:'Z.closeSheet();Z.toggleVideoSave(\'' + esc(videoId) + '\')' });
+    rows.push({ icon:'fa-regular fa-bookmark', label:'Watch Later', action:'Z.closeSheet();Z.toggleVideoSave(\'' + esc(videoId) + '\')' });
     rows.push({ icon:'fa-solid fa-thumbs-down', label:'Not interested', action:'Z.closeSheet();Z.markNotInterested(\'video\',\'' + esc(videoId) + '\');Z.sp5CloseVideo()' });
     rows.push({ icon:'fa-solid fa-flag', label:'Report', action:'Z.closeSheet();Z._openContentReportSheet(\'spark\',\'' + esc(videoId) + '\',\'this video\')', danger:true });
   }
@@ -14235,8 +14278,8 @@ Z._openVideoMoreMenu = function(videoId, isMine, video){
   h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
   h += '<div class="sheet-body" style="padding:8px;">';
   rows.forEach(function(it){
-    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:' + (it.danger ? '#c9a5a5' : '#e2e8f0') + ';font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
-    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:' + (it.danger ? '#a16262' : '#10b981') + ';flex-shrink:0;"></i>';
+    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:' + (it.danger?'#c9a5a5':'#e2e8f0') + ';font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
+    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:' + (it.danger?'#a16262':'#10b981') + ';flex-shrink:0;"></i>';
     h += '<span style="flex:1;">' + esc(it.label) + '</span></button>';
   });
   h += '</div></div></div>';
@@ -14244,65 +14287,92 @@ Z._openVideoMoreMenu = function(videoId, isMine, video){
 };
 
 /* ============================================================
-   6. SPARK — CFAR chip next to publisher · edit/delete own
+   8. SPARK slide — CFAR chip + pin/edit
    ============================================================ */
-var _origRenderSparkSlide = Z.renderSparkSlide;
-if(typeof _origRenderSparkSlide === 'function'){
+var _origSlideV3 = Z.renderSparkSlide;
+if(typeof _origSlideV3 === 'function'){
   Z.renderSparkSlide = function(spark, index){
-    var html = _origRenderSparkSlide.apply(this, arguments);
+    var html = _origSlideV3.apply(this, arguments);
     if(!spark || !spark.id) return html;
-
-    /* CFAR chip on spark author line if creator set a rate */
     var rate = Number(spark.cfar_rate_per_minute) || 0;
     var budget = Number(spark.cfar_view_budget) || 0;
+    var spent = Number(spark.cfar_budget_spent) || 0;
     if((rate > 0 || budget > 0) && html.indexOf('data-spark-cfar-chip=') === -1){
-      var authorLineEnd = html.indexOf('</div>', html.indexOf('spark-info-author'));
-      if(authorLineEnd !== -1){
-        var closeDiv = html.indexOf('</div>', authorLineEnd + 6);
-        var chipHtml = '<div data-spark-cfar-chip="' + spark.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.35);margin-top:4px;font-size:10px;font-weight:900;color:#60a5fa;">' +
-          '<i class="fa-regular fa-eye" style="font-size:9px;"></i>' +
-          (rate > 0 ? '$' + rate.toFixed(3) + '/min' : '') +
-          (rate > 0 && budget > 0 ? ' · ' : '') +
-          (budget > 0 ? '$' + budget.toLocaleString() : '') +
-        '</div>';
-        html = html.substring(0, closeDiv) + chipHtml + html.substring(closeDiv);
+      var authorOpen = html.indexOf('spark-info-author');
+      if(authorOpen !== -1){
+        var endOfAuthor = html.indexOf('</div>', html.indexOf('</div>', authorOpen) + 6);
+        if(endOfAuthor !== -1){
+          var chipHtml = '<div data-spark-cfar-chip="' + spark.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.35);margin-top:4px;font-size:10px;font-weight:900;color:#60a5fa;">' +
+            '<i class="fa-regular fa-eye" style="font-size:9px;"></i>' +
+            (rate > 0 ? fmtRate(rate) + '/min' : '') +
+            (rate > 0 && budget > 0 ? ' · ' : '') +
+            (budget > 0 ? '$' + spent.toFixed(2) + '/$' + budget.toFixed(0) : '') +
+          '</div>';
+          html = html.substring(0, endOfAuthor + 6) + chipHtml + html.substring(endOfAuthor + 6);
+        }
       }
     }
-
-    /* Add Edit for own spark */
     var u = Z.State.currentUser;
     if(u && u.id === spark.author_id && spark.type !== 'long_video'){
-      var deleteNeedle = '<button class="danger" onclick="Z.deleteSpark(\'' + spark.id + '\')">';
-      var idx = html.indexOf(deleteNeedle);
-      if(idx !== -1 && html.indexOf('data-spark-edit=') === -1){
-        var editBtn = '<button data-spark-edit="' + spark.id + '" onclick="Z.editSpark(\'' + spark.id + '\')"><i class="fa-solid fa-pen"></i> Edit caption</button>';
-        html = html.substring(0, idx) + editBtn + html.substring(idx);
+      var delNeedle = '<button class="danger" onclick="Z.deleteSpark(\'' + spark.id + '\')">';
+      var di = html.indexOf(delNeedle);
+      if(di !== -1){
+        var extras = '';
+        if(html.indexOf('data-spark-edit=') === -1){
+          extras += '<button data-spark-edit="' + spark.id + '" onclick="Z.editSpark(\'' + spark.id + '\')"><i class="fa-solid fa-pen"></i> Edit caption</button>';
+        }
+        if(html.indexOf('data-spark-pin=') === -1){
+          var pinned = !!spark.is_pinned;
+          extras += '<button data-spark-pin="' + spark.id + '" onclick="Z.pinSpark(\'' + spark.id + '\',' + (pinned?'true':'false') + ')"><i class="fa-' + (pinned?'solid':'regular') + ' fa-thumbtack"></i> ' + (pinned?'Unpin':'Pin') + '</button>';
+        }
+        if(extras) html = html.substring(0, di) + extras + html.substring(di);
       }
     }
     return html;
   };
 }
-
+Z.pinSpark = async function(sparkId, unpin){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    await c.from('sparks').update({ is_pinned: false }).eq('author_id', u.id).eq('is_pinned', true).eq('type','spark');
+    if(!unpin){
+      await c.from('sparks').update({ is_pinned: true }).eq('id', sparkId);
+      toast('Spark pinned.');
+    } else toast('Spark unpinned.');
+    [Z.State.spaceSparks, Z.State.publicSparksAll, Z.State.allSparks].forEach(function(arr){
+      if(!arr) return;
+      arr.forEach(function(s){
+        if(s.id === sparkId) s.is_pinned = !unpin;
+        else if(s.is_pinned && s.type === 'spark') s.is_pinned = false;
+      });
+    });
+    if(Z.State.currentView === 'public-profile'){
+      var host = document.getElementById('sp5-content-host');
+      var grid = host ? host.querySelector('.sp5-sgrid') : null;
+      if(grid) grid.innerHTML = Z.sp5RenderSparkGrid(Z.State.publicSparksAll||[], Z.State.spaceUserId);
+    }
+  } catch(e){ toast('Failed.', 'error'); }
+};
 Z.editSpark = function(sparkId){
   var u = Z.State.currentUser;
   if(!u){ toast('Login first.'); return; }
-  var s = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
+  var s = (Z.State.allSparks||[]).find(function(x){ return x.id === sparkId; });
   if(!s){ toast('Spark not found.'); return; }
-  if(s.author_id !== u.id){ toast('You can only edit your own Sparks.', 'error'); return; }
-
+  if(s.author_id !== u.id){ toast('Only your own Sparks.', 'error'); return; }
   var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
   h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:82vh;">';
   h += '<div class="sheet-handle"></div>';
   h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Edit Spark</h3>';
   h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
   h += '<div class="sheet-body" style="padding:16px;">';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Caption</label>';
-  h += '<textarea id="sp-edit-caption" class="form-textarea" maxlength="600" rows="4">' + esc(s.caption || '') + '</textarea>';
+  h += '<textarea id="sp-edit-caption" class="form-textarea" maxlength="600" rows="4">' + esc(s.caption||'') + '</textarea>';
   h += '<button id="sp-edit-save" style="width:100%;margin-top:14px;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Save</button>';
   h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
   h += '</div></div></div>';
   Z.openSheet(h);
-
   setTimeout(function(){
     var save = document.getElementById('sp-edit-save');
     if(save) save.addEventListener('click', async function(){
@@ -14312,204 +14382,31 @@ Z.editSpark = function(sparkId){
       try {
         var r = await c.from('sparks').update({ caption: txt || null }).eq('id', sparkId).eq('author_id', u.id);
         if(r.error) throw r.error;
-        (Z.State.allSparks || []).forEach(function(x){ if(x.id === sparkId) x.caption = txt; });
-        Z.closeSheet();
-        toast('Caption updated.');
+        (Z.State.allSparks||[]).forEach(function(x){ if(x.id === sparkId) x.caption = txt; });
+        Z.closeSheet(); toast('Caption updated.');
         try { Z.showView('spark'); } catch(e){}
-      } catch(e){ toast('Failed: ' + (e.message || 'unknown'), 'error'); }
-    });
-  }, 40);
-};
-
-Z.deleteFullVideo = async function(videoId){
-  var u = Z.State.currentUser;
-  if(!u){ toast('Login first.'); return; }
-  if(!confirm('Delete this video permanently?')) return;
-  var c = Z.sb && Z.sb();
-  if(!c) return;
-  try {
-    var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
-         || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
-         || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
-    if(v && v.author_id !== u.id){ toast('You can only delete your own videos.', 'error'); return; }
-    var r = await c.from('sparks').delete().eq('id', videoId).eq('author_id', u.id);
-    if(r.error) throw r.error;
-    [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
-      if(!arr) return;
-      for(var i = arr.length - 1; i >= 0; i--){ if(arr[i].id === videoId) arr.splice(i, 1); }
-    });
-    try { Z.sp5CloseVideo(); } catch(e){}
-    toast('Video deleted.');
-    if(Z.State.currentView === 'public-profile'){
-      var me = Z.State.currentUser;
-      Z.sp5RenderContent(Z.State.spaceUserId, me && me.id === Z.State.spaceUserId);
-    }
-  } catch(e){ toast('Delete failed: ' + (e.message || 'unknown'), 'error'); }
-};
-
-Z.editFullVideo = function(videoId){
-  var u = Z.State.currentUser;
-  if(!u){ toast('Login first.'); return; }
-  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
-       || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
-       || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
-  if(!v){ toast('Video not found.'); return; }
-  if(v.author_id !== u.id){ toast('You can only edit your own videos.', 'error'); return; }
-
-  var rateOpts = [[0,'Off'],[0.001,'$0.001'],[0.002,'$0.002'],[0.003,'$0.003'],[0.004,'$0.004'],[0.005,'$0.005'],[0.006,'$0.006'],[0.007,'$0.007'],[0.008,'$0.008'],[0.009,'$0.009'],[0.010,'$0.010']];
-  var budOpts = [0,10,25,50,100,250,500,1000,2500,5000,10000];
-  var curRate = Number(v.cfar_rate_per_minute) || 0;
-  var curBud  = Number(v.cfar_view_budget) || 0;
-
-  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
-  h += '<div class="sheet-handle"></div>';
-  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Edit Video</h3>';
-  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
-  h += '<div class="sheet-body" style="padding:16px;">';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Title</label>';
-  h += '<input id="fv-edit-title" class="form-input" maxlength="100" value="' + esc(v.title || '') + '">';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;">Description</label>';
-  h += '<textarea id="fv-edit-caption" class="form-textarea" maxlength="2000" rows="5">' + esc(v.caption || '') + '</textarea>';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;">CFAR viewer rate</label>';
-  h += '<select id="fv-edit-rate" class="form-select" style="margin-bottom:10px;">';
-  rateOpts.forEach(function(o){ h += '<option value="' + o[0] + '" ' + (Math.abs(curRate - o[0]) < 0.0001 ? 'selected' : '') + '>' + o[1] + '</option>'; });
-  h += '</select>';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">CFAR view budget</label>';
-  h += '<select id="fv-edit-budget" class="form-select" style="margin-bottom:10px;">';
-  budOpts.forEach(function(o){ h += '<option value="' + o + '" ' + (curBud === o ? 'selected' : '') + '>' + (o === 0 ? 'Off' : '$' + o.toLocaleString()) + '</option>'; });
-  h += '</select>';
-  h += '<button id="fv-edit-save" style="width:100%;margin-top:14px;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Save</button>';
-  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
-  h += '</div></div></div>';
-  Z.openSheet(h);
-
-  setTimeout(function(){
-    var save = document.getElementById('fv-edit-save');
-    if(save) save.addEventListener('click', async function(){
-      var nt = ((document.getElementById('fv-edit-title')||{}).value || '').trim();
-      var nc = ((document.getElementById('fv-edit-caption')||{}).value || '').trim();
-      var nr = parseFloat((document.getElementById('fv-edit-rate')||{}).value || '0') || 0;
-      var nb = parseFloat((document.getElementById('fv-edit-budget')||{}).value || '0') || 0;
-      if(!nt){ toast('Title cannot be empty.', 'error'); return; }
-      var c = Z.sb && Z.sb();
-      if(!c) return;
-      try {
-        var r = await c.from('sparks').update({
-          title: nt, caption: nc || null,
-          cfar_rate_per_minute: nr > 0 ? nr : null,
-          cfar_view_budget: nb > 0 ? nb : null
-        }).eq('id', videoId).eq('author_id', u.id);
-        if(r.error) throw r.error;
-        [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
-          if(!arr) return;
-          arr.forEach(function(x){
-            if(x.id === videoId){
-              x.title = nt; x.caption = nc;
-              x.cfar_rate_per_minute = nr > 0 ? nr : null;
-              x.cfar_view_budget = nb > 0 ? nb : null;
-            }
-          });
-        });
-        Z.closeSheet();
-        toast('Video updated.');
-        try { Z.sp5CloseVideo(); } catch(e){}
-        setTimeout(function(){ Z.sp5OpenVideo(videoId); }, 250);
-      } catch(e){ toast('Save failed: ' + (e.message || 'unknown'), 'error'); }
+      } catch(e){ toast('Failed: ' + (e.message||'unknown'), 'error'); }
     });
   }, 40);
 };
 
 /* ============================================================
-   7. SPARK FEED — no long_video
+   9. SPARK feed — filter long_video
    ============================================================ */
-var _prevRenderSpark = Z.renderSpark;
-if(typeof _prevRenderSpark === 'function'){
+var _prevRenderSparkV3 = Z.renderSpark;
+if(typeof _prevRenderSparkV3 === 'function'){
   Z.renderSpark = function(){
     var saved = Z.State.allSparks;
-    Z.State.allSparks = (saved || []).filter(function(s){
-      return s && s.type !== 'long_video' && s.video_url;
-    });
+    Z.State.allSparks = (saved||[]).filter(function(s){ return s && s.type !== 'long_video' && s.video_url; });
     var r;
-    try { r = _prevRenderSpark.apply(this, arguments); }
+    try { r = _prevRenderSparkV3.apply(this, arguments); }
     finally { Z.State.allSparks = saved; }
     return r;
   };
 }
 
 /* ============================================================
-   8. DUPE KILLER — badge + trending single instance
-   ============================================================ */
-function killDupes(){
-  var head = document.getElementById('sp5-head-host');
-  if(head){
-    var badges = head.querySelectorAll('[data-health-badge]');
-    for(var i = 0; i < badges.length - 1; i++) badges[i].remove();
-  }
-  var wrongCtx = Z.State.currentView !== 'public-profile' || Z.State.spaceTab !== 'public';
-  var strips = document.querySelectorAll('[data-sp-trend-strip]');
-  if(wrongCtx){ strips.forEach(function(el){ el.remove(); }); }
-  else { for(var j = 0; j < strips.length - 1; j++) strips[j].remove(); }
-}
-
-(function(){
-  if(Z._dupeMO) try { Z._dupeMO.disconnect(); } catch(e){}
-  Z._dupeMO = new MutationObserver(function(){ killDupes(); });
-  Z._dupeMO.observe(document.body, { childList: true, subtree: true });
-})();
-
-setInterval(killDupes, 900);
-
-/* ============================================================
-   9. MOBILE — 3-row lock
-   ============================================================ */
-if(!document.getElementById('zynix-space-mobile-rows-final')){
-  var st = document.createElement('style');
-  st.id = 'zynix-space-mobile-rows-final';
-  st.textContent = [
-    '@media(max-width:640px){',
-      '.sp5-name-row{flex-wrap:nowrap !important;overflow:hidden;min-width:0;}',
-      '.sp5-name-row > *{flex-shrink:0;}',
-      '.sp5-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto;}',
-      '.sp5-handle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;min-width:0;}',
-      '.sp5-chips{flex-wrap:nowrap !important;overflow-x:auto !important;scrollbar-width:none;}',
-      '.sp5-chips::-webkit-scrollbar{display:none;}',
-      '.sp5-actions{flex-wrap:nowrap !important;overflow-x:auto !important;scrollbar-width:none;}',
-      '.sp5-actions::-webkit-scrollbar{display:none;}',
-      '.sp5-head-top{grid-template-rows:auto auto auto;row-gap:8px;}',
-      '.sp5-vd-header-row{flex-wrap:nowrap !important;gap:8px !important;}',
-      '.sp5-vd-header-row .sp5-vd-avatar{width:36px !important;height:36px !important;}',
-      '.sp5-vd-header-row .sp5-vd-chip-btn{padding:6px 10px !important;font-size:11px !important;}',
-      '.sp5-vd-header-row .sp5-vd-share-meta{padding:4px 9px !important;font-size:10px !important;}',
-      '.sp5-vd-header-row .sp5-vd-share-meta span{font-size:10px !important;}',
-    '}'
-  ].join('');
-  document.head.appendChild(st);
-}
-
-console.log('[SPACE v7 — FINAL] publish card · CFAR chip · fee dedupe · avatar · menus · dupes killed');
-})();
-</script>
-<!-- ============================================================ -->
-<!-- SPACE v7 — FINAL CONSOLIDATION ADDENDUM                       -->
-<!-- Comment sort · Blocked list · Spark pin · Legal back          -->
-<!-- ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__zynixSpaceFinalAddendum) return; Z.__zynixSpaceFinalAddendum = true;
-
-function esc(s){
-  if(s == null) return '';
-  return String(s).replace(/[&<>"']/g, function(c){
-    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
-  });
-}
-function toast(m,t){ if(Z.toast) Z.toast(m,t); }
-
-/* ============================================================
-   1. COMMENT SORT — proper rebuild (from deleted Blink Fix)
+   10. COMMENT SORT
    ============================================================ */
 function rebuildCommentsSorted(){
   var listHost = document.querySelector('.sp5-vd-comments');
@@ -14521,41 +14418,31 @@ function rebuildCommentsSorted(){
     if(m) videoId = m[1];
   }
   if(!videoId) return;
-  var v = (Z.State.spaceVideos||[]).find(function(x){ return x.id === videoId; })
-       || (Z.State.publicVideosAll||[]).find(function(x){ return x.id === videoId; })
-       || (Z.State.allSparks||[]).find(function(x){ return x.id === videoId; });
+  var v = findSpark(videoId);
   if(!v || !v._comments) return;
-
   var sorted = v._comments.slice().sort(function(a,b){
     if(Z.State._commentSort === 'top'){
-      var ca=0, cb=0;
+      var ca = 0, cb = 0;
       Object.keys(a._reactionCounts||{}).forEach(function(k){ ca += Number(a._reactionCounts[k])||0; });
       Object.keys(b._reactionCounts||{}).forEach(function(k){ cb += Number(b._reactionCounts[k])||0; });
       if(cb !== ca) return cb - ca;
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     }
-    if(Z.State._commentSort === 'newest'){
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    }
+    if(Z.State._commentSort === 'newest') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
   });
-
   var cp = listHost.querySelector('.comment-color-picker');
   var inputWrap = listHost.querySelector('.comment-input-wrap');
   var sortChips = listHost.querySelector('[data-cmt-sort]');
   var savedValue = '';
   var txt = inputWrap ? inputWrap.querySelector('textarea') : null;
   if(txt) savedValue = txt.value;
-
   Array.prototype.slice.call(listHost.children).forEach(function(ch){
     if(ch === cp || ch === inputWrap || ch === sortChips) return;
     ch.remove();
   });
-
   var html = '';
-  sorted.forEach(function(cm){
-    try { html += Z.renderSparkComment(cm, v, false); } catch(e){}
-  });
+  sorted.forEach(function(cm){ try { html += Z.renderSparkComment(cm, v, false); } catch(e){} });
   if(!html) html = '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
   var tmp = document.createElement('div');
   tmp.innerHTML = html;
@@ -14566,13 +14453,11 @@ function rebuildCommentsSorted(){
   });
   if(txt && savedValue) txt.value = savedValue;
 }
-
 document.addEventListener('click', function(e){
   var chip = e.target.closest('[data-cmt-sort-key]');
   if(!chip) return;
   if(!chip.closest('.sp5-vd-comments')) return;
-  e.stopPropagation();
-  e.preventDefault();
+  e.stopPropagation(); e.preventDefault();
   Z.State._commentSort = chip.getAttribute('data-cmt-sort-key');
   chip.parentNode.querySelectorAll('[data-cmt-sort-key]').forEach(function(c){
     var on = c === chip;
@@ -14584,7 +14469,7 @@ document.addEventListener('click', function(e){
 }, true);
 
 /* ============================================================
-   2. BLOCKED USERS LIST
+   11. BLOCKED USERS
    ============================================================ */
 Z.openBlockedUsers = async function(){
   var u = Z.State.currentUser;
@@ -14618,10 +14503,8 @@ Z.openBlockedUsers = async function(){
       var avatar = p.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name||'U') + '&background=111827&color=34d399');
       h += '<div style="padding:12px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;margin-bottom:8px;display:flex;align-items:center;gap:10px;">';
       h += '<img src="' + esc(avatar) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
-      h += '<div style="flex:1;min-width:0;">';
-      h += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(p.name||'User') + '</div>';
-      h += '<div style="font-size:10px;color:#94a3b8;">@' + esc(p.username||'user') + '</div>';
-      h += '</div>';
+      h += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">' + esc(p.name||'User') + '</div>';
+      h += '<div style="font-size:10px;color:#94a3b8;">@' + esc(p.username||'user') + '</div></div>';
       h += '<button data-unblock-id="' + esc(row.blocked_id) + '" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;">Unblock</button>';
       h += '</div>';
     });
@@ -14642,91 +14525,149 @@ Z.openBlockedUsers = async function(){
     });
   }, 40);
 };
-
-/* Add Blocked Users button to Settings */
-var _prevSettingsAddendum = Z.renderSpaceSettings;
-if(typeof _prevSettingsAddendum === 'function'){
+var _prevSettingsV3 = Z.renderSpaceSettings;
+if(typeof _prevSettingsV3 === 'function'){
   Z.renderSpaceSettings = function(){
-    var html = _prevSettingsAddendum.apply(this, arguments);
+    var html = _prevSettingsV3.apply(this, arguments);
     if(typeof html !== 'string') return html;
     var needle = 'View all documents';
     var idx = html.indexOf(needle);
     if(idx !== -1){
-      var buttonEnd = html.indexOf('</button>', idx) + '</button>'.length;
-      var newBtn = '<button class="sp5-settings-cta" onclick="Z.openBlockedUsers()" style="margin-top:8px;"><i class="fa-solid fa-ban"></i> Blocked users</button>';
-      html = html.substring(0, buttonEnd) + newBtn + html.substring(buttonEnd);
+      var end = html.indexOf('</button>', idx) + '</button>'.length;
+      html = html.substring(0, end) + '<button class="sp5-settings-cta" onclick="Z.openBlockedUsers()" style="margin-top:8px;"><i class="fa-solid fa-ban"></i> Blocked users</button>' + html.substring(end);
     }
     return html;
   };
 }
 
 /* ============================================================
-   3. SPARK PIN in ⋮ menu
+   12. LEGAL HUB + DOC VIEW with proper back
    ============================================================ */
-Z.pinSpark = async function(sparkId, unpin){
-  var u = Z.State.currentUser;
-  if(!u) return;
+Z.openLegalHub = async function(){
   var c = Z.sb && Z.sb();
   if(!c) return;
-  try {
-    await c.from('sparks').update({ is_pinned: false })
-      .eq('author_id', u.id).eq('is_pinned', true).eq('type','spark');
-    if(!unpin){
-      await c.from('sparks').update({ is_pinned: true }).eq('id', sparkId);
-      toast('Spark pinned.');
-    } else {
-      toast('Spark unpinned.');
-    }
-    [Z.State.spaceSparks, Z.State.publicSparksAll, Z.State.allSparks].forEach(function(arr){
-      if(!arr) return;
-      arr.forEach(function(s){
-        if(s.id === sparkId) s.is_pinned = !unpin;
-        else if(s.is_pinned && s.type === 'spark') s.is_pinned = false;
+  var docs = [];
+  try { var r = await c.from('legal_documents').select('*').order('display_order',{ascending:true}); docs = r.data || []; } catch(e){}
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Legal & Policies</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+  if(!docs.length){
+    h += '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;">No documents yet.</div>';
+  } else {
+    docs.forEach(function(d){
+      h += '<button data-legal-open="' + esc(d.slug) + '" style="width:100%;padding:12px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;text-align:left;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">';
+      h += '<div style="flex:1;min-width:0;"><div>' + esc(d.title) + '</div>';
+      if(d.summary) h += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;font-weight:400;">' + esc(d.summary) + '</div>';
+      h += '</div>';
+      h += '<span style="font-size:10px;color:#64748b;font-weight:800;margin-left:8px;">' + esc(d.version || 'v1.0') + '</span>';
+      h += '</button>';
+    });
+  }
+  h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,133,84,.06);border:1px solid rgba(161,133,84,.3);font-size:11px;color:#cbd5e1;line-height:1.6;">';
+  h += '<b style="color:#a18554;">Legal review pending.</b> Documents are placeholders. Final versions undergo external legal review before public launch.';
+  h += '</div>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+  setTimeout(function(){
+    document.querySelectorAll('[data-legal-open]').forEach(function(b){
+      b.addEventListener('click', function(){
+        Z._openLegalDoc(this.getAttribute('data-legal-open'));
       });
     });
-    if(Z.State.currentView === 'public-profile'){
-      var host = document.getElementById('sp5-content-host');
-      var grid = host ? host.querySelector('.sp5-sgrid') : null;
-      if(grid) grid.innerHTML = Z.sp5RenderSparkGrid(Z.State.publicSparksAll||[], Z.State.spaceUserId);
-    }
-  } catch(e){ toast('Failed.', 'error'); }
+  }, 40);
 };
 
-var _prevSlideAddendum = Z.renderSparkSlide;
-if(typeof _prevSlideAddendum === 'function'){
-  Z.renderSparkSlide = function(spark, index){
-    var html = _prevSlideAddendum.apply(this, arguments);
-    try {
-      var me = Z.State.currentUser;
-      if(!me || me.id !== spark.author_id) return html;
-      if(spark.type === 'long_video') return html;
-      if(html.indexOf('data-spark-pin=') !== -1) return html;
-      var marker = '<button onclick="Z.markSparkNotInterested(\'' + spark.id + '\')">';
-      var idx = html.indexOf(marker);
-      if(idx === -1) return html;
-      var pinned = !!spark.is_pinned;
-      var label = pinned ? 'Unpin' : 'Pin';
-      var icon = pinned ? 'fa-solid fa-thumbtack' : 'fa-regular fa-thumbtack';
-      var pinBtn = '<button data-spark-pin="' + spark.id + '" onclick="Z.pinSpark(\'' + spark.id + '\',' + (pinned ? 'true' : 'false') + ')"><i class="' + icon + '"></i> ' + label + '</button>';
-      return html.substring(0, idx) + pinBtn + html.substring(idx);
-    } catch(e){ return html; }
-  };
-}
+Z._openLegalDoc = function(slug){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  c.from('legal_documents').select('*').eq('slug', slug).maybeSingle().then(function(r){
+    if(r.error || !r.data){ toast('Not available.'); return; }
+    var d = r.data;
+    var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.openLegalHub()">';
+    h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+    h += '<div class="sheet-handle"></div>';
+    /* Explicit large back button */
+    h += '<div class="sheet-header" style="gap:10px;">';
+    h += '<button id="legal-back-btn" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#10b981;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:900;cursor:pointer;display:inline-flex;align-items:center;gap:6px;flex-shrink:0;">';
+    h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+    h += '<h3 style="font-size:14px;font-weight:900;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;">' + esc(d.title) + '</h3>';
+    h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+    h += '</div>';
+    h += '<div class="sheet-body" style="padding:16px;">';
+    h += '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:10px;">VERSION ' + esc(d.version || 'v1.0') + '</div>';
+    if(d.summary) h += '<div style="font-size:12px;color:#94a3b8;line-height:1.6;margin-bottom:14px;font-style:italic;">' + esc(d.summary) + '</div>';
+    if(d.content_md){
+      h += '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(d.content_md) + '</div>';
+    } else {
+      h += '<div style="padding:20px;border-radius:10px;background:#0f172a;border:1px dashed #1e293b;text-align:center;color:#64748b;font-size:12px;">Full text pending legal review.</div>';
+    }
+    h += '<div style="margin-top:20px;"><button id="legal-back-btn-2" style="width:100%;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;"><i class="fa-solid fa-arrow-left"></i> Back to Legal hub</button></div>';
+    h += '</div></div></div>';
+    Z.openSheet(h);
+    setTimeout(function(){
+      var b1 = document.getElementById('legal-back-btn');
+      var b2 = document.getElementById('legal-back-btn-2');
+      if(b1) b1.addEventListener('click', function(e){ e.stopPropagation(); Z.openLegalHub(); });
+      if(b2) b2.addEventListener('click', function(e){ e.stopPropagation(); Z.openLegalHub(); });
+    }, 40);
+  }).catch(function(){ toast('Failed.'); });
+};
 
 /* ============================================================
-   4. LEGAL BACK NAVIGATION — reinforce
+   13. DUPE KILLER + MOBILE ROWS
    ============================================================ */
-var _origBackToHub = Z._backToLegalHub;
-if(typeof _origBackToHub === 'function'){
-  Z._backToLegalHub = function(){
-    /* Always re-open the hub, never fall through to settings */
-    return Z.openLegalHub.apply(this, arguments);
+function killDupesV3(){
+  var head = document.getElementById('sp5-head-host');
+  if(head){
+    var b = head.querySelectorAll('[data-health-badge]');
+    for(var i = 0; i < b.length - 1; i++) b[i].remove();
+  }
+  var wrong = Z.State.currentView !== 'public-profile' || Z.State.spaceTab !== 'public';
+  var strips = document.querySelectorAll('[data-sp-trend-strip]');
+  if(wrong){ strips.forEach(function(el){ el.remove(); }); }
+  else { for(var j = 0; j < strips.length - 1; j++) strips[j].remove(); }
+}
+if(!Z._dupeMOV3){
+  Z._dupeMOV3 = new MutationObserver(killDupesV3);
+  Z._dupeMOV3.observe(document.body, { childList: true, subtree: true });
+}
+setInterval(killDupesV3, 900);
+
+if(!document.getElementById('zynix-space-mobile-rows-v3')){
+  var st = document.createElement('style');
+  st.id = 'zynix-space-mobile-rows-v3';
+  st.textContent = [
+    '@media(max-width:640px){',
+      '.sp5-name-row{flex-wrap:nowrap !important;overflow:hidden;min-width:0;}',
+      '.sp5-name-row > *{flex-shrink:0;}',
+      '.sp5-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto;}',
+      '.sp5-chips{flex-wrap:nowrap !important;overflow-x:auto !important;scrollbar-width:none;}',
+      '.sp5-chips::-webkit-scrollbar{display:none;}',
+      '.sp5-actions{flex-wrap:nowrap !important;overflow-x:auto !important;scrollbar-width:none;}',
+      '.sp5-actions::-webkit-scrollbar{display:none;}',
+      '.sp5-vd-header-row{flex-wrap:nowrap !important;gap:8px !important;}',
+      '.sp5-vd-header-row .sp5-vd-avatar{width:36px !important;height:36px !important;}',
+    '}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+var _prevRC_V3 = Z.sp5RenderContent;
+if(typeof _prevRC_V3 === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevRC_V3.apply(this, arguments);
+    setTimeout(function(){ try { killDupesV3(); } catch(e){} }, 100);
+    setTimeout(function(){ try { killDupesV3(); } catch(e){} }, 700);
+    return r;
   };
 }
 
-console.log('[SPACE v7 — FINAL ADDENDUM] comment sort · blocked list · spark pin · legal back');
+console.log('[SPACE v7 — FINAL v3 corrected] publish · CFAR · spark modal · avatar · legal hub with back · comments · blocked');
 })();
-</script>     
+</script> 
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
