@@ -14918,7 +14918,119 @@ if(typeof _prevReloadData === 'function'){
 console.log('[Spark Load More] ready — batch ' + BATCH + ' · trigger at ' + TRIGGER_FROM_END + ' from end');
 })();
 </script>
-     
+<!-- ============================================================ -->
+<!-- SPARK FEED LAZY VIDEO — preload=none, swap on proximity      -->
+<!-- Only 4-5 videos fetch metadata at any time                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkLazyVideo) return; Z.__zynixSparkLazyVideo = true;
+
+var ROOT_MARGIN = '400px 0px';
+var _observer = null;
+
+function getObserver(){
+  if(_observer) return _observer;
+  if(typeof IntersectionObserver === 'undefined') return null;
+
+  _observer = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(!en.isIntersecting) return;
+      var v = en.target;
+      if(!v || v.tagName !== 'VIDEO') return;
+      if(v.getAttribute('preload') === 'none'){
+        v.setAttribute('preload', 'metadata');
+        try { v.load(); } catch(e){}
+      }
+      _observer.unobserve(v);
+    });
+  }, { root: null, rootMargin: ROOT_MARGIN, threshold: 0 });
+
+  return _observer;
+}
+
+function applyToFeed(){
+  if(Z.State.currentView !== 'spark') return;
+  var feed = document.getElementById('spark-feed');
+  if(!feed) return;
+
+  var obs = getObserver();
+  if(!obs) return;
+
+  var videos = feed.querySelectorAll('.spark-slide video');
+  videos.forEach(function(v){
+    if(v._sparkLazyHooked) return;
+    v._sparkLazyHooked = true;
+
+    /* If already loading or has loaded, skip */
+    if(v.currentTime > 0) return;
+    if(v.readyState >= 1) return;
+
+    /* Set to none, then observe */
+    v.setAttribute('preload', 'none');
+    try { v.load(); } catch(e){}
+    try { obs.observe(v); } catch(e){}
+  });
+}
+
+/* Hook into view transitions */
+var _prevShowView = Z.showView;
+Z.showView = function(view){
+  var r = _prevShowView.apply(this, arguments);
+  if(view === 'spark'){
+    setTimeout(applyToFeed, 150);
+    setTimeout(applyToFeed, 600);
+    setTimeout(applyToFeed, 1500);
+  }
+  return r;
+};
+
+/* Watch for slides added by Phase 2's load more */
+(function(){
+  var watchTimer = null;
+  function watch(){
+    if(Z.State.currentView !== 'spark') return;
+    var feed = document.getElementById('spark-feed');
+    if(!feed) return;
+    if(!feed._sparkLazyObserver){
+      feed._sparkLazyObserver = new MutationObserver(function(){
+        if(watchTimer) clearTimeout(watchTimer);
+        watchTimer = setTimeout(applyToFeed, 100);
+      });
+      feed._sparkLazyObserver.observe(feed, { childList: true });
+    }
+  }
+
+  /* Set up observer when spark view first opens */
+  var _prev = Z.showView;
+  Z.showView = function(view){
+    var r = _prev.apply(this, arguments);
+    if(view === 'spark'){
+      setTimeout(watch, 300);
+      setTimeout(watch, 1000);
+    }
+    return r;
+  };
+})();
+
+/* Also re-run after reloadData */
+var _prevReload = Z.reloadData;
+if(typeof _prevReload === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReload.apply(this, arguments);
+    if(Z.State.currentView === 'spark'){
+      setTimeout(applyToFeed, 300);
+      setTimeout(applyToFeed, 900);
+    }
+    return r;
+  };
+}
+
+console.log('[Spark Lazy Video] ready — rootMargin ' + ROOT_MARGIN);
+})();
+</script>     
  
 <!-- ============================================================
      SECTION 9 — CIRCLES
