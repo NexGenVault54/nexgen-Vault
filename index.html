@@ -13986,6 +13986,674 @@ if(typeof _prevMoreSheetWL === 'function'){
 
 console.log('[SPACE v7 — Part 2] age gate · warnings · comment sort · block · watch later · pin · health · legal ready');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — CLICK/BLINK FIX                                    -->
+<!-- Fixes: search cursor loss · comment sort blink · pin blink    -->
+<!-- Health badge dup · trending stale · legal back · blocked list -->
+<!-- Spark pin                                                     -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceBlinkFix) return; Z.__zynixSpaceBlinkFix = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   FIX A — Search input: NEVER re-render. Filter DOM in place.
+   ============================================================ */
+/* Remove the old input listener by replacing it with a fresh input */
+function rebindSearchInput(){
+  var wrap = document.querySelector('[data-sp-search-wrap]');
+  if(!wrap) return;
+  var inp = wrap.querySelector('[data-sp-search-input]');
+  if(!inp) return;
+  if(inp._spBlinkFixed) return;
+  inp._spBlinkFixed = true;
+
+  /* Clear old listeners by cloning */
+  var fresh = inp.cloneNode(true);
+  inp.parentNode.replaceChild(fresh, inp);
+  fresh.value = Z.State._spSpaceSearch || '';
+
+  var deb = null;
+  fresh.addEventListener('input', function(){
+    Z.State._spSpaceSearch = this.value;
+    if(deb) clearTimeout(deb);
+    var self = this;
+    deb = setTimeout(function(){
+      var sub = Z.State.spacePublicTab || 'sparks';
+      /* Call filterGrid directly — no host re-render */
+      try {
+        if(typeof Z._spFilterGrid === 'function'){
+          Z._spFilterGrid(sub);
+        }
+      } catch(e){}
+      /* Keep focus */
+      try { self.focus(); } catch(e){}
+    }, 120);
+  });
+
+  /* Preserve selection on any accidental focus loss */
+  fresh.addEventListener('blur', function(){
+    var self = this;
+    setTimeout(function(){
+      /* Only re-focus if user is still typing on the page */
+      if(document.activeElement === document.body){
+        try { self.focus(); } catch(e){}
+      }
+    }, 0);
+  });
+}
+
+/* ============================================================
+   FIX B — filterGrid refactored to accept sub directly
+   ============================================================ */
+Z._spFilterGrid = function(sub){
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+  var q = (Z.State._spSpaceSearch || '').trim().toLowerCase();
+  var profiles = {};
+  (Z.State.allProfiles || []).forEach(function(p){ if(p && p.id) profiles[p.id] = p; });
+
+  var items = (sub === 'videos') ? (Z.State.publicVideosAll || []) : (Z.State.publicSparksAll || []);
+  var cardSel = (sub === 'videos') ? '.sp5-vgrid .sp5-vcard' : '.sp5-sgrid .sp5-scard';
+  var cards = host.querySelectorAll(cardSel);
+
+  var visible = 0;
+  cards.forEach(function(card){
+    var oc = card.getAttribute('onclick') || '';
+    var m = oc.match(/'([a-f0-9-]{8,})'/);
+    var id = m ? m[1] : null;
+    if(!id){ card.style.display = 'none'; return; }
+    var item = null;
+    for(var i = 0; i < items.length; i++){ if(items[i].id === id){ item = items[i]; break; } }
+    if(!item){ card.style.display = 'none'; return; }
+
+    var niType = (sub === 'videos') ? 'video' : 'spark';
+    if(Z.isNotInterested && Z.isNotInterested(niType, id)){ card.style.display = 'none'; return; }
+
+    if(q){
+      var title = (item.title || '').toLowerCase();
+      var cap = (item.caption || '').toLowerCase();
+      var tags = (item.tags || []).join(' ').toLowerCase();
+      var author = profiles[item.author_id];
+      var auname = author ? ((author.username || '').toLowerCase()) : '';
+      var aname = author ? ((author.name || '').toLowerCase()) : '';
+      var asname = author ? (((author.space_data || {}).name || '').toLowerCase()) : '';
+      var hit = title.indexOf(q) !== -1 || cap.indexOf(q) !== -1 || tags.indexOf(q) !== -1
+             || auname.indexOf(q) !== -1 || aname.indexOf(q) !== -1 || asname.indexOf(q) !== -1;
+      if(!hit){ card.style.display = 'none'; return; }
+    }
+    card.style.display = '';
+    visible++;
+  });
+
+  /* Empty state — inline, no re-render */
+  var empty = host.querySelector('[data-sp-empty]');
+  if(visible === 0 && q){
+    if(!empty){
+      var grid = host.querySelector(sub === 'videos' ? '.sp5-vgrid' : '.sp5-sgrid');
+      if(grid){
+        empty = document.createElement('div');
+        empty.setAttribute('data-sp-empty','1');
+        empty.style.cssText = 'grid-column:1/-1;padding:30px 20px;text-align:center;color:#94a3b8;font-size:12px;';
+        empty.textContent = 'No results for "' + q + '"';
+        grid.appendChild(empty);
+      }
+    } else {
+      empty.textContent = 'No results for "' + q + '"';
+    }
+  } else if(empty){
+    empty.remove();
+  }
+};
+
+/* Override the old debounced re-render version inside applySpaceEnhancements
+   by hooking after search injection */
+var _prevApplyEnh = null;
+
+/* ============================================================
+   FIX C — Trending injection: runs on every sp5RenderContent
+   with a robust retry. Also dedupes.
+   ============================================================ */
+function injectTrendingRow(){
+  if(Z.State.currentView !== 'public-profile') return;
+  if(Z.State.spaceTab !== 'public') return;
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+
+  /* Remove any duplicate */
+  var all = host.querySelectorAll('[data-sp-trend-strip]');
+  for(var i = 1; i < all.length; i++){ all[i].remove(); }
+
+  if(all.length > 0) return;
+
+  var sub = Z.State.spacePublicTab || 'sparks';
+  var items = (sub === 'videos') ? (Z.State.publicVideosAll || []) : (Z.State.publicSparksAll || []);
+  if(!items.length) return;
+
+  /* Build trending now */
+  var scored = items.filter(function(it){
+    return it && it.video_url && !(Z.isNotInterested && Z.isNotInterested(sub === 'videos' ? 'video' : 'spark', it.id));
+  }).map(function(it){
+    var views = Number(it.views) || 0;
+    var reactions = 0;
+    if(it._reactions){
+      Object.keys(it._reactions).forEach(function(k){ if(k !== 'dislike') reactions += Number(it._reactions[k]) || 0; });
+    }
+    var comments = Number(it._commentsCount) || 0;
+    var hours = (Date.now() - new Date(it.created_at).getTime()) / 3600000;
+    var fresh = hours <= 24 ? 1000 : hours <= 168 ? 400 : hours <= 720 ? 100 : 0;
+    return { item: it, score: views + reactions*5 + comments*3 + fresh };
+  });
+  scored.sort(function(a,b){ return b.score - a.score; });
+  var top = scored.slice(0, 5).map(function(x){ return x.item; });
+  if(!top.length) return;
+
+  var title = 'Trending ' + (sub === 'videos' ? 'Videos' : 'Sparks');
+  var h = '<div data-sp-trend-strip="1" style="margin-bottom:12px;">';
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">';
+  h += '<i class="fa-solid fa-fire" style="color:#f59e0b;margin-right:6px;"></i>' + title + '</div>';
+  h += '<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;scrollbar-width:thin;">';
+  top.forEach(function(it, i){
+    var thumb = it.video_url
+      ? '<video src="' + esc(it.video_url) + '" preload="metadata" playsinline muted style="width:100%;height:100%;object-fit:cover;" data-space-spark="1"></video>'
+      : '<div style="width:100%;height:100%;background:#1e293b;"></div>';
+    var label = it.title || it.caption || 'Untitled';
+    if(label.length > 40) label = label.substring(0,40) + '…';
+    var click = (sub === 'videos')
+      ? 'Z.sp5OpenVideo(\'' + esc(it.id) + '\')'
+      : 'Z.sp5OpenUserSpark(\'' + esc(it.id) + '\',\'' + esc(it.author_id) + '\')';
+    h += '<div onclick="' + click + '" style="flex:0 0 130px;cursor:pointer;">' +
+      '<div style="position:relative;aspect-ratio:' + (sub === 'videos' ? '16/9' : '9/16') + ';border-radius:10px;overflow:hidden;background:#000;border:1px solid #1e293b;">' +
+        thumb +
+        '<div style="position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;">' + (i+1) + '</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + esc(label) + '</div>' +
+    '</div>';
+  });
+  h += '</div></div>';
+
+  /* Insert before section header */
+  var secHead = host.querySelector('.sp5-sec-head');
+  var temp = document.createElement('div');
+  temp.innerHTML = h;
+  if(secHead && secHead.parentNode){
+    secHead.parentNode.insertBefore(temp.firstChild, secHead);
+  } else {
+    host.insertBefore(temp.firstChild, host.firstChild);
+  }
+}
+
+/* ============================================================
+   FIX D — Comment sort: rebuild only the comment list, not whole video
+   ============================================================ */
+function rebuildVideoComments(){
+  var listHost = document.querySelector('.sp5-vd-comments');
+  if(!listHost) return;
+  var videoId = null;
+  var headerRow = document.querySelector('.sp5-vd-header-row');
+  if(headerRow){
+    var oc = headerRow.querySelector('.sp5-vd-chip-btn[onclick*="openSparkShare"]');
+    if(oc){
+      var m = (oc.getAttribute('onclick') || '').match(/'([a-f0-9-]{8,})'/);
+      if(m) videoId = m[1];
+    }
+  }
+  if(!videoId) return;
+
+  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+       || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
+       || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+  if(!v || !v._comments) return;
+
+  /* Sort in state */
+  var sorted = v._comments.slice().sort(function(a, b){
+    if(Z.State._commentSort === 'top'){
+      var ca = 0, cb = 0;
+      Object.keys(a._reactionCounts || {}).forEach(function(k){ ca += Number(a._reactionCounts[k]) || 0; });
+      Object.keys(b._reactionCounts || {}).forEach(function(k){ cb += Number(b._reactionCounts[k]) || 0; });
+      if(cb !== ca) return cb - ca;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    if(Z.State._commentSort === 'newest'){
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  });
+  v._comments = sorted;
+
+  /* Rebuild only list items, preserving picker + input */
+  var cp = listHost.querySelector('.comment-color-picker');
+  var inputWrap = listHost.querySelector('.comment-input-wrap');
+  var sortChips = listHost.querySelector('[data-cmt-sort]');
+  var inputValue = '';
+  var inputEl = inputWrap ? inputWrap.querySelector('textarea') : null;
+  if(inputEl) inputValue = inputEl.value;
+
+  /* Remove all comment items (not picker/input/sort chips) */
+  Array.prototype.slice.call(listHost.children).forEach(function(ch){
+    if(ch === cp || ch === inputWrap || ch === sortChips) return;
+    ch.remove();
+  });
+
+  /* Re-render sorted comments */
+  var html = '';
+  sorted.forEach(function(cm){
+    try { html += Z.renderSparkComment(cm, v, false); } catch(e){}
+  });
+  if(!html) html = '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
+
+  var tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  var anchor = sortChips ? sortChips.nextSibling : (cp || inputWrap);
+  Array.prototype.slice.call(tmp.children).forEach(function(node){
+    if(anchor) listHost.insertBefore(node, anchor);
+    else listHost.appendChild(node);
+  });
+
+  /* Restore input value */
+  if(inputEl && inputValue){ inputEl.value = inputValue; }
+}
+
+/* Comment sort chips — call rebuild only */
+document.addEventListener('click', function(e){
+  var chip = e.target.closest('[data-cmt-sort-key]');
+  if(!chip) return;
+  if(Z.State.currentView !== 'public-profile') return;
+  /* Only when inside the video overlay */
+  if(!chip.closest('.sp5-vd-comments')) return;
+  e.stopPropagation();
+  e.preventDefault();
+  Z.State._commentSort = chip.getAttribute('data-cmt-sort-key');
+  /* Update chip active states */
+  chip.parentNode.querySelectorAll('[data-cmt-sort-key]').forEach(function(c){
+    var on = c === chip;
+    c.style.borderColor = on ? '#10b981' : '#1e293b';
+    c.style.background = on ? 'rgba(16,185,129,.12)' : '#0f172a';
+    c.style.color = on ? '#10b981' : '#94a3b8';
+  });
+  rebuildVideoComments();
+}, true);
+
+/* ============================================================
+   FIX E — Pin: no close/reopen. Update in place.
+   ============================================================ */
+Z.pinVideo = async function(videoId, unpin){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    await c.from('sparks').update({ is_pinned: false }).eq('author_id', u.id).eq('is_pinned', true);
+    if(!unpin){
+      await c.from('sparks').update({ is_pinned: true }).eq('id', videoId);
+      toast('Video pinned.');
+    } else {
+      toast('Video unpinned.');
+    }
+    /* Update state in place */
+    [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
+      if(!arr) return;
+      arr.forEach(function(v){
+        if(v.id === videoId) v.is_pinned = !unpin;
+        else if(v.is_pinned) v.is_pinned = false;
+      });
+    });
+    /* Update the pin button in place */
+    var btn = document.querySelector('[data-vd-pin]');
+    if(btn){
+      var nowPinned = !unpin;
+      btn.innerHTML = nowPinned
+        ? '<i class="fa-solid fa-thumbtack"></i>'
+        : '<i class="fa-solid fa-thumbtack" style="opacity:.5;"></i>';
+      btn.title = nowPinned ? 'Unpin' : 'Pin to SPACE';
+    }
+  } catch(e){ toast('Failed.', 'error'); }
+};
+
+/* ============================================================
+   FIX F — Spark pin: add pin option to spark slide ⋮ menu
+   ============================================================ */
+Z.pinSpark = async function(sparkId, unpin){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    /* Unpin any currently pinned spark by same author */
+    await c.from('sparks').update({ is_pinned: false })
+      .eq('author_id', u.id).eq('is_pinned', true).eq('type','spark');
+    if(!unpin){
+      await c.from('sparks').update({ is_pinned: true }).eq('id', sparkId);
+      toast('Spark pinned to your SPACE.');
+    } else {
+      toast('Spark unpinned.');
+    }
+    /* Refresh grid badge in state */
+    [Z.State.spaceSparks, Z.State.publicSparksAll, Z.State.allSparks].forEach(function(arr){
+      if(!arr) return;
+      arr.forEach(function(s){
+        if(s.id === sparkId) s.is_pinned = !unpin;
+        else if(s.is_pinned && s.type === 'spark') s.is_pinned = false;
+      });
+    });
+    /* If currently on a SPACE, re-render the spark grid portion only */
+    if(Z.State.currentView === 'public-profile'){
+      var host = document.getElementById('sp5-content-host');
+      var grid = host ? host.querySelector('.sp5-sgrid') : null;
+      if(grid){
+        grid.innerHTML = Z.sp5RenderSparkGrid(Z.State.publicSparksAll || [], Z.State.spaceUserId);
+      }
+    }
+  } catch(e){ toast('Failed.', 'error'); }
+};
+
+/* Inject pin into spark menu */
+var _prevRenderSlide = Z.renderSparkSlide;
+if(typeof _prevRenderSlide === 'function'){
+  Z.renderSparkSlide = function(spark, index){
+    var html = _prevRenderSlide.apply(this, arguments);
+    try {
+      var me = Z.State.currentUser;
+      var isOwn = me && me.id === spark.author_id;
+      if(isOwn){
+        /* Look for the Not Interested button and insert pin right before it */
+        var marker = '<button onclick="Z.markSparkNotInterested(\'' + spark.id + '\')">';
+        var idx = html.indexOf(marker);
+        if(idx !== -1 && html.indexOf('data-spark-pin=') === -1){
+          var pinned = !!spark.is_pinned;
+          var label = pinned ? 'Unpin' : 'Pin to SPACE';
+          var icon = pinned ? 'fa-solid fa-thumbtack' : 'fa-regular fa-thumbtack';
+          var pinBtn = '<button data-spark-pin="' + spark.id + '" onclick="Z.pinSpark(\'' + spark.id + '\',' + (pinned ? 'true' : 'false') + ')"><i class="' + icon + '"></i> ' + label + '</button>';
+          html = html.substring(0, idx) + pinBtn + html.substring(idx);
+        }
+      }
+    } catch(e){}
+    return html;
+  };
+}
+
+/* Show pin badge on spark grid cards */
+var _prevRenderSparkGrid = Z.sp5RenderSparkGrid;
+if(typeof _prevRenderSparkGrid === 'function'){
+  Z.sp5RenderSparkGrid = function(sparks, userId){
+    var sorted = (sparks || []).slice().sort(function(a, b){
+      if(a.is_pinned && !b.is_pinned) return -1;
+      if(!a.is_pinned && b.is_pinned) return 1;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    var html = _prevRenderSparkGrid.call(this, sorted, userId);
+    try {
+      sorted.forEach(function(s){
+        if(!s.is_pinned) return;
+        var needle = 'Z.sp5OpenUserSpark(\'' + s.id + '\'';
+        var idx = html.indexOf(needle);
+        if(idx === -1) return;
+        /* Find the .sp5-scard opening */
+        var cardIdx = html.lastIndexOf('<div class="sp5-scard"', idx);
+        if(cardIdx === -1) return;
+        var tagClose = html.indexOf('>', cardIdx);
+        if(tagClose === -1) return;
+        var badge = '<div style="position:absolute;top:6px;left:6px;padding:2px 7px;border-radius:8px;background:rgba(0,0,0,.7);color:#fbbf24;font-size:9.5px;font-weight:900;z-index:2;"><i class="fa-solid fa-thumbtack"></i> PINNED</div>';
+        html = html.substring(0, tagClose + 1) + badge + html.substring(tagClose + 1);
+      });
+    } catch(e){}
+    return html;
+  };
+}
+
+/* ============================================================
+   FIX G — Health badge: idempotent, one per header
+   ============================================================ */
+Z._healthBadgeToken = 0;
+
+async function injectHealthBadgeOnce(userId){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  /* Remove all duplicates */
+  var all = head.querySelectorAll('[data-health-badge]');
+  for(var i = 1; i < all.length; i++){ all[i].remove(); }
+  if(all.length > 0 && all[0].getAttribute('data-hb-user') === userId) return;
+
+  if(all.length > 0) all[0].remove();
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var token = ++Z._healthBadgeToken;
+
+  try {
+    var r = await c.rpc('space_health_score', { p_space_id: userId });
+    if(token !== Z._healthBadgeToken) return;
+    if(r.error || !r.data) return;
+    var d = r.data;
+    var map = {
+      new:         { color:'#94a3b8', icon:'🌱', text:'New' },
+      rising:      { color:'#10b981', icon:'📈', text:'Rising' },
+      established: { color:'#60a5fa', icon:'⭐', text:'Established' },
+      premium:     { color:'#a78bfa', icon:'💎', text:'Premium' },
+      elite:       { color:'#fbbf24', icon:'🏆', text:'Elite' }
+    };
+    var meta = map[d.label] || map.new;
+    /* Re-check host didn't change */
+    head = document.getElementById('sp5-head-host');
+    if(!head) return;
+    if(head.querySelector('[data-health-badge]')) return;
+    var nameRow = head.querySelector('.sp5-name-row');
+    if(!nameRow) return;
+    var badge = document.createElement('span');
+    badge.setAttribute('data-health-badge','1');
+    badge.setAttribute('data-hb-user', userId);
+    badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;background:rgba(0,0,0,.3);border:1px solid ' + meta.color + '55;color:' + meta.color + ';font-size:10px;font-weight:900;';
+    badge.textContent = meta.icon + ' ' + meta.text;
+    badge.title = 'Health score ' + d.score + '/100';
+    var subsPill = nameRow.querySelector('[data-subs-pill]');
+    if(subsPill && subsPill.nextSibling) nameRow.insertBefore(badge, subsPill.nextSibling);
+    else nameRow.appendChild(badge);
+    if(Z.State.currentUser && Z.State.currentUser.id === userId){
+      badge.style.cursor = 'pointer';
+      badge.addEventListener('click', function(){ Z._openHealthDetail(d); });
+    }
+  } catch(e){}
+}
+
+/* ============================================================
+   FIX H — Legal doc navigation: back to hub, not settings
+   ============================================================ */
+Z._legalHubOpen = false;
+
+Z.openLegalHub = async function(){
+  Z._legalHubOpen = true;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var docs = [];
+  try { var r = await c.from('legal_documents').select('*').order('display_order',{ascending:true}); docs = r.data || []; } catch(e){}
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Legal & Policies</h3>';
+  h += '<button onclick="Z._closeLegalAll()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+  if(!docs.length){
+    h += '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;">No documents yet.</div>';
+  } else {
+    docs.forEach(function(d){
+      h += '<button data-legal-open="' + esc(d.slug) + '" style="width:100%;padding:12px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;text-align:left;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">';
+      h += '<div style="flex:1;min-width:0;"><div>' + esc(d.title) + '</div>';
+      if(d.summary) h += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;font-weight:400;">' + esc(d.summary) + '</div>';
+      h += '</div>';
+      h += '<span style="font-size:10px;color:#64748b;font-weight:800;margin-left:8px;">' + esc(d.version || 'v1.0') + '</span>';
+      h += '</button>';
+    });
+  }
+  h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,133,84,.06);border:1px solid rgba(161,133,84,.3);font-size:11px;color:#cbd5e1;line-height:1.6;">';
+  h += '<b style="color:#a18554;">Legal review pending.</b> Documents are placeholders for the full text. Final versions undergo external legal review before public launch.';
+  h += '</div>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    document.querySelectorAll('[data-legal-open]').forEach(function(b){
+      b.addEventListener('click', function(){
+        Z._openLegalDoc(this.getAttribute('data-legal-open'));
+      });
+    });
+  }, 40);
+};
+
+Z._closeLegalAll = function(){
+  Z._legalHubOpen = false;
+  Z.closeSheet();
+};
+
+Z._openLegalDoc = function(slug){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  c.from('legal_documents').select('*').eq('slug', slug).maybeSingle().then(function(r){
+    if(r.error || !r.data){ toast('Document not available.'); return; }
+    var d = r.data;
+    var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10003;" onclick="if(event.target===this)Z._backToLegalHub()">';
+    h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+    h += '<div class="sheet-handle"></div>';
+    h += '<div class="sheet-header">';
+    h += '<button onclick="Z._backToLegalHub()" style="background:rgba(30,41,59,.7);border:1px solid #1e293b;color:#cbd5e1;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:8px;"><i class="fa-solid fa-arrow-left"></i></button>';
+    h += '<h3 style="font-size:14px;font-weight:900;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.title) + '</h3>';
+    h += '<button onclick="Z._closeLegalAll()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+    h += '</div>';
+    h += '<div class="sheet-body" style="padding:16px;">';
+    h += '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:10px;">VERSION ' + esc(d.version || 'v1.0') + '</div>';
+    if(d.summary) h += '<div style="font-size:12px;color:#94a3b8;line-height:1.6;margin-bottom:14px;font-style:italic;">' + esc(d.summary) + '</div>';
+    if(d.content_md){
+      h += '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(d.content_md) + '</div>';
+    } else {
+      h += '<div style="padding:20px;border-radius:10px;background:#0f172a;border:1px dashed #1e293b;text-align:center;color:#64748b;font-size:12px;">Full text pending legal review.</div>';
+    }
+    h += '</div></div></div>';
+    Z.openSheet(h);
+  }).catch(function(){ toast('Failed.'); });
+};
+
+Z._backToLegalHub = function(){
+  Z.openLegalHub();
+};
+
+/* ============================================================
+   FIX I — Blocked users list in Settings
+   ============================================================ */
+Z.openBlockedUsers = async function(){
+  var u = Z.State.currentUser;
+  if(!u){ toast('Login first.'); return; }
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var rows = [];
+  try {
+    var r = await c.from('user_blocks').select('blocked_id, created_at').eq('blocker_id', u.id).order('created_at',{ascending:false});
+    rows = r.data || [];
+  } catch(e){}
+
+  var profiles = {};
+  if(rows.length){
+    var ids = rows.map(function(x){ return x.blocked_id; });
+    try {
+      var pr = await c.from('profiles').select('id, name, username, avatar, space_data').in('id', ids);
+      (pr.data || []).forEach(function(p){ profiles[p.id] = p; });
+    } catch(e){}
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Blocked Users</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+
+  if(!rows.length){
+    h += '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;">You have not blocked anyone.</div>';
+  } else {
+    rows.forEach(function(row){
+      var p = profiles[row.blocked_id] || { id: row.blocked_id, name: 'User' };
+      var avatar = p.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name || 'U') + '&background=111827&color=34d399');
+      var uname = p.username ? ('@' + p.username) : 'user';
+      h += '<div style="padding:12px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;margin-bottom:8px;display:flex;align-items:center;gap:10px;">';
+      h += '<img src="' + esc(avatar) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(p.name || 'User') + '</div>';
+      h += '<div style="font-size:10px;color:#94a3b8;">' + esc(uname) + '</div>';
+      h += '</div>';
+      h += '<button data-unblock-id="' + esc(row.blocked_id) + '" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;">Unblock</button>';
+      h += '</div>';
+    });
+  }
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    document.querySelectorAll('[data-unblock-id]').forEach(function(b){
+      b.addEventListener('click', async function(){
+        var uid = this.getAttribute('data-unblock-id');
+        try {
+          var r = await c.rpc('unblock_user', { p_blocked_id: uid });
+          if(r.error) throw r.error;
+          toast('User unblocked.');
+          Z.openBlockedUsers();
+        } catch(e){ toast('Failed.', 'error'); }
+      });
+    });
+  }, 40);
+};
+
+/* Add Blocked Users button to Settings */
+var _prevRenderSettingsBlk = Z.renderSpaceSettings;
+if(typeof _prevRenderSettingsBlk === 'function'){
+  Z.renderSpaceSettings = function(){
+    var html = _prevRenderSettingsBlk.apply(this, arguments);
+    if(typeof html !== 'string') return html;
+    /* Insert into the LEGAL & POLICIES group */
+    var needle = 'View all documents';
+    var idx = html.indexOf(needle);
+    if(idx !== -1){
+      var buttonEnd = html.indexOf('</button>', idx) + '</button>'.length;
+      var newBtn = '<button class="sp5-settings-cta" onclick="Z.openBlockedUsers()" style="margin-top:8px;"><i class="fa-solid fa-ban"></i> Blocked users</button>';
+      html = html.substring(0, buttonEnd) + newBtn + html.substring(buttonEnd);
+    }
+    return html;
+  };
+}
+
+/* ============================================================
+   FIX J — Wire rebind of search input after renders
+   ============================================================ */
+var _prevRenderContentBlink = Z.sp5RenderContent;
+if(typeof _prevRenderContentBlink === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevRenderContentBlink.apply(this, arguments);
+    setTimeout(function(){
+      try { rebindSearchInput(); } catch(e){}
+      try { injectTrendingRow(); } catch(e){}
+      try { injectHealthBadgeOnce(userId); } catch(e){}
+    }, 120);
+    setTimeout(function(){
+      try { rebindSearchInput(); } catch(e){}
+      try { injectTrendingRow(); } catch(e){}
+      try { injectHealthBadgeOnce(userId); } catch(e){}
+    }, 700);
+    return r;
+  };
+}
+
+console.log('[SPACE v7 — Blink Fix] search · sort · pin · health · trending · legal · blocked · spark-pin');
+})();
 </script>       
 <!-- ============================================================
      SECTION 9 — CIRCLES
