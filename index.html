@@ -14654,6 +14654,461 @@ if(typeof _prevRenderContentBlink === 'function'){
 
 console.log('[SPACE v7 — Blink Fix] search · sort · pin · health · trending · legal · blocked · spark-pin');
 })();
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — REAL FIX v2                                        -->
+<!-- Pin no-reload · single health badge · trending only on Public -->
+<!-- comment sort actually works                                   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceRealFixV2) return; Z.__zynixSpaceRealFixV2 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   1. PIN — no reload, button flips in place
+   ============================================================ */
+Z.pinVideo = async function(videoId, wasPinned){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var unpin = !!wasPinned;
+
+  try {
+    if(!unpin){
+      /* Clear any other pinned video by this author */
+      await c.from('sparks').update({ is_pinned: false })
+        .eq('author_id', u.id).eq('type','long_video').eq('is_pinned', true);
+      await c.from('sparks').update({ is_pinned: true }).eq('id', videoId);
+      toast('Video pinned to SPACE.');
+    } else {
+      await c.from('sparks').update({ is_pinned: false }).eq('id', videoId);
+      toast('Video unpinned.');
+    }
+
+    /* Update state in place */
+    [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
+      if(!arr) return;
+      arr.forEach(function(v){
+        if(!v) return;
+        if(v.id === videoId) v.is_pinned = !unpin;
+        else if(v.is_pinned && v.author_id === u.id && v.type === 'long_video') v.is_pinned = false;
+      });
+    });
+
+    /* Flip the visible button in place */
+    var btn = document.querySelector('[data-vd-pin]');
+    if(btn){
+      var nowPinned = !unpin;
+      btn.innerHTML = nowPinned
+        ? '<i class="fa-solid fa-thumbtack"></i>'
+        : '<i class="fa-solid fa-thumbtack" style="opacity:.5;"></i>';
+      btn.title = nowPinned ? 'Unpin' : 'Pin to SPACE';
+      btn.setAttribute('data-vd-pin-state', nowPinned ? '1' : '0');
+    }
+  } catch(e){ toast('Pin failed: ' + (e.message || 'unknown'), 'error'); }
+};
+
+/* Strip the old listener by replacing the pin button entirely */
+function rebindPinButton(){
+  var old = document.querySelector('[data-vd-pin]');
+  if(!old) return;
+  if(old._realPinBound) return;
+
+  var videoId = old.getAttribute('data-vd-pin');
+  if(!videoId) return;
+
+  var fresh = old.cloneNode(true);
+  old.parentNode.replaceChild(fresh, old);
+  fresh._realPinBound = true;
+
+  fresh.addEventListener('click', function(e){
+    e.stopPropagation();
+    e.preventDefault();
+    var isPinned = fresh.getAttribute('data-vd-pin-state') === '1';
+    /* Fallback: read from state if attribute not set */
+    if(fresh.getAttribute('data-vd-pin-state') === null){
+      var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+           || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
+      isPinned = !!(v && v.is_pinned);
+    }
+    Z.pinVideo(videoId, isPinned);
+  });
+}
+
+/* Ensure pin button carries correct attributes after every open */
+var _prevOpenVideo = Z.sp5OpenVideo;
+if(typeof _prevOpenVideo === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideo.apply(this, arguments);
+    setTimeout(rebindPinButton, 200);
+    setTimeout(rebindPinButton, 700);
+    return r;
+  };
+}
+
+/* ============================================================
+   2. HEALTH BADGE — remove all, add exactly one
+   ============================================================ */
+async function paintHealthBadgeOnce(userId){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+
+  /* Kill EVERY existing health badge */
+  head.querySelectorAll('[data-health-badge]').forEach(function(el){ el.remove(); });
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  try {
+    var r = await c.rpc('space_health_score', { p_space_id: userId });
+    if(r.error || !r.data) return;
+    /* Re-check host still here */
+    head = document.getElementById('sp5-head-host');
+    if(!head) return;
+    /* Ensure still no badge (some other timer may have added) */
+    head.querySelectorAll('[data-health-badge]').forEach(function(el){ el.remove(); });
+
+    var d = r.data;
+    var map = {
+      new:         { color:'#94a3b8', icon:'🌱', text:'New' },
+      rising:      { color:'#10b981', icon:'📈', text:'Rising' },
+      established: { color:'#60a5fa', icon:'⭐', text:'Established' },
+      premium:     { color:'#a78bfa', icon:'💎', text:'Premium' },
+      elite:       { color:'#fbbf24', icon:'🏆', text:'Elite' }
+    };
+    var meta = map[d.label] || map.new;
+    var nameRow = head.querySelector('.sp5-name-row');
+    if(!nameRow) return;
+
+    var badge = document.createElement('span');
+    badge.setAttribute('data-health-badge','1');
+    badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;background:rgba(0,0,0,.3);border:1px solid ' + meta.color + '55;color:' + meta.color + ';font-size:10px;font-weight:900;';
+    badge.textContent = meta.icon + ' ' + meta.text;
+    badge.title = 'Health score ' + d.score + '/100';
+    var subsPill = nameRow.querySelector('[data-subs-pill]');
+    if(subsPill && subsPill.nextSibling) nameRow.insertBefore(badge, subsPill.nextSibling);
+    else nameRow.appendChild(badge);
+
+    if(Z.State.currentUser && Z.State.currentUser.id === userId){
+      badge.style.cursor = 'pointer';
+      badge.addEventListener('click', function(){ Z._openHealthDetail(d); });
+    }
+  } catch(e){}
+}
+
+/* Fast re-apply — keeps badge count at exactly 1 */
+setInterval(function(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var badges = head.querySelectorAll('[data-health-badge]');
+  if(badges.length > 1){
+    /* Keep the last one, remove others */
+    for(var i = 0; i < badges.length - 1; i++){ badges[i].remove(); }
+  }
+}, 800);
+
+/* ============================================================
+   3. TRENDING — only on Public Space. Kill everywhere else.
+   ============================================================ */
+function killAllTrending(){
+  document.querySelectorAll('[data-sp-trend-strip]').forEach(function(el){ el.remove(); });
+}
+
+function paintTrendingOnlyOnPublic(){
+  if(Z.State.currentView !== 'public-profile'){ killAllTrending(); return; }
+  if(Z.State.spaceTab !== 'public'){ killAllTrending(); return; }
+  var host = document.getElementById('sp5-content-host');
+  if(!host){ killAllTrending(); return; }
+
+  /* Kill extras but keep one if within this host */
+  var hostTrend = host.querySelector('[data-sp-trend-strip]');
+  document.querySelectorAll('[data-sp-trend-strip]').forEach(function(el){
+    if(el !== hostTrend) el.remove();
+  });
+
+  /* If none, insert one */
+  if(!hostTrend){
+    var sub = Z.State.spacePublicTab || 'sparks';
+    var items = (sub === 'videos') ? (Z.State.publicVideosAll || []) : (Z.State.publicSparksAll || []);
+    if(!items.length) return;
+
+    var scored = items.filter(function(it){
+      return it && it.video_url && !(Z.isNotInterested && Z.isNotInterested(sub === 'videos' ? 'video' : 'spark', it.id));
+    }).map(function(it){
+      var views = Number(it.views) || 0;
+      var reactions = 0;
+      if(it._reactions){
+        Object.keys(it._reactions).forEach(function(k){ if(k !== 'dislike') reactions += Number(it._reactions[k]) || 0; });
+      }
+      var comments = Number(it._commentsCount) || 0;
+      var hours = (Date.now() - new Date(it.created_at).getTime()) / 3600000;
+      var fresh = hours <= 24 ? 1000 : hours <= 168 ? 400 : hours <= 720 ? 100 : 0;
+      return { item: it, score: views + reactions*5 + comments*3 + fresh };
+    });
+    scored.sort(function(a, b){ return b.score - a.score; });
+    var top = scored.slice(0, 5).map(function(x){ return x.item; });
+    if(!top.length) return;
+
+    var title = 'Trending ' + (sub === 'videos' ? 'Videos' : 'Sparks');
+    var h = '<div data-sp-trend-strip="1" style="margin-bottom:12px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">';
+    h += '<i class="fa-solid fa-fire" style="color:#f59e0b;margin-right:6px;"></i>' + title + '</div>';
+    h += '<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;scrollbar-width:thin;">';
+    top.forEach(function(it, i){
+      var thumb = it.video_url
+        ? '<video src="' + esc(it.video_url) + '" preload="metadata" playsinline muted style="width:100%;height:100%;object-fit:cover;" data-space-spark="1"></video>'
+        : '<div style="width:100%;height:100%;background:#1e293b;"></div>';
+      var label = it.title || it.caption || 'Untitled';
+      if(label.length > 40) label = label.substring(0,40) + '…';
+      var click = (sub === 'videos')
+        ? 'Z.sp5OpenVideo(\'' + esc(it.id) + '\')'
+        : 'Z.sp5OpenUserSpark(\'' + esc(it.id) + '\',\'' + esc(it.author_id) + '\')';
+      h += '<div onclick="' + click + '" style="flex:0 0 130px;cursor:pointer;">' +
+        '<div style="position:relative;aspect-ratio:' + (sub === 'videos' ? '16/9' : '9/16') + ';border-radius:10px;overflow:hidden;background:#000;border:1px solid #1e293b;">' +
+          thumb +
+          '<div style="position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;">' + (i+1) + '</div>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + esc(label) + '</div>' +
+      '</div>';
+    });
+    h += '</div></div>';
+
+    var secHead = host.querySelector('.sp5-sec-head');
+    var temp = document.createElement('div');
+    temp.innerHTML = h;
+    if(secHead && secHead.parentNode){
+      secHead.parentNode.insertBefore(temp.firstChild, secHead);
+    } else {
+      host.insertBefore(temp.firstChild, host.firstChild);
+    }
+  }
+}
+
+/* ============================================================
+   4. COMMENT SORT — actually rebuild
+   ============================================================ */
+function getVideoIdFromOverlay(){
+  try {
+    var h = window.location.hash || '';
+    var m = h.match(/^#video-(.+)$/);
+    if(m) return decodeURIComponent(m[1]);
+  } catch(e){}
+  /* Fallback: the share chip's onclick */
+  var shareChip = document.querySelector('.sp5-vd-chip-btn[onclick*="openSparkShare"]');
+  if(shareChip){
+    var oc = shareChip.getAttribute('onclick') || '';
+    var m2 = oc.match(/'([a-f0-9-]{8,})'/);
+    if(m2) return m2[1];
+  }
+  return null;
+}
+
+function rebuildCommentsNow(){
+  var listHost = document.querySelector('.sp5-vd-comments');
+  if(!listHost) return;
+  var videoId = getVideoIdFromOverlay();
+  if(!videoId) return;
+
+  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+       || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
+       || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+  if(!v) return;
+
+  /* Always reload comments from DB to guarantee fresh order */
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  c.from('comments').select('*').eq('spark_id', videoId).order('created_at', {ascending: true}).then(function(res){
+    var cmts = res.data || [];
+    var cIds = cmts.map(function(x){ return x.id; });
+    var crMap = {}, myCrMap = {};
+    var me = Z.State.currentUser;
+    if(cIds.length){
+      return c.from('comment_reactions').select('comment_id, reaction, user_id').in('comment_id', cIds).then(function(cr){
+        (cr.data || []).forEach(function(x){
+          crMap[x.comment_id] = crMap[x.comment_id] || {};
+          crMap[x.comment_id][x.reaction] = (crMap[x.comment_id][x.reaction] || 0) + 1;
+          if(me && x.user_id === me.id){
+            myCrMap[x.comment_id] = myCrMap[x.comment_id] || {};
+            myCrMap[x.comment_id][x.reaction] = true;
+          }
+        });
+        return { cmts: cmts, crMap: crMap, myCrMap: myCrMap };
+      });
+    }
+    return { cmts: cmts, crMap: crMap, myCrMap: myCrMap };
+  }).then(function(pack){
+    pack.cmts.forEach(function(x){
+      x._reactionCounts = pack.crMap[x.id] || {};
+      x._myReactions = pack.myCrMap[x.id] || {};
+      x._replies = [];
+    });
+    var byId = {};
+    pack.cmts.forEach(function(x){ byId[x.id] = x; });
+    pack.cmts.forEach(function(x){
+      if(x.parent_id && byId[x.parent_id]) byId[x.parent_id]._replies.push(x);
+    });
+    var roots = pack.cmts.filter(function(x){ return !x.parent_id; });
+
+    /* Apply sort */
+    var sorted = roots.slice().sort(function(a, b){
+      if(Z.State._commentSort === 'top'){
+        var ca = 0, cb = 0;
+        Object.keys(a._reactionCounts || {}).forEach(function(k){ ca += Number(a._reactionCounts[k]) || 0; });
+        Object.keys(b._reactionCounts || {}).forEach(function(k){ cb += Number(b._reactionCounts[k]) || 0; });
+        if(cb !== ca) return cb - ca;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      if(Z.State._commentSort === 'newest'){
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+
+    /* Also sort replies */
+    function sortReplies(list){
+      list.forEach(function(cm){
+        if(cm._replies && cm._replies.length){
+          cm._replies.sort(function(a, b){
+            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          });
+          sortReplies(cm._replies);
+        }
+      });
+    }
+    sortReplies(sorted);
+
+    /* Update state */
+    v._comments = sorted;
+
+    /* Rebuild DOM list — keep picker, input, sort chips */
+    var cp = listHost.querySelector('.comment-color-picker');
+    var inputWrap = listHost.querySelector('.comment-input-wrap');
+    var sortChips = listHost.querySelector('[data-cmt-sort]');
+    var savedInput = inputWrap ? inputWrap.querySelector('textarea') : null;
+    var savedValue = savedInput ? savedInput.value : '';
+
+    Array.prototype.slice.call(listHost.children).forEach(function(ch){
+      if(ch === cp || ch === inputWrap || ch === sortChips) return;
+      ch.remove();
+    });
+
+    var html = '';
+    sorted.forEach(function(cm){
+      try { html += Z.renderSparkComment(cm, v, false); } catch(e){}
+    });
+    if(!html) html = '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
+
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    var anchor = sortChips ? sortChips.nextSibling : (cp || inputWrap);
+    Array.prototype.slice.call(tmp.children).forEach(function(node){
+      if(anchor) listHost.insertBefore(node, anchor);
+      else listHost.appendChild(node);
+    });
+
+    if(savedInput && savedValue) savedInput.value = savedValue;
+  }).catch(function(){});
+}
+
+/* Bind click on sort chips once they exist */
+function bindSortChips(){
+  var host = document.querySelector('.sp5-vd-comments');
+  if(!host) return;
+  if(host.querySelector('[data-cmt-sort]')) return;
+
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-cmt-sort','1');
+  wrap.style.cssText = 'display:flex;gap:6px;margin:8px 0 10px;';
+
+  ['top','newest','oldest'].forEach(function(k){
+    var active = (Z.State._commentSort || 'top') === k;
+    var label = k === 'top' ? 'Top' : (k === 'newest' ? 'Newest' : 'Oldest');
+    var b = document.createElement('button');
+    b.setAttribute('data-cmt-sort-key', k);
+    b.textContent = label;
+    b.style.cssText = 'padding:5px 12px;border-radius:14px;border:1px solid ' + (active ? '#10b981' : '#1e293b') + ';background:' + (active ? 'rgba(16,185,129,.12)' : '#0f172a') + ';color:' + (active ? '#10b981' : '#94a3b8') + ';font-weight:800;font-size:11px;cursor:pointer;';
+    wrap.appendChild(b);
+  });
+
+  if(host.firstChild) host.insertBefore(wrap, host.firstChild);
+  else host.appendChild(wrap);
+}
+
+/* Delegated click for sort chips */
+document.addEventListener('click', function(e){
+  var chip = e.target.closest('[data-cmt-sort-key]');
+  if(!chip) return;
+  if(!chip.closest('.sp5-vd-comments')) return;
+  e.stopPropagation();
+  e.preventDefault();
+
+  Z.State._commentSort = chip.getAttribute('data-cmt-sort-key');
+  chip.parentNode.querySelectorAll('[data-cmt-sort-key]').forEach(function(c){
+    var on = c === chip;
+    c.style.borderColor = on ? '#10b981' : '#1e293b';
+    c.style.background = on ? 'rgba(16,185,129,.12)' : '#0f172a';
+    c.style.color = on ? '#10b981' : '#94a3b8';
+  });
+  rebuildCommentsNow();
+}, true);
+
+/* ============================================================
+   ONE wrapper for sp5RenderContent — no stacking
+   ============================================================ */
+var _prevRender = Z.sp5RenderContent;
+if(typeof _prevRender === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevRender.apply(this, arguments);
+    var jobs = function(){
+      try { killAllTrending(); } catch(e){}
+      try { paintTrendingOnlyOnPublic(); } catch(e){}
+      try { paintHealthBadgeOnce(userId); } catch(e){}
+    };
+    setTimeout(jobs, 120);
+    setTimeout(jobs, 700);
+    setTimeout(jobs, 1800);
+    return r;
+  };
+}
+
+/* Also on view change */
+var _prevShow = Z.showView;
+Z.showView = function(view){
+  var r = _prevShow.apply(this, arguments);
+  if(view !== 'public-profile'){
+    killAllTrending();
+  }
+  return r;
+};
+
+/* After video overlay opens — bind sort chips + pin button */
+var _prevOpenV = Z.sp5OpenVideo;
+if(typeof _prevOpenV === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenV.apply(this, arguments);
+    setTimeout(function(){ try { bindSortChips(); } catch(e){} }, 200);
+    setTimeout(function(){ try { bindSortChips(); } catch(e){} }, 700);
+    setTimeout(function(){ try { rebindPinButton(); } catch(e){} }, 200);
+    setTimeout(function(){ try { rebindPinButton(); } catch(e){} }, 700);
+    return r;
+  };
+}
+
+console.log('[SPACE v7 — Real Fix v2] pin · health badge · trending · comment sort');
+})();
 </script>       
 <!-- ============================================================
      SECTION 9 — CIRCLES
