@@ -9767,82 +9767,6 @@ Z._saveSpaceName = async function(){
   setTimeout(function(){ Z.showView('space-settings'); }, 200);
 };
 
-/* ============================================================
-   AVATAR PICKER + VIEWER
-   ============================================================ */
-Z.openAvatarPicker = function(){
-  var u = me();
-  if(!u){ toast('Login first.'); return; }
-  var sd = u.space_data || {};
-
-  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
-  h += '<div class="sheet-handle"></div>';
-  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Profile Picture</h3>';
-  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
-  h += '<div class="sheet-body" style="padding:16px;">';
-  h += '<div style="display:flex;justify-content:center;margin-bottom:16px;"><div style="width:120px;height:120px;border-radius:50%;overflow:hidden;background:#0b1220;border:2px solid #10b981;">';
-  if(sd.avatar_video) h += '<video src="' + esc(sd.avatar_video) + '" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:cover;"></video>';
-  else h += '<img src="' + esc(u.avatar || safeAvatar(u)) + '" style="width:100%;height:100%;object-fit:cover;">';
-  h += '</div></div>';
-  h += '<div style="font-size:11px;color:#94a3b8;line-height:1.6;text-align:center;margin-bottom:14px;">Upload an image or a short video (up to 10 seconds). Video avatars loop automatically. Free to change anytime.</div>';
-  h += '<input type="file" id="sp5-av-file" accept="image/*,video/*" style="display:none;">';
-  h += '<button id="sp5-av-pick" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-cloud-arrow-up"></i> Choose from device</button>';
-  h += '<button id="sp5-av-premium" style="width:100%;margin-top:10px;padding:13px;border-radius:12px;border:1px solid rgba(251,191,36,.5);background:linear-gradient(135deg,rgba(251,191,36,.10),rgba(139,92,246,.08));color:#fbbf24;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;"><i class="fa-solid fa-crown"></i> Premium avatars — Browse</button>';
-  h += '</div></div></div>';
-  Z.openSheet(h);
-
-  setTimeout(function(){
-    var pick = document.getElementById('sp5-av-pick');
-    var file = document.getElementById('sp5-av-file');
-    var prem = document.getElementById('sp5-av-premium');
-    if(pick && file) pick.addEventListener('click', function(){ file.click(); });
-    if(file) file.addEventListener('change', function(){ var f = file.files && file.files[0]; if(f) handleAvatarFile(f); });
-    if(prem) prem.addEventListener('click', function(){ Z.closeSheet(); Z.showView('market-browse', 'avatar-frames'); });
-  }, 40);
-};
-
-async function handleAvatarFile(f){
-  var isVid = (f.type && f.type.indexOf('video/') === 0);
-  if(isVid){
-    var url = URL.createObjectURL(f);
-    var v = document.createElement('video');
-    v.preload = 'metadata'; v.src = url; v.muted = true;
-    await new Promise(function(res){ v.onloadedmetadata = res; setTimeout(res, 2500); });
-    if(v.duration && v.duration > 10.5){ URL.revokeObjectURL(url); toast('Video must be 10 seconds or shorter.', 'error'); return; }
-    URL.revokeObjectURL(url);
-  }
-  if(f.size > 15 * 1024 * 1024){ toast('Max 15 MB.', 'error'); return; }
-  toast('Uploading avatar…');
-  try {
-    var url2 = await Z.storeMedia(f);
-    if(!url2){ toast('Upload failed.', 'error'); return; }
-    var u = me();
-    var sd = Object.assign({}, u.space_data || {});
-    var patch = {};
-    if(isVid){ sd.avatar_video = url2; patch.space_data = sd; }
-    else { patch.avatar = url2; sd.avatar_video = null; patch.space_data = sd; }
-    var res = await Z.DB.updateProfile(u.id, patch);
-    if(!res){ toast('Save failed.', 'error'); return; }
-    Z.closeSheet(); toast('Profile picture updated.');
-    try { await Z.refreshSession(); } catch(e){}
-    Z.showView('public-profile', u.id);
-  } catch(e){ toast('Failed: ' + (e.message || 'unknown'), 'error'); }
-}
-
-Z.openAvatarViewer = function(userId){
-  var p = Z.getProfileById ? Z.getProfileById(userId) : null;
-  if(!p){ toast('User not found.'); return; }
-  var sd = p.space_data || {};
-  var url = sd.avatar_video || p.avatar || safeAvatar(p);
-  var lb = document.createElement('div');
-  lb.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out;';
-  lb.innerHTML = sd.avatar_video
-    ? '<video src="' + esc(url) + '" autoplay muted loop playsinline controls style="max-width:100%;max-height:100%;border-radius:50%;aspect-ratio:1;object-fit:cover;"></video>'
-    : '<img src="' + esc(url) + '" style="max-width:100%;max-height:100%;border-radius:50%;aspect-ratio:1;object-fit:cover;">';
-  lb.onclick = function(){ lb.remove(); };
-  document.body.appendChild(lb);
-};
 
 /* ============================================================
    FULL VIDEO CREATOR GUIDE
@@ -10243,200 +10167,6 @@ Z.openPoolHealthMeter = async function(){
   Z.openSheet(h);
 };
 
-/* ============================================================
-   PUBLISH MODAL — CFAR fields + upload fee + soft gate
-   Intercepts Section 6's openCreateFullVideoModal
-   ============================================================ */
-Z._fvPendingDuration = 0;
-
-function injectCfarFieldsIntoPublishModal(){
-  var modal = document.getElementById('modal-container');
-  if(!modal) return;
-  var titleInp = document.getElementById('fv-title');
-  if(!titleInp) return;
-  if(document.getElementById('fv-cfar-block')) return;
-
-  /* Find the submit button so we can insert above it */
-  var submitBtn = modal.querySelector('button.btn-primary');
-  if(!submitBtn) return;
-  var wrapper = submitBtn.parentNode;
-  if(!wrapper) return;
-
-  var block = document.createElement('div');
-  block.id = 'fv-cfar-block';
-  block.style.cssText = 'margin-top:14px;';
-
-  var h = '';
-  h += '<label class="form-label" style="margin-bottom:4px;">Viewer rate (per minute · $0.001 – $0.010)</label>';
-  h += '<input type="number" id="fv-cfar-rate" class="form-input" min="0.001" max="0.010" step="0.001" placeholder="0.005" style="margin-bottom:10px;">';
-  h += '<label class="form-label" style="margin-bottom:4px;">View budget ($10 – $10,000)</label>';
-  h += '<input type="number" id="fv-cfar-budget" class="form-input" min="10" max="10000" step="1" placeholder="100" style="margin-bottom:10px;">';
-  h += '<div style="font-size:10.5px;color:#64748b;line-height:1.5;margin-bottom:12px;">Optional. If set, viewers earn this rate per minute from your Cash wallet, up to the budget cap. Leave blank to disable CFAR for this video.</div>';
-  h += '<div id="fv-duration-info" style="padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11px;color:#cbd5e1;line-height:1.55;margin-bottom:12px;">';
-  h += '<b style="color:#60a5fa;"><i class="fa-solid fa-clock"></i> Duration &amp; fee</b><br>';
-  h += '<div id="fv-duration-text" style="margin-top:4px;">Select a video to see duration and upload fee.</div>';
-  h += '</div>';
-
-  block.innerHTML = h;
-  wrapper.insertBefore(block, submitBtn);
-}
-
-/* Hook previewFvFile to capture duration */
-var _origPreviewFv = Z.previewFvFile;
-if(typeof _origPreviewFv === 'function'){
-  Z.previewFvFile = function(input){
-    var r = _origPreviewFv.apply(this, arguments);
-    setTimeout(function(){
-      var prev = document.getElementById('fv-preview');
-      if(!prev){ Z._fvPendingDuration = 0; updateDurationInfo(); return; }
-      var v = prev.querySelector('video');
-      if(!v){ Z._fvPendingDuration = 0; updateDurationInfo(); return; }
-      var capture = function(){
-        Z._fvPendingDuration = v.duration || 0;
-        updateDurationInfo();
-      };
-      v.addEventListener('loadedmetadata', capture);
-      if(v.readyState >= 1) capture();
-    }, 100);
-    return r;
-  };
-}
-
-function updateDurationInfo(){
-  var el = document.getElementById('fv-duration-text');
-  if(!el) return;
-  var d = Z._fvPendingDuration || 0;
-  if(d <= 0){
-    el.textContent = 'Select a video to see duration and upload fee.';
-    return;
-  }
-  var min = Math.max(1, Math.ceil(d / 60));
-  var bands = Math.max(1, Math.ceil(min / 10));
-  var fee = bands;
-  var warning = '';
-  if(min > 10){
-    warning = '<div style="color:#fbbf24;font-weight:800;margin-top:6px;"><i class="fa-solid fa-triangle-exclamation"></i> Over 10 minutes — requires Full Video Access approval.</div>';
-  }
-  el.innerHTML =
-    '<div>Duration: <b style="color:#fff;">' + min + ' min</b> (' + Math.round(d) + 's)</div>' +
-    '<div>Upload fee: <b style="color:#10b981;">$' + fee.toFixed(2) + '</b> (deducted from Cash)</div>' +
-    warning;
-}
-
-/* Wrap openCreateFullVideoModal */
-var _origOpenFV = Z.openCreateFullVideoModal;
-if(typeof _origOpenFV === 'function'){
-  Z.openCreateFullVideoModal = function(){
-    Z._fvPendingDuration = 0;
-    var r = _origOpenFV.apply(this, arguments);
-    setTimeout(injectCfarFieldsIntoPublishModal, 60);
-    setTimeout(function(){ updateDurationInfo(); }, 200);
-    return r;
-  };
-}
-
-/* Wrap submitFullVideo: soft gate + upload fee + save CFAR fields */
-var _origSubmitFV = Z.submitFullVideo;
-if(typeof _origSubmitFV === 'function'){
-  Z.submitFullVideo = async function(){
-    var u = me();
-    if(!u){ if(typeof _origSubmitFV === 'function') return _origSubmitFV.apply(this, arguments); return; }
-    var c = db();
-    if(!c){ if(typeof _origSubmitFV === 'function') return _origSubmitFV.apply(this, arguments); return; }
-
-    var d = Z._fvPendingDuration || 0;
-    var min = Math.max(1, Math.ceil(d / 60));
-
-    /* Read CFAR inputs (optional) */
-    var rateEl = document.getElementById('fv-cfar-rate');
-    var budEl  = document.getElementById('fv-cfar-budget');
-    var rate   = rateEl ? parseFloat(rateEl.value) : 0;
-    var budget = budEl  ? parseFloat(budEl.value)  : 0;
-    if(isNaN(rate))   rate = 0;
-    if(isNaN(budget)) budget = 0;
-
-    if(rate > 0 && (rate < 0.001 || rate > 0.010)){
-      toast('Viewer rate must be between 0.001 and 0.010.', 'error');
-      return;
-    }
-    if(budget > 0 && (budget < 10 || budget > 10000)){
-      toast('View budget must be between $10 and $10,000.', 'error');
-      return;
-    }
-
-    /* Soft gate: if >10 min and not approved → reject */
-    if(min > 10){
-      try {
-        var acc = await c.rpc('space_fv_access_state', { p_user_id: u.id });
-        if(!acc.error && acc.data && !acc.data.approved){
-          toast('Videos over 10 minutes require Full Video Access approval. Apply from Public Full Videos tab.', 'error');
-          return;
-        }
-      } catch(e){}
-    }
-
-    /* Compute upload fee ($1 per 10-min band) */
-    var bands = Math.max(1, Math.ceil(min / 10));
-    var fee = bands;
-
-    /* Deduct fee via RPC */
-    try {
-      var ded = await c.rpc('space_deduct_upload_fee', {
-        p_amount: fee,
-        p_reason: 'full_video_upload_fee',
-        p_video_id: null
-      });
-      if(ded.error){
-        var dm = ded.error.message || '';
-        if(dm.indexOf('insufficient_funds') !== -1){
-          toast('Not enough Cash to cover the $' + fee.toFixed(2) + ' upload fee.', 'error');
-          return;
-        }
-        throw ded.error;
-      }
-      toast('$' + fee.toFixed(2) + ' upload fee deducted from Cash.');
-      if(typeof Z.refreshSession === 'function'){
-        try { await Z.refreshSession(); } catch(e){}
-        try { Z.updateHeader(); } catch(e){}
-      }
-    } catch(e){
-      toast('Fee deduction failed: ' + (e.message || 'unknown'), 'error');
-      return;
-    }
-
-    /* Inject CFAR fields into the payload by hooking the DB insert.
-       We set them on a temporary state and let Section 6 handle the rest,
-       then we patch immediately after via a short async task. */
-    var _pendingCfar = { rate: rate, budget: budget };
-
-    /* Call the original submit */
-    var result = await _origSubmitFV.apply(this, arguments);
-
-    /* Patch sparks row with CFAR fields on the newest video (best-effort) */
-    if(rate > 0 || budget > 0){
-      setTimeout(async function(){
-        try {
-          var latest = await c.from('sparks')
-            .select('id')
-            .eq('author_id', u.id)
-            .eq('type','long_video')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if(latest.data && latest.data.id){
-            await c.from('sparks').update({
-              cfar_rate_per_minute: rate > 0 ? rate : null,
-              cfar_view_budget: budget > 0 ? budget : null
-            }).eq('id', latest.data.id);
-          }
-        } catch(e){}
-      }, 800);
-    }
-
-    Z._fvPendingDuration = 0;
-    return result;
-  };
-}
 
 /* ============================================================
    PRESERVED HELPERS — About / Offer / Gallery / Lightbox / Promoted / Featured
@@ -15503,7 +15233,572 @@ if(typeof _prevLoadAv === 'function'){
 
 console.log('[SPACE v7 — Surgical Fix v3] badge+trending race · fee pre-check · separate SPACE avatar');
 })();
-</script>       
+</script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — CLEAN OWNER (replaces Part 4 wrappers)             -->
+<!-- · Publish: single fee, single CFAR patch, single age-gate     -->
+<!-- · SPACE avatar: fresh picker, no race                         -->
+<!-- · Spark feed: filter out full videos                          -->
+<!-- · Video page: ⋮ menu (edit · delete · report)                 -->
+<!-- · Spark: edit + delete from own                                  -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceCleanOwner) return; Z.__zynixSpaceCleanOwner = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   1. SINGLE PUBLISH HANDLER — replaces Part 4's wrapper
+   The original Section 6 submitFullVideo is the "parent" now.
+   ============================================================ */
+var _publishInFlight = false;
+var _originalSubmit = null;
+
+/* Capture the true original (Section 6's) — this is what was there
+   before ANY of my wrappers. Since Part 4's wrapper is being deleted,
+   the current Z.submitFullVideo is Section 6's original. */
+_originalSubmit = Z.submitFullVideo;
+
+Z.submitFullVideo = async function(){
+  if(_publishInFlight){ toast('Publishing already in progress…'); return; }
+
+  var u = Z.State.currentUser;
+  if(!u){ return _originalSubmit.apply(this, arguments); }
+  var c = Z.sb && Z.sb();
+  if(!c){ return _originalSubmit.apply(this, arguments); }
+
+  /* Pre-checks BEFORE any fee deduction */
+  var titleEl = document.getElementById('fv-title');
+  var title = titleEl ? (titleEl.value || '').trim() : '';
+  if(!title){ toast('Enter a title first.', 'error'); return; }
+
+  var fileEl = document.getElementById('fv-file');
+  var urlEl  = document.getElementById('fv-url');
+  var hasFile = !!(fileEl && fileEl.files && fileEl.files[0]);
+  var hasUrl  = !!(urlEl && (urlEl.value || '').trim());
+  var cachedFV = Z._mediaCache && Z._mediaCache.fv;
+  var hasCachedFV = !!(cachedFV && cachedFV.blob);
+  if(!hasFile && !hasUrl && !hasCachedFV){
+    toast('Attach a video first.', 'error');
+    return;
+  }
+
+  /* CFAR inputs */
+  var rateEl = document.getElementById('fv-cfar-rate');
+  var budEl  = document.getElementById('fv-cfar-budget');
+  var rate   = rateEl ? parseFloat(rateEl.value) : 0;
+  var budget = budEl  ? parseFloat(budEl.value)  : 0;
+  if(isNaN(rate))   rate = 0;
+  if(isNaN(budget)) budget = 0;
+  if(rate > 0 && (rate < 0.001 || rate > 0.010)){
+    toast('Viewer rate must be between 0.001 and 0.010.', 'error'); return;
+  }
+  if(budget > 0 && (budget < 10 || budget > 10000)){
+    toast('View budget must be between $10 and $10,000.', 'error'); return;
+  }
+
+  /* Duration + soft gate */
+  var d = Z._fvPendingDuration || 0;
+  var min = Math.max(1, Math.ceil(d / 60));
+  if(min > 10){
+    try {
+      var acc = await c.rpc('space_fv_access_state', { p_user_id: u.id });
+      if(!acc.error && acc.data && !acc.data.approved){
+        toast('Videos over 10 minutes require Full Video Access approval.', 'error');
+        return;
+      }
+    } catch(e){}
+  }
+
+  var bands = Math.max(1, Math.ceil(min / 10));
+  var fee = bands;
+
+  _publishInFlight = true;
+  var feePaid = false;
+
+  try {
+    /* Deduct fee ONCE */
+    var ded = await c.rpc('space_deduct_upload_fee', {
+      p_amount: fee,
+      p_reason: 'full_video_upload_fee',
+      p_video_id: null
+    });
+    if(ded.error){
+      var dm = ded.error.message || '';
+      if(dm.indexOf('insufficient_funds') !== -1){
+        toast('Not enough Cash to cover the $' + fee.toFixed(2) + ' upload fee.', 'error');
+        _publishInFlight = false;
+        return;
+      }
+      throw ded.error;
+    }
+    feePaid = true;
+    toast('$' + fee.toFixed(2) + ' upload fee deducted from Cash.');
+    if(typeof Z.refreshSession === 'function'){
+      try { await Z.refreshSession(); } catch(e){}
+      try { Z.updateHeader(); } catch(e){}
+    }
+
+    /* Publish via original */
+    var result = await _originalSubmit.apply(this, arguments);
+
+    /* Patch CFAR + age gate on the newly-created video row */
+    if(rate > 0 || budget > 0 || Z._pendingAgeGate || Z._pendingContentWarning){
+      setTimeout(async function(){
+        try {
+          var latest = await c.from('sparks')
+            .select('id')
+            .eq('author_id', u.id)
+            .eq('type','long_video')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if(latest.data && latest.data.id){
+            var patch = {};
+            if(rate > 0)   patch.cfar_rate_per_minute = rate;
+            if(budget > 0) patch.cfar_view_budget = budget;
+            if(Z._pendingAgeGate != null) patch.is_age_gated = !!Z._pendingAgeGate;
+            if(Z._pendingContentWarning) patch.content_gate = Z._pendingContentWarning;
+            if(Object.keys(patch).length){
+              await c.from('sparks').update(patch).eq('id', latest.data.id);
+            }
+          }
+        } catch(e){}
+      }, 1200);
+    }
+
+    Z._fvPendingDuration = 0;
+    Z._pendingAgeGate = null;
+    Z._pendingContentWarning = null;
+    return result;
+  } catch(e){
+    toast('Publish failed: ' + (e.message || 'unknown'), 'error');
+    throw e;
+  } finally {
+    _publishInFlight = false;
+  }
+};
+
+/* ============================================================
+   2. SPACE AVATAR PICKER — fresh, stored in space_data only
+   ============================================================ */
+Z.openAvatarPicker = function(){
+  var u = Z.State.currentUser;
+  if(!u){ toast('Login first.'); return; }
+  var sd = u.space_data || {};
+
+  var preview = '';
+  if(sd.avatar_video){
+    preview = '<video src="' + esc(sd.avatar_video) + '" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:cover;"></video>';
+  } else if(sd.avatar_image){
+    preview = '<img src="' + esc(sd.avatar_image) + '" style="width:100%;height:100%;object-fit:cover;">';
+  } else if(u.avatar){
+    preview = '<img src="' + esc(u.avatar) + '" style="width:100%;height:100%;object-fit:cover;opacity:.55;">';
+  } else {
+    var fb = (u.name || u.username || 'You');
+    preview = '<img src="https://ui-avatars.com/api/?name=' + encodeURIComponent(fb) + '&background=111827&color=34d399" style="width:100%;height:100%;object-fit:cover;">';
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:82vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">SPACE Avatar</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div style="display:flex;justify-content:center;margin-bottom:14px;"><div style="width:120px;height:120px;border-radius:50%;overflow:hidden;background:#0b1220;border:2px solid #10b981;">' + preview + '</div></div>';
+  h += '<div style="padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">This avatar shows only on your SPACE. Your Home feed avatar is managed separately in ZYNIX account settings.</div>';
+  h += '<input type="file" id="sp5-av-file" accept="image/*,video/*" style="display:none;">';
+  h += '<button id="sp5-av-pick" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-cloud-arrow-up"></i> Choose from device</button>';
+  if(sd.avatar_video || sd.avatar_image){
+    h += '<button id="sp5-av-clear" style="width:100%;margin-top:10px;padding:11px;border-radius:11px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:12px;cursor:pointer;"><i class="fa-solid fa-trash"></i> Remove SPACE avatar</button>';
+  }
+  h += '<button id="sp5-av-premium" style="width:100%;margin-top:10px;padding:13px;border-radius:12px;border:1px solid rgba(251,191,36,.5);background:linear-gradient(135deg,rgba(251,191,36,.10),rgba(139,92,246,.08));color:#fbbf24;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-crown"></i> Premium avatars — Browse</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var pick = document.getElementById('sp5-av-pick');
+    var file = document.getElementById('sp5-av-file');
+    var prem = document.getElementById('sp5-av-premium');
+    var clear = document.getElementById('sp5-av-clear');
+
+    if(pick && file) pick.addEventListener('click', function(){ file.click(); });
+    if(file) file.addEventListener('change', function(){
+      var f = file.files && file.files[0];
+      if(f) handleSpaceAvatar(f);
+    });
+    if(prem) prem.addEventListener('click', function(){ Z.closeSheet(); Z.showView('market-browse','avatar-frames'); });
+    if(clear) clear.addEventListener('click', async function(){
+      var sd2 = Object.assign({}, Z.State.currentUser.space_data || {});
+      sd2.avatar_video = null;
+      sd2.avatar_image = null;
+      var res = await Z.DB.updateProfile(Z.State.currentUser.id, { space_data: sd2 });
+      if(!res){ toast('Failed.', 'error'); return; }
+      if(Z.State.currentUser) Z.State.currentUser.space_data = sd2;
+      Z.closeSheet(); toast('SPACE avatar removed.');
+      try { await Z.refreshSession(); } catch(e){}
+      Z.showView('public-profile', Z.State.currentUser.id);
+    });
+  }, 40);
+};
+
+async function handleSpaceAvatar(f){
+  var isVid = (f.type && f.type.indexOf('video/') === 0);
+  if(isVid){
+    var url = URL.createObjectURL(f);
+    var v = document.createElement('video');
+    v.preload = 'metadata'; v.src = url; v.muted = true;
+    await new Promise(function(res){ v.onloadedmetadata = res; setTimeout(res, 2500); });
+    if(v.duration && v.duration > 10.5){ URL.revokeObjectURL(url); toast('Video must be 10 seconds or shorter.', 'error'); return; }
+    URL.revokeObjectURL(url);
+  }
+  if(f.size > 15 * 1024 * 1024){ toast('Max 15 MB.', 'error'); return; }
+  toast('Uploading SPACE avatar…');
+  try {
+    var url2 = await Z.storeMedia(f);
+    if(!url2){ toast('Upload failed.', 'error'); return; }
+    var u = Z.State.currentUser;
+    var sd = Object.assign({}, u.space_data || {});
+    if(isVid){ sd.avatar_video = url2; sd.avatar_image = null; }
+    else { sd.avatar_image = url2; sd.avatar_video = null; }
+    var res = await Z.DB.updateProfile(u.id, { space_data: sd });
+    if(!res){ toast('Save failed.', 'error'); return; }
+    if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
+    Z.closeSheet(); toast('SPACE avatar updated.');
+    try { await Z.refreshSession(); } catch(e){}
+    Z.showView('public-profile', u.id);
+  } catch(e){ toast('Failed: ' + (e.message || 'unknown'), 'error'); }
+}
+
+/* Header avatar fix — runs after every render, idempotent */
+function fixSpaceAvatarInHeader(){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var btn = head.querySelector('.sp5-avatar-btn');
+  if(!btn) return;
+  var p = Z.State.spaceProfile;
+  if(!p) return;
+  var sd = p.space_data || {};
+  if(Z.State.currentUser && Z.State.currentUser.id === p.id){
+    sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
+  }
+  var wantVideo = !!sd.avatar_video;
+  var wantUrl = sd.avatar_video || sd.avatar_image || p.avatar;
+  if(!wantUrl) return;
+
+  var cur = btn.querySelector('img, video');
+  var editIcon = btn.querySelector('.sp5-avatar-edit');
+  var editHtml = editIcon ? editIcon.outerHTML : '';
+
+  if(!cur){
+    btn.innerHTML = wantVideo
+      ? '<video src="' + esc(wantUrl) + '" autoplay muted loop playsinline></video>' + editHtml
+      : '<img src="' + esc(wantUrl) + '" alt="">' + editHtml;
+    return;
+  }
+  if(wantVideo && cur.tagName !== 'VIDEO'){
+    btn.innerHTML = '<video src="' + esc(wantUrl) + '" autoplay muted loop playsinline></video>' + editHtml;
+  } else if(!wantVideo && cur.tagName !== 'IMG'){
+    btn.innerHTML = '<img src="' + esc(wantUrl) + '" alt="">' + editHtml;
+  } else if(cur.getAttribute('src') !== wantUrl){
+    cur.setAttribute('src', wantUrl);
+  }
+}
+
+/* ============================================================
+   3. SPARK FEED — filter out long_video
+   ============================================================ */
+var _prevRenderSparkClean = Z.renderSpark;
+if(typeof _prevRenderSparkClean === 'function'){
+  Z.renderSpark = function(){
+    /* Temporarily filter to sparks only */
+    var saved = Z.State.allSparks;
+    var filtered = (saved || []).filter(function(s){
+      return s && s.type !== 'long_video' && s.video_url;
+    });
+    Z.State.allSparks = filtered;
+    var r;
+    try { r = _prevRenderSparkClean.apply(this, arguments); }
+    finally { Z.State.allSparks = saved; }
+    return r;
+  };
+}
+
+/* ============================================================
+   4. OWN CONTENT — Delete + Edit for videos and sparks
+   Video page: ⋮ menu (top-right of header)
+   Spark slide: existing ⋮ menu gets Edit option
+   ============================================================ */
+
+/* Delete video */
+Z.deleteFullVideo = async function(videoId){
+  var u = Z.State.currentUser;
+  if(!u){ toast('Login first.'); return; }
+  if(!confirm('Delete this video permanently?')) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+         || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
+         || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+    if(v && v.author_id !== u.id){ toast('You can only delete your own videos.', 'error'); return; }
+
+    var r = await c.from('sparks').delete().eq('id', videoId).eq('author_id', u.id);
+    if(r.error) throw r.error;
+
+    /* Remove from all state arrays */
+    [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
+      if(!arr) return;
+      for(var i = arr.length - 1; i >= 0; i--){ if(arr[i].id === videoId) arr.splice(i, 1); }
+    });
+    try { Z.sp5CloseVideo(); } catch(e){}
+    toast('Video deleted.');
+    if(Z.State.currentView === 'public-profile'){
+      var me = Z.State.currentUser;
+      Z.sp5RenderContent(Z.State.spaceUserId, me && me.id === Z.State.spaceUserId);
+    }
+  } catch(e){ toast('Delete failed: ' + (e.message || 'unknown'), 'error'); }
+};
+
+/* Edit video (title + caption + CFAR) */
+Z.editFullVideo = function(videoId){
+  var u = Z.State.currentUser;
+  if(!u){ toast('Login first.'); return; }
+  var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+       || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
+       || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+  if(!v){ toast('Video not found.'); return; }
+  if(v.author_id !== u.id){ toast('You can only edit your own videos.', 'error'); return; }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Edit Video</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Title</label>';
+  h += '<input id="fv-edit-title" class="form-input" maxlength="100" value="' + esc(v.title || '') + '">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;">Description</label>';
+  h += '<textarea id="fv-edit-caption" class="form-textarea" maxlength="2000" rows="5">' + esc(v.caption || '') + '</textarea>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;">CFAR viewer rate ($0.001–$0.010 / min)</label>';
+  h += '<select id="fv-edit-rate" class="form-select" style="margin-bottom:10px;">';
+  var rateOpts = [[0,'Off'],[0.001,'$0.001'],[0.002,'$0.002'],[0.003,'$0.003'],[0.004,'$0.004'],[0.005,'$0.005'],[0.006,'$0.006'],[0.007,'$0.007'],[0.008,'$0.008'],[0.009,'$0.009'],[0.010,'$0.010']];
+  var curRate = Number(v.cfar_rate_per_minute) || 0;
+  rateOpts.forEach(function(o){
+    h += '<option value="' + o[0] + '" ' + (Math.abs(curRate - o[0]) < 0.0001 ? 'selected' : '') + '>' + o[1] + '</option>';
+  });
+  h += '</select>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">CFAR view budget</label>';
+  h += '<select id="fv-edit-budget" class="form-select" style="margin-bottom:10px;">';
+  var budOpts = [0,10,25,50,100,250,500,1000,2500,5000,10000];
+  var curBud = Number(v.cfar_view_budget) || 0;
+  budOpts.forEach(function(o){
+    h += '<option value="' + o + '" ' + (curBud === o ? 'selected' : '') + '>' + (o === 0 ? 'Off' : '$' + o.toLocaleString()) + '</option>';
+  });
+  h += '</select>';
+  h += '<button id="fv-edit-save" style="width:100%;margin-top:14px;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Save changes</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var save = document.getElementById('fv-edit-save');
+    if(save) save.addEventListener('click', async function(){
+      var nt = ((document.getElementById('fv-edit-title')||{}).value || '').trim();
+      var nc = ((document.getElementById('fv-edit-caption')||{}).value || '').trim();
+      var nr = parseFloat((document.getElementById('fv-edit-rate')||{}).value || '0') || 0;
+      var nb = parseFloat((document.getElementById('fv-edit-budget')||{}).value || '0') || 0;
+      if(!nt){ toast('Title cannot be empty.', 'error'); return; }
+
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var patch = {
+          title: nt,
+          caption: nc || null,
+          cfar_rate_per_minute: nr > 0 ? nr : null,
+          cfar_view_budget: nb > 0 ? nb : null
+        };
+        var r = await c.from('sparks').update(patch).eq('id', videoId).eq('author_id', u.id);
+        if(r.error) throw r.error;
+
+        /* Update state */
+        [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
+          if(!arr) return;
+          arr.forEach(function(x){
+            if(x.id === videoId){
+              x.title = nt;
+              x.caption = nc;
+              x.cfar_rate_per_minute = nr > 0 ? nr : null;
+              x.cfar_view_budget = nb > 0 ? nb : null;
+            }
+          });
+        });
+        Z.closeSheet();
+        toast('Video updated.');
+        /* Reopen video to refresh display */
+        try { Z.sp5CloseVideo(); } catch(e){}
+        setTimeout(function(){ Z.sp5OpenVideo(videoId); }, 250);
+      } catch(e){ toast('Save failed: ' + (e.message || 'unknown'), 'error'); }
+    });
+  }, 40);
+};
+
+/* Add ⋮ menu to video page header — owner + non-owner */
+var _prevOpenVideoMenu = Z.sp5OpenVideo;
+if(typeof _prevOpenVideoMenu === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideoMenu.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        var head = document.querySelector('.sp5-vd-head');
+        if(!head) return;
+        if(head.querySelector('[data-vd-more]')) return;
+
+        var u = Z.State.currentUser;
+        var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+             || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; })
+             || (Z.State.allSparks || []).find(function(x){ return x.id === videoId; });
+        if(!v) return;
+        var isMine = u && u.id === v.author_id;
+
+        var btn = document.createElement('button');
+        btn.setAttribute('data-vd-more','1');
+        btn.title = 'More';
+        btn.style.cssText = 'background:rgba(30,41,59,.7);border:1px solid #1e293b;color:#cbd5e1;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+        btn.innerHTML = '<i class="fa-solid fa-ellipsis-vertical"></i>';
+        btn.addEventListener('click', function(e){
+          e.stopPropagation();
+          Z._openVideoMoreMenu(videoId, isMine, v);
+        });
+        head.appendChild(btn);
+      } catch(e){}
+    }, 250);
+    return r;
+  };
+}
+
+Z._openVideoMoreMenu = function(videoId, isMine, video){
+  var rows = [];
+  if(isMine){
+    rows.push({ icon:'fa-solid fa-pen',      label:'Edit title & description', action:'Z.closeSheet();setTimeout(function(){Z.editFullVideo(\'' + esc(videoId) + '\')},200)' });
+    rows.push({ icon:'fa-solid fa-thumbtack', label: video.is_pinned ? 'Unpin from SPACE' : 'Pin to SPACE', action:'Z.closeSheet();Z.pinVideo(\'' + esc(videoId) + '\',' + (video.is_pinned ? 'true' : 'false') + ')' });
+    rows.push({ icon:'fa-solid fa-bookmark',  label: Z.isVideoSaved(videoId) ? 'Remove from Watch Later' : 'Save to Watch Later', action:'Z.closeSheet();Z.toggleVideoSave(\'' + esc(videoId) + '\')' });
+    rows.push({ icon:'fa-solid fa-trash',     label:'Delete video', action:'Z.closeSheet();setTimeout(function(){Z.deleteFullVideo(\'' + esc(videoId) + '\')},200)', danger:true });
+  } else {
+    rows.push({ icon:'fa-solid fa-bookmark', label: Z.isVideoSaved(videoId) ? 'Remove from Watch Later' : 'Save to Watch Later', action:'Z.closeSheet();Z.toggleVideoSave(\'' + esc(videoId) + '\')' });
+    rows.push({ icon:'fa-solid fa-thumbs-down', label:'Not interested', action:'Z.closeSheet();Z.markNotInterested(\'video\',\'' + esc(videoId) + '\');Z.sp5CloseVideo()' });
+    rows.push({ icon:'fa-solid fa-flag', label:'Report', action:'Z.closeSheet();Z._openContentReportSheet(\'spark\',\'' + esc(videoId) + '\',\'this video\')', danger:true });
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">More</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:8px;">';
+  rows.forEach(function(it){
+    h += '<button onclick="' + it.action + '" style="width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:' + (it.danger ? '#c9a5a5' : '#e2e8f0') + ';font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;">';
+    h += '<i class="' + it.icon + '" style="width:16px;text-align:center;color:' + (it.danger ? '#a16262' : '#10b981') + ';flex-shrink:0;"></i>';
+    h += '<span style="flex:1;">' + esc(it.label) + '</span>';
+    h += '</button>';
+  });
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ============================================================
+   5. SPARK slide — add Edit + Delete options for own spark
+   ============================================================ */
+var _prevRenderSparkSlideClean = Z.renderSparkSlide;
+if(typeof _prevRenderSparkSlideClean === 'function'){
+  Z.renderSparkSlide = function(spark, index){
+    var html = _prevRenderSparkSlideClean.apply(this, arguments);
+    try {
+      var u = Z.State.currentUser;
+      var isOwn = u && u.id === spark.author_id;
+      if(isOwn && spark.type !== 'long_video'){
+        /* Find Delete button (already exists for own) and insert Edit before it */
+        var deleteNeedle = '<button class="danger" onclick="Z.deleteSpark(\'' + spark.id + '\')">';
+        var idx = html.indexOf(deleteNeedle);
+        if(idx !== -1 && html.indexOf('data-spark-edit=') === -1){
+          var editBtn = '<button data-spark-edit="' + spark.id + '" onclick="Z.editSpark(\'' + spark.id + '\')"><i class="fa-solid fa-pen"></i> Edit caption</button>';
+          html = html.substring(0, idx) + editBtn + html.substring(idx);
+        }
+      }
+    } catch(e){}
+    return html;
+  };
+}
+
+Z.editSpark = function(sparkId){
+  var u = Z.State.currentUser;
+  if(!u){ toast('Login first.'); return; }
+  var s = (Z.State.allSparks || []).find(function(x){ return x.id === sparkId; });
+  if(!s){ toast('Spark not found.'); return; }
+  if(s.author_id !== u.id){ toast('You can only edit your own Sparks.', 'error'); return; }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:82vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Edit Spark Caption</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<textarea id="sp-edit-caption" class="form-textarea" maxlength="600" rows="4" placeholder="Caption…">' + esc(s.caption || '') + '</textarea>';
+  h += '<button id="sp-edit-save" style="width:100%;margin-top:14px;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Save caption</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var save = document.getElementById('sp-edit-save');
+    if(save) save.addEventListener('click', async function(){
+      var txt = ((document.getElementById('sp-edit-caption')||{}).value || '').trim();
+      var c = Z.sb && Z.sb();
+      if(!c) return;
+      try {
+        var r = await c.from('sparks').update({ caption: txt || null }).eq('id', sparkId).eq('author_id', u.id);
+        if(r.error) throw r.error;
+        (Z.State.allSparks || []).forEach(function(x){ if(x.id === sparkId) x.caption = txt; });
+        Z.closeSheet();
+        toast('Caption updated.');
+        try { Z.showView('spark'); } catch(e){}
+      } catch(e){ toast('Failed: ' + (e.message || 'unknown'), 'error'); }
+    });
+  }, 40);
+};
+
+/* ============================================================
+   6. Video page header row — mobile crowd fix
+   Trim to essential on ≤640px. Full details in ⋮ menu.
+   ============================================================ */
+if(!document.getElementById('zynix-vd-mobile-css')){
+  var st = document.createElement('style');
+  st.id = 'zynix-vd-mobile-css';
+  st.textContent = [
+    '@media(max-width:640px){',
+      '.sp5-vd-header-row{flex-wrap:nowrap !important;gap:8px !important;}',
+      '.sp5-vd-header-row .sp5-vd-avatar{width:38px !important;height:38px !important;}',
+      '.sp5-vd-header-row .sp5-vd-chip-btn{padding:6px 10px !important;font-size:11px !important;}',
+      '.sp5-vd-header-row .sp5-vd-share-meta{padding:4px 9px !important;font-size:10px !important;}',
+      '.sp5-vd-header-row .sp5-vd-share-meta span{font-size:10px !important;}',
+    '}'
+  ].join('');
+  document.head.appendChild(st);
+}
+
+console.log('[SPACE v7 — Clean Owner] single publish · single avatar · spark filter · video ⋮ menu · spark edit');
+})();
+</script>     
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
