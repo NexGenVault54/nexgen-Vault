@@ -1795,7 +1795,7 @@ Z.DB = {
       prev.forEach(function(s){ if(s && s.id) prevById[s.id] = s; });
       var r = await c.from('sparks')
         .select('id,author_id,type,title,caption,video_url,tags,views,shares,share_bounty,share_budget_cap,share_bounty_paid,created_at')
-        .order('created_at',{ascending:false}).limit(30);
+        .order('created_at',{ascending:false}).limit(50);
       if(r.error) throw r.error;
       var data = r.data || [];
       data.forEach(function(s){
@@ -14803,7 +14803,122 @@ Z.submitSpark = function(force){
 
 console.log('[SPACE v7 — Fee Safety] size pre-check · refund on failure · click-lock neutralized');
 })();
-</script>    
+</script>
+<!-- ============================================================ -->
+<!-- SPARK LOAD MORE — Auto-paginate footer Spark feed            -->
+<!-- Batch 20 · triggers when 5 slides remain below viewport     -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSparkLoadMore) return; Z.__zynixSparkLoadMore = true;
+
+var BATCH = 20;
+var TRIGGER_FROM_END = 5;
+var _fetching = false;
+var _exhausted = false;
+
+async function fetchMore(){
+  if(_fetching || _exhausted) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var list = (Z.State.allSparks || []).filter(function(s){
+    return s && s.type === 'spark' && s.video_url;
+  });
+  if(!list.length){ _exhausted = true; return; }
+
+  var oldest = list[list.length - 1];
+  if(!oldest || !oldest.created_at){ _exhausted = true; return; }
+
+  _fetching = true;
+  try {
+    var r = await c.from('sparks')
+      .select('id,author_id,type,title,caption,video_url,tags,views,shares,share_bounty,share_budget_cap,share_bounty_paid,created_at,is_pinned,is_age_gated,content_warning,cfar_rate_per_minute,cfar_view_budget,cfar_budget_spent')
+      .eq('type', 'spark')
+      .lt('created_at', oldest.created_at)
+      .order('created_at', { ascending: false })
+      .limit(BATCH);
+
+    if(r.error){ console.warn('[spark load more]', r.error); return; }
+    var rows = r.data || [];
+    if(!rows.length){ _exhausted = true; return; }
+
+    var existingIds = {};
+    (Z.State.allSparks || []).forEach(function(x){ if(x && x.id) existingIds[x.id] = true; });
+    var fresh = rows.filter(function(x){ return x && !existingIds[x.id]; });
+    if(!fresh.length){ _exhausted = true; return; }
+
+    Z.State.allSparks = (Z.State.allSparks || []).concat(fresh);
+
+    var feed = document.getElementById('spark-feed');
+    if(feed){
+      var startIdx = feed.querySelectorAll('.spark-slide').length;
+      var html = '';
+      fresh.forEach(function(sp, i){
+        try { html += Z.renderSparkSlide(sp, startIdx + i); } catch(e){}
+      });
+      feed.insertAdjacentHTML('beforeend', html);
+
+      if(typeof Z.setupSparkFeed === 'function'){
+        try { Z.setupSparkFeed(Z.State.allSparks); } catch(e){}
+      }
+      try { Z.observeFreezeDots(); } catch(e){}
+    }
+    console.log('[spark load more] +' + fresh.length + ' · total ' + (Z.State.allSparks || []).length);
+  } catch(e){
+    console.warn('[spark load more]', e);
+  } finally {
+    _fetching = false;
+  }
+}
+
+function onScroll(){
+  if(Z.State.currentView !== 'spark') return;
+  var feed = document.getElementById('spark-feed');
+  if(!feed) return;
+  var slides = feed.querySelectorAll('.spark-slide');
+  if(!slides.length) return;
+  var scrollBottom = feed.scrollTop + feed.clientHeight;
+  var total = feed.scrollHeight;
+  var remaining = Math.round((total - scrollBottom) / feed.clientHeight);
+  if(remaining <= TRIGGER_FROM_END){
+    fetchMore();
+  }
+}
+
+var _prevShowView = Z.showView;
+Z.showView = function(view){
+  var r = _prevShowView.apply(this, arguments);
+  if(view === 'spark'){
+    _exhausted = false;
+    _fetching = false;
+    setTimeout(function(){
+      var feed = document.getElementById('spark-feed');
+      if(feed && !feed._loadMoreHooked){
+        feed._loadMoreHooked = true;
+        feed.addEventListener('scroll', onScroll, {passive: true});
+      }
+    }, 200);
+  }
+  return r;
+};
+
+var _prevReloadData = Z.reloadData;
+if(typeof _prevReloadData === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReloadData.apply(this, arguments);
+    _exhausted = false;
+    _fetching = false;
+    return r;
+  };
+}
+
+console.log('[Spark Load More] ready — batch ' + BATCH + ' · trigger at ' + TRIGGER_FROM_END + ' from end');
+})();
+</script>
+     
  
 <!-- ============================================================
      SECTION 9 — CIRCLES
