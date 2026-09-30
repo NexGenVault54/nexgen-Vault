@@ -12674,6 +12674,476 @@ Z.showView = function(view){
 console.log('[SPACE v7 — Fix 5 FINAL v2] single controller · hard pause-all · 75% threshold');
 })();
 </script>
+<!-- ============================================================ -->
+<!-- SPACE v7 — CODE PART 1                                        -->
+<!-- Search · Trending · Content reports · Not interested          -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Part1Code) return; Z.__zynixSpaceV7Part1Code = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+function ago(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+/* ============================================================
+   STATE
+   ============================================================ */
+Z.State._spSpaceSearch = Z.State._spSpaceSearch || '';
+Z.State._spSpaceTrending = Z.State._spSpaceTrending || false;
+
+/* Not Interested store */
+function niKey(){ var u = Z.State.currentUser; return u ? ('zynix_ni_' + u.id) : ''; }
+function getNI(){
+  try { var k = niKey(); return k ? JSON.parse(localStorage.getItem(k) || '{}') : {}; } catch(e){ return {}; }
+}
+function setNI(obj){
+  try { var k = niKey(); if(k) localStorage.setItem(k, JSON.stringify(obj)); } catch(e){}
+}
+Z.markNotInterested = function(type, id){
+  var m = getNI();
+  m[type + ':' + id] = Date.now();
+  setNI(m);
+  toast('Marked "Not Interested". Hidden from your feeds.');
+  if(Z.State.currentView === 'spark'){ try { Z.showView('spark'); } catch(e){} }
+  else if(Z.State.currentView === 'public-profile'){ try { Z.sp5RenderContent(Z.State.spaceUserId, Z.State.currentUser && Z.State.currentUser.id === Z.State.spaceUserId); } catch(e){} }
+};
+Z.isNotInterested = function(type, id){
+  var m = getNI();
+  return !!m[type + ':' + id];
+};
+
+/* ============================================================
+   TRENDING ENGINE — client-side, applied to loaded batches
+   Score = views×1 + reactions×5 + comments×3 + fresh_boost
+   fresh_boost: 24h = +1000, 7d = +400, 30d = +100, older = 0
+   ============================================================ */
+function computeTrendScore(item, kind){
+  var views = Number(item.views) || 0;
+  var reactions = 0;
+  if(kind === 'spark' && item._reactions){
+    Object.keys(item._reactions).forEach(function(k){
+      if(k !== 'dislike') reactions += Number(item._reactions[k]) || 0;
+    });
+  }
+  var comments = Number(item._commentsCount) || 0;
+  var ageMs = Date.now() - new Date(item.created_at).getTime();
+  var hours = ageMs / 3600000;
+  var fresh = 0;
+  if(hours <= 24) fresh = 1000;
+  else if(hours <= 168) fresh = 400;
+  else if(hours <= 720) fresh = 100;
+  return (views * 1) + (reactions * 5) + (comments * 3) + fresh;
+}
+
+function getTrendingSparks(limit){
+  var list = (Z.State.publicSparksAll || []).filter(function(s){
+    return s && s.type === 'spark' && s.video_url && !Z.isNotInterested('spark', s.id);
+  });
+  list.sort(function(a, b){ return computeTrendScore(b, 'spark') - computeTrendScore(a, 'spark'); });
+  return list.slice(0, limit || 5);
+}
+
+function getTrendingVideos(limit){
+  var list = (Z.State.publicVideosAll || []).filter(function(v){
+    return v && v.type === 'long_video' && v.video_url && !Z.isNotInterested('video', v.id);
+  });
+  list.sort(function(a, b){ return computeTrendScore(b, 'video') - computeTrendScore(a, 'video'); });
+  return list.slice(0, limit || 5);
+}
+
+/* ============================================================
+   SEARCH ENGINE — title, caption, channel name, SPACE name
+   ============================================================ */
+function matchSearch(item, query, profileMap){
+  if(!query) return true;
+  var q = query.toLowerCase().trim();
+  if(!q) return true;
+  var title = (item.title || '').toLowerCase();
+  var caption = (item.caption || '').toLowerCase();
+  var tags = (item.tags || []).join(' ').toLowerCase();
+  if(title.indexOf(q) !== -1) return true;
+  if(caption.indexOf(q) !== -1) return true;
+  if(tags.indexOf(q) !== -1) return true;
+  var author = profileMap[item.author_id];
+  if(author){
+    var uname = (author.username || '').toLowerCase();
+    var name = (author.name || '').toLowerCase();
+    var spaceName = ((author.space_data || {}).name || '').toLowerCase();
+    if(uname.indexOf(q) !== -1) return true;
+    if(name.indexOf(q) !== -1) return true;
+    if(spaceName.indexOf(q) !== -1) return true;
+  }
+  return false;
+}
+
+function buildProfileMap(){
+  var m = {};
+  (Z.State.allProfiles || []).forEach(function(p){ if(p && p.id) m[p.id] = p; });
+  return m;
+}
+
+/* ============================================================
+   Inject search + trending into Public subtabs
+   Runs after every renderPublicSpace paint.
+   ============================================================ */
+function injectSearchBar(){
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+  var subtabs = host.querySelector('.sp5-subtabs');
+  if(!subtabs) return;
+  if(host.querySelector('[data-sp-search-wrap]')) return;
+
+  var sub = Z.State.spacePublicTab || 'sparks';
+  var placeholder = sub === 'videos' ? 'Search videos, titles, creators…' : 'Search sparks, captions, creators…';
+
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-sp-search-wrap','1');
+  wrap.style.cssText = 'position:relative;';
+  wrap.innerHTML =
+    '<input data-sp-search-input="1" type="text" placeholder="' + esc(placeholder) + '" value="' + esc(Z.State._spSpaceSearch) + '" ' +
+    'style="width:100%;padding:11px 40px 11px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">' +
+    '<i class="fa-solid fa-magnifying-glass" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#64748b;font-size:12px;pointer-events:none;"></i>';
+
+  subtabs.parentNode.insertBefore(wrap, subtabs.nextSibling);
+
+  var input = wrap.querySelector('[data-sp-search-input]');
+  if(input){
+    var deb = null;
+    input.addEventListener('input', function(){
+      Z.State._spSpaceSearch = this.value;
+      if(deb) clearTimeout(deb);
+      deb = setTimeout(function(){
+        var me = Z.State.currentUser;
+        var isOwner = !!(me && me.id === Z.State.spaceUserId);
+        Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
+      }, 220);
+    });
+  }
+}
+
+/* ============================================================
+   Trending row renderer
+   ============================================================ */
+function renderTrendingStrip(kind){
+  var items = kind === 'videos' ? getTrendingVideos(5) : getTrendingSparks(5);
+  if(!items.length) return '';
+  var title = 'Trending ' + (kind === 'videos' ? 'Videos' : 'Sparks');
+  var h = '<div data-sp-trend-strip="1" style="margin-bottom:12px;">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;"><i class="fa-solid fa-fire" style="color:#f59e0b;margin-right:6px;"></i>' + title + '</div>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;scrollbar-width:thin;">';
+  items.forEach(function(item, i){
+    var thumb = '';
+    if(item.video_url){
+      thumb = '<video src="' + esc(item.video_url) + '" preload="metadata" playsinline muted style="width:100%;height:100%;object-fit:cover;" data-space-spark="1"></video>';
+    }
+    var label = item.title || item.caption || 'Untitled';
+    if(label.length > 40) label = label.substring(0, 40) + '…';
+    var click = kind === 'videos'
+      ? 'Z.sp5OpenVideo(\'' + esc(item.id) + '\')'
+      : 'Z.sp5OpenUserSpark(\'' + esc(item.id) + '\',\'' + esc(item.author_id) + '\')';
+    h += '<div onclick="' + click + '" style="flex:0 0 130px;cursor:pointer;">' +
+      '<div style="position:relative;aspect-ratio:' + (kind === 'videos' ? '16/9' : '9/16') + ';border-radius:10px;overflow:hidden;background:#000;border:1px solid #1e293b;">' +
+        thumb +
+        '<div style="position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;">' + (i + 1) + '</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + esc(label) + '</div>' +
+    '</div>';
+  });
+  h += '</div></div>';
+  return h;
+}
+
+/* ============================================================
+   Patch sp5RenderContent to inject search + trending + apply filters
+   ============================================================ */
+var _prevRenderContent = Z.sp5RenderContent;
+if(typeof _prevRenderContent === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevRenderContent.apply(this, arguments);
+    setTimeout(function(){
+      try { applySpaceEnhancements(userId, isOwner); } catch(e){}
+    }, 80);
+    setTimeout(function(){
+      try { applySpaceEnhancements(userId, isOwner); } catch(e){}
+    }, 500);
+    return r;
+  };
+}
+
+function applySpaceEnhancements(userId, isOwner){
+  if(Z.State.currentView !== 'public-profile') return;
+  if(Z.State.spaceTab !== 'public') return;
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+
+  injectSearchBar();
+
+  /* Trending strip — inject above the grid if not present */
+  var sub = Z.State.spacePublicTab || 'sparks';
+  var existing = host.querySelector('[data-sp-trend-strip]');
+  if(!existing){
+    var trendHtml = renderTrendingStrip(sub === 'videos' ? 'videos' : 'sparks');
+    if(trendHtml){
+      var secHead = host.querySelector('.sp5-sec-head');
+      if(secHead && secHead.parentNode){
+        var temp = document.createElement('div');
+        temp.innerHTML = trendHtml;
+        secHead.parentNode.insertBefore(temp.firstChild, secHead);
+      }
+    }
+  }
+
+  /* Apply search filter + not-interested filter to grid */
+  filterGrid(userId, isOwner, sub);
+}
+
+/* Filter logic — hide non-matching cards */
+function filterGrid(userId, isOwner, sub){
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+  var q = (Z.State._spSpaceSearch || '').trim().toLowerCase();
+  var profiles = buildProfileMap();
+  var items;
+  var gridSel;
+
+  if(sub === 'videos'){
+    items = Z.State.publicVideosAll || [];
+    gridSel = '.sp5-vgrid .sp5-vcard';
+  } else {
+    items = Z.State.publicSparksAll || [];
+    gridSel = '.sp5-sgrid .sp5-scard';
+  }
+
+  var cards = host.querySelectorAll(gridSel);
+  var visibleCount = 0;
+
+  cards.forEach(function(card){
+    var oc = card.getAttribute('onclick') || '';
+    var m = oc.match(/'([a-f0-9-]{8,})'/);
+    var id = m ? m[1] : null;
+    if(!id) { card.style.display = 'none'; return; }
+    var item = null;
+    for(var i = 0; i < items.length; i++){ if(items[i].id === id){ item = items[i]; break; } }
+    if(!item){ card.style.display = 'none'; return; }
+
+    /* Not interested check */
+    var niType = sub === 'videos' ? 'video' : 'spark';
+    if(Z.isNotInterested(niType, id)){ card.style.display = 'none'; return; }
+
+    /* Search check */
+    if(q && !matchSearch(item, q, profiles)){ card.style.display = 'none'; return; }
+
+    card.style.display = '';
+    visibleCount++;
+  });
+
+  /* Empty state */
+  var existingEmpty = host.querySelector('[data-sp-empty]');
+  if(visibleCount === 0 && q){
+    if(!existingEmpty){
+      var emptyEl = document.createElement('div');
+      existingEmpty = emptyEl;
+      emptyEl.setAttribute('data-sp-empty','1');
+      emptyEl.style.cssText = 'grid-column:1/-1;padding:30px 20px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#131c30;border:1px dashed #1e293b;';
+      emptyEl.textContent = 'No results for "' + q + '"';
+      var grid = host.querySelector(sub === 'videos' ? '.sp5-vgrid' : '.sp5-sgrid');
+      if(grid) grid.appendChild(emptyEl);
+    }
+  } else if(existingEmpty){
+    existingEmpty.remove();
+  }
+}
+
+/* ============================================================
+   CONTENT REPORT — ⋮ menu integration
+   Adds a small "Report" button to video page, spark slides, post cards
+   ============================================================ */
+Z._openContentReportSheet = function(type, id, label){
+  var reasons = [
+    { key:'spam',          label:'Spam or scam' },
+    { key:'inappropriate', label:'Inappropriate content' },
+    { key:'harassment',    label:'Harassment or bullying' },
+    { key:'copyright',     label:'Copyright violation' },
+    { key:'illegal',       label:'Illegal content' },
+    { key:'adult',         label:'Adult content' },
+    { key:'alcohol',       label:'Alcohol or smoking' },
+    { key:'other',         label:'Other' }
+  ];
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Report ' + esc(label || 'content') + '</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+  h += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.6;margin-bottom:12px;">Your identity stays anonymous to the reported user. Reports go to the moderation committee.</div>';
+
+  reasons.forEach(function(r){
+    h += '<button data-content-report-reason="' + r.key + '" style="width:100%;padding:12px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;text-align:left;margin-bottom:6px;">' + esc(r.label) + '</button>';
+  });
+
+  h += '<div id="sp5-cr-details-wrap" style="display:none;margin-top:8px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Details (optional)</label>';
+  h += '<textarea id="sp5-cr-details" class="form-textarea" maxlength="400" placeholder="Anything that would help."></textarea>';
+  h += '</div>';
+
+  h += '<button id="sp5-cr-submit" style="width:100%;margin-top:14px;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#a16262,#7a4949);color:#fff;font-weight:900;font-size:13px;cursor:pointer;opacity:.5;" disabled>Submit report</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  var chosen = null;
+  setTimeout(function(){
+    var dWrap = document.getElementById('sp5-cr-details-wrap');
+    var sub = document.getElementById('sp5-cr-submit');
+    document.querySelectorAll('[data-content-report-reason]').forEach(function(b){
+      b.addEventListener('click', function(){
+        chosen = this.getAttribute('data-content-report-reason');
+        document.querySelectorAll('[data-content-report-reason]').forEach(function(x){
+          x.style.borderColor = '#1e293b'; x.style.background = '#0f172a';
+        });
+        this.style.borderColor = '#a16262';
+        this.style.background = 'rgba(161,98,98,.12)';
+        dWrap.style.display = 'block';
+        sub.disabled = false; sub.style.opacity = '1';
+      });
+    });
+    sub.addEventListener('click', async function(){
+      if(!chosen) return;
+      var details = ((document.getElementById('sp5-cr-details')||{}).value || '').trim() || null;
+      sub.disabled = true; sub.textContent = 'Submitting…';
+      var c = Z.sb && Z.sb(); if(!c) return;
+      try {
+        var r = await c.rpc('report_content', {
+          p_content_type: type,
+          p_content_id: id,
+          p_reason: chosen,
+          p_details: details
+        });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        toast('Report submitted. Thank you.');
+      } catch(e){
+        var msg = (e && e.message) ? e.message : 'unknown';
+        if(msg.indexOf('cannot_report_own') !== -1) toast('You cannot report your own content.', 'error');
+        else toast('Failed: ' + msg, 'error');
+        sub.disabled = false; sub.textContent = 'Submit report';
+      }
+    });
+  }, 40);
+};
+
+/* Add report option to video page: extend sp5OpenVideo after render */
+var _prevOpenVideo = Z.sp5OpenVideo;
+if(typeof _prevOpenVideo === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideo.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        var head = document.querySelector('.sp5-vd-head');
+        if(head && !head.querySelector('[data-vd-report]')){
+          var btn = document.createElement('button');
+          btn.setAttribute('data-vd-report','1');
+          btn.title = 'Report';
+          btn.style.cssText = 'background:transparent;border:1px solid #1e293b;color:#94a3b8;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+          btn.innerHTML = '<i class="fa-solid fa-flag"></i>';
+          btn.addEventListener('click', function(){
+            Z._openContentReportSheet('spark', videoId, 'this video');
+          });
+          head.appendChild(btn);
+        }
+      } catch(e){}
+    }, 120);
+    return r;
+  };
+}
+
+/* Add report + not-interested to spark slide ⋮ menu */
+var _prevRenderSparkSlide = Z.renderSparkSlide;
+if(typeof _prevRenderSparkSlide === 'function'){
+  Z.renderSparkSlide = function(spark, index){
+    var html = _prevRenderSparkSlide.apply(this, arguments);
+    try {
+      var marker = '<button onclick="Z.markSparkNotInterested(\'' + spark.id + '\')"><i class="fa-solid fa-thumbs-down"></i> Not Interested</button>';
+      if(html.indexOf(marker) !== -1 && !Z.isNotInterested('spark', spark.id)){
+        /* Add report button after Not Interested */
+        var add = marker + '<button data-spark-report="' + spark.id + '" onclick="Z._openContentReportSheet(\'spark\',\'' + spark.id + '\',\'this spark\')"><i class="fa-solid fa-flag"></i> Report</button>';
+        html = html.replace(marker, add);
+      }
+    } catch(e){}
+    return html;
+  };
+}
+
+/* Add report option to post cards — non-owner */
+var _prevRenderPostCard = Z.renderPostCard;
+if(typeof _prevRenderPostCard === 'function'){
+  Z.renderPostCard = function(p, profiles, me, isNew){
+    var html = _prevRenderPostCard.apply(this, arguments);
+    try {
+      var isMine = me && me.id === p.author_id;
+      if(!isMine && html.indexOf('data-post-report=') === -1){
+        /* Insert Report row right before the closing </div> of the menu */
+        var menuClose = html.indexOf("Not Interested");
+        if(menuClose !== -1){
+          var afterNI = html.indexOf('</button>', menuClose) + '</button>'.length;
+          var reportBtn = '<button data-post-report="' + p.id + '" onclick="Z._openContentReportSheet(\'post\',\'' + p.id + '\',\'this post\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-flag" style="width:14px;text-align:center;color:#a16262;"></i> Report</button>';
+          html = html.substring(0, afterNI) + reportBtn + html.substring(afterNI);
+        }
+      }
+    } catch(e){}
+    return html;
+  };
+}
+
+/* ============================================================
+   NOT INTERESTED — extends to video page
+   ============================================================ */
+var _prevOpenVideo2 = Z.sp5OpenVideo;
+if(typeof _prevOpenVideo2 === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideo2.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        var head = document.querySelector('.sp5-vd-head');
+        if(head && !head.querySelector('[data-vd-ni]')){
+          var niBtn = document.createElement('button');
+          niBtn.setAttribute('data-vd-ni','1');
+          niBtn.title = 'Not interested';
+          niBtn.style.cssText = 'background:transparent;border:1px solid #1e293b;color:#94a3b8;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:6px;';
+          niBtn.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
+          niBtn.addEventListener('click', function(){
+            Z.markNotInterested('video', videoId);
+            Z.sp5CloseVideo();
+          });
+          head.appendChild(niBtn);
+        }
+      } catch(e){}
+    }, 140);
+    return r;
+  };
+}
+
+console.log('[SPACE v7 — Part 1] search · trending · reports · not-interested ready');
+})();
+</script>     
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
