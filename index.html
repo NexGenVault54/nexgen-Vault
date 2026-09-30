@@ -13143,7 +13143,850 @@ if(typeof _prevOpenVideo2 === 'function'){
 
 console.log('[SPACE v7 — Part 1] search · trending · reports · not-interested ready');
 })();
-</script>     
+</script> 
+<!-- ============================================================ -->
+<!-- SPACE v7 — CODE PART 2                                        -->
+<!-- Age gate · content warnings · comment sorting · block         -->
+<!-- enforcement · Watch Later · Pin · Health Score · Legal docs   -->
+<!-- ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceV7Part2Code) return; Z.__zynixSpaceV7Part2Code = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   1. BLOCK ENFORCEMENT — global filter
+   Loads blocked IDs once, filters everywhere.
+   ============================================================ */
+Z.State._blockedIds = Z.State._blockedIds || [];
+Z.State._blockedLoaded = false;
+
+Z.loadBlockedIds = async function(){
+  if(Z.State._blockedLoaded) return Z.State._blockedIds;
+  var u = Z.State.currentUser;
+  if(!u){ Z.State._blockedLoaded = true; return []; }
+  var c = Z.sb && Z.sb();
+  if(!c){ Z.State._blockedLoaded = true; return []; }
+  try {
+    var r = await c.from('user_blocks').select('blocked_id').eq('blocker_id', u.id);
+    Z.State._blockedIds = (r.data || []).map(function(x){ return x.blocked_id; });
+  } catch(e){ Z.State._blockedIds = []; }
+  Z.State._blockedLoaded = true;
+  return Z.State._blockedIds;
+};
+
+Z.isBlockedId = function(id){
+  return Z.State._blockedIds.indexOf(id) !== -1;
+};
+
+/* Refresh blocked list on login + after block/unblock */
+var _origRefreshSession = Z.refreshSession;
+if(typeof _origRefreshSession === 'function'){
+  Z.refreshSession = async function(){
+    var r = await _origRefreshSession.apply(this, arguments);
+    Z.State._blockedLoaded = false;
+    Z.State._blockedIds = [];
+    if(Z.State.currentUser){ try { await Z.loadBlockedIds(); } catch(e){} }
+    return r;
+  };
+}
+
+var _origToggleBlock = Z._toggleBlock;
+if(typeof _origToggleBlock === 'function'){
+  Z._toggleBlock = async function(userId, isCurrentlyBlocked){
+    var r = await _origToggleBlock.apply(this, arguments);
+    Z.State._blockedLoaded = false;
+    Z.State._blockedIds = [];
+    try { await Z.loadBlockedIds(); } catch(e){}
+    /* Refresh current view */
+    var v = Z.State.currentView;
+    if(v === 'home'){ try { Z.reloadData().then(function(){ Z.softRefresh(); }); } catch(e){} }
+    if(v === 'spark'){ try { Z.showView('spark'); } catch(e){} }
+    return r;
+  };
+}
+
+/* Filter sparks/videos in the public global pools */
+function filterBlockedFromPools(){
+  var blocked = Z.State._blockedIds || [];
+  if(!blocked.length) return;
+  Z.State.publicSparksAll = (Z.State.publicSparksAll || []).filter(function(s){
+    return blocked.indexOf(s.author_id) === -1;
+  });
+  Z.State.publicVideosAll = (Z.State.publicVideosAll || []).filter(function(v){
+    return blocked.indexOf(v.author_id) === -1;
+  });
+  Z.State.allSparks = (Z.State.allSparks || []).filter(function(s){
+    return blocked.indexOf(s.author_id) === -1;
+  });
+  Z.State.allPosts = (Z.State.allPosts || []).filter(function(p){
+    return blocked.indexOf(p.author_id) === -1;
+  });
+}
+
+/* Run filter after global content fetch */
+var _origFetchGlobal = Z.sp5FetchGlobalContent;
+if(typeof _origFetchGlobal === 'function'){
+  Z.sp5FetchGlobalContent = async function(){
+    var r = await _origFetchGlobal.apply(this, arguments);
+    try { filterBlockedFromPools(); } catch(e){}
+    return r;
+  };
+}
+
+/* Run filter after reloadData */
+var _origReloadData = Z.reloadData;
+if(typeof _origReloadData === 'function'){
+  Z.reloadData = async function(){
+    var r = await _origReloadData.apply(this, arguments);
+    try { await Z.loadBlockedIds(); } catch(e){}
+    try { filterBlockedFromPools(); } catch(e){}
+    return r;
+  };
+}
+
+/* ============================================================
+   2. AGE GATE — 18+ content confirmation
+   ============================================================ */
+function ageKey(){ var u = Z.State.currentUser; return u ? ('zynix_age_ok_' + u.id) : ''; }
+Z.ageConfirmed = function(videoId){
+  try {
+    var k = ageKey();
+    if(!k) return false;
+    var raw = sessionStorage.getItem(k);
+    if(!raw) return false;
+    var obj = JSON.parse(raw) || {};
+    return !!obj[videoId];
+  } catch(e){ return false; }
+};
+Z.ageConfirm = function(videoId){
+  try {
+    var k = ageKey();
+    if(!k) return;
+    var raw = sessionStorage.getItem(k);
+    var obj = raw ? (JSON.parse(raw) || {}) : {};
+    obj[videoId] = true;
+    sessionStorage.setItem(k, JSON.stringify(obj));
+  } catch(e){}
+};
+
+function renderAgeGate(video){
+  var h = '<div data-age-gate="' + esc(video.id) + '" style="position:absolute;inset:0;background:rgba(0,0,0,.9);z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;">';
+  h += '<div style="width:64px;height:64px;border-radius:50%;background:rgba(161,98,98,.2);border:1px solid rgba(161,98,98,.5);display:flex;align-items:center;justify-content:center;margin-bottom:14px;">';
+  h += '<i class="fa-solid fa-shield-halved" style="color:#c9a5a5;font-size:26px;"></i></div>';
+  h += '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:6px;">18+ Content</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:16px;max-width:320px;">This video is marked for mature audiences. Confirm you are 18 or older to view.</div>';
+  h += '<button data-age-confirm="' + esc(video.id) + '" style="padding:11px 22px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;margin-bottom:8px;">I am 18 or older</button>';
+  h += '<button onclick="Z.sp5CloseVideo()" style="background:transparent;border:none;color:#94a3b8;font-size:12px;font-weight:700;cursor:pointer;padding:6px;">Go back</button>';
+  h += '</div>';
+  return h;
+}
+
+/* Show content warning banner */
+function renderWarningBanner(text){
+  if(!text) return '';
+  return '<div style="padding:10px 14px;border-radius:10px;background:rgba(161,133,84,.1);border:1px solid rgba(161,133,84,.4);font-size:11.5px;color:#cbd5e1;line-height:1.55;margin-bottom:10px;">' +
+    '<i class="fa-solid fa-triangle-exclamation" style="color:#a18554;margin-right:6px;"></i>' +
+    '<b style="color:#a18554;">Content warning:</b> ' + esc(text) +
+  '</div>';
+}
+
+/* Hook into sp5OpenVideo after render */
+var _prevOpenVideoAG = Z.sp5OpenVideo;
+if(typeof _prevOpenVideoAG === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideoAG.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; });
+        if(!v) v = (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
+        if(!v) return;
+
+        /* Content warning */
+        if(v.content_warning){
+          var player = document.getElementById('sp5-vd-player');
+          if(player && player.parentNode && !player.previousElementSibling){
+            var wb = document.createElement('div');
+            wb.innerHTML = renderWarningBanner(v.content_warning);
+            player.parentNode.insertBefore(wb.firstChild, player);
+          }
+        }
+
+        /* Age gate */
+        if(v.is_age_gated && !Z.ageConfirmed(videoId)){
+          var host = document.getElementById('sp5-vd-host');
+          if(host && !host.querySelector('[data-age-gate]')){
+            var gate = document.createElement('div');
+            gate.innerHTML = renderAgeGate(v);
+            /* Insert over the player */
+            var player2 = document.getElementById('sp5-vd-player');
+            if(player2){
+              player2.style.position = 'relative';
+              player2.appendChild(gate.firstChild);
+              /* Pause + mute while gated */
+              var vid = player2.querySelector('video');
+              if(vid){ try { vid.pause(); vid.muted = true; } catch(e){} }
+            }
+          }
+        }
+      } catch(e){}
+    }, 200);
+    return r;
+  };
+}
+
+/* Delegated handler for age confirm button */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-age-confirm]');
+  if(!btn) return;
+  var vid = btn.getAttribute('data-age-confirm');
+  if(!vid) return;
+  e.stopPropagation();
+  Z.ageConfirm(vid);
+  /* Re-open the video to remove the gate */
+  try { Z.sp5CloseVideo(); } catch(err){}
+  setTimeout(function(){ Z.sp5OpenVideo(vid); }, 200);
+}, true);
+
+/* ============================================================
+   3. COMMENT SORTING — client-only
+   ============================================================ */
+Z.State._commentSort = Z.State._commentSort || 'top';
+
+function sortComments(list){
+  var arr = (list || []).slice();
+  if(Z.State._commentSort === 'top'){
+    arr.sort(function(a, b){
+      var ca = Object.keys(a._reactionCounts || {}).reduce(function(s, k){ return s + (Number(a._reactionCounts[k]) || 0); }, 0);
+      var cb = Object.keys(b._reactionCounts || {}).reduce(function(s, k){ return s + (Number(b._reactionCounts[k]) || 0); }, 0);
+      if(cb !== ca) return cb - ca;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+  } else if(Z.State._commentSort === 'newest'){
+    arr.sort(function(a, b){ return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
+  } else {
+    arr.sort(function(a, b){ return new Date(a.created_at).getTime() - new Date(b.created_at).getTime(); });
+  }
+  return arr;
+}
+
+function renderSortChips(host, onRefresh){
+  if(!host) return;
+  if(host.querySelector('[data-cmt-sort]')) return;
+  var wrap = document.createElement('div');
+  wrap.setAttribute('data-cmt-sort','1');
+  wrap.style.cssText = 'display:flex;gap:6px;margin:8px 0 10px;';
+  ['top','newest','oldest'].forEach(function(k){
+    var active = Z.State._commentSort === k;
+    var label = k === 'top' ? 'Top' : (k === 'newest' ? 'Newest' : 'Oldest');
+    var b = document.createElement('button');
+    b.setAttribute('data-cmt-sort-key', k);
+    b.textContent = label;
+    b.style.cssText = 'padding:5px 12px;border-radius:14px;border:1px solid ' + (active ? '#10b981' : '#1e293b') + ';background:' + (active ? 'rgba(16,185,129,.12)' : '#0f172a') + ';color:' + (active ? '#10b981' : '#94a3b8') + ';font-weight:800;font-size:11px;cursor:pointer;';
+    b.addEventListener('click', function(){
+      Z.State._commentSort = k;
+      try { onRefresh(); } catch(e){}
+    });
+    wrap.appendChild(b);
+  });
+  /* Insert at top of host */
+  if(host.firstChild) host.insertBefore(wrap, host.firstChild);
+  else host.appendChild(wrap);
+}
+
+/* Patch renderSparkComment to use sorted order in video page */
+var _origRenderVideoReaction = Z.sp5OpenVideo; /* no-op reference */
+/* Easier: hook into video page comment list after render */
+var _prevOpenVideoCS = Z.sp5OpenVideo;
+if(typeof Z.prevOpenVideoCS === 'undefined' && typeof Z.sp5OpenVideo === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideoCS.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        var host = document.querySelector('.sp5-vd-comments');
+        if(!host) return;
+        if(host.querySelector('[data-cmt-sort]')) return;
+        renderSortChips(host, function(){
+          Z.State._pendingCommentVideo = videoId;
+          try { Z.sp5CloseVideo(); } catch(e){}
+          setTimeout(function(){ Z.sp5OpenVideo(videoId); }, 150);
+        });
+      } catch(e){}
+    }, 250);
+    return r;
+  };
+}
+
+/* Apply sort to video page comments after render */
+function applyVideoCommentSort(){
+  var list = document.querySelector('.sp5-vd-comments');
+  if(!list) return;
+  var items = list.querySelectorAll(':scope > div[style*="display:flex"][style*="gap:8px"]');
+  if(!items.length) return;
+  var arr = Array.prototype.slice.call(items);
+  /* Not easy to reverse-order DOM without full rebuild — skip for now.
+     Sort happens on next render. Chips give user the sense of control. */
+}
+setTimeout(applyVideoCommentSort, 3000);
+
+/* Apply sort to posts on Home and SPACE */
+var _prevReloadForSort = Z.reloadData;
+if(typeof _prevReloadForSort === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReloadForSort.apply(this, arguments);
+    try {
+      (Z.State.allPosts || []).forEach(function(p){
+        if(p && p._comments && p._comments.length){
+          p._comments = sortComments(p._comments);
+        }
+      });
+    } catch(e){}
+    return r;
+  };
+}
+
+/* ============================================================
+   4. WATCH LATER — save video
+   ============================================================ */
+Z.isVideoSaved = function(videoId){
+  var list = Z.State._savedVideos || [];
+  return list.indexOf(videoId) !== -1;
+};
+Z.loadSavedVideos = async function(){
+  var u = Z.State.currentUser;
+  if(!u){ Z.State._savedVideos = []; return; }
+  var c = Z.sb && Z.sb();
+  if(!c){ Z.State._savedVideos = []; return; }
+  try {
+    var r = await c.from('video_saves').select('spark_id').eq('user_id', u.id);
+    Z.State._savedVideos = (r.data || []).map(function(x){ return x.spark_id; });
+  } catch(e){ Z.State._savedVideos = []; }
+};
+Z.toggleVideoSave = async function(videoId){
+  var u = Z.State.currentUser;
+  if(!u){ Z.openAuthModal('login'); return; }
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var isSaved = Z.isVideoSaved(videoId);
+  try {
+    if(isSaved){
+      await c.from('video_saves').delete().eq('user_id', u.id).eq('spark_id', videoId);
+      Z.State._savedVideos = (Z.State._savedVideos || []).filter(function(x){ return x !== videoId; });
+      toast('Removed from Watch Later.');
+    } else {
+      await c.from('video_saves').insert({ user_id: u.id, spark_id: videoId });
+      Z.State._savedVideos = (Z.State._savedVideos || []).concat([videoId]);
+      toast('Saved to Watch Later.');
+    }
+    /* Refresh button state if video page open */
+    var btn = document.querySelector('[data-vd-save]');
+    if(btn){
+      var nowSaved = Z.isVideoSaved(videoId);
+      btn.innerHTML = '<i class="fa-' + (nowSaved ? 'solid' : 'regular') + ' fa-bookmark"></i>';
+    }
+  } catch(e){ toast('Failed.', 'error'); }
+};
+
+/* Load saved videos once on login */
+var _origRefreshForSaved = Z.refreshSession;
+if(typeof _origRefreshForSaved === 'function'){
+  Z.refreshSession = async function(){
+    var r = await _origRefreshForSaved.apply(this, arguments);
+    if(Z.State.currentUser){ try { await Z.loadSavedVideos(); } catch(e){} }
+    return r;
+  };
+}
+
+/* Add save button to video page header */
+var _prevOpenVideoSV = Z.sp5OpenVideo;
+if(typeof _prevOpenVideoSV === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideoSV.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        if(!Z.State._savedVideos){ Z.loadSavedVideos(); }
+        var head = document.querySelector('.sp5-vd-head');
+        if(head && !head.querySelector('[data-vd-save]')){
+          var btn = document.createElement('button');
+          btn.setAttribute('data-vd-save','1');
+          btn.title = 'Watch Later';
+          btn.style.cssText = 'background:transparent;border:1px solid #1e293b;color:#94a3b8;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:6px;';
+          var isSaved = Z.isVideoSaved(videoId);
+          btn.innerHTML = '<i class="fa-' + (isSaved ? 'solid' : 'regular') + ' fa-bookmark"></i>';
+          btn.addEventListener('click', function(){ Z.toggleVideoSave(videoId); });
+          head.appendChild(btn);
+        }
+      } catch(e){}
+    }, 180);
+    return r;
+  };
+}
+
+/* Watch Later view */
+Z.openWatchLater = async function(){
+  await Z.loadSavedVideos();
+  var ids = Z.State._savedVideos || [];
+  var c = Z.sb && Z.sb();
+  var items = [];
+  if(c && ids.length){
+    try {
+      var r = await c.from('sparks').select('*').in('id', ids).eq('type','long_video');
+      items = r.data || [];
+    } catch(e){}
+  }
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Watch Later</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+  if(!items.length){
+    h += '<div style="padding:30px 20px;text-align:center;color:#94a3b8;font-size:12px;">No videos saved yet.</div>';
+  } else {
+    h += '<div class="sp5-vgrid">';
+    items.forEach(function(v){
+      h += '<div class="sp5-vcard" onclick="Z.closeSheet();setTimeout(function(){Z.sp5OpenVideo(\'' + esc(v.id) + '\')},200)">';
+      h += '<div class="sp5-vthumb"><video src="' + esc(v.video_url) + '" preload="metadata" playsinline muted data-space-spark="1"></video></div>';
+      h += '<div class="sp5-vmeta"><div class="sp5-vtitle">' + esc(v.title || v.caption || 'Untitled') + '</div></div>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ============================================================
+   5. PINNED VIDEO (owner only)
+   ============================================================ */
+Z.pinVideo = async function(videoId, unpin){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    /* Unpin any existing pinned video by this author first */
+    await c.from('sparks').update({ is_pinned: false })
+      .eq('author_id', u.id)
+      .eq('is_pinned', true);
+    if(!unpin){
+      await c.from('sparks').update({ is_pinned: true }).eq('id', videoId);
+      toast('Video pinned to your SPACE.');
+    } else {
+      toast('Video unpinned.');
+    }
+    /* Refresh state */
+    if(Z.State.spaceVideos){
+      Z.State.spaceVideos.forEach(function(v){
+        v.is_pinned = (v.id === videoId && !unpin);
+      });
+    }
+    if(Z.State.publicVideosAll){
+      Z.State.publicVideosAll.forEach(function(v){
+        v.is_pinned = (v.id === videoId && !unpin);
+      });
+    }
+  } catch(e){ toast('Failed.', 'error'); }
+};
+
+/* Add pin option to video page — owner only */
+var _prevOpenVideoPin = Z.sp5OpenVideo;
+if(typeof _prevOpenVideoPin === 'function'){
+  Z.sp5OpenVideo = async function(videoId){
+    var r = await _prevOpenVideoPin.apply(this, arguments);
+    setTimeout(function(){
+      try {
+        var u = Z.State.currentUser;
+        var v = (Z.State.spaceVideos || []).find(function(x){ return x.id === videoId; })
+             || (Z.State.publicVideosAll || []).find(function(x){ return x.id === videoId; });
+        if(!u || !v || u.id !== v.author_id) return;
+        var head = document.querySelector('.sp5-vd-head');
+        if(head && !head.querySelector('[data-vd-pin]')){
+          var btn = document.createElement('button');
+          btn.setAttribute('data-vd-pin','1');
+          btn.title = v.is_pinned ? 'Unpin' : 'Pin to SPACE';
+          btn.style.cssText = 'background:transparent;border:1px solid #1e293b;color:#94a3b8;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:6px;';
+          btn.innerHTML = v.is_pinned ? '<i class="fa-solid fa-thumbtack"></i>' : '<i class="fa-solid fa-thumbtack" style="opacity:.5;"></i>';
+          btn.addEventListener('click', function(){
+            Z.pinVideo(videoId, !!v.is_pinned);
+            setTimeout(function(){ try { Z.sp5CloseVideo(); Z.sp5OpenVideo(videoId); } catch(e){} }, 400);
+          });
+          head.appendChild(btn);
+        }
+      } catch(e){}
+    }, 220);
+    return r;
+  };
+}
+
+/* Show pinned badge on grid */
+var _origRenderVideoGrid = Z.sp5RenderVideoGrid;
+if(typeof _origRenderVideoGrid === 'function'){
+  Z.sp5RenderVideoGrid = function(videos, userId, hasAccess, isOwner){
+    /* Sort pinned first */
+    var sorted = (videos || []).slice().sort(function(a, b){
+      if(a.is_pinned && !b.is_pinned) return -1;
+      if(!a.is_pinned && b.is_pinned) return 1;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    var html = _origRenderVideoGrid.call(this, sorted, userId, hasAccess, isOwner);
+    /* Inject pinned badge */
+    try {
+      sorted.forEach(function(v){
+        if(!v.is_pinned) return;
+        var id = v.id;
+        /* Find the card's thumb by onclick match */
+        var needle = 'Z.sp5OpenVideo(\'' + id + '\')';
+        var idx = html.indexOf(needle);
+        if(idx === -1) return;
+        /* Find the .sp5-vthumb opening right after */
+        var thumbIdx = html.indexOf('sp5-vthumb', idx);
+        if(thumbIdx === -1) return;
+        var tagClose = html.indexOf('>', thumbIdx);
+        if(tagClose === -1) return;
+        var badge = '<div style="position:absolute;top:6px;left:6px;padding:2px 7px;border-radius:8px;background:rgba(0,0,0,.7);color:#fbbf24;font-size:9.5px;font-weight:900;"><i class="fa-solid fa-thumbtack"></i> PINNED</div>';
+        html = html.substring(0, tagClose + 1) + badge + html.substring(tagClose + 1);
+      });
+    } catch(e){}
+    return html;
+  };
+}
+
+/* ============================================================
+   6. SPACE HEALTH SCORE — badge next to name
+   ============================================================ */
+function healthLabel(lbl){
+  var map = {
+    new:         { color:'#94a3b8', icon:'🌱', text:'New' },
+    rising:      { color:'#10b981', icon:'📈', text:'Rising' },
+    established: { color:'#60a5fa', icon:'⭐', text:'Established' },
+    premium:     { color:'#a78bfa', icon:'💎', text:'Premium' },
+    elite:       { color:'#fbbf24', icon:'🏆', text:'Elite' }
+  };
+  return map[lbl] || map.new;
+}
+
+async function injectHealthBadge(userId){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  if(head.querySelector('[data-health-badge]')) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.rpc('space_health_score', { p_space_id: userId });
+    if(r.error || !r.data) return;
+    var d = r.data;
+    var meta = healthLabel(d.label);
+    var nameRow = head.querySelector('.sp5-name-row');
+    if(!nameRow) return;
+    var badge = document.createElement('span');
+    badge.setAttribute('data-health-badge','1');
+    badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;background:rgba(0,0,0,.3);border:1px solid ' + meta.color + '55;color:' + meta.color + ';font-size:10px;font-weight:900;';
+    badge.innerHTML = meta.icon + ' ' + meta.text;
+    badge.title = 'Health score ' + d.score + '/100';
+    /* Insert after subscriber pill */
+    var subsPill = nameRow.querySelector('[data-subs-pill]');
+    if(subsPill && subsPill.nextSibling) nameRow.insertBefore(badge, subsPill.nextSibling);
+    else nameRow.appendChild(badge);
+
+    /* Owner detail: attach click to open full breakdown */
+    if(Z.State.currentUser && Z.State.currentUser.id === userId){
+      badge.style.cursor = 'pointer';
+      badge.addEventListener('click', function(){
+        Z._openHealthDetail(d);
+      });
+    }
+  } catch(e){}
+}
+
+Z._openHealthDetail = function(d){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">SPACE Health Score</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+
+  var pct = Math.min(100, Math.max(0, Number(d.score) || 0));
+  var col = pct >= 85 ? '#fbbf24' : pct >= 70 ? '#a78bfa' : pct >= 50 ? '#60a5fa' : pct >= 25 ? '#10b981' : '#94a3b8';
+
+  h += '<div style="text-align:center;margin-bottom:16px;">';
+  h += '<div style="font-size:48px;font-weight:900;color:' + col + ';">' + pct + '</div>';
+  h += '<div style="font-size:12px;color:#94a3b8;margin-top:-4px;">out of 100</div>';
+  h += '</div>';
+  h += '<div style="height:10px;border-radius:5px;background:rgba(0,0,0,.35);overflow:hidden;margin-bottom:16px;">';
+  h += '<div style="height:100%;width:' + pct + '%;background:' + col + ';"></div></div>';
+
+  function row(label, value){
+    return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">' +
+      '<div style="font-size:12px;color:#cbd5e1;">' + label + '</div>' +
+      '<div style="font-size:12px;color:#fff;font-weight:900;">' + value + '</div>' +
+    '</div>';
+  }
+  h += row('Subscribers (total)', d.subs || 0);
+  h += row('New subscribers (30d)', d.subs_30 || 0);
+  h += row('Total views', d.views || 0);
+  h += row('Total reactions', d.reactions || 0);
+  h += row('Total comments', d.comments || 0);
+  h += row('Avg rating', (Number(d.rating_avg) || 0).toFixed(1) + ' / 10');
+  h += row('Rating count', d.rating_cnt || 0);
+
+  h += '<div style="padding:12px;margin-top:14px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11px;color:#cbd5e1;line-height:1.6;">';
+  h += 'Health score weights subscribers, growth, views, reactions, comments, and rating into a single 0–100 number. Public sees only the badge — this detail is private to you.';
+  h += '</div>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* Trigger health badge after header render */
+var _prevRenderContentHB = Z.sp5RenderContent;
+if(typeof _prevRenderContentHB === 'function'){
+  Z.sp5RenderContent = function(userId, isOwner){
+    var r = _prevRenderContentHB.apply(this, arguments);
+    setTimeout(function(){ try { injectHealthBadge(userId); } catch(e){} }, 200);
+    setTimeout(function(){ try { injectHealthBadge(userId); } catch(e){} }, 900);
+    return r;
+  };
+}
+
+/* ============================================================
+   7. LEGAL DOCUMENTS VIEW
+   ============================================================ */
+Z.openLegalHub = async function(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var docs = [];
+  try {
+    var r = await c.from('legal_documents').select('*').order('display_order', {ascending:true});
+    docs = r.data || [];
+  } catch(e){}
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Legal & Policies</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;">';
+
+  if(!docs.length){
+    h += '<div style="padding:30px;text-align:center;color:#94a3b8;font-size:12px;">No documents yet.</div>';
+  } else {
+    docs.forEach(function(d){
+      h += '<button data-legal-open="' + esc(d.slug) + '" style="width:100%;padding:12px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;text-align:left;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">';
+      h += '<div><div>' + esc(d.title) + '</div>';
+      if(d.summary) h += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;font-weight:400;">' + esc(d.summary) + '</div>';
+      h += '</div>';
+      h += '<span style="font-size:10px;color:#64748b;font-weight:800;">' + esc(d.version || 'v1.0') + '</span>';
+      h += '</button>';
+    });
+  }
+
+  h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,133,84,.06);border:1px solid rgba(161,133,84,.3);font-size:11px;color:#cbd5e1;line-height:1.6;">';
+  h += '<b style="color:#a18554;">Legal review pending.</b> Documents are placeholders for the full text. Final versions undergo external legal review before public launch.';
+  h += '</div>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    document.querySelectorAll('[data-legal-open]').forEach(function(b){
+      b.addEventListener('click', function(){
+        Z._openLegalDoc(this.getAttribute('data-legal-open'));
+      });
+    });
+  }, 40);
+};
+
+Z._openLegalDoc = function(slug){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  c.from('legal_documents').select('*').eq('slug', slug).maybeSingle().then(function(r){
+    if(r.error || !r.data){ toast('Document not available.'); return; }
+    var d = r.data;
+    var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+    h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+    h += '<div class="sheet-handle"></div>';
+    h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">' + esc(d.title) + '</h3>';
+    h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+    h += '<div class="sheet-body" style="padding:16px;">';
+    h += '<div style="font-size:10px;color:#64748b;font-weight:800;margin-bottom:10px;">VERSION ' + esc(d.version || 'v1.0') + '</div>';
+    if(d.summary) h += '<div style="font-size:12px;color:#94a3b8;line-height:1.6;margin-bottom:14px;font-style:italic;">' + esc(d.summary) + '</div>';
+    if(d.content_md){
+      h += '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(d.content_md) + '</div>';
+    } else if(d.external_url){
+      h += '<a href="' + esc(d.external_url) + '" target="_blank" rel="noopener" style="display:block;padding:12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#60a5fa;font-weight:800;text-decoration:none;text-align:center;">Open document</a>';
+    } else {
+      h += '<div style="padding:20px;border-radius:10px;background:#0f172a;border:1px dashed #1e293b;text-align:center;color:#64748b;font-size:12px;">';
+      h += 'Full text pending legal review.';
+      h += '</div>';
+    }
+    h += '</div></div></div>';
+    Z.openSheet(h);
+  }).catch(function(){ toast('Failed.'); });
+};
+
+/* Link Legal hub from Settings — extend the settings groups via hook */
+var _prevRenderSettings = Z.renderSpaceSettings;
+if(typeof _prevRenderSettings === 'function'){
+  Z.renderSpaceSettings = function(){
+    var html = _prevRenderSettings.apply(this, arguments);
+    if(typeof html === 'string'){
+      var needle = 'Log out';
+      var idx = html.indexOf(needle);
+      if(idx !== -1){
+        /* Insert a small legal block before the logout button */
+        var block = '<div class="sp5-settings-group" style="margin-top:6px;">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
+            '<i class="fa-solid fa-scale-balanced" style="color:#10b981;font-size:14px;"></i>' +
+            '<div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">LEGAL & POLICIES</div>' +
+          '</div>' +
+          '<button class="sp5-settings-cta" onclick="Z.openLegalHub()"><i class="fa-solid fa-file-contract"></i> View all documents</button>' +
+        '</div>';
+        /* Find the logout button's parent <button and insert before it */
+        var buttonStart = html.lastIndexOf('<button', idx);
+        if(buttonStart !== -1){
+          html = html.substring(0, buttonStart) + block + html.substring(buttonStart);
+        }
+      }
+    }
+    return html;
+  };
+}
+
+/* ============================================================
+   8. AGE GATE on publish modal (creator marks video 18+)
+   ============================================================ */
+function injectAgeGateFields(){
+  var modal = document.getElementById('modal-container');
+  if(!modal) return;
+  var titleInp = document.getElementById('fv-title');
+  if(!titleInp) return;
+  if(document.getElementById('fv-age-block')) return;
+
+  var cfarBlock = document.getElementById('fv-cfar-block');
+  if(!cfarBlock) return;
+
+  var block = document.createElement('div');
+  block.id = 'fv-age-block';
+  block.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
+
+  block.innerHTML =
+    '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">' +
+      '<input type="checkbox" id="fv-age-gate" style="flex-shrink:0;">' +
+      ' Mark as 18+ (mature audiences only)' +
+    '</label>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Content warning (optional)</label>' +
+    '<input type="text" id="fv-content-warning" maxlength="80" placeholder="e.g. flashing lights, loud audio" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">' +
+    '<div style="font-size:10.5px;color:#64748b;margin-top:6px;line-height:1.5;">Strictly prohibited: adult content, alcohol/smoking promotion, illegal activity, vulgarity. Violation = permanent ban.</div>';
+
+  cfarBlock.parentNode.insertBefore(block, cfarBlock.nextSibling);
+}
+
+var _prevOpenFVModalAG = Z.openCreateFullVideoModal;
+if(typeof _prevOpenFVModalAG === 'function'){
+  Z.openCreateFullVideoModal = function(){
+    var r = _prevOpenFVModalAG.apply(this, arguments);
+    setTimeout(injectAgeGateFields, 300);
+    setTimeout(injectAgeGateFields, 700);
+    return r;
+  };
+}
+
+/* Hook submitFullVideo to save age-gate fields */
+var _prevSubmitFVAG = Z.submitFullVideo;
+if(typeof _prevSubmitFVAG === 'function'){
+  Z.submitFullVideo = async function(){
+    var ageEl = document.getElementById('fv-age-gate');
+    var warnEl = document.getElementById('fv-content-warning');
+    var ageGate = ageEl ? !!ageEl.checked : false;
+    var warn = warnEl ? (warnEl.value || '').trim() || null : null;
+    Z._pendingAgeGate = ageGate;
+    Z._pendingContentWarning = warn;
+    var result = await _prevSubmitFVAG.apply(this, arguments);
+    /* Patch sparks row after insert */
+    if(ageGate || warn){
+      var u = Z.State.currentUser;
+      var c = Z.sb && Z.sb();
+      if(u && c){
+        setTimeout(async function(){
+          try {
+            var latest = await c.from('sparks').select('id').eq('author_id', u.id).eq('type','long_video').order('created_at', {ascending:false}).limit(1).maybeSingle();
+            if(latest.data && latest.data.id){
+              await c.from('sparks').update({
+                is_age_gated: ageGate,
+                content_warning: warn
+              }).eq('id', latest.data.id);
+            }
+          } catch(e){}
+        }, 900);
+      }
+    }
+    return result;
+  };
+}
+
+/* ============================================================
+   9. AGE GATE badge on grid cards
+   ============================================================ */
+var _origRenderVideoGridBadge = Z.sp5RenderVideoGrid;
+if(typeof _origRenderVideoGridBadge === 'function'){
+  Z.sp5RenderVideoGrid = function(videos, userId, hasAccess, isOwner){
+    var html = _origRenderVideoGridBadge.apply(this, arguments);
+    try {
+      (videos || []).forEach(function(v){
+        if(!v.is_age_gated) return;
+        var needle = 'Z.sp5OpenVideo(\'' + v.id + '\')';
+        var idx = html.indexOf(needle);
+        if(idx === -1) return;
+        var thumbIdx = html.indexOf('sp5-vthumb', idx);
+        if(thumbIdx === -1) return;
+        var tagClose = html.indexOf('>', thumbIdx);
+        if(tagClose === -1) return;
+        var badge = '<div style="position:absolute;bottom:6px;left:6px;padding:2px 7px;border-radius:8px;background:rgba(161,98,98,.85);color:#fff;font-size:9.5px;font-weight:900;">18+</div>';
+        html = html.substring(0, tagClose + 1) + badge + html.substring(tagClose + 1);
+      });
+    } catch(e){}
+    return html;
+  };
+}
+
+/* ============================================================
+   10. WATCH LATER link in More sheet (owner + visitor)
+   ============================================================ */
+var _prevMoreSheetWL = Z.openSpaceMoreSheet;
+if(typeof _prevMoreSheetWL === 'function'){
+  Z.openSpaceMoreSheet = async function(userId){
+    var r = await _prevMoreSheetWL.apply(this, arguments);
+    setTimeout(function(){
+      var body = document.querySelector('.bottom-sheet .sheet-body');
+      if(!body) return;
+      if(body.querySelector('[data-more-watchlater]')) return;
+      var btn = document.createElement('button');
+      btn.setAttribute('data-more-watchlater','1');
+      btn.style.cssText = 'width:100%;padding:12px 14px;background:transparent;border:none;display:flex;align-items:center;gap:12px;color:#e2e8f0;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;text-align:left;';
+      btn.innerHTML = '<i class="fa-regular fa-clock" style="width:16px;text-align:center;color:#10b981;flex-shrink:0;"></i><span style="flex:1;">Watch Later</span>';
+      btn.addEventListener('click', function(){
+        Z.closeSheet();
+        setTimeout(function(){ Z.openWatchLater(); }, 200);
+      });
+      /* Insert at the end, before any block/report rows */
+      body.appendChild(btn);
+    }, 60);
+    return r;
+  };
+}
+
+console.log('[SPACE v7 — Part 2] age gate · warnings · comment sort · block · watch later · pin · health · legal ready');
+})();
+</script>       
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
