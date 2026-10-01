@@ -35945,22 +35945,24 @@ console.log('[Market Block 24] service orders + Fix 3 UI ready');
 </script> 
 
 <!-- ============================================================ -->
-<!-- SPACE v9 — CRITICAL FIX                                      -->
-<!-- Fixes: renderPublicSpace missing var h=''; sp5SwitchPublicTab -->
-<!-- and sp5SwitchMySub undefined; safe view toggles.             -->
+<!-- SPACE v9 — COMPLETE FIX (replaces earlier fix block)         -->
+<!-- Fixes: renderPublicSpace crash + sp5SwitchPublicTab +        -->
+<!-- sp5SwitchMySub + restores own-space post video controller.   -->
 <!-- ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__sp5PublicFix) return; Z.__sp5PublicFix = true;
+if(Z.__sp5PublicFixV2) return; Z.__sp5PublicFixV2 = true;
 
-/* ---------- 1. Fixed public space renderer ---------- */
+/* ============================================================
+   1. FIXED public space renderer (adds missing var h)
+   ============================================================ */
 function renderPublicSpaceFixed(userId, isOwner){
   var videos = Z.State.publicVideosAll || [];
   var sparks = Z.State.publicSparksAll || [];
   var sub = Z.State.spacePublicTab || 'sparks';
-  var h = '';   // <-- THE MISSING LINE
+  var h = '';                                  /* ← THE FIX */
 
   if(!videos.length && !sparks.length && !Z._globalRepaintPending){
     Z._globalRepaintPending = true;
@@ -36002,7 +36004,9 @@ function renderPublicSpaceFixed(userId, isOwner){
   return h;
 }
 
-/* ---------- 2. Local header toggle update ---------- */
+/* ============================================================
+   2. Local header toggle (mirror of Block A's private one)
+   ============================================================ */
 function updateHeaderToggleLocal(){
   var head = document.getElementById('sp5-head-host');
   if(!head) return;
@@ -36017,7 +36021,9 @@ function updateHeaderToggleLocal(){
   btn.innerHTML = '<i class="' + icon + '"></i> ' + label;
 }
 
-/* ---------- 3. Safe grid lazy video observer ---------- */
+/* ============================================================
+   3. Local grid lazy videos (mirror of Block A's private one)
+   ============================================================ */
 function setupGridLazyVideosLocal(){
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
@@ -36043,7 +36049,118 @@ function setupGridLazyVideosLocal(){
   });
 }
 
-/* ---------- 4. Override sp5RenderContent with fixed version ---------- */
+/* ============================================================
+   4. ★ LOCAL POST VIDEO CONTROLLER (the piece I missed) ★
+   Own-Space posts videos: 75% visible → play; else → pause.
+   One video at a time. Clip-aware ratio.
+   ============================================================ */
+var _sp5PvPlaying   = null;
+var _sp5PvRaf       = null;
+var _sp5PvObserver  = null;
+
+function _sp5PvEffectiveRatio(v){
+  var rect = v.getBoundingClientRect();
+  var clipTop = 0, clipBottom = window.innerHeight;
+  var el = v.parentElement;
+  while(el && el !== document.body){
+    var st;
+    try { st = window.getComputedStyle(el); } catch(e){ st = null; }
+    if(st){
+      var ov = st.overflowY || st.overflow;
+      if(ov === 'auto' || ov === 'hidden' || ov === 'scroll'){
+        var cr = el.getBoundingClientRect();
+        if(cr.top > clipTop) clipTop = cr.top;
+        if(cr.bottom < clipBottom) clipBottom = cr.bottom;
+      }
+    }
+    el = el.parentElement;
+  }
+  var visibleTop    = Math.max(clipTop, rect.top);
+  var visibleBottom = Math.min(clipBottom, rect.bottom);
+  var visible       = Math.max(0, visibleBottom - visibleTop);
+  return rect.height > 0 ? (visible / rect.height) : 0;
+}
+
+function _sp5PvEval(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+
+  var vids = [];
+  host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video').forEach(function(v){
+    if(v.hasAttribute('data-space-spark') || v.hasAttribute('data-spark-id')) return;
+    if(!v.isConnected) return;
+    vids.push(v);
+  });
+
+  if(!vids.length){ _sp5PvPlaying = null; return; }
+
+  var best = null, bestRatio = 0;
+  vids.forEach(function(v){
+    var r = _sp5PvEffectiveRatio(v);
+    if(r > bestRatio){ bestRatio = r; best = v; }
+  });
+
+  var shouldPlay = best && bestRatio >= 0.75;
+
+  vids.forEach(function(v){
+    if(shouldPlay && v === best){
+      if(v.paused){ try { v.play().catch(function(){}); } catch(e){} }
+      _sp5PvPlaying = v;
+    } else {
+      if(!v.paused){ try { v.pause(); } catch(e){} }
+      if(v === best) _sp5PvPlaying = null;
+    }
+  });
+
+  if(!shouldPlay) _sp5PvPlaying = null;
+}
+
+function _sp5PvSchedule(){
+  if(_sp5PvRaf) return;
+  _sp5PvRaf = requestAnimationFrame(function(){
+    _sp5PvRaf = null;
+    _sp5PvEval();
+  });
+}
+
+function setupPostVideoControllerLocal(){
+  if(Z.State.currentView !== 'public-profile') return;
+  var host = document.getElementById('sp5-content-host');
+  if(!host) return;
+
+  var vids = host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video');
+  if(!vids.length){ _sp5PvPlaying = null; return; }
+
+  if(!_sp5PvObserver && typeof IntersectionObserver !== 'undefined'){
+    _sp5PvObserver = new IntersectionObserver(function(){
+      _sp5PvSchedule();
+    }, { threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0] });
+  }
+
+  vids.forEach(function(v){
+    if(v._sp5PvHooked) return;
+    v._sp5PvHooked = true;
+    if(v.hasAttribute('data-space-spark') || v.hasAttribute('data-spark-id')) return;
+    if(_sp5PvObserver){ try { _sp5PvObserver.observe(v); } catch(e){} }
+    v.setAttribute('playsinline','');
+    v.setAttribute('loop','');
+  });
+
+  if(!Z._sp5PvScrollHooked){
+    Z._sp5PvScrollHooked = true;
+    window.addEventListener('scroll', _sp5PvSchedule, {passive:true});
+    window.addEventListener('resize', _sp5PvSchedule, {passive:true});
+    document.addEventListener('scroll', _sp5PvSchedule, {passive:true, capture:true});
+  }
+
+  _sp5PvSchedule();
+}
+
+/* ============================================================
+   5. ★ THE MAIN OVERRIDE — full mirror of Block A's logic ★
+   Now includes ALL 3 internal helpers so nothing is lost.
+   ============================================================ */
 Z.sp5RenderContent = function(userId, isOwner){
   if(Z._sp5RcInflight){
     Z._sp5RcPending = { userId: userId, isOwner: isOwner };
@@ -36063,12 +36180,13 @@ Z.sp5RenderContent = function(userId, isOwner){
       host.innerHTML = Z.sp5RenderMySpace(userId, true, Z.State.spaceProfile);
     }
 
-    try { updateHeaderToggleLocal(); } catch(e){ console.error('[sp5] toggle', e); }
+    try { updateHeaderToggleLocal(); } catch(e){}
 
     setTimeout(function(){
       try { if(typeof Z.resolveIdbRefs === 'function') Z.resolveIdbRefs(host); } catch(e){}
       try { Z.observeFreezeDots(); } catch(e){}
       try { Z._tagMediaContainers(); } catch(e){}
+      try { setupPostVideoControllerLocal(); } catch(e){}   /* ← RESTORED */
       try { setupGridLazyVideosLocal(); } catch(e){}
     }, 60);
   } catch(e){
@@ -36087,7 +36205,9 @@ Z.sp5RenderContent = function(userId, isOwner){
   }
 };
 
-/* ---------- 5. Missing switchers ---------- */
+/* ============================================================
+   6. Missing switchers
+   ============================================================ */
 Z.sp5SwitchPublicTab = function(tab){
   if(tab !== 'videos' && tab !== 'sparks') return;
   Z.State.spacePublicTab = tab;
@@ -36103,7 +36223,9 @@ Z.sp5SwitchMySub = function(sub){
   Z.sp5RenderContent(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId));
 };
 
-/* ---------- 6. Safe view toggles with error surfacing ---------- */
+/* ============================================================
+   7. Safe view toggles
+   ============================================================ */
 Z.sp5GoPublicView = function(){
   try {
     if(Z.State.spaceTab === 'public') return;
@@ -36140,25 +36262,22 @@ Z.sp5GoMySpaceView = function(){
   }
 };
 
-/* ---------- 7. Safe goMySpace ---------- */
-var _origGoMySpace = Z.goMySpace;
-Z.goMySpace = function(){
-  try {
-    var me = Z.State.currentUser;
-    if(!me){ Z.openAuthModal('login'); return; }
-    Z.State._spaceLandingTab = 'public';
-    Z.State._spaceLandingPublicSub = 'sparks';
-    Z.State._spaceLandingMySub = 'default';
-    Z.showView('public-profile', me.id);
-  } catch(e){
-    console.error('[goMySpace]', e);
-    try { if(_origGoMySpace) _origGoMySpace.apply(this, arguments); } catch(e2){}
+/* ============================================================
+   8. Stop own-space videos when leaving the view
+   ============================================================ */
+var _prevShow = Z.showView;
+Z.showView = function(view){
+  var r = _prevShow.apply(this, arguments);
+  if(view !== 'public-profile' && _sp5PvPlaying){
+    try { _sp5PvPlaying.pause(); } catch(e){}
+    _sp5PvPlaying = null;
   }
+  return r;
 };
 
-console.log('[SPACE v9 Fix] public renderer repaired · switch helpers added · toggles safe');
+console.log('[SPACE v9 Fix v2] public render + post video controller both restored');
 })();
-</script>     
+</script>
      
 </body>
 </html>
