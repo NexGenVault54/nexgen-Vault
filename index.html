@@ -7208,6 +7208,7 @@ Z._bondState = Z._bondState || {};
 
 /* Public fetch dedupe */
 var _publicFetchInFlight = false;
+var _publicFetchPromise = null;
 var _warmScheduled = false;
 
 /* ============================================================
@@ -7555,25 +7556,30 @@ Z.sp5FetchContent = async function(profile){
 /* ============================================================
    GLOBAL PUBLIC POOL
    ============================================================ */
-Z.sp5FetchGlobalContent = async function(){
-  if(_publicFetchInFlight) return;
+Z.sp5FetchGlobalContent = function(){
+  if(_publicFetchInFlight) return _publicFetchPromise;
+  var c = Z.sb && Z.sb();
+  if(!c) return Promise.resolve();
   _publicFetchInFlight = true;
-  try {
-    var c = Z.sb && Z.sb();
-    if(!c) return;
-    var sparksP = c.from('sparks').select('*').eq('type','spark').order('created_at',{ascending:false}).limit(60);
-    var videosP = c.from('sparks').select('*').eq('type','long_video').order('created_at',{ascending:false}).limit(60);
-    var res = await Promise.all([sparksP, videosP]);
-    var sparks = res[0].data || [];
-    var videos = res[1].data || [];
-    var blocked = Z.State._blockedIds || [];
-    Z.State.publicSparksAll = blocked.length ? sparks.filter(function(s){ return blocked.indexOf(s.author_id) === -1; }) : sparks;
-    Z.State.publicVideosAll = blocked.length ? videos.filter(function(v){ return blocked.indexOf(v.author_id) === -1; }) : videos;
-    Z.State._publicGlobalLoadedAt = Date.now();
-  } catch(e){}
-  finally { _publicFetchInFlight = false; }
+  _publicFetchPromise = (async function(){
+    try {
+      var sparksP = c.from('sparks').select('*').eq('type','spark').order('created_at',{ascending:false}).limit(60);
+      var videosP = c.from('sparks').select('*').eq('type','long_video').order('created_at',{ascending:false}).limit(60);
+      var res = await Promise.all([sparksP, videosP]);
+      var sparks = res[0].data || [];
+      var videos = res[1].data || [];
+      var blocked = Z.State._blockedIds || [];
+      Z.State.publicSparksAll = blocked.length ? sparks.filter(function(s){ return blocked.indexOf(s.author_id) === -1; }) : sparks;
+      Z.State.publicVideosAll = blocked.length ? videos.filter(function(v){ return blocked.indexOf(v.author_id) === -1; }) : videos;
+      Z.State._publicGlobalLoadedAt = Date.now();
+    } catch(e){}
+    finally {
+      _publicFetchInFlight = false;
+      _publicFetchPromise = null;
+    }
+  })();
+  return _publicFetchPromise;
 };
-
 function scheduleGlobalPrewarm(){
   if(_warmScheduled) return;
   if(!Z.State.currentUser) return;
@@ -7604,23 +7610,9 @@ Z.sp5GoPublicView = function(){
   try { sessionStorage.setItem('zynix_space_tab','public'); } catch(e){}
   var me = Z.State.currentUser;
   var isOwner = !!(me && me.id === Z.State.spaceUserId);
-  var stale = (Date.now() - (Z.State._publicGlobalLoadedAt || 0)) > 60000;
-  var needFetch = ((!Z.State.publicSparksAll.length && !Z.State.publicVideosAll.length) || stale);
-  if(needFetch){
-    var token = (Z._publicFetchToken = (Z._publicFetchToken || 0) + 1);
-    Z.sp5FetchGlobalContent().then(function(){
-      if(Z._publicFetchToken !== token) return;
-      if(Z.State.currentView !== 'public-profile') return;
-      if(Z.State.spaceTab !== 'public') return;
-      /* Guard: only re-render if we already rendered an OLDER batch */
-      if(Z.State._lastRenderedPublicAt === Z.State._publicGlobalLoadedAt) return;
-      Z.State._lastRenderedPublicAt = Z.State._publicGlobalLoadedAt;
-      Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
-    }).catch(function(){});
-  }
+  /* Fetch + repaint handled by renderPublicSpace (single source) */
   Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
 };
-
 Z.sp5SwitchPublicTab = function(sub){
   if(Z.State.spacePublicTab === sub) return;
   Z.State.spacePublicTab = sub;
@@ -7644,9 +7636,25 @@ function renderPublicSpace(userId, isOwner){
   var sparks = Z.State.publicSparksAll || [];
   var sub = Z.State.spacePublicTab || 'sparks';
 
-  /* Trigger global fetch once (no chained render) */
- 
-  var h = '<div style="display:flex;flex-direction:column;gap:12px;">';
+  /* Repaint only if data batch is NEWER than what we last rendered */
+  var loadedAt = Z.State._publicGlobalLoadedAt || 0;
+  var renderedAt = Z.State._lastRenderedPublicAt || 0;
+  var stale = (Date.now() - loadedAt) > 60000;
+  var needData = (!videos.length && !sparks.length);
+  var needRepaint = needData || stale || (loadedAt > renderedAt);
+
+  if(needRepaint && !Z._globalRepaintPending){
+    Z._globalRepaintPending = true;
+    Z.sp5FetchGlobalContent().then(function(){
+      Z._globalRepaintPending = false;
+      /* Mark before re-render so loop can't form */
+      Z.State._lastRenderedPublicAt = Z.State._publicGlobalLoadedAt || 0;
+      if(Z.State.currentView === 'public-profile' && Z.State.spaceTab === 'public'){
+        var me2 = Z.State.currentUser;
+        Z.sp5RenderContent(Z.State.spaceUserId, !!(me2 && me2.id === Z.State.spaceUserId));
+      }
+    }).catch(function(){ Z._globalRepaintPending = false; });
+  }
 
   h += '<div class="sp5-subtabs">';
   h += '<button class="sp5-subtab" ' + (sub === 'videos' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'videos\')"><i class="fa-solid fa-film"></i> Public Full Videos <span class="cnt">' + videos.length + '</span></button>';
