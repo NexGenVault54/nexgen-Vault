@@ -7610,22 +7610,14 @@ Z.sp5GoPublicView = function(){
   try { sessionStorage.setItem('zynix_space_tab','public'); } catch(e){}
   var me = Z.State.currentUser;
   var isOwner = !!(me && me.id === Z.State.spaceUserId);
-  /* Fetch + repaint handled by renderPublicSpace (single source) */
+  /* Immediate render — shows whatever data we have */
   Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
-};
-Z.sp5SwitchPublicTab = function(sub){
-  if(Z.State.spacePublicTab === sub) return;
-  Z.State.spacePublicTab = sub;
-  try { sessionStorage.setItem('zynix_space_public_sub', sub); } catch(e){}
-  var me = Z.State.currentUser;
-  Z.sp5RenderContent(Z.State.spaceUserId, me && me.id === Z.State.spaceUserId);
-};
-
-Z.sp5SwitchMySub = function(sub){
-  Z.State.spaceMySub = sub;
-  try { sessionStorage.setItem('zynix_space_my_sub', sub); } catch(e){}
-  var me = Z.State.currentUser;
-  Z.sp5RenderContent(Z.State.spaceUserId, me && me.id === Z.State.spaceUserId);
+  /* Fire fetch; when done, re-render once if still on Public */
+  Z.sp5FetchGlobalContent().then(function(){
+    if(Z.State.currentView !== 'public-profile') return;
+    if(Z.State.spaceTab !== 'public') return;
+    Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
+  }).catch(function(){});
 };
 
 /* ============================================================
@@ -7637,22 +7629,15 @@ function renderPublicSpace(userId, isOwner){
   var sub = Z.State.spacePublicTab || 'sparks';
 
   /* Repaint only if data batch is NEWER than what we last rendered */
-  var loadedAt = Z.State._publicGlobalLoadedAt || 0;
-  var renderedAt = Z.State._lastRenderedPublicAt || 0;
-  var stale = (Date.now() - loadedAt) > 60000;
-  var needData = (!videos.length && !sparks.length);
-  var needRepaint = needData || stale || (loadedAt > renderedAt);
-
-  if(needRepaint && !Z._globalRepaintPending){
+  /* Passive fetch — only when data is missing, no chain, no loop */
+  if(!videos.length && !sparks.length && !Z._globalRepaintPending){
     Z._globalRepaintPending = true;
     Z.sp5FetchGlobalContent().then(function(){
       Z._globalRepaintPending = false;
-      /* Mark before re-render so loop can't form */
-      Z.State._lastRenderedPublicAt = Z.State._publicGlobalLoadedAt || 0;
-      if(Z.State.currentView === 'public-profile' && Z.State.spaceTab === 'public'){
-        var me2 = Z.State.currentUser;
-        Z.sp5RenderContent(Z.State.spaceUserId, !!(me2 && me2.id === Z.State.spaceUserId));
-      }
+      if(Z.State.currentView !== 'public-profile') return;
+      if(Z.State.spaceTab !== 'public') return;
+      var me2 = Z.State.currentUser;
+      Z.sp5RenderContent(Z.State.spaceUserId, !!(me2 && me2.id === Z.State.spaceUserId));
     }).catch(function(){ Z._globalRepaintPending = false; });
   }
 
