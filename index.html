@@ -7208,7 +7208,7 @@ Z._bondState = Z._bondState || {};
 
 /* Public fetch dedupe */
 var _publicFetchInFlight = false;
-
+var _publicFetchPromise = null;
 var _warmScheduled = false;
 
 /* ============================================================
@@ -7556,23 +7556,29 @@ Z.sp5FetchContent = async function(profile){
 /* ============================================================
    GLOBAL PUBLIC POOL
    ============================================================ */
-Z.sp5FetchGlobalContent = async function(){
-  if(_publicFetchInFlight) return;
+Z.sp5FetchGlobalContent = function(){
+  if(_publicFetchInFlight) return _publicFetchPromise;
+  var c = Z.sb && Z.sb();
+  if(!c) return Promise.resolve();
   _publicFetchInFlight = true;
-  try {
-    var c = Z.sb && Z.sb();
-    if(!c) return;
-    var sparksP = c.from('sparks').select('*').eq('type','spark').order('created_at',{ascending:false}).limit(60);
-    var videosP = c.from('sparks').select('*').eq('type','long_video').order('created_at',{ascending:false}).limit(60);
-    var res = await Promise.all([sparksP, videosP]);
-    var sparks = res[0].data || [];
-    var videos = res[1].data || [];
-    var blocked = Z.State._blockedIds || [];
-    Z.State.publicSparksAll = blocked.length ? sparks.filter(function(s){ return blocked.indexOf(s.author_id) === -1; }) : sparks;
-    Z.State.publicVideosAll = blocked.length ? videos.filter(function(v){ return blocked.indexOf(v.author_id) === -1; }) : videos;
-    Z.State._publicGlobalLoadedAt = Date.now();
-  } catch(e){}
-  finally { _publicFetchInFlight = false; }
+  _publicFetchPromise = (async function(){
+    try {
+      var sparksP = c.from('sparks').select('*').eq('type','spark').order('created_at',{ascending:false}).limit(60);
+      var videosP = c.from('sparks').select('*').eq('type','long_video').order('created_at',{ascending:false}).limit(60);
+      var res = await Promise.all([sparksP, videosP]);
+      var sparks = res[0].data || [];
+      var videos = res[1].data || [];
+      var blocked = Z.State._blockedIds || [];
+      Z.State.publicSparksAll = blocked.length ? sparks.filter(function(s){ return blocked.indexOf(s.author_id) === -1; }) : sparks;
+      Z.State.publicVideosAll = blocked.length ? videos.filter(function(v){ return blocked.indexOf(v.author_id) === -1; }) : videos;
+      Z.State._publicGlobalLoadedAt = Date.now();
+    } catch(e){}
+    finally {
+      _publicFetchInFlight = false;
+      _publicFetchPromise = null;
+    }
+  })();
+  return _publicFetchPromise;
 };
 function scheduleGlobalPrewarm(){
   if(_warmScheduled) return;
@@ -7604,20 +7610,14 @@ Z.sp5GoPublicView = function(){
   try { sessionStorage.setItem('zynix_space_tab','public'); } catch(e){}
   var me = Z.State.currentUser;
   var isOwner = !!(me && me.id === Z.State.spaceUserId);
-  var stale = (Date.now() - (Z.State._publicGlobalLoadedAt || 0)) > 60000;
-  var needFetch = ((!Z.State.publicSparksAll.length && !Z.State.publicVideosAll.length) || stale);
-  if(needFetch){
-    var token = (Z._publicFetchToken = (Z._publicFetchToken || 0) + 1);
-    Z.sp5FetchGlobalContent().then(function(){
-      if(Z._publicFetchToken !== token) return;
-      if(Z.State.currentView !== 'public-profile') return;
-      if(Z.State.spaceTab !== 'public') return;
-      if(Z.State._lastRenderedPublicAt === Z.State._publicGlobalLoadedAt) return;
-      Z.State._lastRenderedPublicAt = Z.State._publicGlobalLoadedAt;
-      Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
-    }).catch(function(){});
-  }
+  /* Immediate render — shows whatever data we have */
   Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
+  /* Fire fetch; when done, re-render once if still on Public */
+  Z.sp5FetchGlobalContent().then(function(){
+    if(Z.State.currentView !== 'public-profile') return;
+    if(Z.State.spaceTab !== 'public') return;
+    Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
+  }).catch(function(){});
 };
 
 /* ============================================================
@@ -7628,8 +7628,20 @@ function renderPublicSpace(userId, isOwner){
   var sparks = Z.State.publicSparksAll || [];
   var sub = Z.State.spacePublicTab || 'sparks';
 
-  /* Repaint only if data batch is NEWER than what we last rendered */
+  /* FIX: missing accumulator variable */
+  var h = '';
 
+  /* Passive fetch — only when data is missing, no chain, no loop */
+  if(!videos.length && !sparks.length && !Z._globalRepaintPending){
+    Z._globalRepaintPending = true;
+    Z.sp5FetchGlobalContent().then(function(){
+      Z._globalRepaintPending = false;
+      if(Z.State.currentView !== 'public-profile') return;
+      if(Z.State.spaceTab !== 'public') return;
+      var me2 = Z.State.currentUser;
+      Z.sp5RenderContent(Z.State.spaceUserId, !!(me2 && me2.id === Z.State.spaceUserId));
+    }).catch(function(){ Z._globalRepaintPending = false; });
+  }
 
   h += '<div class="sp5-subtabs">';
   h += '<button class="sp5-subtab" ' + (sub === 'videos' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'videos\')"><i class="fa-solid fa-film"></i> Public Full Videos <span class="cnt">' + videos.length + '</span></button>';
@@ -7661,7 +7673,6 @@ function renderPublicSpace(userId, isOwner){
     h += '<div class="sp5-sgrid" id="sp5-public-sgrid">' + Z.sp5RenderSparkGrid(sparks, userId, 'public') + '</div>';
   }
 
-  h += '</div>';
   return h;
 }
 
@@ -8199,6 +8210,7 @@ function _evaluatePostVideos(){
   var vids = [];
   host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video').forEach(function(v){
     if(v.hasAttribute('data-space-spark') || v.hasAttribute('data-spark-id')) return;
+    if(!v.isConnected) return;
     vids.push(v);
   });
   if(!vids.length){ _spacePostVideoPlaying = null; return; }
@@ -8374,6 +8386,24 @@ Z.sp5FmtDur      = fmtDur;
 Z.sp5FormatSubs  = formatSubs;
 
 /* ============================================================
+   MISSING SWITCHERS (added — original Block A forgot these)
+   ============================================================ */
+Z.sp5SwitchPublicTab = function(tab){
+  if(tab !== 'videos' && tab !== 'sparks') return;
+  Z.State.spacePublicTab = tab;
+  try { sessionStorage.setItem('zynix_space_public_sub', tab); } catch(e){}
+  var me = Z.State.currentUser;
+  Z.sp5RenderContent(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId));
+};
+
+Z.sp5SwitchMySub = function(sub){
+  Z.State.spaceMySub = sub || 'default';
+  try { sessionStorage.setItem('zynix_space_my_sub', Z.State.spaceMySub); } catch(e){}
+  var me = Z.State.currentUser;
+  Z.sp5RenderContent(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId));
+};
+
+/* ============================================================
    DRAG-SCROLL for horizontal strips (laptop)
    ============================================================ */
 (function(){
@@ -8411,11 +8441,12 @@ Z.sp5FormatSubs  = formatSubs;
     }
     _drag = null;
   });
-})();     
+})();
 
-console.log('[SPACE v9 — Block A] foundation · crash guard · single observers · no loops');
+console.log('[SPACE v9 — Block A] foundation · public space bug fixed · missing switchers added');
 })();
 </script>
+
 
 <!-- ============================================================ -->
 <!-- SECTION 8 — SPACE · v9 · BLOCK B of 4                         -->
@@ -8719,6 +8750,7 @@ Z.sp5VideoReact = async function(videoId, reactionType){
     console.error('[video-react]', e);
   }
 };
+
 /* ============================================================
    OPEN VIDEO — single overlay
    ============================================================ */
@@ -9113,7 +9145,7 @@ Z.sp5AddComment = async function(videoId){
     if(v && v._comments) v._comments = v._comments.filter(function(x){ return x.id !== newId; });
     if(v) v._commentsCount = Math.max(0, (v._commentsCount || 1) - 1);
     var domEl = document.querySelector('[data-spark-comment-id="' + newId + '"]');
-    if(domEl && domEl.parentNode) domEl.parentNode.remove();
+    if(domEl && domEl.parentNode) domEl.parentNode.removeChild(domEl);
     var head2 = document.querySelector('.sp5-vd-comments-head .cnt');
     if(head2 && v) head2.textContent = v._commentsCount;
     Z.toast('Failed.', 'error');
@@ -9984,7 +10016,6 @@ if(!Z.__zynixAgeConfirmListener){
 console.log('[SPACE v9 — Block B] overlay · reactions · ratings · comments · ⋮ · edit · delete · pin');
 })();
 </script>
-
 <!-- ============================================================ -->
 <!-- SECTION 8 — SPACE · v9 · BLOCK C of 4                         -->
 <!-- Bond · More sheet · Settings · Avatar picker/viewer ·         -->
@@ -10160,7 +10191,7 @@ if(!Z.__zynixBondClickListener){
   }, true);
 }
 
-/* Clear cache on logout */
+/* Clear caches on logout */
 var _prevLogoutC = Z.logout;
 if(typeof _prevLogoutC === 'function'){
   Z.logout = async function(){
@@ -10237,7 +10268,7 @@ Z.openSubscribeSheet = function(creatorId){
 };
 
 /* ============================================================
-   MORE SHEET — role-aware
+   MUTE helpers (private)
    ============================================================ */
 function _muteKey(targetId){
   var u = me();
@@ -10257,6 +10288,9 @@ function _setMuted(targetId, on){
   } catch(e){}
 }
 
+/* ============================================================
+   MORE SHEET — role-aware
+   ============================================================ */
 Z.openSpaceMoreSheet = async function(userId){
   var u = me();
   var p = (Z.getProfileById ? Z.getProfileById(userId) : null) || {};
@@ -10301,7 +10335,8 @@ Z.openSpaceMoreSheet = async function(userId){
   }
   rows.push({ icon:'fa-regular fa-bookmark', label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
   rows.push({ icon:'fa-solid fa-copy', label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
-   /* Watch Later — owner only */
+
+  /* Watch Later — owner only */
   if(isOwner){
     rows.push({ icon:'fa-regular fa-clock', label:'Watch Later', action:'Z.closeSheet();setTimeout(function(){Z.openWatchLater()},200)' });
   }
@@ -10376,7 +10411,6 @@ Z._toggleBlock = async function(userId, isCurrentlyBlocked){
   try {
     var r = await c.rpc(isCurrentlyBlocked ? 'unblock_user' : 'block_user', { p_blocked_id: userId });
     if(r.error) throw r.error;
-    /* Close sheet ONLY on this specific action (silent — no reload, no navigate) */
     Z.closeSheet();
     toast(isCurrentlyBlocked ? 'User unblocked.' : 'User blocked.');
   } catch(e){
@@ -10636,14 +10670,12 @@ Z._saveSpaceName = async function(){
   sd.name = val;
   var r = await Z.DB.updateProfile(u.id, { space_data: sd });
   if(!r){ toast('Failed.', 'error'); return; }
-    if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
-  /* Also update cached space profile so header reads fresh data */
+  if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
   if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
     Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, sd);
   }
   Z.closeModal();
   toast('SPACE name saved.');
-  /* Repaint header if user is on their own SPACE */
   if(Z.State.currentView === 'public-profile' && Z.State.spaceUserId === u.id){
     setTimeout(function(){ try { Z.sp5RenderHeader(u.id, true); } catch(e){} }, 50);
   }
@@ -10651,7 +10683,7 @@ Z._saveSpaceName = async function(){
 };
 
 /* ============================================================
-   AVATAR PICKER (image only) + VIEWER + PREMIUM link
+   AVATAR PICKER + VIEWER + PREMIUM link
    ============================================================ */
 Z._avatarPickedFile = null;
 
@@ -10677,7 +10709,6 @@ Z.openAvatarPicker = function(){
   h += '<button class="btn-primary" onclick="document.getElementById(\'sp5-avatar-input\').click()" style="margin-bottom:8px;"><i class="fa-solid fa-camera"></i> Choose image</button>';
   h += '<button class="btn-primary" id="sp5-avatar-save" onclick="Z._saveAvatar()" disabled style="background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;">Save avatar</button>';
 
-  /* Premium avatar button — jumps to Digital Market */
   h += '<button class="btn-primary" onclick="Z._avatarGoPremium()" style="background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;margin-top:8px;">';
   h += '<i class="fa-solid fa-crown"></i> Premium avatars — Digital Market';
   h += '</button>';
@@ -10689,7 +10720,6 @@ Z.openAvatarPicker = function(){
 
 Z._avatarGoPremium = function(){
   Z.closeModal();
-  /* Navigate to Digital Market avatar-frames category */
   Z.State._spaceLandingTab = null;
   setTimeout(function(){
     if(typeof Z.zygOpenCategory === 'function'){
@@ -10729,7 +10759,6 @@ Z._saveAvatar = async function(){
     var url = await Z.storeMedia(file);
     if(!url) throw new Error('Upload returned empty URL.');
 
-    /* Fetch freshest profile to merge correctly */
     var c = db();
     var currentData = Object.assign({}, u.space_data || {});
     if(c){
@@ -10743,8 +10772,7 @@ Z._saveAvatar = async function(){
     currentData.avatar = url;
     var r = await Z.DB.updateProfile(u.id, { space_data: currentData });
     if(!r) throw new Error('Profile update failed.');
-       if(Z.State.currentUser) Z.State.currentUser.space_data = currentData;
-    /* Also update cached space profile */
+    if(Z.State.currentUser) Z.State.currentUser.space_data = currentData;
     if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
       Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, currentData);
     }
@@ -10816,7 +10844,6 @@ async function fetchHealthScore(userId, isOwner){
     var r = await c.rpc('space_health_score', { p_space_id: userId });
     if(!r.error && r.data){
       _healthCache[userId] = { data: r.data, ts: Date.now() };
-      /* Repaint chip if header still mounted */
       if(Z.State.currentView === 'public-profile' && Z.State.spaceUserId === userId){
         var chipsRow = document.querySelector('#sp5-head-host .sp5-chips');
         if(chipsRow && !chipsRow.querySelector('[data-health-badge]')){
@@ -12168,7 +12195,7 @@ if(typeof _prevSubmitSparkD === 'function'){
         }
       }
 
-          var countToday = await countTodaySparksD(u.id);
+      var countToday = await countTodaySparksD(u.id);
       var fee = countToday < 3 ? 0 : 1;
 
       /* Read CFAR + age BEFORE submit */
@@ -12470,8 +12497,7 @@ if(typeof _prevSubmitFVD === 'function'){
     return result;
   };
 }
-     
-     
+
 /* ============================================================
    11. DEEP LINKS
    ============================================================ */
@@ -12573,8 +12599,7 @@ if(typeof _prevVideoReactD === 'function'){
 
 console.log('[SPACE v9 — Block D] cfar tracker · search · trending · spark cap · deep links · done');
 })();
-</script>     
-     
+</script>
 <!-- ============================================================ -->
 <!-- SPARK LOAD MORE — Auto-paginate footer Spark feed            -->
 <!-- Batch 20 · triggers when 5 slides remain below viewport     -->
@@ -35943,341 +35968,6 @@ Z.showView = function(view, param){
 console.log('[Market Block 24] service orders + Fix 3 UI ready');
 })();
 </script> 
-
-<!-- ============================================================ -->
-<!-- SPACE v9 — COMPLETE FIX (replaces earlier fix block)         -->
-<!-- Fixes: renderPublicSpace crash + sp5SwitchPublicTab +        -->
-<!-- sp5SwitchMySub + restores own-space post video controller.   -->
-<!-- ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__sp5PublicFixV2) return; Z.__sp5PublicFixV2 = true;
-
-/* ============================================================
-   1. FIXED public space renderer (adds missing var h)
-   ============================================================ */
-function renderPublicSpaceFixed(userId, isOwner){
-  var videos = Z.State.publicVideosAll || [];
-  var sparks = Z.State.publicSparksAll || [];
-  var sub = Z.State.spacePublicTab || 'sparks';
-  var h = '';                                  /* ← THE FIX */
-
-  if(!videos.length && !sparks.length && !Z._globalRepaintPending){
-    Z._globalRepaintPending = true;
-    Z.sp5FetchGlobalContent().then(function(){
-      Z._globalRepaintPending = false;
-      if(Z.State.currentView !== 'public-profile') return;
-      if(Z.State.spaceTab !== 'public') return;
-      var me2 = Z.State.currentUser;
-      Z.sp5RenderContent(Z.State.spaceUserId, !!(me2 && me2.id === Z.State.spaceUserId));
-    }).catch(function(){ Z._globalRepaintPending = false; });
-  }
-
-  h += '<div class="sp5-subtabs">';
-  h += '<button class="sp5-subtab" ' + (sub === 'videos' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'videos\')"><i class="fa-solid fa-film"></i> Public Full Videos <span class="cnt">' + videos.length + '</span></button>';
-  h += '<button class="sp5-subtab" ' + (sub === 'sparks' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'sparks\')"><i class="fa-solid fa-bolt"></i> Public Sparks <span class="cnt">' + sparks.length + '</span></button>';
-  h += '</div>';
-
-  h += '<div id="sp5-search-slot"></div>';
-
-  h += '<div class="sp5-sec-head" style="margin-bottom:0;">';
-  h += '<div class="sp5-sec-title">' + (sub === 'videos' ? '<i class="fa-solid fa-film" style="color:#10b981;"></i> Full Videos' : '<i class="fa-solid fa-bolt" style="color:#10b981;"></i> Sparks') + ' <span class="cnt">' + (sub === 'videos' ? videos.length : sparks.length) + '</span></div>';
-  if(sub === 'videos'){
-    h += '<button class="sp5-fullview guide" onclick="Z.openFullVideoCreatorGuide()"><i class="fa-solid fa-circle-question"></i> How it works</button>';
-  }
-  h += '</div>';
-
-  h += '<div id="sp5-trending-slot"></div>';
-
-  if(sub === 'videos'){
-    h += '<div id="sp5-fv-app-host" style="margin-bottom:4px;"></div>';
-    setTimeout(function(){ try { Z.paintFullVideoApplicationSlot(userId); } catch(e){} }, 80);
-    h += '<div class="sp5-vgrid" id="sp5-public-vgrid">' + Z.sp5RenderVideoGrid(videos, userId, true, isOwner, 'global') + '</div>';
-    h += '<div id="sp5-videos-rating-host" style="margin-top:6px;"></div>';
-    setTimeout(function(){ try { Z.sp5PaintVideosRatingBlock(userId); } catch(e){} }, 80);
-  } else {
-    h += '<div class="sp5-sgrid" id="sp5-public-sgrid">' + Z.sp5RenderSparkGrid(sparks, userId, 'public') + '</div>';
-  }
-
-  return h;
-}
-
-/* ============================================================
-   2. Local header toggle (mirror of Block A's private one)
-   ============================================================ */
-function updateHeaderToggleLocal(){
-  var head = document.getElementById('sp5-head-host');
-  if(!head) return;
-  var btn = head.querySelector('[data-toggle-btn]');
-  if(!btn) return;
-  var isPublic = (Z.State.spaceTab === 'public');
-  var label = isPublic ? 'My Space' : 'Public Space';
-  var icon  = isPublic ? 'fa-solid fa-user' : 'fa-solid fa-globe';
-  var fn    = isPublic ? 'Z.sp5GoMySpaceView()' : 'Z.sp5GoPublicView()';
-  btn.setAttribute('onclick', fn);
-  btn.setAttribute('title', label);
-  btn.innerHTML = '<i class="' + icon + '"></i> ' + label;
-}
-
-/* ============================================================
-   3. Local grid lazy videos (mirror of Block A's private one)
-   ============================================================ */
-function setupGridLazyVideosLocal(){
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-  if(!Z._sp5LazyGridObserver && typeof IntersectionObserver !== 'undefined'){
-    Z._sp5LazyGridObserver = new IntersectionObserver(function(entries){
-      entries.forEach(function(en){
-        if(!en.isIntersecting) return;
-        var v = en.target;
-        if(v.getAttribute('preload') === 'none'){
-          v.setAttribute('preload', 'metadata');
-          try { v.load(); } catch(e){}
-        }
-        try { Z._sp5LazyGridObserver.unobserve(v); } catch(e){}
-      });
-    }, { rootMargin: '300px 0px' });
-  }
-  if(!Z._sp5LazyGridObserver) return;
-  host.querySelectorAll('video[data-space-spark="1"]').forEach(function(v){
-    if(v._sp5LazyHooked) return;
-    v._sp5LazyHooked = true;
-    if(v.readyState >= 1) return;
-    try { Z._sp5LazyGridObserver.observe(v); } catch(e){}
-  });
-}
-
-/* ============================================================
-   4. ★ LOCAL POST VIDEO CONTROLLER (the piece I missed) ★
-   Own-Space posts videos: 75% visible → play; else → pause.
-   One video at a time. Clip-aware ratio.
-   ============================================================ */
-var _sp5PvPlaying   = null;
-var _sp5PvRaf       = null;
-var _sp5PvObserver  = null;
-
-function _sp5PvEffectiveRatio(v){
-  var rect = v.getBoundingClientRect();
-  var clipTop = 0, clipBottom = window.innerHeight;
-  var el = v.parentElement;
-  while(el && el !== document.body){
-    var st;
-    try { st = window.getComputedStyle(el); } catch(e){ st = null; }
-    if(st){
-      var ov = st.overflowY || st.overflow;
-      if(ov === 'auto' || ov === 'hidden' || ov === 'scroll'){
-        var cr = el.getBoundingClientRect();
-        if(cr.top > clipTop) clipTop = cr.top;
-        if(cr.bottom < clipBottom) clipBottom = cr.bottom;
-      }
-    }
-    el = el.parentElement;
-  }
-  var visibleTop    = Math.max(clipTop, rect.top);
-  var visibleBottom = Math.min(clipBottom, rect.bottom);
-  var visible       = Math.max(0, visibleBottom - visibleTop);
-  return rect.height > 0 ? (visible / rect.height) : 0;
-}
-
-function _sp5PvEval(){
-  if(Z.State.currentView !== 'public-profile') return;
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-
-  var vids = [];
-  host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video').forEach(function(v){
-    if(v.hasAttribute('data-space-spark') || v.hasAttribute('data-spark-id')) return;
-    if(!v.isConnected) return;
-    vids.push(v);
-  });
-
-  if(!vids.length){ _sp5PvPlaying = null; return; }
-
-  var best = null, bestRatio = 0;
-  vids.forEach(function(v){
-    var r = _sp5PvEffectiveRatio(v);
-    if(r > bestRatio){ bestRatio = r; best = v; }
-  });
-
-  var shouldPlay = best && bestRatio >= 0.75;
-
-  vids.forEach(function(v){
-    if(shouldPlay && v === best){
-      if(v.paused){ try { v.play().catch(function(){}); } catch(e){} }
-      _sp5PvPlaying = v;
-    } else {
-      if(!v.paused){ try { v.pause(); } catch(e){} }
-      if(v === best) _sp5PvPlaying = null;
-    }
-  });
-
-  if(!shouldPlay) _sp5PvPlaying = null;
-}
-
-function _sp5PvSchedule(){
-  if(_sp5PvRaf) return;
-  _sp5PvRaf = requestAnimationFrame(function(){
-    _sp5PvRaf = null;
-    _sp5PvEval();
-  });
-}
-
-function setupPostVideoControllerLocal(){
-  if(Z.State.currentView !== 'public-profile') return;
-  var host = document.getElementById('sp5-content-host');
-  if(!host) return;
-
-  var vids = host.querySelectorAll('.post-card video, .sp5-posts-window video, .post-media video');
-  if(!vids.length){ _sp5PvPlaying = null; return; }
-
-  if(!_sp5PvObserver && typeof IntersectionObserver !== 'undefined'){
-    _sp5PvObserver = new IntersectionObserver(function(){
-      _sp5PvSchedule();
-    }, { threshold:[0, 0.25, 0.5, 0.75, 0.9, 1.0] });
-  }
-
-  vids.forEach(function(v){
-    if(v._sp5PvHooked) return;
-    v._sp5PvHooked = true;
-    if(v.hasAttribute('data-space-spark') || v.hasAttribute('data-spark-id')) return;
-    if(_sp5PvObserver){ try { _sp5PvObserver.observe(v); } catch(e){} }
-    v.setAttribute('playsinline','');
-    v.setAttribute('loop','');
-  });
-
-  if(!Z._sp5PvScrollHooked){
-    Z._sp5PvScrollHooked = true;
-    window.addEventListener('scroll', _sp5PvSchedule, {passive:true});
-    window.addEventListener('resize', _sp5PvSchedule, {passive:true});
-    document.addEventListener('scroll', _sp5PvSchedule, {passive:true, capture:true});
-  }
-
-  _sp5PvSchedule();
-}
-
-/* ============================================================
-   5. ★ THE MAIN OVERRIDE — full mirror of Block A's logic ★
-   Now includes ALL 3 internal helpers so nothing is lost.
-   ============================================================ */
-Z.sp5RenderContent = function(userId, isOwner){
-  if(Z._sp5RcInflight){
-    Z._sp5RcPending = { userId: userId, isOwner: isOwner };
-    return;
-  }
-  Z._sp5RcInflight = true;
-
-  try {
-    var host = document.getElementById('sp5-content-host');
-    if(!host) return;
-
-    if(!isOwner){
-      host.innerHTML = Z.sp5RenderMySpace(userId, false, Z.State.spaceProfile);
-    } else if(Z.State.spaceTab === 'public'){
-      host.innerHTML = renderPublicSpaceFixed(userId, true);
-    } else {
-      host.innerHTML = Z.sp5RenderMySpace(userId, true, Z.State.spaceProfile);
-    }
-
-    try { updateHeaderToggleLocal(); } catch(e){}
-
-    setTimeout(function(){
-      try { if(typeof Z.resolveIdbRefs === 'function') Z.resolveIdbRefs(host); } catch(e){}
-      try { Z.observeFreezeDots(); } catch(e){}
-      try { Z._tagMediaContainers(); } catch(e){}
-      try { setupPostVideoControllerLocal(); } catch(e){}   /* ← RESTORED */
-      try { setupGridLazyVideosLocal(); } catch(e){}
-    }, 60);
-  } catch(e){
-    console.error('[sp5RenderContent] FAILED:', e);
-    var h2 = document.getElementById('sp5-content-host');
-    if(h2) h2.innerHTML = '<div class="empty-state"><p>Could not load SPACE content.</p><p style="font-size:11px;color:#a16262;margin-top:6px;">' + (e && e.message ? e.message : 'unknown') + '</p></div>';
-  } finally {
-    setTimeout(function(){
-      Z._sp5RcInflight = false;
-      if(Z._sp5RcPending){
-        var p = Z._sp5RcPending;
-        Z._sp5RcPending = null;
-        Z.sp5RenderContent(p.userId, p.isOwner);
-      }
-    }, 80);
-  }
-};
-
-/* ============================================================
-   6. Missing switchers
-   ============================================================ */
-Z.sp5SwitchPublicTab = function(tab){
-  if(tab !== 'videos' && tab !== 'sparks') return;
-  Z.State.spacePublicTab = tab;
-  try { sessionStorage.setItem('zynix_space_public_sub', tab); } catch(e){}
-  var me = Z.State.currentUser;
-  Z.sp5RenderContent(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId));
-};
-
-Z.sp5SwitchMySub = function(sub){
-  Z.State.spaceMySub = sub || 'default';
-  try { sessionStorage.setItem('zynix_space_my_sub', Z.State.spaceMySub); } catch(e){}
-  var me = Z.State.currentUser;
-  Z.sp5RenderContent(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId));
-};
-
-/* ============================================================
-   7. Safe view toggles
-   ============================================================ */
-Z.sp5GoPublicView = function(){
-  try {
-    if(Z.State.spaceTab === 'public') return;
-    Z.State.spaceTab = 'public';
-    try { sessionStorage.setItem('zynix_space_tab','public'); } catch(e){}
-    var me = Z.State.currentUser;
-    var isOwner = !!(me && me.id === Z.State.spaceUserId);
-    Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
-    Z.sp5FetchGlobalContent().then(function(){
-      if(Z.State.currentView !== 'public-profile') return;
-      if(Z.State.spaceTab !== 'public') return;
-      Z.sp5RenderContent(Z.State.spaceUserId, isOwner);
-    }).catch(function(){});
-  } catch(e){
-    console.error('[sp5GoPublicView]', e);
-    if(Z.toast) Z.toast('Could not open Public Space.', 'error');
-  }
-};
-
-Z.sp5GoMySpaceView = function(){
-  try {
-    if(Z.State.spaceTab === 'my') return;
-    Z.State.spaceTab = 'my';
-    Z.State.spaceMySub = 'default';
-    try {
-      sessionStorage.setItem('zynix_space_tab','my');
-      sessionStorage.setItem('zynix_space_my_sub','default');
-    } catch(e){}
-    var me = Z.State.currentUser;
-    Z.sp5RenderContent(Z.State.spaceUserId, !!(me && me.id === Z.State.spaceUserId));
-  } catch(e){
-    console.error('[sp5GoMySpaceView]', e);
-    if(Z.toast) Z.toast('Could not open My Space.', 'error');
-  }
-};
-
-/* ============================================================
-   8. Stop own-space videos when leaving the view
-   ============================================================ */
-var _prevShow = Z.showView;
-Z.showView = function(view){
-  var r = _prevShow.apply(this, arguments);
-  if(view !== 'public-profile' && _sp5PvPlaying){
-    try { _sp5PvPlaying.pause(); } catch(e){}
-    _sp5PvPlaying = null;
-  }
-  return r;
-};
-
-console.log('[SPACE v9 Fix v2] public render + post video controller both restored');
-})();
-</script>
      
 </body>
 </html>
