@@ -7978,7 +7978,11 @@ function renderHeader(p, isOwner, rating, bondCount){
 
   var completion = (typeof Z.profileCompletion === 'function') ? Z.profileCompletion(p) : 0;
   var sd = p.space_data || {};
-  var avUrl = p.avatar || safeAvatar(p);
+  /* Owner reads LIVE space_data — reflects saves immediately */
+  if(isOwner && Z.State.currentUser && Z.State.currentUser.id === p.id){
+    sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
+  }
+  var avUrl = sd.avatar || p.avatar || safeAvatar(p);
   var avInner = '<img src="' + esc(avUrl) + '" alt="">';
 
   var spaceName = (sd.name || '').trim() || p.name || 'User';
@@ -8607,22 +8611,18 @@ Z.sp5VideoReact = async function(videoId, reactionType){
   if(reactionType === 'dislike') return;
   var v = findVideo(videoId);
   if(!v) return;
+  var u = Z.State.currentUser;
+  if(!u){ Z.openAuthModal('login'); return; }
+  var c = Z.sb && Z.sb();
+  if(!c) return;
 
-  /* Already reacted */
-  if(v._myReactions && v._myReactions[reactionType]){
-    Z.toast('Already reacted.');
-    return;
-  }
-  /* Dislike conflict */
-  if(v._myReactions && v._myReactions['dislike']){
-    Z.toast('Remove dislike first.');
-    return;
-  }
-  /* Freeze check */
+  /* Ownership / own-content guard */
+  if(v.author_id === u.id){ Z.toast('Cannot react to your own video.'); return; }
+
+  /* Freeze guard — soft blink + tooltip only */
   if(!Z.isUnfrozen(videoId)){
     var dot = document.querySelector('.freeze-dot[data-freeze-id="' + videoId + '"]');
     if(dot){
-      /* Soft blink */
       dot.style.transition = 'transform .22s ease, opacity .22s ease';
       dot.style.transform = 'scale(1.25)';
       dot.style.opacity = '0.55';
@@ -8635,63 +8635,75 @@ Z.sp5VideoReact = async function(videoId, reactionType){
     return;
   }
 
-  /* OPTIMISTIC local update FIRST */
-  v._myReactions = v._myReactions || {};
-  v._reactions = v._reactions || {};
+  if(!v._myReactions) v._myReactions = {};
+  if(!v._reactions) v._reactions = {};
+
+  /* Enforce: only ONE reaction at a time. Dislike is separate. */
+  if(v._myReactions['dislike']){ Z.toast('Remove dislike first.'); return; }
+  if(v._myReactions[reactionType]){ Z.toast('Already reacted.'); return; }
+
+  /* Optimistic update */
   v._myReactions[reactionType] = true;
   v._reactions[reactionType] = (v._reactions[reactionType] || 0) + 1;
+  if(typeof Z._markSelfReaction === 'function') Z._markSelfReaction(videoId, reactionType);
 
-  /* Immediate UI update */
+  /* Immediate row repaint */
   var row = document.querySelector('.sp5-vd-rx');
-  if(row){
-    row.innerHTML = Z._renderVideoPageReactionRow(v);
-    try { Z.observeFreezeDots(); } catch(e){}
-  }
+  if(row){ row.innerHTML = Z._renderVideoPageReactionRow(v); try { Z.observeFreezeDots(); } catch(e){} }
 
-  /* Now fire RPC via Section 6's handler (handles RLS + bounty RPC) */
+  /* Heart-rise animation */
   try {
-    if(typeof Z.sparkReact === 'function'){
-      await Z.sparkReact(videoId, reactionType);
-    }
-  } catch(e){}
-
-    /* Fire heart-rise animation right after optimistic paint */
-  try {
-    var r = Z.Reactions[reactionType];
-    if(r){
+    var rx = Z.Reactions[reactionType];
+    if(rx){
       var btn = document.querySelector('.sp5-vd-react[onclick*="' + reactionType + '"]');
       if(btn){
         var rect = btn.getBoundingClientRect();
         var cx = rect.left + rect.width / 2;
         var cy = rect.top + rect.height / 2;
         var heart = document.createElement('div');
-        heart.className = 'zynix-heart-rise';
-        heart.textContent = r.symbol;
-        heart.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;font-size:40px;left:' + (cx - 20) + 'px;top:' + (cy - 20) + 'px;animation:zynixHeartRise 700ms cubic-bezier(.25,.46,.45,.94) forwards;filter:drop-shadow(0 0 12px rgba(16,185,129,.6));';
+        heart.textContent = rx.symbol;
+        heart.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;font-size:40px;left:' + (cx - 20) + 'px;top:' + (cy - 20) + 'px;filter:drop-shadow(0 0 12px rgba(16,185,129,.6));transition:transform .7s cubic-bezier(.25,.46,.45,.94),opacity .7s;';
         document.body.appendChild(heart);
-        if(r.reward > 0){
+        requestAnimationFrame(function(){
+          heart.style.transform = 'translateY(-220px) scale(.7)';
+          heart.style.opacity = '0';
+        });
+        if(rx.reward > 0){
           var amt = document.createElement('div');
-          amt.textContent = '+~$' + r.reward.toFixed(2);
-          amt.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;font-size:12px;font-weight:900;color:#10b981;text-shadow:0 0 8px rgba(16,185,129,.85);left:' + cx + 'px;top:' + (cy - 30) + 'px;transform:translateX(-50%);animation:zynixHeartRise 700ms cubic-bezier(.25,.46,.45,.94) forwards;';
+          amt.textContent = '+~$' + rx.reward.toFixed(2);
+          amt.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;font-size:12px;font-weight:900;color:#10b981;text-shadow:0 0 8px rgba(16,185,129,.85);left:' + cx + 'px;top:' + (cy - 30) + 'px;transform:translateX(-50%);transition:transform .7s cubic-bezier(.25,.46,.45,.94),opacity .7s;';
           document.body.appendChild(amt);
-          setTimeout(function(){ amt.remove(); }, 750);
+          requestAnimationFrame(function(){
+            amt.style.transform = 'translate(-50%,-220px) scale(.7)';
+            amt.style.opacity = '0';
+          });
+          setTimeout(function(){ amt.remove(); }, 800);
         }
-        setTimeout(function(){ heart.remove(); }, 750);
+        setTimeout(function(){ heart.remove(); }, 800);
       }
     }
   } catch(e){}
 
-  /* Re-sync after RPC settles */
-  setTimeout(function(){
-    var v2 = findVideo(videoId);
-    var row2 = document.querySelector('.sp5-vd-rx');
-    if(row2 && v2){
-      row2.innerHTML = Z._renderVideoPageReactionRow(v2);
-      try { Z.observeFreezeDots(); } catch(e){}
+  /* DB insert — direct, no sparkReact dependency */
+  try {
+    var ins = await c.from('spark_reactions').insert({
+      spark_id: videoId, user_id: u.id, reaction: reactionType
+    });
+    if(ins.error && ins.error.code !== '23505'){
+      /* Revert optimistic */
+      delete v._myReactions[reactionType];
+      v._reactions[reactionType] = Math.max(0, (v._reactions[reactionType]||0) - 1);
+      var row2 = document.querySelector('.sp5-vd-rx');
+      if(row2){ row2.innerHTML = Z._renderVideoPageReactionRow(v); try { Z.observeFreezeDots(); } catch(e){} }
+      Z.toast('Failed to save reaction.', 'error');
+      return;
     }
-  }, 300);
+    /* Award bounty (server-side) */
+    try { await Z.DB.awardReactionBounty('spark', videoId, reactionType); } catch(e){}
+  } catch(e){
+    console.error('[video-react]', e);
+  }
 };
-
 /* ============================================================
    OPEN VIDEO — single overlay
    ============================================================ */
@@ -10274,7 +10286,10 @@ Z.openSpaceMoreSheet = async function(userId){
   }
   rows.push({ icon:'fa-regular fa-bookmark', label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
   rows.push({ icon:'fa-solid fa-copy', label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
-  rows.push({ icon:'fa-regular fa-clock', label:'Watch Later', action:'Z.closeSheet();setTimeout(function(){Z.openWatchLater()},200)' });
+   /* Watch Later — owner only */
+  if(isOwner){
+    rows.push({ icon:'fa-regular fa-clock', label:'Watch Later', action:'Z.closeSheet();setTimeout(function(){Z.openWatchLater()},200)' });
+  }
 
   /* Visitor-only: mute, block, report */
   if(!isOwner){
@@ -10606,9 +10621,17 @@ Z._saveSpaceName = async function(){
   sd.name = val;
   var r = await Z.DB.updateProfile(u.id, { space_data: sd });
   if(!r){ toast('Failed.', 'error'); return; }
-  if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
+    if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
+  /* Also update cached space profile so header reads fresh data */
+  if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
+    Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, sd);
+  }
   Z.closeModal();
   toast('SPACE name saved.');
+  /* Repaint header if user is on their own SPACE */
+  if(Z.State.currentView === 'public-profile' && Z.State.spaceUserId === u.id){
+    setTimeout(function(){ try { Z.sp5RenderHeader(u.id, true); } catch(e){} }, 50);
+  }
   setTimeout(function(){ Z.showView('space-settings'); }, 200);
 };
 
@@ -10705,12 +10728,16 @@ Z._saveAvatar = async function(){
     currentData.avatar = url;
     var r = await Z.DB.updateProfile(u.id, { space_data: currentData });
     if(!r) throw new Error('Profile update failed.');
-    if(Z.State.currentUser) Z.State.currentUser.space_data = currentData;
+       if(Z.State.currentUser) Z.State.currentUser.space_data = currentData;
+    /* Also update cached space profile */
+    if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
+      Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, currentData);
+    }
     Z.closeModal();
     toast('Avatar updated.');
     Z._avatarPickedFile = null;
     if(Z.State.currentView === 'public-profile' && Z.State.spaceUserId === u.id){
-      setTimeout(function(){ Z.sp5RenderHeader(u.id, true); }, 100);
+      setTimeout(function(){ try { Z.sp5RenderHeader(u.id, true); } catch(e){} }, 100);
     } else if(Z.State.currentView === 'space-settings'){
       setTimeout(function(){ Z.showView('space-settings'); }, 100);
     }
@@ -12126,8 +12153,14 @@ if(typeof _prevSubmitSparkD === 'function'){
         }
       }
 
-      var countToday = await countTodaySparksD(u.id);
+          var countToday = await countTodaySparksD(u.id);
       var fee = countToday < 3 ? 0 : 1;
+
+      /* Read CFAR + age BEFORE submit */
+      var cfarRate = parseFloat((document.getElementById('spark-cfar-rate')||{}).value || '0') || 0;
+      var cfarBudget = parseFloat((document.getElementById('spark-cfar-budget')||{}).value || '0') || 0;
+      var ageGate = !!(document.getElementById('spark-age-gate')||{}).checked;
+      var warning = ((document.getElementById('spark-content-warning')||{}).value || '').trim() || null;
 
       var result;
       try {
@@ -12135,6 +12168,30 @@ if(typeof _prevSubmitSparkD === 'function'){
       } catch(e){
         console.error('[v9 spark submit]', e);
         return;
+      }
+
+      /* Patch CFAR + age 500ms after DB confirm */
+      if(cfarRate > 0 || cfarBudget > 0 || ageGate || warning){
+        setTimeout(async function(){
+          try {
+            var latest = await c.from('sparks')
+              .select('id').eq('author_id', u.id).eq('type','spark')
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if(!latest || !latest.data) return;
+            var patch = {};
+            if(cfarRate > 0)   patch.cfar_rate_per_minute = cfarRate;
+            if(cfarBudget > 0) patch.cfar_view_budget = cfarBudget;
+            if(ageGate)        patch.is_age_gated = true;
+            if(warning)        patch.content_warning = warning;
+            if(Object.keys(patch).length){
+              await c.from('sparks').update(patch).eq('id', latest.data.id);
+              [Z.State.spaceSparks, Z.State.publicSparksAll, Z.State.allSparks].forEach(function(arr){
+                if(!arr) return;
+                arr.forEach(function(x){ if(x.id === latest.data.id) Object.assign(x, patch); });
+              });
+            }
+          } catch(e){ console.error('[spark-cfar-patch]', e); }
+        }, 500);
       }
 
       /* Fee-safe deduction (single-shot, 500ms after DB confirm) */
@@ -12227,6 +12284,179 @@ async function injectSparkFeeInfoD(){
   if(submitBtn.parentNode) submitBtn.parentNode.insertBefore(info, submitBtn);
 }
 
+/* ============================================================
+   10b. FV + SPARK MODAL — CFAR + age + warning injection
+   (single injection per modal, deduped)
+   ============================================================ */
+var _prevOpenFVModalD = Z.openCreateFullVideoModal;
+if(typeof _prevOpenFVModalD === 'function'){
+  Z.openCreateFullVideoModal = function(){
+    var r = _prevOpenFVModalD.apply(this, arguments);
+    setTimeout(injectFVModalExtrasD, 120);
+    setTimeout(injectFVModalExtrasD, 400);
+    return r;
+  };
+}
+
+function injectFVModalExtrasD(){
+  var modal = document.getElementById('modal-container');
+  if(!modal) return;
+  if(!document.getElementById('fv-title')) return;
+
+  /* Dedupe — keep only one */
+  var existingCfar = modal.querySelectorAll('#fv-cfar-block');
+  for(var i = 1; i < existingCfar.length; i++) existingCfar[i].remove();
+  if(existingCfar.length) return;
+
+  var submitBtn = null;
+  modal.querySelectorAll('button.btn-primary').forEach(function(b){
+    var t = (b.textContent||'').toLowerCase();
+    if(t.indexOf('upload') !== -1 || t.indexOf('publish') !== -1) submitBtn = b;
+  });
+  if(!submitBtn) return;
+  var wrapper = submitBtn.parentNode;
+  if(!wrapper) return;
+
+  var cfar = document.createElement('div');
+  cfar.id = 'fv-cfar-block';
+  cfar.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);';
+  cfar.innerHTML =
+    '<div style="font-size:11px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-coins"></i> CFAR — VIEWER REWARDS (optional)</div>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Viewer rate (per minute)</label>' +
+    '<select id="fv-cfar-rate" class="form-select" style="margin-bottom:10px;">' +
+      '<option value="0">Off (no viewer reward)</option>' +
+      [0.001,0.002,0.003,0.004,0.005,0.006,0.007,0.008,0.009,0.010].map(function(v){ return '<option value="'+v+'">$'+v.toFixed(3)+' / min</option>'; }).join('') +
+    '</select>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">View budget</label>' +
+    '<select id="fv-cfar-budget" class="form-select">' +
+      '<option value="0">Off (no viewer reward)</option>' +
+      [10,25,50,100,250,500,1000,2500,5000,10000].map(function(v){ return '<option value="'+v+'">$'+v.toLocaleString()+'</option>'; }).join('') +
+    '</select>';
+
+  var ag = document.createElement('div');
+  ag.id = 'fv-age-block';
+  ag.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
+  ag.innerHTML =
+    '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">' +
+      '<input type="checkbox" id="fv-age-gate" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)</label>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Content warning (optional)</label>' +
+    '<input type="text" id="fv-content-warning" maxlength="80" placeholder="e.g. flashing lights" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">';
+
+  wrapper.insertBefore(ag, submitBtn);
+  wrapper.insertBefore(cfar, submitBtn);
+}
+
+/* Spark modal — CFAR + age block (fee info already injected elsewhere) */
+var _prevOpenSparkModalExtraD = Z.openCreateSparkModal;
+if(typeof _prevOpenSparkModalExtraD === 'function'){
+  Z.openCreateSparkModal = function(){
+    var r = _prevOpenSparkModalExtraD.apply(this, arguments);
+    setTimeout(injectSparkCfarBlockD, 140);
+    setTimeout(injectSparkCfarBlockD, 420);
+    return r;
+  };
+}
+
+function injectSparkCfarBlockD(){
+  var modal = document.getElementById('modal-container');
+  if(!modal) return;
+  if(!document.getElementById('spark-caption')) return;
+
+  var existing = modal.querySelectorAll('#spark-cfar-block');
+  for(var i = 1; i < existing.length; i++) existing[i].remove();
+  if(existing.length) return;
+
+  var submitBtn = null;
+  modal.querySelectorAll('button.btn-primary').forEach(function(b){
+    var t = (b.textContent||'').toLowerCase();
+    if(t.indexOf('publish') !== -1) submitBtn = b;
+  });
+  if(!submitBtn) return;
+  var wrapper = submitBtn.parentNode;
+  if(!wrapper) return;
+
+  var cfar = document.createElement('div');
+  cfar.id = 'spark-cfar-block';
+  cfar.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);';
+  cfar.innerHTML =
+    '<div style="font-size:11px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-coins"></i> CFAR — VIEWER REWARDS (optional)</div>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Viewer rate (per minute)</label>' +
+    '<select id="spark-cfar-rate" class="form-select" style="margin-bottom:10px;">' +
+      '<option value="0">Off (no viewer reward)</option>' +
+      [0.001,0.002,0.003,0.004,0.005,0.006,0.007,0.008,0.009,0.010].map(function(v){ return '<option value="'+v+'">$'+v.toFixed(3)+' / min</option>'; }).join('') +
+    '</select>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">View budget</label>' +
+    '<select id="spark-cfar-budget" class="form-select">' +
+      '<option value="0">Off (no viewer reward)</option>' +
+      [10,25,50,100,250,500,1000,2500,5000,10000].map(function(v){ return '<option value="'+v+'">$'+v.toLocaleString()+'</option>'; }).join('') +
+    '</select>';
+
+  var ag = document.createElement('div');
+  ag.id = 'spark-age-block';
+  ag.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
+  ag.innerHTML =
+    '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">' +
+      '<input type="checkbox" id="spark-age-gate" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)</label>' +
+    '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Content warning (optional)</label>' +
+    '<input type="text" id="spark-content-warning" maxlength="80" placeholder="e.g. flashing lights" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">';
+
+  wrapper.insertBefore(ag, submitBtn);
+  wrapper.insertBefore(cfar, submitBtn);
+}
+
+/* ============================================================
+   FV submit — read CFAR + age, patch DB row after publish
+   ============================================================ */
+var _prevSubmitFVD = Z.submitFullVideo;
+if(typeof _prevSubmitFVD === 'function'){
+  Z.submitFullVideo = async function(){
+    var u = me();
+    if(!u) return _prevSubmitFVD.apply(this, arguments);
+    var c = db();
+    if(!c) return _prevSubmitFVD.apply(this, arguments);
+
+    /* Read CFAR + age + warning from modal BEFORE submit */
+    var cfarRate = parseFloat((document.getElementById('fv-cfar-rate')||{}).value || '0') || 0;
+    var cfarBudget = parseFloat((document.getElementById('fv-cfar-budget')||{}).value || '0') || 0;
+    var ageGate = !!(document.getElementById('fv-age-gate')||{}).checked;
+    var warning = ((document.getElementById('fv-content-warning')||{}).value || '').trim() || null;
+
+    var result;
+    try {
+      result = await _prevSubmitFVD.apply(this, arguments);
+    } catch(e){
+      return;
+    }
+
+    /* Patch after DB row is confirmed (500ms delay for stability) */
+    if(cfarRate > 0 || cfarBudget > 0 || ageGate || warning){
+      setTimeout(async function(){
+        try {
+          var latest = await c.from('sparks')
+            .select('id').eq('author_id', u.id).eq('type','long_video')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if(!latest || !latest.data) return;
+          var patch = {};
+          if(cfarRate > 0)   patch.cfar_rate_per_minute = cfarRate;
+          if(cfarBudget > 0) patch.cfar_view_budget = cfarBudget;
+          if(ageGate)        patch.is_age_gated = true;
+          if(warning)        patch.content_warning = warning;
+          if(Object.keys(patch).length){
+            await c.from('sparks').update(patch).eq('id', latest.data.id);
+            /* Update local state */
+            [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
+              if(!arr) return;
+              arr.forEach(function(x){ if(x.id === latest.data.id) Object.assign(x, patch); });
+            });
+          }
+        } catch(e){ console.error('[fv-cfar-patch]', e); }
+      }, 500);
+    }
+    return result;
+  };
+}
+     
+     
 /* ============================================================
    11. DEEP LINKS
    ============================================================ */
