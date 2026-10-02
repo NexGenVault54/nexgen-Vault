@@ -7127,6 +7127,9 @@ Z.closeStatusViewer = function(){
 .zy-scoped-space-ring:active{transform:scale(.92)}
 body.zy-spark-ring-on .zy-scoped-space-ring{display:flex}
 @media(max-width:640px){.zy-scoped-space-ring{top:12px;right:52px;width:26px;height:26px;font-size:6px}}
+
+/* Hide footer plus button — replaced by per-tab plus */
+.zynix-footer .create-btn{display:none !important;}
 </style>
 
 <script>
@@ -7650,13 +7653,17 @@ function renderPublicSpace(userId, isOwner){
 
   h += '<div id="sp5-search-slot"></div>';
 
-  h += '<div class="sp5-sec-head" style="margin-bottom:0;">';
+    h += '<div class="sp5-sec-head" style="margin-bottom:0;">';
   h += '<div class="sp5-sec-title">' + (sub === 'videos' ? '<i class="fa-solid fa-film" style="color:#10b981;"></i> Full Videos' : '<i class="fa-solid fa-bolt" style="color:#10b981;"></i> Sparks') + ' <span class="cnt">' + (sub === 'videos' ? videos.length : sparks.length) + '</span></div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;">';
   if(sub === 'videos'){
     h += '<button class="sp5-fullview guide" onclick="Z.openFullVideoCreatorGuide()"><i class="fa-solid fa-circle-question"></i> How it works</button>';
+    h += '<button class="sp5-fullview" onclick="Z.sp5PlusClick(\'fv\')" title="Upload Full Video" style="border-color:rgba(59,130,246,.45);background:rgba(59,130,246,.08);color:#60a5fa;padding:5px 10px;"><i class="fa-solid fa-plus"></i></button>';
+  } else {
+    h += '<button class="sp5-fullview" onclick="Z.sp5PlusClick(\'spark\')" title="Create Spark" style="border-color:rgba(16,185,129,.45);background:rgba(16,185,129,.08);color:#10b981;padding:5px 10px;"><i class="fa-solid fa-plus"></i></button>';
   }
   h += '</div>';
-
+  h += '</div>';
   h += '<div id="sp5-trending-slot"></div>';
 
   if(sub === 'videos'){
@@ -8442,7 +8449,16 @@ Z.sp5SwitchMySub = function(sub){
     _drag = null;
   });
 })();
-
+/* Plus button handler for Public Sparks / Full Videos tabs */
+Z.sp5PlusClick = function(kind){
+  var me = Z.State.currentUser;
+  if(!me){ Z.openAuthModal('login'); return; }
+  if(kind === 'fv'){
+    if(typeof Z.openCreateFullVideoModal === 'function') Z.openCreateFullVideoModal();
+  } else if(kind === 'spark'){
+    if(typeof Z.openCreateSparkModal === 'function') Z.openCreateSparkModal();
+  }
+};
 console.log('[SPACE v9 — Block A] foundation · public space bug fixed · missing switchers added');
 })();
 </script>
@@ -12272,59 +12288,6 @@ if(typeof _prevSubmitSparkD === 'function'){
   };
 }
 
-/* ============================================================
-   10. SPARK MODAL FEE INFO — SINGLE INJECTION (fixes 3× bug)
-   ============================================================ */
-var _prevOpenSparkModalD = Z.openCreateSparkModal;
-if(typeof _prevOpenSparkModalD === 'function'){
-  Z.openCreateSparkModal = function(){
-    var r = _prevOpenSparkModalD.apply(this, arguments);
-    setTimeout(injectSparkFeeInfoD, 100);
-    setTimeout(injectSparkFeeInfoD, 350);
-    return r;
-  };
-}
-
-async function injectSparkFeeInfoD(){
-  var modal = document.getElementById('modal-container');
-  if(!modal) return;
-  if(!document.getElementById('spark-caption')) return;
-
-  /* HARD DEDUPE — if ANY existing fee-info block exists in DOM, remove extras */
-  var existing = document.querySelectorAll('[data-spark-fee-info]');
-  for(var i = 1; i < existing.length; i++){
-    try { existing[i].remove(); } catch(e){}
-  }
-  if(existing.length > 0) return; /* one already present */
-
-  var submitBtn = null;
-  modal.querySelectorAll('button.btn-primary').forEach(function(b){
-    var t = (b.textContent||'').toLowerCase();
-    if(t.indexOf('publish') !== -1) submitBtn = b;
-  });
-  if(!submitBtn) return;
-
-  var u = me();
-  var fee = 1, remaining = 0, count = 0;
-  if(u){
-    count = await countTodaySparksD(u.id);
-    fee = count < 3 ? 0 : 1;
-    remaining = Math.max(0, 3 - count);
-  }
-
-  var info = document.createElement('div');
-  info.setAttribute('data-spark-fee-info','1');
-  info.style.cssText = 'padding:12px;border-radius:10px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.28);margin-top:12px;';
-  info.innerHTML =
-    '<div style="font-size:11px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:6px;"><i class="fa-solid fa-receipt"></i> UPLOAD LIMITS & FEE</div>' +
-    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;">' +
-      '• Max <b style="color:#fff;">3 minutes</b> · Max <b style="color:#fff;">200 MB</b><br>' +
-      (fee === 0
-        ? '• <b style="color:#10b981;">FREE today</b> — ' + remaining + ' free spark' + (remaining === 1 ? '' : 's') + ' remaining'
-        : '• <b style="color:#fbbf24;">$1.00</b> fee (3 free used today)') +
-    '</div>';
-  if(submitBtn.parentNode) submitBtn.parentNode.insertBefore(info, submitBtn);
-}
 
 /* ============================================================
    10b. FV + SPARK MODAL — CFAR + age + warning injection
@@ -12345,10 +12308,8 @@ function injectFVModalExtrasD(){
   if(!modal) return;
   if(!document.getElementById('fv-title')) return;
 
-  /* Dedupe — keep only one */
-  var existingCfar = modal.querySelectorAll('#fv-cfar-block');
-  for(var i = 1; i < existingCfar.length; i++) existingCfar[i].remove();
-  if(existingCfar.length) return;
+  /* Dedupe — only one extras block */
+  if(modal.querySelector('[data-fv-extras]')) return;
 
   var submitBtn = null;
   modal.querySelectorAll('button.btn-primary').forEach(function(b){
@@ -12359,6 +12320,11 @@ function injectFVModalExtrasD(){
   var wrapper = submitBtn.parentNode;
   if(!wrapper) return;
 
+  var marker = document.createElement('div');
+  marker.setAttribute('data-fv-extras','1');
+  marker.style.display = 'none';
+
+  /* ---------- CFAR block ---------- */
   var cfar = document.createElement('div');
   cfar.id = 'fv-cfar-block';
   cfar.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);';
@@ -12375,17 +12341,131 @@ function injectFVModalExtrasD(){
       [10,25,50,100,250,500,1000,2500,5000,10000].map(function(v){ return '<option value="'+v+'">$'+v.toLocaleString()+'</option>'; }).join('') +
     '</select>';
 
-  var ag = document.createElement('div');
-  ag.id = 'fv-age-block';
-  ag.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
-  ag.innerHTML =
+  /* ---------- Fee + duration + size preview block ---------- */
+  var feeBox = document.createElement('div');
+  feeBox.id = 'fv-fee-preview';
+  feeBox.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.3);';
+  feeBox.innerHTML =
+    '<div style="font-size:11px;font-weight:900;color:#fbbf24;letter-spacing:.4px;margin-bottom:8px;">' +
+      '<i class="fa-solid fa-circle-info"></i> UPLOAD PREVIEW' +
+    '</div>' +
+    '<div id="fv-fee-preview-body" style="font-size:12px;color:#cbd5e1;line-height:1.7;">' +
+      '<div style="color:#94a3b8;"><i class="fa-solid fa-hourglass-half"></i> Choose a video to see duration and fee.</div>' +
+      '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;">' +
+        '<div>• Minimum: <b style="color:#fff;">4 minutes</b></div>' +
+        '<div>• Maximum: <b style="color:#fff;">60 minutes</b></div>' +
+        '<div>• Max size: <b style="color:#fff;">1 GB</b></div>' +
+        '<div>• Fee: <b style="color:#10b981;">$1 per 10-minute band</b> (max $6)</div>' +
+      '</div>' +
+    '</div>';
+
+  /* ---------- 18+ block (moved to bottom) ---------- */
+  var ageBox = document.createElement('div');
+  ageBox.id = 'fv-age-block';
+  ageBox.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
+  ageBox.innerHTML =
     '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">' +
       '<input type="checkbox" id="fv-age-gate" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)</label>' +
     '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Content warning (optional)</label>' +
     '<input type="text" id="fv-content-warning" maxlength="80" placeholder="e.g. flashing lights" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">';
 
-  wrapper.insertBefore(ag, submitBtn);
+  /* ---------- DOM order: CFAR → Fee Preview → 18+ → Publish ---------- */
+  wrapper.insertBefore(marker, submitBtn);
   wrapper.insertBefore(cfar, submitBtn);
+  wrapper.insertBefore(feeBox, submitBtn);
+  wrapper.insertBefore(ageBox, submitBtn);
+
+  /* ---------- Wire: file picker → update preview ---------- */
+  var fileInput = document.getElementById('fv-file');
+  if(fileInput){
+    fileInput.addEventListener('change', function(){
+      setTimeout(_updateFVModalFeePreview, 150);
+    });
+  }
+
+  setTimeout(_updateFVModalFeePreview, 200);
+}
+
+/* Update the fee preview box in FV modal */
+async function _updateFVModalFeePreview(){
+  var body = document.getElementById('fv-fee-preview-body');
+  if(!body) return;
+
+  var fi = document.getElementById('fv-file');
+  var file = (fi && fi.files && fi.files[0]) || (Z._mediaCache && Z._mediaCache.fv && Z._mediaCache.fv.blob);
+
+  if(!file){
+    body.innerHTML =
+      '<div style="color:#94a3b8;"><i class="fa-solid fa-hourglass-half"></i> Choose a video to see duration and fee.</div>' +
+      '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;">' +
+        '<div>• Minimum: <b style="color:#fff;">4 minutes</b></div>' +
+        '<div>• Maximum: <b style="color:#fff;">60 minutes</b></div>' +
+        '<div>• Max size: <b style="color:#fff;">1 GB</b></div>' +
+        '<div>• Fee: <b style="color:#10b981;">$1 per 10-minute band</b> (max $6)</div>' +
+      '</div>';
+    return;
+  }
+
+  var sizeMB = file.size / (1024*1024);
+  var sizeText = sizeMB >= 1024 ? ((sizeMB/1024).toFixed(2) + ' GB') : (sizeMB.toFixed(1) + ' MB');
+
+  /* Size gate */
+  if(file.size > 1024*1024*1024){
+    body.innerHTML =
+      '<div style="padding:10px 12px;border-radius:8px;background:rgba(161,98,98,.12);border:1px solid rgba(161,98,98,.4);color:#fca5a5;font-size:12px;font-weight:800;line-height:1.6;">' +
+        '<i class="fa-solid fa-triangle-exclamation"></i> File too large.<br>' +
+        '<span style="color:#cbd5e1;font-weight:600;">Max: 1 GB · Yours: ' + sizeText + '</span>' +
+      '</div>';
+    return;
+  }
+
+  /* Duration */
+  body.innerHTML = '<div style="color:#94a3b8;"><i class="fa-solid fa-circle-notch fa-spin"></i> Reading video duration…</div>';
+  var dur = await _fvGetDuration(file);
+
+  if(!dur){
+    body.innerHTML =
+      '<div style="color:#94a3b8;">Could not read video duration. ' +
+      'File size: <b style="color:#fff;">' + sizeText + '</b></div>';
+    return;
+  }
+
+  var mins = Math.floor(dur / 60);
+  var secs = Math.round(dur % 60);
+  var durText = mins + 'm ' + secs + 's';
+
+  if(dur < 240){
+    body.innerHTML =
+      '<div style="padding:10px 12px;border-radius:8px;background:rgba(161,98,98,.12);border:1px solid rgba(161,98,98,.4);color:#fca5a5;font-size:12px;font-weight:800;line-height:1.6;">' +
+        '<i class="fa-solid fa-triangle-exclamation"></i> Video too short.<br>' +
+        '<span style="color:#cbd5e1;font-weight:600;">Minimum: 4 minutes · Yours: ' + durText + '</span>' +
+      '</div>';
+    return;
+  }
+  if(dur > 3600){
+    body.innerHTML =
+      '<div style="padding:10px 12px;border-radius:8px;background:rgba(161,98,98,.12);border:1px solid rgba(161,98,98,.4);color:#fca5a5;font-size:12px;font-weight:800;line-height:1.6;">' +
+        '<i class="fa-solid fa-triangle-exclamation"></i> Video too long.<br>' +
+        '<span style="color:#cbd5e1;font-weight:600;">Maximum: 60 minutes · Yours: ' + durText + '</span>' +
+      '</div>';
+    return;
+  }
+
+  /* Valid — show summary */
+  var fee = _fvComputeFee(dur);
+  body.innerHTML =
+    '<div style="padding:10px 12px;border-radius:8px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);line-height:1.7;">' +
+      '<div><i class="fa-solid fa-check-circle" style="color:#10b981;"></i> <span style="color:#cbd5e1;">Duration: <b style="color:#fff;">' + durText + '</b></span></div>' +
+      '<div><i class="fa-solid fa-file-video" style="color:#60a5fa;"></i> <span style="color:#cbd5e1;">Size: <b style="color:#fff;">' + sizeText + '</b></span></div>' +
+      '<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.08);">' +
+        '<i class="fa-solid fa-receipt" style="color:#fbbf24;"></i> ' +
+        '<span style="color:#cbd5e1;">Upload fee: </span>' +
+        '<b style="color:#10b981;font-size:14px;">$' + fee.toFixed(2) + '</b>' +
+      '</div>' +
+      '<div style="margin-top:6px;font-size:10.5px;color:#94a3b8;">' +
+        'Fee is charged only after the video uploads successfully. If the upload fails, no fee is taken.' +
+      '</div>' +
+    '</div>';
 }
 
 /* Spark modal — CFAR + age block (fee info already injected elsewhere) */
@@ -12404,9 +12484,8 @@ function injectSparkCfarBlockD(){
   if(!modal) return;
   if(!document.getElementById('spark-caption')) return;
 
-  var existing = modal.querySelectorAll('#spark-cfar-block');
-  for(var i = 1; i < existing.length; i++) existing[i].remove();
-  if(existing.length) return;
+  /* Dedupe */
+  if(modal.querySelector('[data-spark-extras]')) return;
 
   var submitBtn = null;
   modal.querySelectorAll('button.btn-primary').forEach(function(b){
@@ -12417,6 +12496,15 @@ function injectSparkCfarBlockD(){
   var wrapper = submitBtn.parentNode;
   if(!wrapper) return;
 
+  var marker = document.createElement('div');
+  marker.setAttribute('data-spark-extras','1');
+  marker.style.display = 'none';
+
+  /* Remove old fee-info block if present (merged into new preview) */
+  var oldFee = modal.querySelector('[data-spark-fee-info]');
+  if(oldFee) oldFee.remove();
+
+  /* ---------- CFAR block ---------- */
   var cfar = document.createElement('div');
   cfar.id = 'spark-cfar-block';
   cfar.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);';
@@ -12433,17 +12521,122 @@ function injectSparkCfarBlockD(){
       [10,25,50,100,250,500,1000,2500,5000,10000].map(function(v){ return '<option value="'+v+'">$'+v.toLocaleString()+'</option>'; }).join('') +
     '</select>';
 
-  var ag = document.createElement('div');
-  ag.id = 'spark-age-block';
-  ag.style.cssText = 'margin-top:12px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
-  ag.innerHTML =
+  /* ---------- Fee + duration + size preview ---------- */
+  var feeBox = document.createElement('div');
+  feeBox.id = 'spark-fee-preview';
+  feeBox.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.3);';
+  feeBox.innerHTML =
+    '<div style="font-size:11px;font-weight:900;color:#fbbf24;letter-spacing:.4px;margin-bottom:8px;">' +
+      '<i class="fa-solid fa-circle-info"></i> UPLOAD PREVIEW' +
+    '</div>' +
+    '<div id="spark-fee-preview-body" style="font-size:12px;color:#cbd5e1;line-height:1.7;">' +
+      '<div style="color:#94a3b8;"><i class="fa-solid fa-hourglass-half"></i> Choose a video to see duration and fee.</div>' +
+      '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;">' +
+        '<div>• Maximum: <b style="color:#fff;">3 minutes</b></div>' +
+        '<div>• Max size: <b style="color:#fff;">200 MB</b></div>' +
+        '<div>• Fee: <b style="color:#10b981;">First 3 daily free · then $1 each</b></div>' +
+      '</div>' +
+    '</div>';
+
+  /* ---------- 18+ block (bottom) ---------- */
+  var ageBox = document.createElement('div');
+  ageBox.id = 'spark-age-block';
+  ageBox.style.cssText = 'margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);';
+  ageBox.innerHTML =
     '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">' +
       '<input type="checkbox" id="spark-age-gate" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)</label>' +
     '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Content warning (optional)</label>' +
     '<input type="text" id="spark-content-warning" maxlength="80" placeholder="e.g. flashing lights" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">';
 
-  wrapper.insertBefore(ag, submitBtn);
+  wrapper.insertBefore(marker, submitBtn);
   wrapper.insertBefore(cfar, submitBtn);
+  wrapper.insertBefore(feeBox, submitBtn);
+  wrapper.insertBefore(ageBox, submitBtn);
+
+  /* Wire file picker */
+  var fileInput = document.getElementById('spark-file');
+  if(fileInput){
+    fileInput.addEventListener('change', function(){
+      setTimeout(_updateSparkModalFeePreview, 150);
+    });
+  }
+
+  setTimeout(_updateSparkModalFeePreview, 200);
+}
+
+/* Update fee preview box in Spark modal */
+async function _updateSparkModalFeePreview(){
+  var body = document.getElementById('spark-fee-preview-body');
+  if(!body) return;
+
+  var fi = document.getElementById('spark-file');
+  var file = (fi && fi.files && fi.files[0]) || (Z._mediaCache && Z._mediaCache.spark && Z._mediaCache.spark.blob);
+
+  var u = Z.State.currentUser;
+  var countToday = 0;
+  if(u){ try { countToday = await countTodaySparksD(u.id); } catch(e){} }
+  var isFree = countToday < 3;
+  var remaining = Math.max(0, 3 - countToday);
+
+  if(!file){
+    body.innerHTML =
+      '<div style="color:#94a3b8;"><i class="fa-solid fa-hourglass-half"></i> Choose a video to see duration and fee.</div>' +
+      '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;">' +
+        '<div>• Maximum: <b style="color:#fff;">3 minutes</b></div>' +
+        '<div>• Max size: <b style="color:#fff;">200 MB</b></div>' +
+        '<div>• Fee: <b style="color:#10b981;">First 3 daily free · then $1 each</b></div>' +
+      '</div>';
+    return;
+  }
+
+  var sizeMB = file.size / (1024*1024);
+  var sizeText = sizeMB.toFixed(1) + ' MB';
+
+  if(file.size > 200*1024*1024){
+    body.innerHTML =
+      '<div style="padding:10px 12px;border-radius:8px;background:rgba(161,98,98,.12);border:1px solid rgba(161,98,98,.4);color:#fca5a5;font-size:12px;font-weight:800;line-height:1.6;">' +
+        '<i class="fa-solid fa-triangle-exclamation"></i> File too large.<br>' +
+        '<span style="color:#cbd5e1;font-weight:600;">Max: 200 MB · Yours: ' + sizeText + '</span>' +
+      '</div>';
+    return;
+  }
+
+  body.innerHTML = '<div style="color:#94a3b8;"><i class="fa-solid fa-circle-notch fa-spin"></i> Reading video duration…</div>';
+  var dur = await _fvGetDuration(file);
+
+  if(!dur){
+    body.innerHTML = '<div style="color:#94a3b8;">Could not read duration. Size: <b style="color:#fff;">' + sizeText + '</b></div>';
+    return;
+  }
+
+  var secs = Math.round(dur);
+  var durText = secs + 's';
+
+  if(dur > 180){
+    body.innerHTML =
+      '<div style="padding:10px 12px;border-radius:8px;background:rgba(161,98,98,.12);border:1px solid rgba(161,98,98,.4);color:#fca5a5;font-size:12px;font-weight:800;line-height:1.6;">' +
+        '<i class="fa-solid fa-triangle-exclamation"></i> Video too long.<br>' +
+        '<span style="color:#cbd5e1;font-weight:600;">Maximum: 3 minutes · Yours: ' + durText + '</span>' +
+      '</div>';
+    return;
+  }
+
+  var feeText = isFree
+    ? ('<b style="color:#10b981;">FREE</b> <span style="color:#94a3b8;font-size:10.5px;">· ' + remaining + ' free remaining today</span>')
+    : '<b style="color:#fbbf24;">$1.00</b> <span style="color:#94a3b8;font-size:10.5px;">(3 free used today)</span>';
+
+  body.innerHTML =
+    '<div style="padding:10px 12px;border-radius:8px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);line-height:1.7;">' +
+      '<div><i class="fa-solid fa-check-circle" style="color:#10b981;"></i> <span style="color:#cbd5e1;">Duration: <b style="color:#fff;">' + durText + '</b></span></div>' +
+      '<div><i class="fa-solid fa-file-video" style="color:#60a5fa;"></i> <span style="color:#cbd5e1;">Size: <b style="color:#fff;">' + sizeText + '</b></span></div>' +
+      '<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.08);">' +
+        '<i class="fa-solid fa-receipt" style="color:#fbbf24;"></i> ' +
+        '<span style="color:#cbd5e1;">Upload fee: </span>' + feeText +
+      '</div>' +
+      '<div style="margin-top:6px;font-size:10.5px;color:#94a3b8;">' +
+        'Fee is charged only after the spark uploads successfully.' +
+      '</div>' +
+    '</div>';
 }
 
 /* ============================================================
