@@ -1556,13 +1556,20 @@ Z.saveSnapshot = function(){
                  shared_from_id: p.shared_from_id || null,
                  shared_from_type: p.shared_from_type || null };
       }),
-           sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
+                    sparks: (Z.State.allSparks||[]).slice(0,30).map(function(s){
         return { id:s.id, author_id:s.author_id, caption:s.caption, title:s.title,
                  video_url: safeUrl(s.video_url),
                  tags:s.tags||[], type:s.type, created_at:s.created_at, views:s.views, shares:s.shares,
                  share_bounty: Number(s.share_bounty) || 0,
                  share_budget_cap: Number(s.share_budget_cap) || 0,
-                 share_bounty_paid: Number(s.share_bounty_paid) || 0 };
+                 share_bounty_paid: Number(s.share_bounty_paid) || 0,
+                 cfar_rate_per_minute: Number(s.cfar_rate_per_minute) || 0,
+                 cfar_view_budget: Number(s.cfar_view_budget) || 0,
+                 cfar_budget_spent: Number(s.cfar_budget_spent) || 0,
+                 is_age_gated: !!s.is_age_gated,
+                 content_warning: s.content_warning || null,
+                 is_pinned: !!s.is_pinned,
+                 duration_seconds: s.duration_seconds || null };
       }),
       profiles: (Z.State.allProfiles||[]).slice(0,50).map(function(p){
         return { id:p.id, name:p.name, username:p.username, avatar:p.avatar, profession:p.profession,
@@ -12325,8 +12332,10 @@ if(typeof _prevSubmitSparkD === 'function'){
               break;
             }
           }
-          if(Z.State.currentView === 'spark'){
+            if(Z.State.currentView === 'spark'){
             Z.showView('spark');
+            setTimeout(function(){ try { _cfarSyncChips(); } catch(e){} }, 300);
+            setTimeout(function(){ try { _cfarSyncChips(); } catch(e){} }, 800);
           }
         } catch(e){ console.warn('[spark-cfar-optimistic]', e); }
       }   
@@ -13130,6 +13139,63 @@ function _updateCfarChipOnSparkSlide(sparkId, spark){
   if(cap > 0){ if(txt) txt += ' · '; txt += rem.toFixed(2) + '/' + cap.toFixed(0); }
   chip.innerHTML = '<i class="fa-regular fa-eye" style="font-size:9px;"></i>' + txt;
 }
+/* ============================================================
+   CFAR CHIP SYNC — keeps every visible slide's chip in sync
+   with current state. Handles: refresh, new publish, navigate.
+   ============================================================ */
+function _cfarSyncChips(){
+  if(Z.State.currentView !== 'spark') return;
+  var feed = document.getElementById('spark-feed');
+  if(!feed) return;
+  var sparks = Z.State.allSparks || [];
+  var sparkMap = {};
+  sparks.forEach(function(s){ if(s && s.id) sparkMap[s.id] = s; });
+
+  feed.querySelectorAll('.spark-slide').forEach(function(slide){
+    var vid = slide.querySelector('video[data-spark-id]');
+    if(!vid) return;
+    var sid = vid.getAttribute('data-spark-id');
+    var spark = sparkMap[sid];
+    if(!spark) return;
+
+    var authorBlock = slide.querySelector('.spark-info-author');
+    if(!authorBlock) return;
+
+    var existingChip = authorBlock.querySelector('[data-spark-cfar-chip]');
+    var rate = Number(spark.cfar_rate_per_minute) || 0;
+    var cap  = Number(spark.cfar_view_budget) || 0;
+
+    if(rate <= 0 && cap <= 0){
+      if(existingChip) existingChip.remove();
+      return;
+    }
+
+    var spent = Number(spark.cfar_budget_spent) || 0;
+    var rem = Math.max(0, cap - spent);
+    var txt = '';
+    if(rate > 0) txt += '$' + rate.toFixed(3) + '/min';
+    if(cap > 0){ if(txt) txt += ' · '; txt += rem.toFixed(2) + '/' + cap.toFixed(0); }
+
+    if(existingChip){
+      existingChip.innerHTML = '<i class="fa-regular fa-eye" style="font-size:9px;"></i>' + txt;
+      return;
+    }
+
+    var chip = document.createElement('span');
+    chip.setAttribute('data-spark-cfar-chip', sid);
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:8px;background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.35);color:#60a5fa;font-size:9.5px;font-weight:900;white-space:nowrap;flex-shrink:0;';
+    chip.innerHTML = '<i class="fa-regular fa-eye" style="font-size:9px;"></i>' + txt;
+    authorBlock.appendChild(chip);
+  });
+}
+Z._cfarSyncChips = _cfarSyncChips;
+
+/* Poll every 500ms — only runs when on spark view */
+setInterval(function(){
+  if(Z.State.currentView !== 'spark') return;
+  try { _cfarSyncChips(); } catch(e){}
+}, 500);
+     
 console.log('[SPACE v9 — Block D] cfar tracker · search · trending · spark cap · deep links · done');
 })();
 </script>
