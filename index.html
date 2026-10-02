@@ -12447,56 +12447,251 @@ function injectSparkCfarBlockD(){
 }
 
 /* ============================================================
-   FV submit — read CFAR + age, patch DB row after publish
+   FULL VIDEO PUBLISH — single source of truth (Step 1)
+   - Duration-based fee: $1 per 10-min band (4–60 min = $1–$6)
+   - File cap: 1 GB
+   - Min duration: 4 min · Max: 60 min
+   - Fee deducted ONLY after R2 upload stable + DB insert success
+   - No double fee: in-flight guard + 24h localStorage dedupe
+   - CFAR + age + warning passed at insert time (no post-patch)
    ============================================================ */
-var _prevSubmitFVD = Z.submitFullVideo;
-if(typeof _prevSubmitFVD === 'function'){
-  Z.submitFullVideo = async function(){
-    var u = me();
-    if(!u) return _prevSubmitFVD.apply(this, arguments);
-    var c = db();
-    if(!c) return _prevSubmitFVD.apply(this, arguments);
+Z._fvSubmitInFlight = false;
 
-    /* Read CFAR + age + warning from modal BEFORE submit */
-    var cfarRate = parseFloat((document.getElementById('fv-cfar-rate')||{}).value || '0') || 0;
-    var cfarBudget = parseFloat((document.getElementById('fv-cfar-budget')||{}).value || '0') || 0;
-    var ageGate = !!(document.getElementById('fv-age-gate')||{}).checked;
-    var warning = ((document.getElementById('fv-content-warning')||{}).value || '').trim() || null;
-
-    var result;
+function _fvGetDuration(file){
+  return new Promise(function(resolve){
     try {
-      result = await _prevSubmitFVD.apply(this, arguments);
-    } catch(e){
+      var url = URL.createObjectURL(file);
+      var v = document.createElement('video');
+      v.preload = 'metadata';
+      var done = false;
+      function finish(d){
+        if(done) return; done = true;
+        try { URL.revokeObjectURL(url); } catch(e){}
+        resolve(d || 0);
+      }
+      v.onloadedmetadata = function(){ finish(v.duration); };
+      v.onerror = function(){ finish(0); };
+      setTimeout(function(){ finish(v.duration || 0); }, 5000);
+      v.src = url;
+    } catch(e){ resolve(0); }
+  });
+}
+
+function _fvComputeFee(durationSec){
+  if(!durationSec || durationSec < 240) return 0;
+  var bands = Math.ceil(durationSec / 600);   /* 10-min bands */
+  if(bands < 1) bands = 1;
+  if(bands > 6) bands = 6;
+  return bands;
+}
+
+function _fvDeductFeeOnce(videoId, fee, durationSec){
+  if(!fee || fee <= 0) return;
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* 24h dedupe guard — survives page refresh */
+  var guardKey = 'zynix_fvfee_' + videoId;
+  try {
+    if(localStorage.getItem(guardKey) === '1'){
+      console.warn('[fv-fee] already deducted for', videoId);
+      return;
+    }
+  } catch(e){}
+
+  c.rpc('space_deduct_upload_fee', {
+    p_amount: fee,
+    p_reason: 'full_video_upload_fee',
+    p_video_id: videoId
+  }).then(async function(ded){
+    if(ded.error){
+      console.warn('[fv-fee] deduction failed:', ded.error.message);
+      if(String(ded.error.message).indexOf('insufficient_funds') !== -1){
+        Z.toast('Video published. Fee could not be charged — insufficient balance.', 'error');
+      } else {
+        Z.toast('Video published. Fee issue: ' + ded.error.message, 'error');
+      }
+      return;
+    }
+    try { localStorage.setItem(guardKey, '1'); } catch(e){}
+    var mins = Math.round(durationSec / 60);
+    Z.toast('$' + fee.toFixed(2) + ' upload fee deducted (' + mins + ' min video).');
+    if(typeof Z.refreshSession === 'function'){
+      try { await Z.refreshSession(); } catch(e){}
+      try { Z.updateHeader(); } catch(e){}
+    }
+  }).catch(function(e){
+    console.error('[fv-fee]', e);
+  });
+}
+
+Z.submitFullVideo = async function(){
+  var me = Z.State.currentUser;
+  if(!me){ Z.toast('Login first.'); return; }
+
+  /* In-flight guard — blocks double-click */
+  if(Z._fvSubmitInFlight){
+    Z.toast('Publishing… please wait.');
+    return;
+  }
+
+  var title = ((document.getElementById('fv-title')||{}).value||'').trim();
+  var desc  = ((document.getElementById('fv-desc')||{}).value||'').trim();
+  var fi    = document.getElementById('fv-file');
+  var url   = ((document.getElementById('fv-url')||{}).value||'').trim();
+  var sb_   = parseFloat((document.getElementById('fv-share-bounty')||{}).value || '0') || 0;
+  var cap_  = parseFloat((document.getElementById('fv-share-budget')||{}).value || '0') || 0;
+
+  if(!title){ Z.toast('Enter a title.'); return; }
+
+  var cached  = Z._mediaCache.fv;
+  var fileObj = cached && cached.blob ? cached.blob : (fi && fi.files && fi.files[0] ? fi.files[0] : null);
+
+  /* 1 GB cap */
+  if(fileObj && fileObj.size > 1024*1024*1024){
+    Z.toast('Full Video must be under 1 GB. Yours is ' + (fileObj.size/1024/1024).toFixed(0) + ' MB.', 'error');
+    return;
+  }
+  if(!fileObj && !url){ Z.toast('Provide video.'); return; }
+
+  /* Duration + fee (only if file uploaded — URL-only skips fee) */
+  var duration = 0;
+  var fee = 0;
+  if(fileObj){
+    duration = await _fvGetDuration(fileObj);
+    if(duration > 3600){
+      Z.toast('Full Video max 60 minutes. Yours is ' + Math.round(duration/60) + ' min.', 'error');
+      return;
+    }
+    if(duration > 0 && duration < 240){
+      Z.toast('Full Video minimum 4 minutes. Yours is ' + Math.round(duration) + ' sec.', 'error');
+      return;
+    }
+    fee = _fvComputeFee(duration);
+  }
+
+  Z._fvSubmitInFlight = true;
+
+  /* Read CFAR + age + warning BEFORE close modal */
+  var cfarRate   = parseFloat((document.getElementById('fv-cfar-rate')||{}).value || '0') || 0;
+  var cfarBudget = parseFloat((document.getElementById('fv-cfar-budget')||{}).value || '0') || 0;
+  var ageGate    = !!(document.getElementById('fv-age-gate')||{}).checked;
+  var warning    = ((document.getElementById('fv-content-warning')||{}).value || '').trim() || null;
+
+  var localUrl = fileObj ? URL.createObjectURL(fileObj) : url;
+  var fvId     = Z.uuid();
+
+  var optimistic = {
+    id: fvId,
+    author_id: me.id,
+    title: title, caption: desc, video_url: localUrl,
+    type: 'long_video', tags: [],
+    share_bounty: sb_, share_budget_cap: cap_,
+    created_at: new Date().toISOString(), views: 0, shares: 0,
+    duration_seconds: Math.round(duration) || null,
+    cfar_rate_per_minute: cfarRate > 0 ? cfarRate : null,
+    cfar_view_budget:     cfarBudget > 0 ? cfarBudget : null,
+    cfar_budget_spent: 0,
+    is_age_gated: ageGate,
+    content_warning: warning,
+    _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
+    _optimistic: true
+  };
+  Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
+
+  /* Save to recovery queue BEFORE close */
+  if(fileObj){
+    Z.uploadQueue.add({
+      id: fvId, kind: 'full_video',
+      fileName: fileObj.name || 'video.bin',
+      fileType: fileObj.type || 'application/octet-stream',
+      fileBlob: fileObj,
+      payload: {
+        id: fvId, author_id: me.id, title: title, caption: desc,
+        type: 'long_video', tags: [],
+        share_bounty: sb_, share_budget_cap: cap_,
+        cfar_rate_per_minute: cfarRate > 0 ? cfarRate : null,
+        cfar_view_budget:     cfarBudget > 0 ? cfarBudget : null,
+        is_age_gated: ageGate,
+        content_warning: warning,
+        duration_seconds: Math.round(duration) || null,
+        upload_fee: fee
+      },
+      createdAt: Date.now()
+    }).catch(function(){});
+  }
+
+  Z.closeModal();
+  Z.toast('Uploading video…');
+  Z.haptic(12);
+  Z.showView('spark');
+
+  (async function(){
+    var vu = url;
+    try {
+      if(fileObj) vu = await Z.storeMedia(fileObj);
+      else if(url) vu = url;
+    } catch(err){
+      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== fvId; });
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z.toast('Upload failed — video not uploaded. No fee charged.', 'error');
+      Z._fvSubmitInFlight = false;
+      if(Z.State.currentView === 'spark') Z.showView('spark');
       return;
     }
 
-    /* Patch after DB row is confirmed (500ms delay for stability) */
-    if(cfarRate > 0 || cfarBudget > 0 || ageGate || warning){
-      setTimeout(async function(){
-        try {
-          var latest = await c.from('sparks')
-            .select('id').eq('author_id', u.id).eq('type','long_video')
-            .order('created_at', { ascending: false }).limit(1).maybeSingle();
-          if(!latest || !latest.data) return;
-          var patch = {};
-          if(cfarRate > 0)   patch.cfar_rate_per_minute = cfarRate;
-          if(cfarBudget > 0) patch.cfar_view_budget = cfarBudget;
-          if(ageGate)        patch.is_age_gated = true;
-          if(warning)        patch.content_warning = warning;
-          if(Object.keys(patch).length){
-            await c.from('sparks').update(patch).eq('id', latest.data.id);
-            /* Update local state */
-            [Z.State.spaceVideos, Z.State.publicVideosAll, Z.State.allSparks].forEach(function(arr){
-              if(!arr) return;
-              arr.forEach(function(x){ if(x.id === latest.data.id) Object.assign(x, patch); });
-            });
-          }
-        } catch(e){ console.error('[fv-cfar-patch]', e); }
-      }, 500);
+    /* R2 upload succeeded — NOW insert DB row (fee not yet charged) */
+    var sp = await Z.DB.createSpark({
+      id: fvId, author_id: me.id, title: title, caption: desc,
+      video_url: vu, type: 'long_video', tags: [],
+      share_bounty: sb_, share_budget_cap: cap_,
+      cfar_rate_per_minute: cfarRate > 0 ? cfarRate : null,
+      cfar_view_budget:     cfarBudget > 0 ? cfarBudget : null,
+      is_age_gated: ageGate,
+      content_warning: warning,
+      duration_seconds: Math.round(duration) || null
+    });
+
+    var arr = Z.State.allSparks || [];
+    var idx = -1;
+    for(var i=0;i<arr.length;i++){ if(arr[i].id === fvId){ idx = i; break; } }
+
+    if(sp){
+      if(idx >= 0){
+        var real = Object.assign({}, sp, {
+          _reactions:{}, _myReactions:{}, _comments:[], _commentsCount:0
+        });
+        if(localUrl && localUrl.indexOf('blob:') === 0 && !sp.video_url){
+          real.video_url = localUrl;
+        }
+        if(cfarRate > 0)   real.cfar_rate_per_minute = cfarRate;
+        if(cfarBudget > 0) real.cfar_view_budget = cfarBudget;
+        if(!real.cfar_budget_spent) real.cfar_budget_spent = 0;
+        arr[idx] = real;
+      }
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z._mediaCache.fv = null;
+      try { Z.saveSnapshot(); } catch(e){}
+      Z.toast('Video uploaded!');
+      if(fileObj){ Z.uploadQueue.remove(fvId).catch(function(){}); }
+
+      /* ←←← FEE DEDUCTION: only after R2 stable + DB insert success ←←← */
+      if(fee > 0){
+        _fvDeductFeeOnce(fvId, fee, duration);
+      }
+    } else {
+      Z.State.allSparks = arr.filter(function(x){ return x.id !== fvId; });
+      if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
+      Z._cleanupOrphanUpload(vu);
+      Z.toast('Save failed. Try again. No fee charged.', 'error');
+      if(Z.State.currentView === 'spark') Z.showView('spark');
     }
-    return result;
-  };
-}
+
+    Z._fvSubmitInFlight = false;
+  })();
+};
 
 /* ============================================================
    11. DEEP LINKS
