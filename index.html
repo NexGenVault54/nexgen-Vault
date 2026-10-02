@@ -12794,7 +12794,8 @@ Z.submitFullVideo = async function(){
     _reactions: {}, _myReactions: {}, _comments: [], _commentsCount: 0,
     _optimistic: true
   };
-  Z.State.allSparks = [optimistic].concat(Z.State.allSparks || []);
+   Z.State.spaceVideos = [optimistic].concat(Z.State.spaceVideos || []);
+  Z.State.publicVideosAll = [optimistic].concat(Z.State.publicVideosAll || []);
 
   /* Save to recovery queue BEFORE close */
   if(fileObj){
@@ -12821,19 +12822,27 @@ Z.submitFullVideo = async function(){
   Z.closeModal();
   Z.toast('Uploading video…');
   Z.haptic(12);
-  Z.showView('spark');
+  Z.State._spaceLandingTab = 'public';
+  Z.State._spaceLandingPublicSub = 'videos';
+  Z.State._spaceLandingMySub = 'default';
+  if(Z.State.currentUser){
+    Z.showView('public-profile', Z.State.currentUser.id);
+  }
 
   (async function(){
     var vu = url;
     try {
       if(fileObj) vu = await Z.storeMedia(fileObj);
       else if(url) vu = url;
-    } catch(err){
-      Z.State.allSparks = (Z.State.allSparks || []).filter(function(x){ return x.id !== fvId; });
+       } catch(err){
+      Z.State.spaceVideos = (Z.State.spaceVideos || []).filter(function(x){ return x.id !== fvId; });
+      Z.State.publicVideosAll = (Z.State.publicVideosAll || []).filter(function(x){ return x.id !== fvId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z.toast('Upload failed — video not uploaded. No fee charged.', 'error');
       Z._fvSubmitInFlight = false;
-      if(Z.State.currentView === 'spark') Z.showView('spark');
+      if(Z.State.currentView === 'public-profile'){
+      try { Z.sp5RenderContent(Z.State.spaceUserId, true); } catch(e){}
+      }
       return;
     }
 
@@ -12849,9 +12858,12 @@ Z.submitFullVideo = async function(){
       duration_seconds: Math.round(duration) || null
     });
 
-    var arr = Z.State.allSparks || [];
+       var arr = Z.State.spaceVideos || [];
     var idx = -1;
     for(var i=0;i<arr.length;i++){ if(arr[i].id === fvId){ idx = i; break; } }
+    var arr2 = Z.State.publicVideosAll || [];
+    var idx2 = -1;
+    for(var j=0;j<arr2.length;j++){ if(arr2[j].id === fvId){ idx2 = j; break; } }
 
     if(sp){
       if(idx >= 0){
@@ -12865,6 +12877,7 @@ Z.submitFullVideo = async function(){
         if(cfarBudget > 0) real.cfar_view_budget = cfarBudget;
         if(!real.cfar_budget_spent) real.cfar_budget_spent = 0;
         arr[idx] = real;
+        if(idx2 >= 0) arr2[idx2] = real;
       }
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._mediaCache.fv = null;
@@ -12877,11 +12890,14 @@ Z.submitFullVideo = async function(){
         _fvDeductFeeOnce(fvId, fee, duration);
       }
     } else {
-      Z.State.allSparks = arr.filter(function(x){ return x.id !== fvId; });
+      Z.State.spaceVideos = arr.filter(function(x){ return x.id !== fvId; });
+      Z.State.publicVideosAll = arr2.filter(function(x){ return x.id !== fvId; });
       if(localUrl && localUrl.indexOf('blob:') === 0){ try { URL.revokeObjectURL(localUrl); } catch(e){} }
       Z._cleanupOrphanUpload(vu);
       Z.toast('Save failed. Try again. No fee charged.', 'error');
-      if(Z.State.currentView === 'spark') Z.showView('spark');
+      if(Z.State.currentView === 'public-profile'){
+      try { Z.sp5RenderContent(Z.State.spaceUserId, true); } catch(e){}
+      }
     }
 
     Z._fvSubmitInFlight = false;
