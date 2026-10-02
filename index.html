@@ -12318,52 +12318,16 @@ if(typeof _prevSubmitSparkD === 'function'){
         return;
       }
       
-      /* Inject CFAR fields into optimistic spark IMMEDIATELY */
+      /* Stash CFAR — interceptor will inject at DB insert time */
       if(cfarRate > 0 || cfarBudget > 0 || ageGate || warning){
-        try {
-          var arr = Z.State.allSparks || [];
-          for(var ai = 0; ai < arr.length; ai++){
-            if(arr[ai] && arr[ai]._optimistic && arr[ai].author_id === u.id){
-              if(cfarRate > 0)   arr[ai].cfar_rate_per_minute = cfarRate;
-              if(cfarBudget > 0) arr[ai].cfar_view_budget = cfarBudget;
-              arr[ai].cfar_budget_spent = arr[ai].cfar_budget_spent || 0;
-              if(ageGate)        arr[ai].is_age_gated = true;
-              if(warning)        arr[ai].content_warning = warning;
-              break;
-            }
-          }
-            if(Z.State.currentView === 'spark'){
-            Z.showView('spark');
-            setTimeout(function(){ try { _cfarSyncChips(); } catch(e){} }, 300);
-            setTimeout(function(){ try { _cfarSyncChips(); } catch(e){} }, 800);
-          }
-        } catch(e){ console.warn('[spark-cfar-optimistic]', e); }
-      }   
-
-      /* Patch CFAR + age 500ms after DB confirm */
-      if(cfarRate > 0 || cfarBudget > 0 || ageGate || warning){
-        setTimeout(async function(){
-          try {
-            var latest = await c.from('sparks')
-              .select('id').eq('author_id', u.id).eq('type','spark')
-              .order('created_at', { ascending: false }).limit(1).maybeSingle();
-            if(!latest || !latest.data) return;
-            var patch = {};
-            if(cfarRate > 0)   patch.cfar_rate_per_minute = cfarRate;
-            if(cfarBudget > 0) patch.cfar_view_budget = cfarBudget;
-            if(ageGate)        patch.is_age_gated = true;
-            if(warning)        patch.content_warning = warning;
-            if(Object.keys(patch).length){
-              await c.from('sparks').update(patch).eq('id', latest.data.id);
-              [Z.State.spaceSparks, Z.State.publicSparksAll, Z.State.allSparks].forEach(function(arr){
-                if(!arr) return;
-                arr.forEach(function(x){ if(x.id === latest.data.id) Object.assign(x, patch); });
-              });
-            }
-          } catch(e){ console.error('[spark-cfar-patch]', e); }
-        }, 500);
+        Z._pendingSparkCfar = {
+          cfar_rate_per_minute: cfarRate,
+          cfar_view_budget: cfarBudget,
+          is_age_gated: ageGate,
+          content_warning: warning,
+          set_at: Date.now()
+        };
       }
-
       /* Fee-safe deduction (single-shot, 500ms after DB confirm) */
       if(fee > 0){
         setTimeout(async function(){
@@ -13195,6 +13159,30 @@ setInterval(function(){
   if(Z.State.currentView !== 'spark') return;
   try { _cfarSyncChips(); } catch(e){}
 }, 500);
+/* ============================================================
+   CFAR INTERCEPTOR — inject CFAR into DB insert payload
+   (bypasses RLS-blocked UPDATE path; correct spark gets fields)
+   ============================================================ */
+(function(){
+  if(Z.__cfarInterceptorInstalled) return;
+  Z.__cfarInterceptorInstalled = true;
+  var _origCreateSpark = Z.DB.createSpark;
+  Z.DB.createSpark = async function(payload){
+    try {
+      if(payload && payload.type === 'spark' && Z._pendingSparkCfar){
+        var p = Z._pendingSparkCfar;
+        if(Date.now() - p.set_at < 120000){
+          if(p.cfar_rate_per_minute > 0) payload.cfar_rate_per_minute = p.cfar_rate_per_minute;
+          if(p.cfar_view_budget > 0)     payload.cfar_view_budget = p.cfar_view_budget;
+          if(p.is_age_gated)             payload.is_age_gated = true;
+          if(p.content_warning)          payload.content_warning = p.content_warning;
+        }
+        delete Z._pendingSparkCfar;
+      }
+    } catch(e){}
+    return _origCreateSpark.apply(this, arguments);
+  };
+})();
      
 console.log('[SPACE v9 — Block D] cfar tracker · search · trending · spark cap · deep links · done');
 })();
