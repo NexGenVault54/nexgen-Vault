@@ -10446,9 +10446,28 @@ Z.openSpaceMoreSheet = async function(userId){
   rows.push({ icon:'fa-regular fa-bookmark', label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
   rows.push({ icon:'fa-solid fa-copy', label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
 
-  /* Watch Later — owner only */
+   /* Watch Later — owner only */
   if(isOwner){
     rows.push({ icon:'fa-regular fa-clock', label:'Watch Later', action:'Z.closeSheet();setTimeout(function(){Z.openWatchLater()},200)' });
+  }
+
+  /* Member directory toggle — visitor only (user's own choice per SPACE) */
+  if(!isOwner){
+    var u2 = Z.State.currentUser;
+    var hideDir = (u2 && u2.hide_from_member_directory === false) ? false : true;
+    var isBonded = false;
+    try {
+      var cs = Z.getConnectionState ? Z.getConnectionState(userId) : 'none';
+      var bs = Z.getBondStateSync ? Z.getBondStateSync(userId) : { bonded:false };
+      isBonded = !!(bs && bs.bonded);
+    } catch(e){}
+    if(isBonded){
+      rows.push({
+        icon: hideDir ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye',
+        label: hideDir ? 'Join this SPACE directory' : 'Leave this SPACE directory',
+        action: 'Z._toggleMemberDirectory(\'' + esc(userId) + '\',' + (hideDir ? 'true' : 'false') + ')'
+      });
+    }
   }
 
   /* Visitor-only: mute, block, report */
@@ -11823,6 +11842,28 @@ Z._bondDirDecide = async function(creatorId, join){
   }
 };
 
+/* ============================================================
+   MEMBER DIRECTORY TOGGLE
+   ============================================================ */
+Z._toggleMemberDirectory = async function(creatorId, currentlyHidden){
+  Z.closeSheet();
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  var join = currentlyHidden; /* if currently hidden, join = true */
+  try {
+    var r = await c.from('profiles')
+      .update({ hide_from_member_directory: !join })
+      .eq('id', u.id);
+    if(r.error) throw r.error;
+    if(Z.State.currentUser) Z.State.currentUser.hide_from_member_directory = !join;
+    Z.toast(join ? 'Added to SPACE member directory.' : 'Removed from SPACE member directory.');
+  } catch(e){
+    console.error('[member-dir-toggle]', e);
+    Z.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+  }
+};     
 console.log('[SPACE v9 — Block C] bond · more · settings · avatar · health · guide · legal · watch later');
 })();
 </script>
@@ -14759,11 +14800,80 @@ Z.renderProfile = function(){
       '<button onclick="Z.showView(\'packages\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-box" style="color:#3b82f6;"></i> Packages</div></button>' +
       '<button onclick="Z.showView(\'referrals\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-users-rays" style="color:#8b5cf6;"></i> Referrals</div></button>' +
       '<button onclick="Z.showView(\'people\')" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-users" style="color:#6366f1;"></i> Discover People</div></button>' +
-      '<button onclick="Z.openBindReferral()" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-link" style="color:#10b981;"></i> Referral Upline</div></button>' +
+           '<button onclick="Z.openBindReferral()" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;"><div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-link" style="color:#10b981;"></i> Referral Upline</div></button>' +
+     '</div>' +
+     '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-top:12px;">' +
+       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
+         '<i class="fa-solid fa-shield-halved" style="color:#10b981;font-size:14px;"></i>' +
+         '<div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">PRIVACY</div>' +
+       '</div>' +
+       '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">' +
+         '<div style="flex:1;min-width:0;">' +
+           '<div style="font-size:12.5px;font-weight:800;color:#fff;">Appear in Discover People</div>' +
+           '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">Shown in search + recommendations</div>' +
+         '</div>' +
+         '<button id="priv-disc-toggle" onclick="Z._togglePrivacySetting(\'hide_from_discovery\')" style="padding:7px 14px;border-radius:16px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:900;font-size:11px;cursor:pointer;flex-shrink:0;"></button>' +
+       '</div>' +
+       '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">' +
+         '<div style="flex:1;min-width:0;">' +
+           '<div style="font-size:12.5px;font-weight:800;color:#fff;">Appear in SPACE directories</div>' +
+           '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">Visible to other bonded members of SPACEs you Bond</div>' +
+         '</div>' +
+         '<button id="priv-dir-toggle" onclick="Z._togglePrivacySetting(\'hide_from_member_directory\')" style="padding:7px 14px;border-radius:16px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:900;font-size:11px;cursor:pointer;flex-shrink:0;"></button>' +
+       '</div>' +
      '</div>' +
   '</div>';
 };
 
+/* Privacy toggle handler */
+Z._togglePrivacySetting = async function(field){
+  var u = Z.State.currentUser;
+  if(!u){ return; }
+  var c = Z.sb && Z.sb();
+  if(!c){ return; }
+  var current = !!u[field];
+  var next = !current;
+  try {
+    var patch = {};
+    patch[field] = next;
+    var r = await c.from('profiles').update(patch).eq('id', u.id);
+    if(r.error) throw r.error;
+    Z.State.currentUser[field] = next;
+    Z.toast(next ? 'Hidden.' : 'Visible.');
+    if(Z.State.currentView === 'profile') Z.softRefresh();
+  } catch(e){
+    Z.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+  }
+};
+
+/* Paint toggle labels when profile view renders */
+var _prevShowProfile = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowProfile.apply(this, arguments);
+  if(view === 'profile'){
+    setTimeout(function(){
+      var u = Z.State.currentUser;
+      if(!u) return;
+      var b1 = document.getElementById('priv-disc-toggle');
+      if(b1){
+        var hidden1 = !!u.hide_from_discovery;
+        b1.textContent = hidden1 ? 'Hidden' : 'Visible';
+        b1.style.background = hidden1 ? 'rgba(161,98,98,.08)' : 'rgba(16,185,129,.08)';
+        b1.style.borderColor = hidden1 ? 'rgba(161,98,98,.4)' : 'rgba(16,185,129,.4)';
+        b1.style.color = hidden1 ? '#c9a5a5' : '#10b981';
+      }
+      var b2 = document.getElementById('priv-dir-toggle');
+      if(b2){
+        var hidden2 = (u.hide_from_member_directory === false) ? false : true;
+        b2.textContent = hidden2 ? 'Hidden' : 'Visible';
+        b2.style.background = hidden2 ? 'rgba(161,98,98,.08)' : 'rgba(16,185,129,.08)';
+        b2.style.borderColor = hidden2 ? 'rgba(161,98,98,.4)' : 'rgba(16,185,129,.4)';
+        b2.style.color = hidden2 ? '#c9a5a5' : '#10b981';
+      }
+    }, 200);
+  }
+  return r;
+};
 Z._editImages = {avatar:null, cover:null};
 Z.openEditProfileModal = function(){
   var u = Z.State.currentUser;
