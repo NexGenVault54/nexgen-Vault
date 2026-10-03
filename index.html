@@ -12060,10 +12060,22 @@ function attachCfarTrackerD(videoEl, videoId){
   var budget = Number(spark.cfar_view_budget) || 0;
   if(rate <= 0 || budget <= 0) return;
 
+  /* One-shot session check — viewer can't re-earn on same video */
+  var c = db();
+  if(c){
+    c.rpc('cfar_start_session', { p_spark_id: videoId }).then(function(res){
+      if(res.error || !res.data) return;
+      if(res.data.ok === false){
+        videoEl._cfarBlocked = true;
+      }
+    }).catch(function(){});
+  }
+
   videoEl._cfarAttached = true;
   Z._cfarClaimed[videoId] = Z._cfarClaimed[videoId] || {};
-  videoEl.addEventListener('timeupdate', async function(){
+   videoEl.addEventListener('timeupdate', async function(){
     if(videoEl.paused) return;
+    if(videoEl._cfarBlocked) return;
     var slot = Math.floor((videoEl.currentTime || 0) / 60);
     if(slot < 1 || slot > 10) return;
     if(Z._cfarClaimed[videoId][slot]) return;
@@ -12328,6 +12340,41 @@ if(typeof _prevSubmitSparkD === 'function'){
           set_at: Date.now()
         };
       }
+      /* CFAR upfront deduction — after DB row exists, fund the pool */
+      if(cfarRate > 0 && cfarBudget > 0){
+        setTimeout(async function(){
+          try {
+            var latest = await c.from('sparks')
+              .select('id').eq('author_id', u.id).eq('type','spark')
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if(!latest || !latest.data) return;
+            var fund = await c.rpc('cfar_fund_and_register', {
+              p_spark_id: latest.data.id,
+              p_rate: cfarRate,
+              p_budget: cfarBudget,
+              p_cap_minutes: 10
+            });
+            if(fund.error){
+              console.warn('[cfar-fund]', fund.error);
+              Z.toast('CFAR funding failed — pool not activated.', 'error');
+              return;
+            }
+            if(fund.data && fund.data.ok === false){
+              if(fund.data.error === 'insufficient_funds'){
+                Z.toast('CFAR not funded — insufficient Cash balance ($' + Number(fund.data.available||0).toFixed(2) + ').', 'error');
+              } else {
+                Z.toast('CFAR issue: ' + (fund.data.error || 'unknown'), 'error');
+              }
+              return;
+            }
+            Z.toast('CFAR funded · $' + cfarBudget.toFixed(2) + ' locked.');
+            if(typeof Z.refreshSession === 'function'){
+              try { await Z.refreshSession(); } catch(e){}
+              try { Z.updateHeader(); } catch(e){}
+            }
+          } catch(e){ console.error('[cfar-fund]', e); }
+        }, 600);
+      }   
       /* Fee-safe deduction (single-shot, 500ms after DB confirm) */
       if(fee > 0){
         setTimeout(async function(){
