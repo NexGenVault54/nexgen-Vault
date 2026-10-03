@@ -15245,11 +15245,37 @@ Z.renderPeople = function(){
       '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>' +
       '<h2 class="view-title" style="margin-left:6px;"><i class="fa-solid fa-users" style="color:#10b981;margin-right:6px;"></i>Discover People</h2>' +
     '</div>' +
-    '<input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;">' +
+    '<input type="text" id="people-search-input" placeholder="Search people..." value="' + Z.escape(Z.State.peopleSearch||'') + '" oninput="Z.onPeopleSearch(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;font-size:12px;color:#fff;outline:none;box-sizing:border-box;">' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      '<button data-people-filter="all" data-active="1" onclick="Z.setPeopleFilter(\'all\')" class="mkt-sort-btn">All</button>' +
+      '<button data-people-filter="online" onclick="Z.setPeopleFilter(\'online\')" class="mkt-sort-btn">Online</button>' +
+      '<button data-people-filter="connected" onclick="Z.setPeopleFilter(\'connected\')" class="mkt-sort-btn">Connected</button>' +
+    '</div>' +
     '<div id="people-list-container">' + Z.skeletonRows(6) + '</div>' +
   '</div>';
-  setTimeout(Z.refreshPeopleList, 30);
+  setTimeout(function(){
+    Z._peopleFilter = 'all';
+    Z.refreshPeopleList();
+    Z.touchLastSeen();
+  }, 30);
   return html;
+};
+
+Z._peopleFilter = 'all';
+
+Z.setPeopleFilter = function(f){
+  Z._peopleFilter = f;
+  document.querySelectorAll('[data-people-filter]').forEach(function(b){
+    if(b.getAttribute('data-people-filter') === f) b.setAttribute('data-active','1');
+    else b.removeAttribute('data-active');
+  });
+  Z.refreshPeopleList();
+};
+
+Z.touchLastSeen = function(){
+  var c = Z.sb && Z.sb();
+  if(!c || !Z.State.currentUser) return;
+  c.rpc('touch_last_seen').catch(function(){});
 };
 Z.refreshPeopleList = async function(){
   var container = document.getElementById('people-list-container');
@@ -15263,64 +15289,103 @@ Z.refreshPeopleList = async function(){
     });
     return;
   }
-  var seed = Date.now();
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* Fetch users — exclude self, exclude hidden */
   var data = [];
-  try { data = await Z.DB.getPeopleFeed(30, 0, seed); }
-  catch(e){ data = []; }
-  if(!data || !data.length){
-    data = (Z.State.allProfiles||[])
-      .filter(function(u){ return u.id !== me.id; })
-      .slice(0, 30)
-      .map(function(u){
-        return {
-          id:u.id, name:u.name, username:u.username, avatar:u.avatar,
-          profession:u.profession, bio:u.bio, package:u.package,
-          bounty_settings:u.bounty_settings, connection_count:0,
-          mutual_count:0, rank_score:0
-        };
-      });
-  }
+  try {
+    var r = await c.from('profiles')
+      .select('id,name,username,avatar,profession,bio,package,bounty_settings,last_seen_at,hide_from_discovery')
+      .neq('id', me.id)
+      .eq('hide_from_discovery', false)
+      .limit(200);
+    data = r.data || [];
+  } catch(e){ data = []; }
+
+  /* Cache into allProfiles */
   data.forEach(function(p){
     var arr = Z.State.allProfiles || [];
     var idx = -1;
     for(var i=0;i<arr.length;i++){ if(arr[i].id === p.id){ idx = i; break; } }
     if(idx === -1) arr.push(p);
-    else arr[idx] = Object.assign({}, arr[idx], {
-      bounty_settings: p.bounty_settings || arr[idx].bounty_settings,
-      name: p.name || arr[idx].name,
-      username: p.username || arr[idx].username,
-      avatar: p.avatar || arr[idx].avatar,
-      profession: p.profession || arr[idx].profession,
-      bio: p.bio || arr[idx].bio,
-      package: p.package || arr[idx].package
-    });
+    else arr[idx] = Object.assign({}, arr[idx], p);
+    Z.State.allProfiles = arr;
   });
-  var q = (Z.State.peopleSearch||'').toLowerCase();
+
+  /* Connections map */
+  var connSet = {};
+  (Z.State.allConnections || []).forEach(function(cn){
+    if(cn.status === 'accepted'){
+      if(cn.requester_id === me.id) connSet[cn.recipient_id] = true;
+      if(cn.recipient_id === me.id) connSet[cn.requester_id] = true;
+    }
+  });
+
+  /* Search filter */
+  var q = (Z.State.peopleSearch||'').toLowerCase().trim();
   if(q){
     data = data.filter(function(u){
-      return String(u.name||'').toLowerCase().indexOf(q) !== -1 ||
-             String(u.username||'').toLowerCase().indexOf(q) !== -1;
+      var nm = String(u.name||'').toLowerCase();
+      var un = String(u.username||'').toLowerCase();
+      return nm.indexOf(q) !== -1 || un.indexOf(q) !== -1;
     });
   }
+
+  /* Filter chips */
+  var filter = Z._peopleFilter || 'all';
+  if(filter === 'online'){
+    data = data.filter(function(u){
+      return u.last_seen_at && (Date.now() - new Date(u.last_seen_at).getTime() < 5*60*1000);
+    });
+  } else if(filter === 'connected'){
+    data = data.filter(function(u){ return connSet[u.id]; });
+  }
+
+  /* Sort: online+connected → offline+connected → online+others → offline+others, each alphabetically */
+  function bucket(p){
+    var isConn = connSet[p.id] ? 1 : 0;
+    var isOn = (p.last_seen_at && (Date.now() - new Date(p.last_seen_at).getTime() < 5*60*1000)) ? 1 : 0;
+    if(isConn && isOn) return 0;
+    if(isConn && !isOn) return 1;
+    if(!isConn && isOn) return 2;
+    return 3;
+  }
+  data.sort(function(a, b){
+    var ba = bucket(a), bb = bucket(b);
+    if(ba !== bb) return ba - bb;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+
+  if(!data.length){
+    container.innerHTML = Z.emptyState({
+      icon: 'fa-solid fa-users',
+      title: q ? 'No people match your search.' : (filter === 'online' ? 'No one online right now.' : (filter === 'connected' ? 'No connections yet.' : 'No people to discover yet.'))
+    });
+    return;
+  }
+
+  /* Render */
   var html = '';
   data.forEach(function(u){
-    html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">' +
-      '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="display:flex;align-items:center;gap:10px;background:transparent;border:none;cursor:pointer;flex:1;text-align:left;min-width:0;">' +
-        '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0;">' +
-        '<div style="min-width:0;">' +
-          '<div style="font-weight:700;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(u)) + '</div>' +
-          '<div style="font-size:10px;color:#64748b;">@' + Z.escape(u.username||'user') + (u.mutual_count > 0 ? ' · ' + u.mutual_count + ' mutual' : '') + '</div>' +
-        '</div>' +
-      '</button>' +
-      Z.renderConnectButton(u.id) +
-    '</div>';
+    var isOn = u.last_seen_at && (Date.now() - new Date(u.last_seen_at).getTime() < 5*60*1000);
+    var dot = isOn ? '<span style="position:absolute;bottom:2px;right:2px;width:12px;height:12px;border-radius:50%;background:#10b981;border:2px solid #111827;"></span>' : '';
+    html += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:12px;display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
+    html += '<button onclick="Z.showView(\'public-profile\',\'' + Z.escape(u.id) + '\')" style="display:flex;align-items:center;gap:10px;background:transparent;border:none;cursor:pointer;flex:1;text-align:left;min-width:0;">';
+    html += '<div style="position:relative;width:44px;height:44px;flex-shrink:0;">';
+    html += '<img src="' + Z.escape(Z.displayAvatar(u)) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+    html += dot;
+    html += '</div>';
+    html += '<div style="min-width:0;flex:1;">';
+    html += '<div style="font-weight:700;font-size:13px;color:#fff;">' + Z.escape(Z.displayName(u)) + '</div>';
+    html += '<div style="font-size:10px;color:#64748b;">@' + Z.escape(u.username||'user') + (u.profession ? (' · ' + Z.escape(u.profession)) : '') + '</div>';
+    html += '</div>';
+    html += '</button>';
+    html += '<button onclick="event.stopPropagation();Z.openDMWith(\'' + Z.escape(u.id) + '\')" title="Message" style="padding:8px 10px;border-radius:10px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-weight:900;font-size:12px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-comment"></i></button>';
+    html += Z.renderConnectButton(u.id);
+    html += '</div>';
   });
-  if(!html){
-    html = Z.emptyState({
-      icon: 'fa-solid fa-users',
-      title: q ? 'No people match your search.' : 'No people to discover yet.'
-    });
-  }
   container.innerHTML = html;
 };
 Z.onPeopleSearch = function(v){ Z.State.peopleSearch = v; Z.refreshPeopleList(); };
