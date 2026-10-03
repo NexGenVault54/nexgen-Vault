@@ -4863,8 +4863,12 @@ Z.renderComment = function(cm, post, profiles, isReply){
     '</button>';
   });
 
-  var actions = '<div class="comment-actions">' +
-    '<button onclick="Z.openInlineReply(\'' + Z.escape(post.id) + '\',\'' + Z.escape(cm.id) + '\')">Reply</button>';
+  var _cmDepth = Number(cm.depth) || 0;
+  var _canReply = _cmDepth < 2;
+  var actions = '<div class="comment-actions">';
+  if(_canReply){
+    actions += '<button onclick="Z.openInlineReply(\'' + Z.escape(post.id) + '\',\'' + Z.escape(cm.id) + '\')">Reply</button>';
+  }
   if(isMyComment){
     actions += '<button onclick="Z.deleteComment(\'' + Z.escape(cm.id) + '\',\'' + Z.escape(post.id) + '\')">Delete</button>';
   } else if(isMyPost){
@@ -5721,8 +5725,14 @@ Z.renderSparkComment = function(cm, spark, isReply){
     '</button>';
   });
 
-  var actions = '<div class="comment-actions"><button onclick="Z.openInlineSparkReply(\'' + Z.escape(spark.id) + '\',\'' + Z.escape(cm.id) + '\')">Reply</button>';
-  if(isMyComment){ actions += '<button onclick="Z.deleteSparkComment(\'' + Z.escape(cm.id) + '\',\'' + Z.escape(spark.id) + '\')">Delete</button>'; }
+    var _cmDepth = Number(cm.depth) || 0;
+  var _canReply = _cmDepth < 2;
+  var actions = '<div class="comment-actions">';
+  if(_canReply){
+    actions += '<button onclick="Z.openInlineSparkReply(\'' + Z.escape(spark.id) + '\',\'' + Z.escape(cm.id) + '\')">Reply</button>';
+  }
+     
+     if(isMyComment){ actions += '<button onclick="Z.deleteSparkComment(\'' + Z.escape(cm.id) + '\',\'' + Z.escape(spark.id) + '\')">Delete</button>'; }
   else if(isMySpark){
     actions += cm.hidden
       ? '<button onclick="Z.unhideSparkComment(\'' + Z.escape(cm.id) + '\',\'' + Z.escape(spark.id) + '\')">Unhide</button>'
@@ -14563,6 +14573,473 @@ Z.showView = function(view, param){
 console.log('[Scheduled Posts] ready');
 })();
 </script> 
+
+<!-- ============================================================
+     PLAYLISTS + EVENTS UI
+     Paste BEFORE Section 9 comment
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixPlaylistsEvents) return; Z.__zynixPlaylistsEvents = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function me(){ return Z.State.currentUser || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   PLAYLISTS
+   ============================================================ */
+function renderPlaylists(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-list" style="color:#10b981;"></i> Playlists</h2>';
+  h += '</div>';
+  h += '<button onclick="Z.openPlaylistCreate()" style="padding:7px 14px;border-radius:16px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;"><i class="fa-solid fa-plus"></i> New</button>';
+  h += '</div>';
+  h += '<div id="playlists-host"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  h += '</div>';
+  setTimeout(loadPlaylists, 40);
+  return h;
+}
+
+async function loadPlaylists(){
+  var host = document.getElementById('playlists-host');
+  if(!host) return;
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+  try {
+    var r = await c.from('playlists').select('*').eq('owner_id', u.id).order('updated_at', { ascending: false });
+    var items = r.data || [];
+    if(!items.length){
+      host.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;"><i class="fa-solid fa-list" style="font-size:32px;color:#334155;display:block;margin-bottom:10px;"></i>No playlists yet.<br>Tap "New" to create one.</div>';
+      return;
+    }
+    var h = '';
+    items.forEach(function(p){
+      h += '<div data-pl-open="' + esc(p.id) + '" style="padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;cursor:pointer;display:flex;gap:12px;align-items:center;">';
+      h += '<div style="width:52px;height:52px;border-radius:10px;background:linear-gradient(135deg,#8b5cf6,#3b82f6);display:flex;align-items:center;justify-content:center;flex-shrink:0;">';
+      h += '<i class="fa-solid fa-list" style="color:#fff;font-size:20px;"></i></div>';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:13px;font-weight:900;color:#fff;">' + esc(p.title) + '</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">' + (p.item_count||0) + ' item' + (p.item_count===1?'':'s') + (p.is_public ? ' · Public' : ' · Private') + '</div>';
+      h += '</div>';
+      h += '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i>';
+      h += '</div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-pl-open]').forEach(function(el){
+      el.addEventListener('click', function(){
+        Z.openPlaylistView(this.getAttribute('data-pl-open'));
+      });
+    });
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:30px;color:#a16262;font-size:12px;">Could not load.</div>';
+  }
+}
+
+Z.openPlaylistCreate = function(){
+  if(!me()){ Z.openAuthModal('login'); return; }
+  Z.openSheet(
+    '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">' +
+      '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:70vh;">' +
+        '<div class="sheet-handle"></div>' +
+        '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">New Playlist</h3>' +
+          '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="sheet-body" style="padding:16px;">' +
+          '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Title</label>' +
+          '<input id="pl-title" type="text" maxlength="80" placeholder="e.g. Best of 2026" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">' +
+          '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Description (optional)</label>' +
+          '<textarea id="pl-desc" maxlength="300" rows="3" placeholder="What is this collection about?" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;margin-bottom:12px;font-family:inherit;"></textarea>' +
+          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#cbd5e1;font-weight:700;margin-bottom:16px;">' +
+            '<input type="checkbox" id="pl-public" checked style="flex-shrink:0;">' +
+            '<span>Make this playlist public</span>' +
+          '</label>' +
+          '<button id="pl-create" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Create</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+  setTimeout(function(){
+    var btn = document.getElementById('pl-create');
+    if(!btn) return;
+    btn.addEventListener('click', async function(){
+      var title = ((document.getElementById('pl-title')||{}).value || '').trim();
+      var desc = ((document.getElementById('pl-desc')||{}).value || '').trim();
+      var pub = !!(document.getElementById('pl-public')||{}).checked;
+      if(title.length < 2){ toast('Title required.', 'error'); return; }
+      btn.disabled = true; btn.textContent = 'Creating…';
+      var c = db(); if(!c) return;
+      try {
+        var r = await c.rpc('playlist_create', { p_title: title, p_desc: desc || null, p_public: pub });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        toast('Playlist created.');
+        if(Z.State.currentView === 'playlists') loadPlaylists();
+      } catch(e){
+        var msg = (e && e.message) || 'unknown';
+        toast('Failed: ' + msg, 'error');
+        btn.disabled = false; btn.textContent = 'Create';
+      }
+    });
+  }, 40);
+};
+
+Z.openPlaylistView = async function(id){
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+  Z.openSheet(
+    '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">' +
+      '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">' +
+        '<div class="sheet-handle"></div>' +
+        '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Playlist</h3>' +
+          '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="sheet-body" id="pl-view-host" style="padding:16px;">Loading…</div>' +
+      '</div>' +
+    '</div>'
+  );
+
+  var host = document.getElementById('pl-view-host');
+  if(!host) return;
+
+  try {
+    var pr = await c.from('playlists').select('*').eq('id', id).maybeSingle();
+    if(pr.error || !pr.data){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">Not found.</div>'; return; }
+    var pl = pr.data;
+
+    var ir = await c.from('playlist_items').select('spark_id, position').eq('playlist_id', id).order('position', { ascending: true });
+    var items = ir.data || [];
+    var sparkIds = items.map(function(x){ return x.spark_id; });
+
+    var sparks = [];
+    if(sparkIds.length){
+      var sr = await c.from('sparks').select('id, title, caption, video_url, type, views, author_id').in('id', sparkIds);
+      sparks = sr.data || [];
+    }
+
+    var h = '';
+    h += '<div style="font-size:14px;font-weight:900;color:#fff;">' + esc(pl.title) + '</div>';
+    if(pl.description) h += '<div style="font-size:12px;color:#cbd5e1;margin-top:6px;line-height:1.6;">' + esc(pl.description) + '</div>';
+    h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:6px;">' + items.length + ' item' + (items.length===1?'':'s') + ' · ' + (pl.is_public ? 'Public' : 'Private') + '</div>';
+    h += '<div style="height:1px;background:#1e293b;margin:14px 0;"></div>';
+
+    if(!sparks.length){
+      h += '<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;">No items yet.</div>';
+    } else {
+      sparks.forEach(function(s){
+        h += '<div style="display:flex;gap:10px;align-items:center;padding:10px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;margin-bottom:6px;">';
+        h += '<div style="width:60px;height:44px;border-radius:6px;overflow:hidden;background:#000;flex-shrink:0;">';
+        if(s.video_url) h += '<video src="' + esc(s.video_url) + '" preload="metadata" muted style="width:100%;height:100%;object-fit:cover;"></video>';
+        h += '</div>';
+        h += '<div style="flex:1;min-width:0;">';
+        h += '<div style="font-size:12px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.title || s.caption || 'Untitled') + '</div>';
+        h += '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">' + (s.views||0) + ' views</div>';
+        h += '</div>';
+        h += '<button data-pl-rm="' + esc(s.id) + '" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-xmark"></i></button>';
+        h += '</div>';
+      });
+    }
+    host.innerHTML = h;
+
+    host.querySelectorAll('[data-pl-rm]').forEach(function(b){
+      b.addEventListener('click', async function(){
+        var sid = this.getAttribute('data-pl-rm');
+        try {
+          var r2 = await c.rpc('playlist_remove', { p_playlist_id: id, p_spark_id: sid });
+          if(r2.error) throw r2.error;
+          toast('Removed.');
+          Z.closeSheet();
+          setTimeout(function(){ Z.openPlaylistView(id); }, 200);
+        } catch(e){ toast('Failed.', 'error'); }
+      });
+    });
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed to load.</div>';
+  }
+};
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+function renderEvents(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-ticket" style="color:#10b981;"></i> Events</h2>';
+  h += '</div>';
+  h += '<button onclick="Z.openEventCreate()" style="padding:7px 14px;border-radius:16px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11px;cursor:pointer;"><i class="fa-solid fa-plus"></i> Create</button>';
+  h += '</div>';
+  h += '<div id="events-host"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  h += '</div>';
+  setTimeout(loadEvents, 40);
+  return h;
+}
+
+async function loadEvents(){
+  var host = document.getElementById('events-host');
+  if(!host) return;
+  var c = db();
+  if(!c) return;
+  try {
+    var r = await c.from('events').select('*').eq('active', true).gte('event_date', new Date().toISOString()).order('event_date', { ascending: true }).limit(100);
+    var items = r.data || [];
+    if(!items.length){
+      host.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;"><i class="fa-solid fa-ticket" style="font-size:32px;color:#334155;display:block;margin-bottom:10px;"></i>No upcoming events.<br>Tap "Create" to host one.</div>';
+      return;
+    }
+    var h = '';
+    items.forEach(function(ev){
+      var date = new Date(ev.event_date);
+      var sold = ev.tickets_sold || 0;
+      var cap = ev.capacity || 0;
+      var pct = cap > 0 ? Math.round((sold / cap) * 100) : 0;
+      var priceTxt = ev.is_paid ? ('$' + Number(ev.ticket_price).toFixed(2)) : 'Free';
+      h += '<div data-ev-open="' + esc(ev.id) + '" style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;cursor:pointer;">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:13.5px;font-weight:900;color:#fff;">' + esc(ev.title) + '</div>';
+      if(ev.venue) h += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;"><i class="fa-solid fa-location-dot"></i> ' + esc(ev.venue) + '</div>';
+      h += '<div style="font-size:11px;color:#cbd5e1;margin-top:3px;"><i class="fa-regular fa-calendar"></i> ' + date.toLocaleString() + '</div>';
+      h += '</div>';
+      h += '<div style="text-align:right;flex-shrink:0;">';
+      h += '<div style="font-size:15px;font-weight:900;color:' + (ev.is_paid ? '#fbbf24' : '#10b981') + ';">' + priceTxt + '</div>';
+      h += '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + sold + ' / ' + cap + '</div>';
+      h += '</div></div>';
+      h += '<div style="margin-top:10px;height:5px;border-radius:3px;background:rgba(0,0,0,.3);overflow:hidden;">';
+      h += '<div style="height:100%;width:' + Math.min(100, pct) + '%;background:linear-gradient(90deg,#10b981,#3b82f6);"></div></div>';
+      h += '</div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-ev-open]').forEach(function(el){
+      el.addEventListener('click', function(){
+        Z.openEventView(this.getAttribute('data-ev-open'));
+      });
+    });
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:30px;color:#a16262;">Could not load events.</div>';
+  }
+}
+
+Z.openEventCreate = function(){
+  if(!me()){ Z.openAuthModal('login'); return; }
+  Z.openSheet(
+    '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">' +
+      '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:90vh;">' +
+        '<div class="sheet-handle"></div>' +
+        '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Create Event</h3>' +
+          '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="sheet-body" style="padding:16px;overflow-y:auto;">' +
+          '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Title</label>' +
+          '<input id="ev-title" maxlength="120" placeholder="Event name" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">' +
+          '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Description</label>' +
+          '<textarea id="ev-desc" maxlength="600" rows="3" placeholder="What is this event about?" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;margin-bottom:12px;font-family:inherit;"></textarea>' +
+          '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Venue (optional)</label>' +
+          '<input id="ev-venue" maxlength="120" placeholder="Where?" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">' +
+          '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Date & time</label>' +
+          '<input id="ev-date" type="datetime-local" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">' +
+          '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+            '<div style="flex:1;"><label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Capacity</label><input id="ev-cap" type="number" min="1" value="100" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;"></div>' +
+            '<div style="flex:1;"><label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Price (0=free)</label><input id="ev-price" type="number" min="0" step="0.5" value="0" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;"></div>' +
+          '</div>' +
+          '<button id="ev-create" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Create Event</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+  setTimeout(function(){
+    var inp = document.getElementById('ev-date');
+    if(inp && !inp.value){
+      var d = new Date(Date.now() + 24*60*60*1000);
+      inp.value = new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+    }
+    var btn = document.getElementById('ev-create');
+    if(!btn) return;
+    btn.addEventListener('click', async function(){
+      var title = ((document.getElementById('ev-title')||{}).value || '').trim();
+      var desc = ((document.getElementById('ev-desc')||{}).value || '').trim();
+      var venue = ((document.getElementById('ev-venue')||{}).value || '').trim();
+      var dateVal = ((document.getElementById('ev-date')||{}).value || '');
+      var cap = parseInt((document.getElementById('ev-cap')||{}).value || '100', 10) || 100;
+      var price = parseFloat((document.getElementById('ev-price')||{}).value || '0') || 0;
+      if(title.length < 2){ toast('Title required.', 'error'); return; }
+      if(!dateVal){ toast('Pick a date.', 'error'); return; }
+      var when = new Date(dateVal).getTime();
+      if(!when || when <= Date.now()){ toast('Date must be in the future.', 'error'); return; }
+      btn.disabled = true; btn.textContent = 'Creating…';
+      var c = db(); if(!c) return;
+      try {
+        var r = await c.rpc('event_create', {
+          p_title: title, p_desc: desc || null, p_venue: venue || null,
+          p_date: new Date(when).toISOString(), p_capacity: cap,
+          p_ticket_price: price, p_cover: null
+        });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        toast('Event created.');
+        if(Z.State.currentView === 'events') loadEvents();
+      } catch(e){
+        var msg = (e && e.message) || 'unknown';
+        if(msg.indexOf('invalid_date') !== -1) toast('Date must be future.', 'error');
+        else if(msg.indexOf('invalid_capacity') !== -1) toast('Capacity 1-100000.', 'error');
+        else if(msg.indexOf('invalid_price') !== -1) toast('Price 0-500.', 'error');
+        else toast('Failed: ' + msg, 'error');
+        btn.disabled = false; btn.textContent = 'Create Event';
+      }
+    });
+  }, 40);
+};
+
+Z.openEventView = async function(id){
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+  Z.openSheet(
+    '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">' +
+      '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">' +
+        '<div class="sheet-handle"></div>' +
+        '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Event</h3>' +
+          '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="sheet-body" id="ev-view-host" style="padding:16px;">Loading…</div>' +
+      '</div>' +
+    '</div>'
+  );
+  var host = document.getElementById('ev-view-host');
+  if(!host) return;
+  try {
+    var r = await c.from('events').select('*').eq('id', id).maybeSingle();
+    if(r.error || !r.data){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">Not found.</div>'; return; }
+    var ev = r.data;
+    var isOrganizer = ev.organizer_id === u.id;
+    var date = new Date(ev.event_date);
+    var sold = ev.tickets_sold || 0;
+    var cap = ev.capacity || 0;
+    var remaining = Math.max(0, cap - sold);
+    var isPast = date.getTime() <= Date.now();
+    var priceTxt = ev.is_paid ? ('$' + Number(ev.ticket_price).toFixed(2)) : 'Free';
+
+    var h = '';
+    h += '<div style="font-size:16px;font-weight:900;color:#fff;">' + esc(ev.title) + '</div>';
+    if(ev.venue) h += '<div style="font-size:12px;color:#94a3b8;margin-top:6px;"><i class="fa-solid fa-location-dot"></i> ' + esc(ev.venue) + '</div>';
+    h += '<div style="font-size:12px;color:#cbd5e1;margin-top:4px;"><i class="fa-regular fa-calendar"></i> ' + date.toLocaleString() + '</div>';
+    if(ev.description) h += '<div style="font-size:12.5px;color:#cbd5e1;margin-top:12px;line-height:1.6;">' + esc(ev.description) + '</div>';
+    h += '<div style="height:1px;background:#1e293b;margin:14px 0;"></div>';
+    h += '<div style="display:flex;justify-content:space-between;padding:8px 0;"><span style="color:#94a3b8;font-size:12px;">Price</span><b style="color:#fbbf24;font-size:13px;">' + priceTxt + '</b></div>';
+    h += '<div style="display:flex;justify-content:space-between;padding:8px 0;"><span style="color:#94a3b8;font-size:12px;">Tickets sold</span><b style="color:#fff;font-size:13px;">' + sold + ' / ' + cap + '</b></div>';
+    h += '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);"><span style="color:#94a3b8;font-size:12px;">Remaining</span><b style="color:' + (remaining > 0 ? '#10b981' : '#a16262') + ';font-size:13px;">' + remaining + '</b></div>';
+
+    if(isPast){
+      h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.35);font-size:12px;color:#c9a5a5;text-align:center;">This event has passed.</div>';
+    } else if(isOrganizer){
+      h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);font-size:12px;color:#60a5fa;text-align:center;">You are the organizer.</div>';
+    } else if(remaining <= 0){
+      h += '<div style="margin-top:14px;padding:12px;border-radius:10px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.35);font-size:12px;color:#c9a5a5;text-align:center;">Sold out.</div>';
+    } else {
+      h += '<div style="display:flex;gap:8px;align-items:center;margin-top:14px;">';
+      h += '<input id="ev-qty" type="number" min="1" max="' + Math.min(20, remaining) + '" value="1" style="width:80px;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;outline:none;box-sizing:border-box;">';
+      h += '<button id="ev-buy" style="flex:1;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Buy ' + priceTxt + '</button>';
+      h += '</div>';
+    }
+    host.innerHTML = h;
+
+    var btn = document.getElementById('ev-buy');
+    if(btn){
+      btn.addEventListener('click', async function(){
+        var qty = parseInt((document.getElementById('ev-qty')||{}).value || '1', 10) || 1;
+        if(qty < 1 || qty > Math.min(20, remaining)){ toast('Invalid quantity.', 'error'); return; }
+        btn.disabled = true; btn.textContent = 'Processing…';
+        try {
+          var r2 = await c.rpc('event_buy', { p_event_id: id, p_qty: qty });
+          if(r2.error) throw r2.error;
+          Z.closeSheet();
+          toast(qty + ' ticket' + (qty === 1 ? '' : 's') + ' confirmed.');
+          if(typeof Z.refreshSession === 'function'){
+            try { await Z.refreshSession(); } catch(e){}
+            try { Z.updateHeader(); } catch(e){}
+          }
+          if(Z.State.currentView === 'events') loadEvents();
+        } catch(e){
+          var msg = (e && e.message) || 'unknown';
+          if(msg.indexOf('insufficient_funds') !== -1) toast('Not enough Cash.', 'error');
+          else if(msg.indexOf('capacity_exceeded') !== -1) toast('Not enough seats left.', 'error');
+          else if(msg.indexOf('event_passed') !== -1) toast('Event already passed.', 'error');
+          else toast('Failed: ' + msg, 'error');
+          btn.disabled = false; btn.textContent = 'Buy ' + priceTxt;
+        }
+      });
+    }
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed to load.</div>';
+  }
+};
+
+/* ============================================================
+   ROUTER + ENTRY POINTS
+   ============================================================ */
+var _prevRenderV = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'playlists') return renderPlaylists();
+  if(view === 'events') return renderEvents();
+  return _prevRenderV.call(this, view, param);
+};
+
+/* Wire Event entry point in Galleria */
+setTimeout(function(){
+  if(Z.zygSubitems && Z.zygSubitems['events']){
+    Z.zygSubitems['events'].forEach(function(s){
+      s.active = true;
+      s.action = function(){
+        var key = s.key;
+        Z.showView('events');
+      };
+    });
+  }
+}, 300);
+
+/* Add Playlists + Events buttons to Settings */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'profile'){
+    setTimeout(function(){
+      var host = document.getElementById('app-container');
+      if(!host) return;
+      if(host.querySelector('#pe-settings-grid')) return;
+      var grid = host.querySelector('.media-grid-2');
+      if(!grid) return;
+      var wrap = document.createElement('div');
+      wrap.id = 'pe-settings-grid';
+      wrap.style.cssText = 'display:contents;';
+      var b1 = document.createElement('button');
+      b1.style.cssText = 'background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;';
+      b1.innerHTML = '<div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-list" style="color:#8b5cf6;"></i> Playlists</div>';
+      b1.onclick = function(){ Z.showView('playlists'); };
+      var b2 = document.createElement('button');
+      b2.style.cssText = 'background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;';
+      b2.innerHTML = '<div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-solid fa-ticket" style="color:#fbbf24;"></i> Events</div>';
+      b2.onclick = function(){ Z.showView('events'); };
+      wrap.appendChild(b1);
+      wrap.appendChild(b2);
+      grid.appendChild(wrap);
+    }, 250);
+  }
+  return r;
+};
+
+console.log('[Playlists + Events] ready');
+})();
+</script>     
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
