@@ -11007,7 +11007,7 @@ var FV_GUIDE = [
   { h:'Optional Premium tier', p:'By default viewers pay $0. As a space owner you MAY charge a premium subscription on top, subject to Zynix rating standards and the rate formula set by the platform.' },
   { h:'Eligibility (when you start earning)', p:'You begin earning from Full Video subscriptions when ALL of these are met in a month:\n\n• You\'re on the Business tier\n• 500+ active subscribers\n• Aggregate rating 7.0 or higher (from Full Video ratings)\n• 5 or more Full Videos at 20+ minutes live\n• 60 Sparks posted this month\n• At least 1 fresh Full Video posted in last 30 days\n• Account at least 90 days old\n• No active abuse flags\n\nMiss any gate → payment pauses that month. Nothing is lost.' },
   { h:'Payment caps', p:'Maximum payout per creator per month: $4,000.\nIf pool can\'t cover everyone, all eligible creators receive proportional amounts.' },
-  { h:'Content requirements', p:'• Length: 4 min minimum, 60 min maximum\n• Upload fee: $1 for 1–10 min, +$1 per additional 10-min band\n• Format: mp4, webm, mov\n• Quality: 720p minimum (1080p recommended)\n• You must own all rights to content' },
+   { h:'Content requirements', p:'• Length: 4 min minimum, 60 min maximum\n• Max file size: 1 GB\n• Upload fee: $1 per 10-minute band ($1 for 4–10 min, $2 for 11–20 min, up to $6 for 51–60 min)\n• Fee charged only after upload succeeds\n• Format: mp4, webm, mov\n• Quality: 720p minimum (1080p recommended)\n• You must own all rights to content' },
   { h:'Ratings', p:'Each Full Video has its own 1–10 anonymous rating sheet. Your aggregate rating averages all your Full Videos. Ratings below 7.0 pause your CSF payment.\n\nRating Guardian Streak: 12 months above 7.0 → Gold Star badge. 24 months → Platinum.' },
   { h:'Rating bands', p:'9–10 excellent\n7–8 good\n4–6 fair\n1–3 poor' },
   { h:'Reactions', p:'Full Videos get the same 6 reactions as Sparks: ❤️ Heart · 🌹 Rose · 🔥 Fire · 👏 Clap · ⭐ Star · 👎 Dislike.\nYou can freeze/unfreeze reactions on any video.' },
@@ -14293,7 +14293,13 @@ Z.renderNotifications = function(){
       var fromUser = fromId ? Z.getProfileById(fromId) : null;
       var avatar = fromUser ? Z.displayAvatar(fromUser)
                             : 'https://ui-avatars.com/api/?name=Z&background=111827&color=34d399';
-      var click = fromId ? ' onclick="Z.showView(\'public-profile\',\'' + Z.escape(fromId) + '\')" style="cursor:pointer;"' : '';
+           var sparkId = (n.metadata && n.metadata.spark_id) ? n.metadata.spark_id : null;
+      var click = '';
+      if(sparkId){
+        click = ' onclick="try{Z.State._spaceLandingTab=\'public\';Z.State._spaceLandingPublicSub=\'sparks\';window.location.hash=\'#spark-' + Z.escape(sparkId) + '\';}catch(e){}" style="cursor:pointer;"';
+      } else if(fromId){
+        click = ' onclick="Z.showView(\'public-profile\',\'' + Z.escape(fromId) + '\')" style="cursor:pointer;"';
+      }
       var reversedClass = (n.kind === 'dislike_reversed') ? ' notif-reversed' : '';
       html += '<div class="notif-item' + (n.read?'':' unread') + reversedClass + '"' + click + '>' +
         '<img src="' + Z.escape(avatar) + '">' +
@@ -14546,10 +14552,19 @@ Z.setupRealtime = function(){
         })
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'comments' },
-        function(payload){
+        async function(payload){
           var old = payload.old;
           if(!old || !old.id) return;
           var id = old.id;
+
+          try {
+            var cc = Z.sb();
+            if(cc){
+              var check = await cc.from('comments').select('id').eq('id', id).maybeSingle();
+              if(check.error) return;
+              if(check.data){ console.warn('[phantom-delete-ignored]', id); return; }
+            }
+          } catch(e){ return; }
 
           /* Recursively remove a comment (and any of its replies) from
              a nested comment tree. Returns true when it found + removed. */
