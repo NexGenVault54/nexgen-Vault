@@ -4902,8 +4902,17 @@ Z.submitReply = async function(postId, parentId){
   if(!c) return;
   var newId = Z.uuid();
   var color = Z.State.commentColor || 'light-green';
+  /* Depth cap: 3 levels only. Parent's parent se root_id inherit karo. */
+  var parentCm = Z.findCommentInState(parentId);
+  var parentDepth = parentCm ? (parentCm.depth || 0) : 0;
+  if(parentDepth >= 2){
+    Z.toast('Maximum reply depth reached.', 'error');
+    return;
+  }
+  var rootId = parentCm ? (parentCm.root_id || parentId) : parentId;
   var r = await c.from('comments').insert({
-    id:newId, post_id:postId, parent_id:parentId, author_id:me.id, text:t, color:color
+    id:newId, post_id:postId, parent_id:parentId, author_id:me.id, text:t, color:color,
+    root_id: rootId, depth: parentDepth + 1
   });
   if(r.error){ Z.toast('Failed.', 'error'); return; }
   var post = Z.findPostInState(postId);
@@ -10430,7 +10439,7 @@ Z.openSpaceMoreSheet = async function(userId){
 
   /* Engagement */
   if(!isOwner){
-    rows.push({ icon:'fa-solid fa-hand-holding-dollar', label:'Send a tip', action:'Z.closeSheet();Z.toast(\'Tips coming soon\')' });
+       rows.push({ icon:'fa-solid fa-hand-holding-dollar', label:'Send a tip', action:'Z.closeSheet();setTimeout(function(){Z.openSpaceTipSheet(\'' + esc(userId) + '\')},200)' });
   }
   rows.push({ icon:'fa-regular fa-bookmark', label:'Save SPACE', action:'Z.closeSheet();Z.toast(\'Saved\')' });
   rows.push({ icon:'fa-solid fa-copy', label:'Copy handle', action:'Z.closeSheet();try{navigator.clipboard.writeText(\'@' + esc(uname) + '\');Z.toast(\'Copied\');}catch(e){}' });
@@ -10689,9 +10698,12 @@ function renderSpaceSettings(){
   h += '<div class="sp5-settings-row"><div class="lbl">You earn</div><div class="val">$0.30 / subscriber / month</div></div>';
   h += '<div class="sp5-settings-row"><div class="lbl">Ad Wallet</div><div class="val">$0.20 / subscriber / month (ring-fenced)</div></div>';
   h += '<div id="sp5-settings-fv-status" style="margin-top:12px;"><div style="text-align:center;color:#64748b;font-size:11px;padding:8px;">Loading status…</div></div>';
-  h += '<button class="sp5-settings-cta blue" onclick="Z.openFullVideoCreatorGuide()" style="margin-top:8px;"><i class="fa-solid fa-circle-question"></i> How it works (Creator Guide)</button>';
+  h += '<button class="sp5-settings-cta blue" onclick="Z.openFullVideoCreatorGuide()" style="margin-top:8px;"><i class="fa-solid fa-circle-question"></i> Full Video Creator Guide</button>';
+  h += '<button class="sp5-settings-cta" onclick="Z.showCSFCreatorGuide()" style="margin-top:8px;"><i class="fa-solid fa-hand-holding-dollar"></i> CSF Creator Guide</button>';
+  h += '<button class="sp5-settings-cta" onclick="Z.showCFARGuide(\'creator\')" style="margin-top:8px;"><i class="fa-solid fa-eye"></i> CFAR Creator Guide</button>';
+  h += '<button class="sp5-settings-cta" onclick="Z.showCFARGuide(\'viewer\')" style="margin-top:8px;border-color:rgba(96,165,250,.35);background:rgba(96,165,250,.06);color:#60a5fa;"><i class="fa-solid fa-coins"></i> CFAR Viewer Guide</button>';
   h += '</div>';
-
+     
   /* Legal & Blocked */
   h += '<div class="sp5-settings-group">';
   h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><i class="fa-solid fa-scale-balanced" style="color:#10b981;font-size:14px;"></i><div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">LEGAL & POLICIES</div></div>';
@@ -11668,6 +11680,92 @@ Z.renderView = function(view, param){
   if(view === 'space-settings') return renderSpaceSettings();
   return _prevRenderV9C.call(this, view, param);
 };
+/* ============================================================
+   SPACE TIP — send real money from Cash wallet
+   ============================================================ */
+Z.openSpaceTipSheet = function(userId){
+  var me = Z.State.currentUser;
+  if(!me){ Z.openAuthModal('login'); return; }
+  if(me.id === userId){ Z.toast('Cannot tip yourself.'); return; }
+  var p = Z.getProfileById ? Z.getProfileById(userId) : null;
+  var name = p ? (p.name || p.username || 'user') : 'user';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:75vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Send a tip to ' + esc(name) + '</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;">80% goes to the creator · 20% platform fee. Paid from your Cash wallet.</div>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Amount</label>';
+  h += '<div id="space-tip-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">';
+  [1,2,5].forEach(function(v, i){
+    h += '<button data-space-tip-amt="' + v + '" ' + (i === 0 ? 'data-active="1"' : '') + ' style="padding:14px;border-radius:10px;border:1px solid ' + (i === 0 ? '#fbbf24' : '#1e293b') + ';background:' + (i === 0 ? 'rgba(251,191,36,.12)' : '#0f172a') + ';color:' + (i === 0 ? '#fbbf24' : '#fff') + ';font-weight:900;font-size:14px;cursor:pointer;">$' + v + '</button>';
+  });
+  h += '</div>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Or custom ($0.10 – $100)</label>';
+  h += '<input id="space-tip-custom" type="number" min="0.10" max="100" step="0.10" placeholder="Custom amount" style="width:100%;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:16px;">';
+  h += '<button id="space-tip-send" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Send · $1.00</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var grid = document.getElementById('space-tip-grid');
+    var sendBtn = document.getElementById('space-tip-send');
+    var custom = document.getElementById('space-tip-custom');
+    var selected = 1;
+
+    function refreshSend(){
+      var amt = (custom && custom.value) ? parseFloat(custom.value || '0') : selected;
+      sendBtn.textContent = 'Send · $' + (amt || 0).toFixed(2);
+    }
+
+    grid.querySelectorAll('[data-space-tip-amt]').forEach(function(b){
+      b.addEventListener('click', function(){
+        selected = parseFloat(this.getAttribute('data-space-tip-amt'));
+        grid.querySelectorAll('[data-space-tip-amt]').forEach(function(x){
+          x.setAttribute('data-active','');
+          x.style.borderColor = '#1e293b';
+          x.style.background = '#0f172a';
+          x.style.color = '#fff';
+        });
+        this.setAttribute('data-active','1');
+        this.style.borderColor = '#fbbf24';
+        this.style.background = 'rgba(251,191,36,.12)';
+        this.style.color = '#fbbf24';
+        if(custom) custom.value = '';
+        refreshSend();
+      });
+    });
+    if(custom) custom.addEventListener('input', refreshSend);
+    refreshSend();
+
+    sendBtn.addEventListener('click', async function(){
+      var amt = (custom && custom.value) ? parseFloat(custom.value) : selected;
+      if(!amt || amt < 0.10 || amt > 100){ Z.toast('Amount must be $0.10 – $100.', 'error'); return; }
+      sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+      var c = Z.sb && Z.sb();
+      if(!c){ sendBtn.disabled = false; return; }
+      try {
+        var r = await c.rpc('market_send_tip', { p_to_user: userId, p_amount: amt, p_asset_id: null });
+        if(r.error) throw r.error;
+        Z.closeSheet();
+        Z.toast('Tip sent · $' + amt.toFixed(2));
+        if(typeof Z.refreshSession === 'function'){
+          try { await Z.refreshSession(); } catch(e){}
+          try { Z.updateHeader(); } catch(e){}
+        }
+      } catch(e){
+        var msg = (e && e.message) ? e.message : 'unknown';
+        if(msg.indexOf('insufficient_funds') !== -1) Z.toast('Not enough balance.', 'error');
+        else if(msg.indexOf('cannot_tip_self') !== -1) Z.toast('Cannot tip yourself.', 'error');
+        else Z.toast('Failed: ' + msg, 'error');
+        sendBtn.disabled = false; refreshSend();
+      }
+    });
+  }, 40);
+};
+     
 
 console.log('[SPACE v9 — Block C] bond · more · settings · avatar · health · guide · legal · watch later');
 })();
