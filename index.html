@@ -15101,51 +15101,57 @@ Z.renderProfile = function(){
 };
 
 /* Privacy toggle handler */
+Z._privToggleBusy = false;
+
+Z._privPaint = function(){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var b1 = document.getElementById('priv-disc-toggle');
+  if(b1){
+    var hidden1 = !!u.hide_from_discovery;
+    b1.textContent = hidden1 ? 'Hidden' : 'Visible';
+    b1.style.background  = hidden1 ? '#1e293b' : 'rgba(59,130,246,.18)';
+    b1.style.borderColor = hidden1 ? '#334155' : 'rgba(59,130,246,.5)';
+    b1.style.color       = hidden1 ? '#94a3b8' : '#60a5fa';
+  }
+  var b2 = document.getElementById('priv-dir-toggle');
+  if(b2){
+    var hidden2 = (u.hide_from_member_directory === false) ? false : true;
+    b2.textContent = hidden2 ? 'Hidden' : 'Visible';
+    b2.style.background  = hidden2 ? '#1e293b' : 'rgba(59,130,246,.18)';
+    b2.style.borderColor = hidden2 ? '#334155' : 'rgba(59,130,246,.5)';
+    b2.style.color       = hidden2 ? '#94a3b8' : '#60a5fa';
+  }
+};
+
 Z._togglePrivacySetting = async function(field){
+  if(Z._privToggleBusy) return;
   var u = Z.State.currentUser;
   if(!u){ return; }
   var c = Z.sb && Z.sb();
   if(!c){ return; }
-  var current = !!u[field];
-  var next = !current;
+  Z._privToggleBusy = true;
   try {
+    var next = !(!!u[field]);
     var patch = {};
     patch[field] = next;
     var r = await c.from('profiles').update(patch).eq('id', u.id);
     if(r.error) throw r.error;
     Z.State.currentUser[field] = next;
-    Z.toast(next ? 'Hidden.' : 'Visible.');
-    if(Z.State.currentView === 'profile') Z.softRefresh();
+    Z._privPaint();
   } catch(e){
-    Z.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+    console.error('[priv-toggle]', e);
+  } finally {
+    Z._privToggleBusy = false;
   }
 };
 
 /* Paint toggle labels when profile view renders */
-var _prevShowProfile = Z.showView;
+var _prevShowProfile2 = Z.showView;
 Z.showView = function(view, param){
-  var r = _prevShowProfile.apply(this, arguments);
+  var r = _prevShowProfile2.apply(this, arguments);
   if(view === 'profile'){
-    setTimeout(function(){
-      var u = Z.State.currentUser;
-      if(!u) return;
-      var b1 = document.getElementById('priv-disc-toggle');
-      if(b1){
-        var hidden1 = !!u.hide_from_discovery;
-        b1.textContent = hidden1 ? 'Hidden' : 'Visible';
-        b1.style.background = hidden1 ? 'rgba(161,98,98,.08)' : 'rgba(16,185,129,.08)';
-        b1.style.borderColor = hidden1 ? 'rgba(161,98,98,.4)' : 'rgba(16,185,129,.4)';
-        b1.style.color = hidden1 ? '#c9a5a5' : '#10b981';
-      }
-      var b2 = document.getElementById('priv-dir-toggle');
-      if(b2){
-        var hidden2 = (u.hide_from_member_directory === false) ? false : true;
-        b2.textContent = hidden2 ? 'Hidden' : 'Visible';
-        b2.style.background = hidden2 ? 'rgba(161,98,98,.08)' : 'rgba(16,185,129,.08)';
-        b2.style.borderColor = hidden2 ? 'rgba(161,98,98,.4)' : 'rgba(16,185,129,.4)';
-        b2.style.color = hidden2 ? '#c9a5a5' : '#10b981';
-      }
-    }, 200);
+    setTimeout(Z._privPaint, 200);
   }
   return r;
 };
