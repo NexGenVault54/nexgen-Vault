@@ -10226,6 +10226,8 @@ Z.bondUser = async function(userId){
         try { await Z.refreshSession(); } catch(e){}
         try { Z.updateHeader(); } catch(e){}
       }
+      /* Show member directory opt-in popup */
+      setTimeout(function(){ Z._showBondDirectoryPopup(userId); }, 600);
     }
     Z._bondStateTs[userId] = Date.now();
     Z.refreshBondSurfaces(userId);
@@ -11769,6 +11771,57 @@ Z.openSpaceTipSheet = function(userId){
   }, 40);
 };
      
+/* ============================================================
+   BOND → Member Directory opt-in popup
+   ============================================================ */
+Z._showBondDirectoryPopup = async function(creatorId){
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* If already visible in directory, no need to ask again */
+  if(u.hide_from_member_directory === false) return;
+
+  var p = Z.getProfileById ? Z.getProfileById(creatorId) : null;
+  var name = p ? (p.name || p.username || 'this creator') : 'this creator';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:center;padding:16px;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="modal-box" onclick="event.stopPropagation()" style="max-width:400px;">';
+  h += '<div style="text-align:center;padding:8px 0 4px;">';
+  h += '<div style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,rgba(16,185,129,.2),rgba(59,130,246,.15));border:1px solid rgba(16,185,129,.4);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">';
+  h += '<i class="fa-solid fa-users" style="font-size:24px;color:#10b981;"></i>';
+  h += '</div>';
+  h += '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:8px;">Appear in ' + esc(name) + '\'s Member Directory?</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.65;padding:0 8px;margin-bottom:18px;">';
+  h += 'By default, your Bond stays private. If you opt-in, you will appear in ' + esc(name) + '\'s public Member Directory, visible to other bonded members of this SPACE.';
+  h += '</div>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px;">';
+  h += '<button onclick="Z._bondDirDecide(\'' + esc(creatorId) + '\', false)" style="flex:1;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Stay private</button>';
+  h += '<button onclick="Z._bondDirDecide(\'' + esc(creatorId) + '\', true)" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Join Directory</button>';
+  h += '</div>';
+  h += '</div></div>';
+  Z.openSheet(h);
+};
+
+Z._bondDirDecide = async function(creatorId, join){
+  Z.closeSheet();
+  var u = Z.State.currentUser;
+  if(!u) return;
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.from('profiles').update({ hide_from_member_directory: !join }).eq('id', u.id);
+    if(r.error) throw r.error;
+    if(Z.State.currentUser) Z.State.currentUser.hide_from_member_directory = !join;
+    if(typeof Z.toast === 'function'){
+      Z.toast(join ? 'Added to member directory.' : 'Stayed private.');
+    }
+  } catch(e){
+    if(typeof Z.toast === 'function') Z.toast('Failed to save.', 'error');
+  }
+};
 
 console.log('[SPACE v9 — Block C] bond · more · settings · avatar · health · guide · legal · watch later');
 })();
@@ -14159,11 +14212,19 @@ Z.anaLoad = async function(){
       } else {
         var th = '';
         sorted.forEach(function(x, i){
-          var title = x.title || x.caption || x.content || 'Untitled';
+          var title = x.title || x.caption || x.content || '';
           if(title.length > 50) title = title.slice(0, 50) + '…';
-          th += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">';
+          var isSpark = !!x.video_url || x.type === 'spark' || x.type === 'long_video';
+          var kindIcon = isSpark ? 'fa-solid fa-bolt' : 'fa-regular fa-newspaper';
+          var kindLabel = isSpark ? 'Spark' : 'Post';
+          if(!title) title = '(' + kindLabel + ' · media only)';
+          var openClick = isSpark
+            ? ' onclick="Z.sp5OpenVideo(\'' + esc(x.id) + '\',\'global\')"'
+            : ' onclick="Z.openPostPage(\'' + esc(x.id) + '\')"';
+          th += '<div' + openClick + ' style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;">';
           th += '<div style="display:flex;gap:10px;align-items:center;min-width:0;flex:1;">';
           th += '<span style="width:22px;height:22px;border-radius:50%;background:rgba(16,185,129,.12);color:#10b981;font-size:10px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + (i+1) + '</span>';
+          th += '<i class="' + kindIcon + '" style="color:#64748b;font-size:10px;flex-shrink:0;"></i>';
           th += '<span style="font-size:12px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(title) + '</span>';
           th += '</div>';
           th += '<span style="font-size:12px;font-weight:900;color:#10b981;flex-shrink:0;margin-left:8px;">' + (x.views || 0) + ' views</span>';
