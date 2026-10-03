@@ -10708,9 +10708,11 @@ function renderSpaceSettings(){
   h += '<div class="sp5-settings-group">';
   h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><i class="fa-solid fa-scale-balanced" style="color:#10b981;font-size:14px;"></i><div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">LEGAL & POLICIES</div></div>';
   h += '<button class="sp5-settings-cta" onclick="Z.openLegalHub()"><i class="fa-solid fa-file-contract"></i> View all documents</button>';
-  h += '<button class="sp5-settings-cta" onclick="Z.openBlockedUsers()" style="margin-top:8px;"><i class="fa-solid fa-ban"></i> Blocked users</button>';
+   h += '<button class="sp5-settings-cta" onclick="Z.openBlockedUsers()" style="margin-top:8px;"><i class="fa-solid fa-ban"></i> Blocked users</button>';
+  h += '<button class="sp5-settings-cta" onclick="Z.showView(\'members\')" style="margin-top:8px;"><i class="fa-solid fa-users"></i> Member directory</button>';
+  h += '<button class="sp5-settings-cta" onclick="Z.exportMyData()" style="margin-top:8px;"><i class="fa-solid fa-download"></i> Export my data (GDPR)</button>';
   h += '</div>';
-
+     
   /* Logout */
   h += '<button class="sp5-settings-cta danger" onclick="Z.logout()" style="margin-top:6px;"><i class="fa-solid fa-power-off"></i> Log out</button>';
 
@@ -13723,6 +13725,294 @@ Z.showCFARGuide = function(mode){
 };
 
 console.log('[Guides] CSF + CFAR ready');
+})();
+</script> 
+
+<!-- ============================================================
+     MEMBER DIRECTORY + DATA EXPORT
+     Paste BEFORE Section 9 comment
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixMemberDirectory) return; Z.__zynixMemberDirectory = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function me(){ return Z.State.currentUser || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+function safeAvatar(u){
+  if(typeof Z.displayAvatar === 'function'){ try { return Z.displayAvatar(u); } catch(e){} }
+  var n = (u && (u.name || u.username)) || 'U';
+  return 'https://ui-avatars.com/api/?name=' + encodeURIComponent(n) + '&background=111827&color=34d399';
+}
+function isOnline(p){
+  if(!p || !p.last_seen_at) return false;
+  var ms = Date.now() - new Date(p.last_seen_at).getTime();
+  return ms < 5 * 60 * 1000;
+}
+
+/* ============================================================
+   MEMBER DIRECTORY VIEW
+   ============================================================ */
+function renderMemberDirectory(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-users" style="color:#10b981;"></i> Members</h2>';
+  h += '</div>';
+  h += '<button id="mdr-hide-toggle" onclick="Z.toggleHideFromDiscovery()" title="Hide me from discovery" style="padding:7px 12px;border-radius:16px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-size:11px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-eye"></i></button>';
+  h += '</div>';
+  h += '<input id="mdr-search" type="text" placeholder="Search by name or @username…" style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+  h += '<button data-mdr-filter="all" data-active="1" class="mkt-sort-btn">All</button>';
+  h += '<button data-mdr-filter="online" class="mkt-sort-btn">Online</button>';
+  h += '<button data-mdr-filter="connected" class="mkt-sort-btn">Connected</button>';
+  h += '</div>';
+  h += '<div id="mdr-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  h += '</div>';
+  setTimeout(loadMemberDirectory, 40);
+  return h;
+}
+
+async function loadMemberDirectory(){
+  var host = document.getElementById('mdr-list');
+  if(!host) return;
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+
+  try {
+    var r = await c.from('profiles')
+      .select('id, name, username, avatar, profession, last_seen_at, hide_from_discovery')
+      .neq('id', u.id)
+      .eq('hide_from_discovery', false)
+      .order('last_seen_at', { ascending: false, nullsFirst: false })
+      .limit(200);
+
+    var all = r.data || [];
+
+    /* Connections map */
+    var connSet = {};
+    (Z.State.allConnections || []).forEach(function(cn){
+      if(cn.status === 'accepted'){
+        if(cn.requester_id === u.id) connSet[cn.recipient_id] = true;
+        if(cn.recipient_id === u.id) connSet[cn.requester_id] = true;
+      }
+    });
+
+    Z._mdrAll = all;
+    Z._mdrConnSet = connSet;
+    paintMembers();
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:30px;color:#a16262;font-size:12px;">Could not load members.</div>';
+  }
+}
+
+function paintMembers(){
+  var host = document.getElementById('mdr-list');
+  if(!host) return;
+  var all = Z._mdrAll || [];
+  var connSet = Z._mdrConnSet || {};
+  var qEl = document.getElementById('mdr-search');
+  var q = qEl ? (qEl.value || '').toLowerCase().trim() : '';
+  var activeBtn = document.querySelector('[data-mdr-filter][data-active="1"]');
+  var filter = activeBtn ? activeBtn.getAttribute('data-mdr-filter') : 'all';
+
+  var list = all.filter(function(p){
+    if(filter === 'online' && !isOnline(p)) return false;
+    if(filter === 'connected' && !connSet[p.id]) return false;
+    if(q){
+      var nm = (p.name || '').toLowerCase();
+      var un = (p.username || '').toLowerCase();
+      if(nm.indexOf(q) === -1 && un.indexOf(q) === -1) return false;
+    }
+    return true;
+  });
+
+  /* Sort: online first, then alphabetical */
+  list.sort(function(a, b){
+    var ao = isOnline(a) ? 1 : 0;
+    var bo = isOnline(b) ? 1 : 0;
+    if(ao !== bo) return bo - ao;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  if(!list.length){
+    host.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8;font-size:12px;">No members match.</div>';
+    return;
+  }
+
+  var h = '';
+  list.forEach(function(p){
+    var online = isOnline(p);
+    var dot = online ? '<span style="position:absolute;bottom:2px;right:2px;width:12px;height:12px;border-radius:50%;background:#10b981;border:2px solid #0f172a;"></span>' : '';
+    h += '<div data-mdr-open="' + esc(p.id) + '" style="display:flex;gap:12px;align-items:center;padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;cursor:pointer;">';
+    h += '<div style="position:relative;width:44px;height:44px;flex-shrink:0;">';
+    h += '<img src="' + esc(safeAvatar(p)) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+    h += dot;
+    h += '</div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:13px;font-weight:800;color:#fff;">' + esc(p.name || p.username || 'User') + '</div>';
+    h += '<div style="font-size:10.5px;color:#94a3b8;">@' + esc(p.username || 'user') + (p.profession ? (' · ' + esc(p.profession)) : '') + '</div>';
+    h += '</div>';
+    h += '<button onclick="event.stopPropagation();Z.openDMWith(\'' + esc(p.id) + '\')" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-weight:900;font-size:11px;cursor:pointer;"><i class="fa-solid fa-comment"></i></button>';
+    h += '</div>';
+  });
+  host.innerHTML = h;
+
+  host.querySelectorAll('[data-mdr-open]').forEach(function(el){
+    el.addEventListener('click', function(){
+      Z.showView('public-profile', this.getAttribute('data-mdr-open'));
+    });
+  });
+}
+
+/* Filter and search wiring */
+document.addEventListener('input', function(e){
+  if(e.target && e.target.id === 'mdr-search') paintMembers();
+});
+document.addEventListener('click', function(e){
+  var b = e.target.closest('[data-mdr-filter]');
+  if(!b) return;
+  if(Z.State.currentView !== 'members') return;
+  document.querySelectorAll('[data-mdr-filter]').forEach(function(x){ x.removeAttribute('data-active'); });
+  b.setAttribute('data-active','1');
+  paintMembers();
+});
+
+/* ============================================================
+   HIDE FROM DISCOVERY
+   ============================================================ */
+Z.toggleHideFromDiscovery = async function(){
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+  var next = !u.hide_from_discovery;
+  try {
+    var r = await c.from('profiles').update({ hide_from_discovery: next }).eq('id', u.id);
+    if(r.error) throw r.error;
+    if(Z.State.currentUser) Z.State.currentUser.hide_from_discovery = next;
+    /* Update button */
+    var btn = document.getElementById('mdr-hide-toggle');
+    if(btn){
+      btn.style.background = next ? 'rgba(161,98,98,.08)' : '#0f172a';
+      btn.style.borderColor = next ? 'rgba(161,98,98,.4)' : '#1e293b';
+      btn.style.color = next ? '#c9a5a5' : '#94a3b8';
+      btn.innerHTML = next
+        ? '<i class="fa-solid fa-eye-slash"></i> Hidden'
+        : '<i class="fa-solid fa-eye"></i>';
+      btn.title = next ? 'You are hidden from discovery' : 'You are visible in discovery';
+    }
+    toast(next ? 'Hidden from discovery.' : 'Visible in discovery.');
+  } catch(e){
+    toast('Failed.', 'error');
+  }
+};
+
+/* Paint hide button state on load */
+var _prevRenderV = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'members'){
+    var out = renderMemberDirectory();
+    setTimeout(function(){
+      var u = me();
+      var btn = document.getElementById('mdr-hide-toggle');
+      if(btn && u){
+        var next = !!u.hide_from_discovery;
+        btn.style.background = next ? 'rgba(161,98,98,.08)' : '#0f172a';
+        btn.style.borderColor = next ? 'rgba(161,98,98,.4)' : '#1e293b';
+        btn.style.color = next ? '#c9a5a5' : '#94a3b8';
+        btn.innerHTML = next
+          ? '<i class="fa-solid fa-eye-slash"></i> Hidden'
+          : '<i class="fa-solid fa-eye"></i>';
+      }
+    }, 200);
+    return out;
+  }
+  return _prevRenderV.call(this, view, param);
+};
+
+/* ============================================================
+   DATA EXPORT (GDPR) — client-side JSON download
+   ============================================================ */
+Z.exportMyData = async function(){
+  var u = me();
+  var c = db();
+  if(!u || !c){ toast('Login first.', 'error'); return; }
+  toast('Preparing your data…');
+
+  try {
+    var out = {
+      exported_at: new Date().toISOString(),
+      user: { id: u.id, email: u.email, name: u.name, username: u.username },
+      profile: null,
+      posts: [],
+      sparks: [],
+      comments: [],
+      wallet_transactions: [],
+      referrals: [],
+      connections: [],
+      legal_acceptance: { terms: true, privacy: true }
+    };
+
+    /* Profile (strip admin-only fields) */
+    var pr = await c.from('profiles').select('id,name,username,avatar,bio,profession,package,tier,wallet_cash,wallet_bounty,wallet_total,referral_code,created_at,space_data').eq('id', u.id).maybeSingle();
+    if(pr.data){
+      var p = Object.assign({}, pr.data);
+      /* Strip admin/mod notes if present */
+      delete p.is_admin;
+      delete p.moderation_notes;
+      delete p.flags;
+      out.profile = p;
+    }
+
+    /* Posts */
+    var ps = await c.from('posts').select('id,content,media_url,media_type,created_at,views,shares').eq('author_id', u.id).limit(500);
+    out.posts = ps.data || [];
+
+    /* Sparks */
+    var sp = await c.from('sparks').select('id,title,caption,video_url,type,created_at,views,shares').eq('author_id', u.id).limit(500);
+    out.sparks = sp.data || [];
+
+    /* Comments */
+    var cm = await c.from('comments').select('id,post_id,spark_id,text,created_at').eq('author_id', u.id).limit(500);
+    out.comments = cm.data || [];
+
+    /* Wallet */
+    var wt = await c.from('wallet_transactions').select('*').eq('user_id', u.id).limit(1000);
+    out.wallet_transactions = wt.data || [];
+
+    /* Connections */
+    var cn = await c.from('connection_requests').select('*').or('requester_id.eq.' + u.id + ',recipient_id.eq.' + u.id);
+    out.connections = cn.data || [];
+
+    /* Download as JSON */
+    var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'zynix-data-export-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+
+    toast('Download started.');
+  } catch(e){
+    console.error('[data-export]', e);
+    toast('Export failed: ' + ((e && e.message) || 'unknown'), 'error');
+  }
+};
+
+console.log('[Members + Export] ready');
 })();
 </script>     
  
