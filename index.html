@@ -10675,8 +10675,9 @@ function renderSpaceSettings(){
   h += '<div class="sp5-settings-row"><div class="lbl">Referral code</div><div class="val">' + esc(u.referral_code || '—') + '</div></div>';
   h += '<button class="sp5-settings-cta" onclick="Z.showView(\'earning-hub\')"><i class="fa-solid fa-arrow-right"></i> Open Earning Hub</button>';
   h += '<button class="sp5-settings-cta blue" onclick="Z.openPoolHealthMeter()" style="margin-top:8px;"><i class="fa-solid fa-heart-pulse"></i> Pool Health Meter</button>';
+  h += '<button class="sp5-settings-cta" onclick="Z.showView(\'analytics\')" style="margin-top:8px;"><i class="fa-solid fa-chart-line"></i> Analytics</button>';
   h += '</div>';
-
+     
   /* Avatar group */
   h += '<div class="sp5-settings-group">';
   h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><i class="fa-solid fa-circle-user" style="color:#10b981;font-size:14px;"></i><div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;">AVATAR</div></div>';
@@ -14013,6 +14014,176 @@ Z.exportMyData = async function(){
 };
 
 console.log('[Members + Export] ready');
+})();
+</script> 
+
+<!-- ============================================================
+     ANALYTICS DASHBOARD
+     Paste BEFORE Section 9 comment
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAnalytics) return; Z.__zynixAnalytics = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function me(){ return Z.State.currentUser || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+
+function renderAnalytics(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-chart-line" style="color:#10b981;"></i> Analytics</h2>';
+  h += '</div></div>';
+
+  /* Range selector */
+  h += '<div style="display:flex;gap:6px;">';
+  [['7d','7 days'],['30d','30 days'],['90d','90 days']].forEach(function(p, i){
+    h += '<button data-an-range="' + p[0] + '" ' + (i === 1 ? 'data-active="1"' : '') + ' class="mkt-sort-btn" onclick="Z.anaSetRange(\'' + p[0] + '\')">' + p[1] + '</button>';
+  });
+  h += '</div>';
+
+  /* KPI cards */
+  h += '<div id="ana-kpis" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;"></div>';
+
+  /* Chart */
+  h += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;">VIEWS OVER TIME</div>';
+  h += '<div id="ana-chart" style="height:100px;display:flex;align-items:flex-end;gap:4px;"></div>';
+  h += '</div>';
+
+  /* Top content */
+  h += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;margin-bottom:10px;">TOP CONTENT</div>';
+  h += '<div id="ana-top"></div>';
+  h += '</div>';
+
+  h += '</div>';
+  setTimeout(function(){ Z.anaLoad(); }, 40);
+  return h;
+}
+
+Z._anaRange = '30d';
+
+Z.anaSetRange = function(r){
+  Z._anaRange = r;
+  document.querySelectorAll('[data-an-range]').forEach(function(b){
+    if(b.getAttribute('data-an-range') === r) b.setAttribute('data-active','1');
+    else b.removeAttribute('data-active');
+  });
+  Z.anaLoad();
+};
+
+Z.anaLoad = async function(){
+  var u = me(); var c = db();
+  if(!u || !c) return;
+
+  var days = Z._anaRange === '7d' ? 7 : (Z._anaRange === '90d' ? 90 : 30);
+  var since = new Date(Date.now() - days*24*60*60*1000).toISOString();
+
+  try {
+    /* Aggregates from posts + sparks */
+    var pRes = await c.from('posts').select('id,views,shares,created_at,content').eq('author_id', u.id).gte('created_at', since);
+    var sRes = await c.from('sparks').select('id,views,shares,created_at,title,caption').eq('author_id', u.id).gte('created_at', since);
+
+    var posts = pRes.data || [];
+    var sparks = sRes.data || [];
+    var all = posts.concat(sparks);
+
+    var totalViews = all.reduce(function(s, x){ return s + (Number(x.views) || 0); }, 0);
+    var totalShares = all.reduce(function(s, x){ return s + (Number(x.shares) || 0); }, 0);
+    var totalContent = all.length;
+
+    /* Reactions count (from wallet transactions as proxy) */
+    var rRes = await c.from('wallet_transactions').select('id,type').eq('user_id', u.id).gte('created_at', since);
+    var reactions = (rRes.data || []).filter(function(t){ return t.type && t.type.indexOf('REACTION_') === 0; }).length;
+
+    /* KPI paint */
+    var kpi = document.getElementById('ana-kpis');
+    if(kpi){
+      kpi.innerHTML =
+        '<div style="padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.3);">' +
+          '<div style="font-size:9.5px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">TOTAL VIEWS</div>' +
+          '<div style="font-size:22px;font-weight:900;color:#10b981;margin-top:2px;">' + totalViews + '</div>' +
+        '</div>' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.3);">' +
+          '<div style="font-size:9.5px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">SHARES</div>' +
+          '<div style="font-size:22px;font-weight:900;color:#60a5fa;margin-top:2px;">' + totalShares + '</div>' +
+        '</div>' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.3);">' +
+          '<div style="font-size:9.5px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">REACTIONS</div>' +
+          '<div style="font-size:22px;font-weight:900;color:#fbbf24;margin-top:2px;">' + reactions + '</div>' +
+        '</div>' +
+        '<div style="padding:12px;border-radius:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.3);">' +
+          '<div style="font-size:9.5px;color:#94a3b8;font-weight:900;letter-spacing:.4px;">CONTENT</div>' +
+          '<div style="font-size:22px;font-weight:900;color:#a78bfa;margin-top:2px;">' + totalContent + '</div>' +
+        '</div>';
+    }
+
+    /* Chart — daily buckets */
+    var buckets = {};
+    for(var i = 0; i < days; i++){
+      var d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - i);
+      buckets[d.toISOString().slice(0,10)] = 0;
+    }
+    all.forEach(function(x){
+      var k = (x.created_at || '').slice(0,10);
+      if(buckets[k] !== undefined) buckets[k] += Number(x.views) || 0;
+    });
+    var keys = Object.keys(buckets).sort();
+    var maxV = Math.max.apply(null, keys.map(function(k){ return buckets[k]; }).concat([1]));
+    var chart = document.getElementById('ana-chart');
+    if(chart){
+      var ch = '';
+      keys.forEach(function(k){
+        var pct = Math.round((buckets[k] / maxV) * 100);
+        ch += '<div style="flex:1;background:linear-gradient(180deg,#10b981,#3b82f6);border-radius:3px;height:' + Math.max(4, pct) + '%;min-height:4px;" title="' + k + ' · ' + buckets[k] + ' views"></div>';
+      });
+      chart.innerHTML = ch;
+    }
+
+    /* Top content */
+    var sorted = all.sort(function(a, b){ return (Number(b.views)||0) - (Number(a.views)||0); }).slice(0, 5);
+    var topHost = document.getElementById('ana-top');
+    if(topHost){
+      if(!sorted.length){
+        topHost.innerHTML = '<div style="text-align:center;color:#64748b;font-size:12px;padding:20px;">No content yet in this range.</div>';
+      } else {
+        var th = '';
+        sorted.forEach(function(x, i){
+          var title = x.title || x.caption || x.content || 'Untitled';
+          if(title.length > 50) title = title.slice(0, 50) + '…';
+          th += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">';
+          th += '<div style="display:flex;gap:10px;align-items:center;min-width:0;flex:1;">';
+          th += '<span style="width:22px;height:22px;border-radius:50%;background:rgba(16,185,129,.12);color:#10b981;font-size:10px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + (i+1) + '</span>';
+          th += '<span style="font-size:12px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(title) + '</span>';
+          th += '</div>';
+          th += '<span style="font-size:12px;font-weight:900;color:#10b981;flex-shrink:0;margin-left:8px;">' + (x.views || 0) + ' views</span>';
+          th += '</div>';
+        });
+        topHost.innerHTML = th;
+      }
+    }
+  } catch(e){
+    console.error('[analytics]', e);
+  }
+};
+
+var _prevRenderV = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'analytics') return renderAnalytics();
+  return _prevRenderV.call(this, view, param);
+};
+
+console.log('[Analytics] ready');
 })();
 </script>     
  
