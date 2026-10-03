@@ -3481,6 +3481,17 @@ Z.expandComposer = function(){
           return '<option value="' + v + '">$' + v.toFixed(2) + (v === 0 ? ' (no cap)' : '') + '</option>';
         }).join('') +
       '</select>' +
+           '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(96,165,250,.05);border:1px solid rgba(96,165,250,.22);">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#cbd5e1;font-weight:700;">' +
+          '<input type="checkbox" id="composer-schedule-toggle" onchange="Z.toggleComposerSchedule()" style="flex-shrink:0;">' +
+          '<i class="fa-regular fa-clock" style="color:#60a5fa;"></i> Schedule for later' +
+        '</label>' +
+        '<div id="composer-schedule-wrap" style="display:none;margin-top:8px;">' +
+          '<label style="display:block;font-size:10.5px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Date & time</label>' +
+          '<input type="datetime-local" id="composer-schedule-at" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:9px 11px;font-size:12px;color:#fff;outline:none;box-sizing:border-box;">' +
+          '<div style="font-size:10px;color:#64748b;margin-top:6px;line-height:1.5;">Publishes automatically. Please keep the app open around that time.</div>' +
+        '</div>' +
+      '</div>' +
       '<div style="display:flex;gap:8px;margin-top:6px;">' +
         '<button onclick="Z.submitComposer()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 20px;border-radius:8px;font-size:12px;cursor:pointer;">Publish</button>' +
         '<button onclick="Z.cancelComposer()" style="background:transparent;border:none;color:#64748b;padding:8px 12px;font-size:12px;cursor:pointer;">Cancel</button>' +
@@ -3587,9 +3598,82 @@ Z.cancelComposer = function(){
   var c = document.getElementById('composer-expanded'); if(c) c.innerHTML='';
   var i = document.getElementById('composer-input');    if(i) i.value='';
 };
+Z.toggleComposerSchedule = function(){
+  var cb = document.getElementById('composer-schedule-toggle');
+  var wrap = document.getElementById('composer-schedule-wrap');
+  if(!cb || !wrap) return;
+  if(cb.checked){
+    wrap.style.display = 'block';
+    var inp = document.getElementById('composer-schedule-at');
+    if(inp && !inp.value){
+      var now = new Date(Date.now() + 60*60*1000);
+      var iso = new Date(now.getTime() - now.getTimezoneOffset()*60000).toISOString().slice(0,16);
+      inp.value = iso;
+    }
+  } else {
+    wrap.style.display = 'none';
+  }
+};
 
+/* ============================================================
+   SCHEDULED PUBLISH
+   ============================================================ */
+Z.submitComposerScheduled = async function(){
+  var me = Z.State.currentUser;
+  if(!me) return;
+  var text = ((document.getElementById('composer-text')||{}).value||'').trim();
+  var fileObj = Z._getComposerFile();
+  var hasFile = !!fileObj;
+  var when = ((document.getElementById('composer-schedule-at')||{}).value) || '';
+  if(!when){ Z.toast('Pick a date and time.', 'error'); return; }
+  var whenMs = new Date(when).getTime();
+  if(!whenMs){ Z.toast('Invalid date.', 'error'); return; }
+  if(whenMs <= Date.now() + 60000){ Z.toast('Schedule must be at least 1 minute in the future.', 'error'); return; }
+  if(!text && !hasFile){ Z.toast('Add text or media.', 'error'); return; }
+  if(fileObj && fileObj.size > 100*1024*1024){ Z.toast('Media under 100 MB.', 'error'); return; }
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  var mediaUrl = null;
+  var mediaType = null;
+  if(fileObj){
+    try {
+      Z.toast('Uploading media…');
+      mediaUrl = await Z.storeMedia(fileObj);
+      if(!mediaUrl) throw new Error('Upload failed');
+      mediaType = ((fileObj.type && fileObj.type.indexOf('video/')===0) || Z.isVideoUrl(fileObj.name)) ? 'video' : 'image';
+    } catch(e){
+      Z.toast('Upload failed.', 'error');
+      return;
+    }
+  }
+
+  try {
+    var r = await c.rpc('schedule_post', {
+      p_content: text,
+      p_media_url: mediaUrl,
+      p_media_type: mediaType,
+      p_scheduled_for: new Date(whenMs).toISOString()
+    });
+    if(r.error) throw r.error;
+    Z.toast('Scheduled for ' + new Date(whenMs).toLocaleString());
+    Z._mediaCache.composer = null;
+    Z.cancelComposer();
+  } catch(e){
+    var msg = (e && e.message) || 'unknown';
+    if(msg.indexOf('invalid_schedule_time') !== -1) Z.toast('Time must be at least 1 minute ahead.', 'error');
+    else if(msg.indexOf('too_far_in_future') !== -1) Z.toast('Max 1 year ahead.', 'error');
+    else if(msg.indexOf('empty_post') !== -1) Z.toast('Add text or media.', 'error');
+    else Z.toast('Schedule failed: ' + msg, 'error');
+  }
+};
 Z.submitComposer = async function(forceNoCaption){
   var me = Z.State.currentUser;
+   var schedCb = document.getElementById('composer-schedule-toggle');
+  if(schedCb && schedCb.checked){
+    return Z.submitComposerScheduled();
+  }    
   if(!me) return;
   var text = ((document.getElementById('composer-text')||{}).value||'').trim();
   var fileObj = Z._getComposerFile();
@@ -14288,8 +14372,197 @@ Z.renderView = function(view, param){
 
 console.log('[Analytics] ready');
 })();
-</script>     
- 
+</script>  
+     
+<!-- ============================================================
+     SCHEDULED POSTS QUEUE + AUTO-PUBLISH
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixScheduled) return; Z.__zynixScheduled = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function me(){ return Z.State.currentUser || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 0) return 'in ' + Math.abs(Math.floor(s/60)) + 'm';
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function timeUntil(ts){
+  if(!ts) return '';
+  var ms = new Date(ts).getTime() - Date.now();
+  if(ms <= 0) return 'Due now';
+  var m = Math.floor(ms/60000);
+  if(m < 60) return 'in ' + m + 'm';
+  var h = Math.floor(m/60);
+  if(h < 24) return 'in ' + h + 'h ' + (m % 60) + 'm';
+  var d = Math.floor(h/24);
+  return 'in ' + d + 'd ' + (h % 24) + 'h';
+}
+
+/* ============================================================
+   VIEW
+   ============================================================ */
+function renderScheduled(){
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-regular fa-clock" style="color:#60a5fa;"></i> Scheduled Posts</h2>';
+  h += '</div></div>';
+  h += '<div id="sched-host"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  h += '</div>';
+  setTimeout(loadScheduled, 40);
+  return h;
+}
+
+async function loadScheduled(){
+  var host = document.getElementById('sched-host');
+  if(!host) return;
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+  try {
+    var r = await c.from('scheduled_posts')
+      .select('*')
+      .eq('author_id', u.id)
+      .order('scheduled_for', { ascending: true })
+      .limit(100);
+    var rows = r.data || [];
+    if(!rows.length){
+      host.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;"><i class="fa-regular fa-clock" style="font-size:32px;color:#334155;display:block;margin-bottom:10px;"></i>No scheduled posts.<br>Create one from the composer.</div>';
+      return;
+    }
+    var pending = rows.filter(function(x){ return x.status === 'pending'; });
+    var past = rows.filter(function(x){ return x.status !== 'pending'; });
+
+    var h = '';
+    if(pending.length){
+      h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;padding:0 4px;margin-bottom:6px;">PENDING (' + pending.length + ')</div>';
+      pending.forEach(function(x){ h += cardHTML(x); });
+    }
+    if(past.length){
+      h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;padding:0 4px;margin-top:14px;margin-bottom:6px;">HISTORY (' + past.length + ')</div>';
+      past.forEach(function(x){ h += cardHTML(x); });
+    }
+    host.innerHTML = h;
+
+    host.querySelectorAll('[data-sched-del]').forEach(function(b){
+      b.addEventListener('click', async function(e){
+        e.stopPropagation();
+        var id = this.getAttribute('data-sched-del');
+        if(!confirm('Delete this scheduled post?')) return;
+        var r2 = await c.rpc('delete_scheduled_post', { p_id: id });
+        if(r2.error){ Z.toast('Failed.', 'error'); return; }
+        Z.toast('Deleted.');
+        loadScheduled();
+      });
+    });
+  } catch(e){
+    host.innerHTML = '<div style="padding:40px;text-align:center;color:#a16262;font-size:12px;">Could not load.</div>';
+  }
+}
+
+function cardHTML(x){
+  var st = x.status;
+  var col = st === 'pending' ? '#60a5fa' : st === 'published' ? '#10b981' : '#a16262';
+  var label = st === 'pending' ? 'PENDING' : st === 'published' ? 'PUBLISHED' : 'FAILED';
+  var whenTxt = st === 'pending' ? timeUntil(x.scheduled_for) : timeAgo(x.scheduled_for);
+  var preview = (x.content || '').trim();
+  if(preview.length > 120) preview = preview.slice(0, 120) + '…';
+  if(!preview) preview = x.media_type === 'video' ? '(Video post)' : (x.media_type === 'image' ? '(Image post)' : '(Empty)');
+
+  var h = '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<span style="display:inline-block;font-size:9px;font-weight:900;color:' + col + ';background:' + col + '22;padding:3px 8px;border-radius:8px;letter-spacing:.5px;">' + label + '</span>';
+  h += '<div style="font-size:12.5px;color:#cbd5e1;margin-top:8px;line-height:1.5;">' + esc(preview) + '</div>';
+  h += '<div style="font-size:10.5px;color:#64748b;margin-top:8px;"><i class="fa-regular fa-clock"></i> ' + esc(whenTxt) + ' · ' + new Date(x.scheduled_for).toLocaleString() + '</div>';
+  if(x.error) h += '<div style="font-size:10.5px;color:#a16262;margin-top:4px;">Error: ' + esc(x.error) + '</div>';
+  h += '</div>';
+  if(st === 'pending'){
+    h += '<button data-sched-del="' + esc(x.id) + '" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(161,98,98,.35);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-trash"></i></button>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+/* ============================================================
+   AUTO-PUBLISH — on boot + every 60s
+   ============================================================ */
+async function tryPublish(){
+  var u = me();
+  var c = db();
+  if(!u || !c) return;
+  try {
+    var r = await c.rpc('publish_due_scheduled_posts');
+    if(r.error) return;
+    var n = Number(r.data) || 0;
+    if(n > 0){
+      Z.toast(n + ' scheduled post' + (n === 1 ? '' : 's') + ' published.');
+      if(typeof Z.reloadData === 'function'){ try { await Z.reloadData(); } catch(e){} }
+      if(Z.State.currentView === 'home'){ try { Z.softRefresh(); } catch(e){} }
+      if(Z.State.currentView === 'scheduled-posts'){ loadScheduled(); }
+    }
+  } catch(e){}
+}
+
+setInterval(function(){
+  if(document.hidden) return;
+  if(!Z.State.currentUser) return;
+  tryPublish();
+}, 60000);
+
+setTimeout(function(){
+  if(Z.State.currentUser) tryPublish();
+}, 5000);
+
+/* ============================================================
+   ROUTER + SETTINGS LINK
+   ============================================================ */
+var _prevRenderV = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'scheduled-posts') return renderScheduled();
+  return _prevRenderV.call(this, view, param);
+};
+
+/* Settings button injection */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'profile'){
+    setTimeout(function(){
+      var host = document.getElementById('app-container');
+      if(!host) return;
+      if(host.querySelector('#sched-settings-btn')) return;
+      var grid = host.querySelector('.media-grid-2');
+      if(!grid) return;
+      var b = document.createElement('button');
+      b.id = 'sched-settings-btn';
+      b.style.cssText = 'background:#111827;border:1px solid #1e293b;border-radius:12px;padding:14px;text-align:left;cursor:pointer;';
+      b.innerHTML = '<div style="font-weight:700;font-size:12px;color:#fff;"><i class="fa-regular fa-clock" style="color:#60a5fa;"></i> Scheduled Posts</div>';
+      b.onclick = function(){ Z.showView('scheduled-posts'); };
+      grid.appendChild(b);
+    }, 200);
+  }
+  return r;
+};
+
+console.log('[Scheduled Posts] ready');
+})();
+</script> 
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
