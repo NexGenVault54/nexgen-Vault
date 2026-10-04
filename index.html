@@ -8044,38 +8044,14 @@ function renderPostsList(posts){
    5 CARDS
    ============================================================ */
 function renderFiveCards(p, isOwner, gallery){
-  var sd = (p && p.space_data) || {};
-  gallery = gallery || [];
-
-  /* Get cards from space_data or generate defaults */
-  var cards = Array.isArray(sd.cards) && sd.cards.length
-    ? sd.cards.slice()
-    : _defaultCards(p, gallery);
-
+  var cards = _getCardsFor(p);
   if(cards.length > 10) cards = cards.slice(0, 10);
 
   var h = '';
   cards.forEach(function(c, idx){
-    var action = isOwner
-      ? 'Z.openCardEditor(' + idx + ')'
-      : 'Z.openCardViewer(' + idx + ')';
-    var thumb = c.thumbnail_url
-      ? '<div class="sp5-card-media" style="background-image:url(' + esc(c.thumbnail_url) + ');"></div>'
-      : '<div class="sp5-card-media" style="background:' + (c.banner_gradient || 'linear-gradient(135deg,#10b981,#065f46)') + ';display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-image" style="font-size:34px;color:rgba(255,255,255,.28);"></i></div>';
-
-    h += '<div class="sp5-card" onclick="' + action + '">' + thumb + '<div class="sp5-card-grad"></div>';
-    h += '<div class="sp5-card-badge">' + _cardBadge(c) + '</div>';
-    if(isOwner){
-      /* Both edit + delete accessible via editor; edit icon just opens editor */
-      h += '<div class="sp5-card-edit" onclick="event.stopPropagation();Z.openCardEditor(' + idx + ')"><i class="fa-solid fa-pen"></i></div>';
-    }
-    h += '<div class="sp5-card-body">';
-    h += '<div class="sp5-card-title">' + esc(c.title || 'Card') + '</div>';
-    h += '<div class="sp5-card-sub">' + esc(c.subtitle || '') + '</div>';
-    h += '</div></div>';
+    h += _cardFaceHTML(c, idx, isOwner);
   });
 
-  /* Progressive add-more card */
   if(isOwner && cards.length < 10){
     h += '<div class="sp5-card" onclick="Z.openCardEditor(-1)" style="border:2px dashed rgba(16,185,129,.5);background:rgba(16,185,129,.04);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;">';
     h += '<i class="fa-solid fa-plus" style="font-size:28px;color:#10b981;"></i>';
@@ -8087,37 +8063,92 @@ function renderFiveCards(p, isOwner, gallery){
   return h;
 }
 
-function _defaultCards(p, gallery){
-  var sd = (p && p.space_data) || {};
+/* ============================================================
+   CARD DATA SOURCE — resolves correct profile's cards
+   ============================================================ */
+function _getCardsFor(profile){
+  if(!profile) return [];
+  var me = Z.State.currentUser;
+  var isOwner = me && me.id === profile.id;
+
+  /* Owner reads live space_data (reflects unsaved edits from header) */
+  var sd = isOwner
+    ? Object.assign({}, profile.space_data || {}, me.space_data || {})
+    : (profile.space_data || {});
+
+  var cards = Array.isArray(sd.cards) ? sd.cards.slice() : [];
+  if(cards.length) return cards;
+
+  /* No cards → generate defaults based on profile data */
+  return _defaultCards(profile);
+}
+
+function _defaultCards(profile){
+  var sd = (profile && profile.space_data) || {};
   return [
-    { type:'about', title: sd.name ? 'About ' + sd.name : 'About Me',
-      subtitle: sd.about ? (sd.about.length > 70 ? sd.about.slice(0,70)+'…' : sd.about) : 'Tap to write your story',
-      banner_gradient:'linear-gradient(135deg,#10b981,#065f46)', description: sd.about || '',
-      is_default: true },
-    { type:'offer', title:'My Offer',
-      subtitle: sd.offer ? (sd.offer.length > 70 ? sd.offer.slice(0,70)+'…' : sd.offer) : 'Tap to describe what you offer',
-      banner_gradient:'linear-gradient(135deg,#3b82f6,#1e40af)', description: sd.offer || '',
-      is_default: true },
-    { type:'gallery', title:'Gallery',
-      subtitle: gallery.length ? (gallery.length + ' photo' + (gallery.length===1?'':'s')) : 'Upload images',
-      banner_gradient:'linear-gradient(135deg,#8b5cf6,#4c1d95)',
-      thumbnail_url: gallery[0] ? gallery[0].url : null,
-      is_default: true },
-    { type:'promoted', title:'Promoted', subtitle:'Featured spotlight',
-      banner_gradient:'linear-gradient(135deg,#ec4899,#831843)', is_default: true },
-    { type:'featured', title:'Featured', subtitle: 'Your best pick',
-      banner_gradient:'linear-gradient(135deg,#f59e0b,#78350f)', is_default: true }
+    { id:'_d_about',   type:'about',    title:'About',    subtitle: sd.about ? _trunc(sd.about, 60) : 'My story',    description: sd.about || '', banner_gradient:'linear-gradient(135deg,#10b981,#065f46)', created_at: Date.now() },
+    { id:'_d_offer',   type:'offer',    title:'Offer',    subtitle: sd.offer ? _trunc(sd.offer, 60) : 'What I offer', description: sd.offer || '', banner_gradient:'linear-gradient(135deg,#3b82f6,#1e40af)', created_at: Date.now() },
+    { id:'_d_gallery', type:'gallery',  title:'Gallery',  subtitle:'Photos & videos', banner_gradient:'linear-gradient(135deg,#8b5cf6,#4c1d95)', cover_image_url:null, gallery_items:[], created_at: Date.now() },
+    { id:'_d_featured',type:'featured', title:'Featured', subtitle:'My best pick',  banner_gradient:'linear-gradient(135deg,#f59e0b,#78350f)', link_url:'', link_label:'View', created_at: Date.now() },
+    { id:'_d_promoted',type:'promoted', title:'Promoted', subtitle:'Spotlight',    banner_gradient:'linear-gradient(135deg,#ec4899,#831843)', link_url:'', link_label:'Open', created_at: Date.now() }
   ];
 }
 
-function _cardBadge(c){
-  var icons = { about:'fa-user', offer:'fa-gift', gallery:'fa-images', promoted:'fa-bullhorn', featured:'fa-star', custom:'fa-square' };
-  var labels = { about:'About', offer:'Offer', gallery:'Gallery', promoted:'Promoted', featured:'Featured', custom:'Card' };
-  var i = icons[c.type] || 'fa-square';
-  var l = labels[c.type] || 'Card';
-  return '<i class="fa-solid ' + i + '"></i> ' + l;
+function _trunc(s, n){
+  s = String(s || '');
+  return s.length > n ? (s.slice(0, n) + '…') : s;
 }
 
+/* ============================================================
+   CARD FACE — universal display for all types
+   ============================================================ */
+function _cardFaceHTML(c, idx, isOwner){
+  var face = '';
+  var bg = c.banner_gradient || 'linear-gradient(135deg,#10b981,#065f46)';
+
+  /* Background: cover_image (gallery) → thumbnail → gradient+icon */
+  if(c.type === 'gallery' && c.cover_image_url){
+    face = '<div class="sp5-card-media" style="background-image:url(' + esc(c.cover_image_url) + ');"></div>';
+  } else if(c.thumbnail_url){
+    face = '<div class="sp5-card-media" style="background-image:url(' + esc(c.thumbnail_url) + ');"></div>';
+  } else {
+    var icon = _typeIcon(c.type);
+    face = '<div class="sp5-card-media" style="background:' + bg + ';display:flex;align-items:center;justify-content:center;">';
+    face += '<i class="' + icon + '" style="font-size:42px;color:rgba(255,255,255,.35);"></i>';
+    face += '</div>';
+  }
+
+  var action = isOwner
+    ? 'Z.openCardEditor(' + idx + ')'
+    : 'Z.openCardViewer(' + idx + ')';
+
+  var h = '<div class="sp5-card" onclick="' + action + '">';
+  h += face;
+  h += '<div class="sp5-card-grad"></div>';
+  h += '<div class="sp5-card-badge"><i class="' + _typeIcon(c.type) + '"></i> ' + _typeLabel(c.type) + '</div>';
+  if(isOwner){
+    h += '<div class="sp5-card-edit" onclick="event.stopPropagation();Z.openCardEditor(' + idx + ')"><i class="fa-solid fa-pen"></i></div>';
+  }
+  if(c.type === 'gallery' && c.gallery_items && c.gallery_items.length){
+    h += '<div class="sp5-card-count">' + c.gallery_items.length + '</div>';
+  }
+  h += '<div class="sp5-card-body">';
+  h += '<div class="sp5-card-title">' + esc(c.title || _typeLabel(c.type)) + '</div>';
+  h += '<div class="sp5-card-sub">' + esc(c.subtitle || '') + '</div>';
+  h += '</div></div>';
+  return h;
+}
+
+function _typeIcon(t){
+  return ({
+    about:'fa-solid fa-user', offer:'fa-solid fa-gift',
+    gallery:'fa-solid fa-images', featured:'fa-solid fa-star',
+    promoted:'fa-solid fa-bullhorn', custom:'fa-solid fa-square'
+  })[t] || 'fa-solid fa-square';
+}
+function _typeLabel(t){
+  return ({ about:'About', offer:'Offer', gallery:'Gallery', featured:'Featured', promoted:'Promoted', custom:'Card' })[t] || 'Card';
+}
 /* ============================================================
    HEADER
    ============================================================ */
@@ -15702,15 +15733,16 @@ console.log('[Dashboard Part 3] full build ready');
 })();
 </script>
 
+     
 <!-- ============================================================
-     5 CARDS SYSTEM — Editor, Viewer, Delete, Link Picker
-     Paste BEFORE Section 9
+     CARDS SYSTEM v2 — Full product
+     Editor · Viewer · Gallery page · Featured page · Links
      ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixCardsSystem) return; Z.__zynixCardsSystem = true;
+if(Z.__zynixCardsSystemV2) return; Z.__zynixCardsSystemV2 = true;
 
 function esc(s){
   if(s == null) return '';
@@ -15722,325 +15754,575 @@ function me(){ return Z.State.currentUser || null; }
 function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
 function toast(m,t){ if(Z.toast) Z.toast(m,t); }
 
+/* ============================================================
+   PRESETS
+   ============================================================ */
 var GRADIENTS = [
-  { id:'emerald', label:'Emerald', css:'linear-gradient(135deg,#10b981,#065f46)' },
-  { id:'blue',    label:'Ocean',   css:'linear-gradient(135deg,#3b82f6,#1e40af)' },
-  { id:'purple',  label:'Violet',  css:'linear-gradient(135deg,#8b5cf6,#4c1d95)' },
-  { id:'pink',    label:'Rose',    css:'linear-gradient(135deg,#ec4899,#831843)' },
-  { id:'amber',   label:'Amber',   css:'linear-gradient(135deg,#f59e0b,#78350f)' },
-  { id:'teal',    label:'Teal',    css:'linear-gradient(135deg,#0d9488,#0f766e)' },
-  { id:'slate',   label:'Slate',   css:'linear-gradient(135deg,#334155,#0f172a)' },
-  { id:'rose',    label:'Crimson', css:'linear-gradient(135deg,#be123c,#7f1d1d)' }
+  { id:'emerald', css:'linear-gradient(135deg,#10b981,#065f46)' },
+  { id:'ocean',   css:'linear-gradient(135deg,#3b82f6,#1e40af)' },
+  { id:'violet',  css:'linear-gradient(135deg,#8b5cf6,#4c1d95)' },
+  { id:'rose',    css:'linear-gradient(135deg,#ec4899,#831843)' },
+  { id:'amber',   css:'linear-gradient(135deg,#f59e0b,#78350f)' },
+  { id:'teal',    css:'linear-gradient(135deg,#0d9488,#0f766e)' },
+  { id:'slate',   css:'linear-gradient(135deg,#334155,#0f172a)' },
+  { id:'crimson', css:'linear-gradient(135deg,#be123c,#7f1d1d)' }
 ];
 
-var DEFAULT_THUMBS = [
-  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=400&q=70',
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=70',
-  'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=400&q=70',
-  'https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=400&q=70'
+var THUMB_PRESETS = [
+  { id:'tech',      icon:'fa-solid fa-laptop-code',  grad:'linear-gradient(135deg,#3b82f6,#1e40af)' },
+  { id:'creative',  icon:'fa-solid fa-palette',      grad:'linear-gradient(135deg,#8b5cf6,#4c1d95)' },
+  { id:'business',  icon:'fa-solid fa-briefcase',    grad:'linear-gradient(135deg,#334155,#0f172a)' },
+  { id:'health',    icon:'fa-solid fa-heart-pulse',  grad:'linear-gradient(135deg,#ec4899,#831843)' },
+  { id:'education', icon:'fa-solid fa-graduation-cap',grad:'linear-gradient(135deg,#f59e0b,#78350f)' }
 ];
 
-var _cardDraft = null;
-var _cardDraftIdx = -1;
+var DEFAULT_BANNER = 'linear-gradient(135deg,#10b981,#065f46)';
 
-function getCards(){
-  var u = me();
-  if(!u) return [];
-  var sd = u.space_data || {};
+/* ============================================================
+   DATA HELPERS
+   ============================================================ */
+function _getCardsFromProfile(profile){
+  if(!profile) return [];
+  var me = Z.State.currentUser;
+  var isOwner = me && me.id === profile.id;
+  var sd = isOwner
+    ? Object.assign({}, profile.space_data || {}, me.space_data || {})
+    : (profile.space_data || {});
   var arr = Array.isArray(sd.cards) ? sd.cards.slice() : [];
-  /* Seed defaults on first access */
-  if(!arr.length){
-    var p = Z.getProfileById ? Z.getProfileById(u.id) : u;
-    arr = (typeof _defaultCards === 'function') ? _defaultCards(p, Z.State.spaceGallery || []) : [];
-  }
-  return arr;
+  if(arr.length) return arr;
+  return (typeof _defaultCards === 'function') ? _defaultCards(profile) : [];
 }
 
-function persistCards(arr){
+function _persistCards(cards){
   var u = me();
-  if(!u) return Promise.reject(new Error('no user'));
+  if(!u) return Promise.reject(new Error('not logged in'));
   var c = db();
   if(!c) return Promise.reject(new Error('no db'));
   var sd = Object.assign({}, u.space_data || {});
-  sd.cards = arr;
+  sd.cards = cards;
   return c.from('profiles').update({ space_data: sd }).eq('id', u.id).then(function(r){
     if(r.error) throw r.error;
     if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
     if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
       Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, sd);
     }
-    return arr;
+    return cards;
   });
 }
 
 /* ============================================================
-   CARD EDITOR (owner)
+   CARD EDITOR (owner only)
    ============================================================ */
+var _draft = null;
+var _draftIdx = -1;
+
 Z.openCardEditor = function(idx){
   var u = me();
   if(!u){ Z.openAuthModal('login'); return; }
-  var arr = getCards();
+  var arr = _getCardsFromProfile(u);
   var isNew = (idx === -1);
   if(isNew && arr.length >= 10){ toast('Max 10 cards.', 'error'); return; }
   var card = isNew
-    ? { type:'custom', title:'', subtitle:'', description:'', banner_gradient:'linear-gradient(135deg,#10b981,#065f46)', thumbnail_url:null, link_url:'', link_label:'Open' }
+    ? { id: Z.uuid(), type:'custom', title:'', subtitle:'', description:'',
+        banner_gradient: DEFAULT_BANNER, thumbnail_url:'', thumbnail_preset:'',
+        link_url:'', link_label:'Open', cover_image_url:'', gallery_items:[],
+        created_at: Date.now() }
     : Object.assign({}, arr[idx]);
-  _cardDraft = card;
-  _cardDraftIdx = idx;
 
-  var typeOptions = [
-    ['about','About'],['offer','Offer'],['gallery','Gallery'],
-    ['promoted','Promoted'],['featured','Featured'],['custom','Custom']
-  ];
+  _draft = card;
+  _draftIdx = idx;
 
-  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeCardEditor()">';
+  var isGallery = (card.type === 'gallery');
+  var isLinkType = (['featured','promoted','custom'].indexOf(card.type) !== -1);
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z._closeCardEditor()">';
   h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:92vh;">';
   h += '<div class="sheet-handle"></div>';
   h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">' + (isNew ? 'New Card' : 'Edit Card') + '</h3>';
-  h += '<button onclick="Z.closeCardEditor()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<button onclick="Z._closeCardEditor()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
   h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
 
-  /* Type selector */
+  /* Type */
   h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Type</label>';
-  h += '<select id="card-type" onchange="Z._cardDraftType(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:14px;">';
-  typeOptions.forEach(function(t){
+  h += '<select id="cd-type" onchange="Z._cdType(this.value)" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:14px;">';
+  [['about','About'],['offer','Offer'],['gallery','Gallery'],['featured','Featured'],['promoted','Promoted'],['custom','Custom']].forEach(function(t){
     h += '<option value="' + t[0] + '" ' + (card.type === t[0] ? 'selected' : '') + '>' + t[1] + '</option>';
   });
   h += '</select>';
 
-  /* Title */
+  /* Title + subtitle */
   h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Title</label>';
-  h += '<input id="card-title" type="text" maxlength="60" value="' + esc(card.title || '') + '" placeholder="Card title" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">';
-
-  /* Subtitle */
+  h += '<input id="cd-title" type="text" maxlength="60" value="' + esc(card.title || '') + '" placeholder="Card title" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">';
   h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Subtitle</label>';
-  h += '<input id="card-subtitle" type="text" maxlength="80" value="' + esc(card.subtitle || '') + '" placeholder="Short tagline" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">';
+  h += '<input id="cd-subtitle" type="text" maxlength="80" value="' + esc(card.subtitle || '') + '" placeholder="Short tagline" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">';
 
-  /* Description */
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Description (15 lines max)</label>';
-  h += '<textarea id="card-desc" maxlength="800" rows="5" placeholder="Long description…" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;margin-bottom:12px;font-family:inherit;">' + esc(card.description || '') + '</textarea>';
-
-  /* Thumbnail */
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Thumbnail</label>';
-  h += '<div id="card-thumb-preview" style="height:120px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;margin-bottom:8px;background-size:cover;background-position:center;background-image:' + (card.thumbnail_url ? 'url(' + card.thumbnail_url + ')' : 'none') + ';display:flex;align-items:center;justify-content:center;">' + (card.thumbnail_url ? '' : '<i class="fa-solid fa-image" style="color:#334155;font-size:32px;"></i>') + '</div>';
-  h += '<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">';
-  h += '<button onclick="document.getElementById(\'card-thumb-file\').click()" style="flex:1;padding:9px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-upload"></i> Upload</button>';
-  h += '<button onclick="Z._cardThumbPickDefault()" style="flex:1;padding:9px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-wand-magic-sparkles"></i> Default</button>';
-  h += '<button onclick="Z.closeCardEditor();setTimeout(function(){Z.showView(\'galleria-cat\',\'digital-market\')},200)" style="flex:1;padding:9px;border-radius:8px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fbbf24;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-crown"></i> Premium</button>';
-  h += '<button onclick="Z._cardThumbRemove()" style="padding:9px 12px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.06);color:#c9a5a5;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  /* Description (not for gallery) */
+  h += '<div id="cd-desc-wrap" style="' + (isGallery ? 'display:none;' : '') + '">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Description</label>';
+  h += '<textarea id="cd-desc" maxlength="1500" rows="5" placeholder="Details, up to 15 lines…" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;margin-bottom:12px;font-family:inherit;">' + esc(card.description || '') + '</textarea>';
   h += '</div>';
-  h += '<input type="file" id="card-thumb-file" accept="image/*" style="display:none;" onchange="Z._cardThumbUpload(this)">';
 
-  /* Banner gradient */
+  /* Thumbnail section — hidden for gallery */
+  h += '<div id="cd-thumb-wrap" style="' + (isGallery ? 'display:none;' : '') + '">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Thumbnail</label>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">';
+  THUMB_PRESETS.forEach(function(t){
+    var active = (card.thumbnail_preset === t.id);
+    h += '<button type="button" data-thumb="' + t.id + '" onclick="Z._cdThumbPick(\'' + t.id + '\')" style="width:52px;height:52px;border-radius:10px;border:2px solid ' + (active ? '#10b981' : 'transparent') + ';background:' + t.grad + ';cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;"><i class="' + t.icon + '"></i></button>';
+  });
+  h += '<button type="button" onclick="Z._cdThumbPremium()" style="width:52px;height:52px;border-radius:10px;border:2px dashed rgba(251,191,36,.5);background:rgba(251,191,36,.06);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fbbf24;font-size:8px;gap:2px;"><i class="fa-solid fa-crown" style="font-size:14px;"></i>Premium</button>';
+  h += '</div>';
+  h += '<div id="cd-thumb-preview" style="height:100px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;margin-bottom:8px;background-size:cover;background-position:center;' + (card.thumbnail_url ? 'background-image:url(' + card.thumbnail_url + ');' : '') + 'display:flex;align-items:center;justify-content:center;">' + (card.thumbnail_url ? '' : '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>') + '</div>';
+  h += '<div style="display:flex;gap:6px;margin-bottom:12px;">';
+  h += '<button type="button" onclick="document.getElementById(\'cd-thumb-file\').click()" style="flex:1;padding:9px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-upload"></i> Upload</button>';
+  h += '<button type="button" onclick="Z._cdThumbRemove()" style="padding:9px 12px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.06);color:#c9a5a5;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<input type="file" id="cd-thumb-file" accept="image/*" style="display:none;" onchange="Z._cdThumbUpload(this)">';
+  h += '</div>';
+
+  /* Banner section — hidden for gallery */
+  h += '<div id="cd-banner-wrap" style="' + (isGallery ? 'display:none;' : '') + '">';
   h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Banner color</label>';
-  h += '<div id="card-grad-picker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
   GRADIENTS.forEach(function(g){
     var active = (card.banner_gradient === g.css);
-    h += '<div data-grad="' + esc(g.css) + '" onclick="Z._cardGradPick(this)" style="width:40px;height:40px;border-radius:10px;cursor:pointer;border:2px solid ' + (active ? '#10b981' : 'transparent') + ';background:' + g.css + ';"></div>';
+    h += '<button type="button" data-grad="' + g.id + '" onclick="Z._cdGradPick(\'' + g.id + '\')" style="width:40px;height:40px;border-radius:10px;cursor:pointer;border:2px solid ' + (active ? '#10b981' : 'transparent') + ';background:' + g.css + ';"></button>';
   });
+  h += '<button type="button" onclick="Z._cdBannerPremium()" style="width:40px;height:40px;border-radius:10px;border:2px dashed rgba(251,191,36,.5);background:rgba(251,191,36,.06);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fbbf24;font-size:14px;"><i class="fa-solid fa-crown"></i></button>';
+  h += '</div>';
   h += '</div>';
 
-  /* Link section (for promoted/featured/custom) */
-  h += '<div id="card-link-section" style="' + (['promoted','featured','custom'].indexOf(card.type) === -1 ? 'display:none;' : '') + '">';
-  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Link (any ZYNIX page or external)</label>';
-  h += '<input id="card-link" type="text" value="' + esc(card.link_url || '') + '" placeholder="Post, Spark, FV, Ride, Market, Shop, Circle, Event, or URL" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:8px;">';
+  /* Gallery section — only for gallery type */
+  h += '<div id="cd-gallery-wrap" style="' + (isGallery ? '' : 'display:none;') + '">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Gallery items</label>';
+  h += '<button type="button" onclick="Z._cdGalleryAdd()" style="width:100%;padding:10px;border-radius:10px;border:1px dashed rgba(16,185,129,.5);background:rgba(16,185,129,.04);color:#10b981;font-size:12px;font-weight:800;cursor:pointer;margin-bottom:10px;"><i class="fa-solid fa-plus"></i> Add media</button>';
+  h += '<div id="cd-gallery-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>';
+  h += '<input type="file" id="cd-gallery-file" accept="image/*,video/*" style="display:none;" onchange="Z._cdGalleryUpload(this)">';
+  h += '</div>';
+
+  /* Link section — for featured/promoted/custom */
+  h += '<div id="cd-link-wrap" style="' + (isLinkType ? '' : 'display:none;') + '">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Link</label>';
+  h += '<input id="cd-link" type="text" value="' + esc(card.link_url || '') + '" placeholder="#post-ID · #spark-ID · home · spark · galleria · https://..." style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:12px;outline:none;box-sizing:border-box;margin-bottom:8px;">';
   h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Button label</label>';
-  h += '<input id="card-link-label" type="text" maxlength="24" value="' + esc(card.link_label || 'Open') + '" placeholder="Open" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">';
+  h += '<input id="cd-link-label" type="text" maxlength="24" value="' + esc(card.link_label || 'Open') + '" placeholder="Open" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;">';
   h += '</div>';
 
   /* Actions */
   h += '<div style="display:flex;gap:8px;margin-top:6px;">';
   if(!isNew){
-    h += '<button onclick="Z.deleteCard(' + idx + ')" style="padding:14px 16px;border-radius:10px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-trash"></i></button>';
+    h += '<button type="button" onclick="Z._cdDelete(' + idx + ')" style="padding:14px 16px;border-radius:10px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-trash"></i></button>';
   }
-  h += '<button onclick="Z.saveCard()" style="flex:1;padding:14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' + (isNew ? 'Create Card' : 'Save Changes') + '</button>';
+  h += '<button type="button" onclick="Z._cdSave()" style="flex:1;padding:14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' + (isNew ? 'Create Card' : 'Save Changes') + '</button>';
   h += '</div>';
 
   h += '</div></div></div>';
   Z.openSheet(h);
+
+  setTimeout(function(){
+    if(isGallery) _cdGalleryPaint();
+  }, 40);
 };
 
-Z._cardDraftType = function(t){
-  if(_cardDraft) _cardDraft.type = t;
-  var sec = document.getElementById('card-link-section');
-  if(sec) sec.style.display = (['promoted','featured','custom'].indexOf(t) === -1 ? 'none' : 'block');
+Z._cdType = function(t){
+  if(!_draft) return;
+  _draft.type = t;
+  var isGallery = (t === 'gallery');
+  var isLinkType = (['featured','promoted','custom'].indexOf(t) !== -1);
+  var descWrap = document.getElementById('cd-desc-wrap');
+  var thumbWrap = document.getElementById('cd-thumb-wrap');
+  var bannerWrap = document.getElementById('cd-banner-wrap');
+  var galWrap = document.getElementById('cd-gallery-wrap');
+  var linkWrap = document.getElementById('cd-link-wrap');
+  if(descWrap)   descWrap.style.display   = isGallery ? 'none' : '';
+  if(thumbWrap)  thumbWrap.style.display  = isGallery ? 'none' : '';
+  if(bannerWrap) bannerWrap.style.display = isGallery ? 'none' : '';
+  if(galWrap)    galWrap.style.display    = isGallery ? '' : 'none';
+  if(linkWrap)   linkWrap.style.display   = isLinkType ? '' : 'none';
+  if(isGallery) _cdGalleryPaint();
 };
 
-Z._cardGradPick = function(el){
-  var val = el.getAttribute('data-grad');
-  if(_cardDraft) _cardDraft.banner_gradient = val;
-  document.querySelectorAll('#card-grad-picker [data-grad]').forEach(function(x){
-    x.style.borderColor = (x === el) ? '#10b981' : 'transparent';
+Z._cdGradPick = function(id){
+  var g = GRADIENTS.find(function(x){ return x.id === id; });
+  if(!g || !_draft) return;
+  _draft.banner_gradient = g.css;
+  document.querySelectorAll('[data-grad]').forEach(function(b){
+    b.style.borderColor = (b.getAttribute('data-grad') === id) ? '#10b981' : 'transparent';
   });
 };
 
-Z._cardThumbUpload = async function(input){
+Z._cdBannerPremium = function(){
+  toast('Premium banners — coming soon from Market.');
+};
+
+Z._cdThumbPick = function(id){
+  var t = THUMB_PRESETS.find(function(x){ return x.id === id; });
+  if(!t || !_draft) return;
+  _draft.thumbnail_preset = id;
+  _draft.thumbnail_url = '';
+  _cdThumbPreview(t.grad, t.icon);
+  document.querySelectorAll('[data-thumb]').forEach(function(b){
+    b.style.borderColor = (b.getAttribute('data-thumb') === id) ? '#10b981' : 'transparent';
+  });
+};
+
+Z._cdThumbPremium = function(){
+  toast('Premium thumbnails — coming soon from Market.');
+};
+
+Z._cdThumbRemove = function(){
+  if(!_draft) return;
+  _draft.thumbnail_url = '';
+  _draft.thumbnail_preset = '';
+  _cdThumbPreview('', '');
+};
+
+function _cdThumbPreview(bgCss, icon){
+  var prev = document.getElementById('cd-thumb-preview');
+  if(!prev) return;
+  if(bgCss){
+    prev.style.backgroundImage = 'none';
+    prev.style.background = bgCss;
+    prev.innerHTML = '<i class="' + icon + '" style="font-size:34px;color:rgba(255,255,255,.85);"></i>';
+  } else {
+    prev.style.backgroundImage = 'none';
+    prev.style.background = '#0f172a';
+    prev.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
+  }
+}
+
+Z._cdThumbUpload = async function(input){
   var f = input && input.files && input.files[0];
   if(!f) return;
-  if(f.size > 5*1024*1024){ toast('Image under 5 MB.', 'error'); input.value=''; return; }
+  if(f.size > 5*1024*1024){ toast('Under 5 MB.', 'error'); input.value=''; return; }
   try {
     toast('Uploading…');
     var url = await Z.storeMedia(f);
     if(!url) throw new Error('upload failed');
-    if(_cardDraft) _cardDraft.thumbnail_url = url;
-    var prev = document.getElementById('card-thumb-preview');
+    _draft.thumbnail_url = url;
+    _draft.thumbnail_preset = '';
+    var prev = document.getElementById('cd-thumb-preview');
     if(prev){
+      prev.style.background = '#0f172a';
       prev.style.backgroundImage = 'url(' + url + ')';
       prev.innerHTML = '';
     }
     toast('Thumbnail ready.');
-  } catch(e){
-    toast('Upload failed.', 'error');
-  }
+  } catch(e){ toast('Upload failed.', 'error'); }
 };
 
-Z._cardThumbPickDefault = function(){
-  var pick = DEFAULT_THUMBS[Math.floor(Math.random() * DEFAULT_THUMBS.length)];
-  if(_cardDraft) _cardDraft.thumbnail_url = pick;
-  var prev = document.getElementById('card-thumb-preview');
-  if(prev){
-    prev.style.backgroundImage = 'url(' + pick + ')';
-    prev.innerHTML = '';
-  }
+/* ============================================================
+   GALLERY ITEMS (inside editor)
+   ============================================================ */
+Z._cdGalleryAdd = function(){
+  var el = document.getElementById('cd-gallery-file');
+  if(el) el.click();
 };
 
-Z._cardThumbRemove = function(){
-  if(_cardDraft) _cardDraft.thumbnail_url = null;
-  var prev = document.getElementById('card-thumb-preview');
-  if(prev){
-    prev.style.backgroundImage = 'none';
-    prev.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:32px;"></i>';
-  }
+Z._cdGalleryUpload = async function(input){
+  var f = input && input.files && input.files[0];
+  if(!f) return;
+  if(f.size > 100*1024*1024){ toast('Under 100 MB.', 'error'); input.value=''; return; }
+  try {
+    toast('Uploading…');
+    var url = await Z.storeMedia(f);
+    if(!url) throw new Error('upload failed');
+    var isVid = (f.type && f.type.indexOf('video/') === 0) || Z.isVideoUrl(f.name);
+    _draft.gallery_items = _draft.gallery_items || [];
+    _draft.gallery_items.push({ url: url, media_type: isVid ? 'video' : 'image', title: '' });
+    if(!_draft.cover_image_url && !isVid) _draft.cover_image_url = url;
+    input.value = '';
+    _cdGalleryPaint();
+    toast('Added.');
+  } catch(e){ toast('Upload failed.', 'error'); }
 };
 
-Z.saveCard = async function(){
-  if(!_cardDraft){ return; }
-  var title = (document.getElementById('card-title').value || '').trim();
+function _cdGalleryPaint(){
+  var host = document.getElementById('cd-gallery-list');
+  if(!host) return;
+  var items = (_draft && _draft.gallery_items) || [];
+  if(!items.length){
+    host.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;font-size:11px;">No items yet.</div>';
+    return;
+  }
+  var h = '';
+  items.forEach(function(it, i){
+    h += '<div style="display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;">';
+    h += '<div style="width:56px;height:56px;border-radius:8px;overflow:hidden;background:#000;flex-shrink:0;">';
+    if(it.media_type === 'video') h += '<video src="' + esc(it.url) + '" preload="metadata" muted style="width:100%;height:100%;object-fit:cover;"></video>';
+    else h += '<img src="' + esc(it.url) + '" style="width:100%;height:100%;object-fit:cover;">';
+    h += '</div>';
+    h += '<input type="text" maxlength="60" value="' + esc(it.title || '') + '" placeholder="Title" onchange="Z._cdGalleryEditTitle(' + i + ', this.value)" style="flex:1;min-width:0;background:#111827;border:1px solid #1e293b;border-radius:8px;padding:8px 10px;color:#fff;font-size:12px;outline:none;box-sizing:border-box;">';
+    if(_draft.cover_image_url === it.url){
+      h += '<span style="font-size:9px;font-weight:900;color:#10b981;padding:3px 8px;border-radius:8px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35);">COVER</span>';
+    } else {
+      h += '<button type="button" onclick="Z._cdGallerySetCover(' + i + ')" style="padding:6px 8px;border-radius:8px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-size:10px;font-weight:800;cursor:pointer;">Cover</button>';
+    }
+    h += '<button type="button" onclick="Z._cdGalleryRemove(' + i + ')" style="padding:6px 8px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-size:11px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+    h += '</div>';
+  });
+  host.innerHTML = h;
+}
+
+Z._cdGalleryEditTitle = function(i, v){
+  if(!_draft || !_draft.gallery_items[i]) return;
+  _draft.gallery_items[i].title = String(v || '').slice(0, 60);
+};
+
+Z._cdGallerySetCover = function(i){
+  if(!_draft || !_draft.gallery_items[i]) return;
+  var it = _draft.gallery_items[i];
+  if(it.media_type === 'video'){ toast('Video cannot be cover.', 'error'); return; }
+  _draft.cover_image_url = it.url;
+  _cdGalleryPaint();
+};
+
+Z._cdGalleryRemove = function(i){
+  if(!_draft || !_draft.gallery_items[i]) return;
+  var url = _draft.gallery_items[i].url;
+  _draft.gallery_items.splice(i, 1);
+  if(_draft.cover_image_url === url){
+    _draft.cover_image_url = null;
+    var firstImage = (_draft.gallery_items||[]).find(function(x){ return x.media_type !== 'video'; });
+    if(firstImage) _draft.cover_image_url = firstImage.url;
+  }
+  _cdGalleryPaint();
+};
+
+/* ============================================================
+   SAVE / DELETE
+   ============================================================ */
+Z._cdSave = async function(){
+  if(!_draft){ return; }
+  var title = (document.getElementById('cd-title').value || '').trim();
   if(!title){ toast('Title required.', 'error'); return; }
-  var subtitle = (document.getElementById('card-subtitle').value || '').trim();
-  var description = (document.getElementById('card-desc').value || '').trim();
+  var subtitle = (document.getElementById('cd-subtitle').value || '').trim();
+  var description = '';
+  var descEl = document.getElementById('cd-desc');
+  if(descEl && descEl.offsetParent !== null) description = (descEl.value || '').trim();
   var linkUrl = '';
   var linkLabel = 'Open';
-  var linkEl = document.getElementById('card-link');
+  var linkEl = document.getElementById('cd-link');
   if(linkEl && linkEl.offsetParent !== null){
     linkUrl = (linkEl.value || '').trim();
-    var lblEl = document.getElementById('card-link-label');
+    var lblEl = document.getElementById('cd-link-label');
     if(lblEl) linkLabel = (lblEl.value || 'Open').trim();
   }
 
-  _cardDraft.title = title;
-  _cardDraft.subtitle = subtitle;
-  _cardDraft.description = description;
-  _cardDraft.link_url = linkUrl;
-  _cardDraft.link_label = linkLabel;
+  _draft.title = title;
+  _draft.subtitle = subtitle;
+  _draft.description = description;
+  _draft.link_url = linkUrl;
+  _draft.link_label = linkLabel;
 
-  var arr = getCards();
-  if(_cardDraftIdx === -1){
+  var u = me();
+  var arr = _getCardsFromProfile(u);
+  /* Remove synthetic defaults if this is first real save */
+  arr = arr.filter(function(c){ return !c.id || String(c.id).indexOf('_d_') !== 0; });
+  if(_draftIdx === -1){
     if(arr.length >= 10){ toast('Max 10 cards.', 'error'); return; }
-    _cardDraft.id = (Z.uuid ? Z.uuid() : String(Date.now()));
-    arr.push(_cardDraft);
+    _draft.created_at = _draft.created_at || Date.now();
+    arr.push(_draft);
   } else {
-    arr[_cardDraftIdx] = Object.assign({}, arr[_cardDraftIdx], _cardDraft);
+    /* Map draftIdx onto filtered array (careful if defaults were stripped) */
+    var targetIdx = arr.findIndex(function(c){ return c.id === _draft.id; });
+    if(targetIdx === -1){ arr.push(_draft); }
+    else { arr[targetIdx] = Object.assign({}, arr[targetIdx], _draft); }
   }
 
-  /* Sync about/offer descriptions to legacy fields for backward compat */
-  arr.forEach(function(c){
-    if(c.type === 'about' && c.description){ /* keep in card */ }
-    if(c.type === 'offer' && c.description){ /* keep in card */ }
-  });
-
   try {
-    await persistCards(arr);
-    Z.closeCardEditor();
+    await _persistCards(arr);
+    _draft = null; _draftIdx = -1;
+    Z.closeSheet();
     toast('Card saved.');
-    if(Z.State.currentView === 'public-profile'){
-      Z.sp5RenderContent(Z.State.spaceUserId, me() && me().id === Z.State.spaceUserId);
-    }
+    _refreshSpaceContent();
   } catch(e){
     toast('Save failed: ' + (e.message || 'unknown'), 'error');
   }
 };
 
-Z.closeCardEditor = function(){
-  _cardDraft = null;
-  _cardDraftIdx = -1;
+Z._cdDelete = async function(idx){
+  if(!_draft) return;
+  if(!confirm('Delete this card?')) return;
+  var u = me();
+  var arr = _getCardsFromProfile(u).filter(function(c){
+    return c.id !== _draft.id && (!c.id || String(c.id).indexOf('_d_') !== 0);
+  });
+  try {
+    await _persistCards(arr);
+    _draft = null; _draftIdx = -1;
+    Z.closeSheet();
+    toast('Card deleted.');
+    _refreshSpaceContent();
+  } catch(e){ toast('Delete failed.', 'error'); }
+};
+
+Z._closeCardEditor = function(){
+  _draft = null; _draftIdx = -1;
   Z.closeSheet();
 };
 
-Z.deleteCard = async function(idx){
-  var arr = getCards();
-  if(idx < 0 || idx >= arr.length){ return; }
-  if(!confirm('Delete this card?')) return;
-  arr.splice(idx, 1);
+function _refreshSpaceContent(){
   try {
-    await persistCards(arr);
-    Z.closeCardEditor();
-    toast('Card deleted.');
     if(Z.State.currentView === 'public-profile'){
       Z.sp5RenderContent(Z.State.spaceUserId, me() && me().id === Z.State.spaceUserId);
     }
-  } catch(e){
-    toast('Delete failed.', 'error');
-  }
+  } catch(e){}
+}
+
+/* ============================================================
+   VISITOR VIEWER — full-page route
+   ============================================================ */
+Z.openCardViewer = function(idx){
+  var targetUserId = Z.State.spaceUserId;
+  if(!targetUserId){ toast('No space loaded.'); return; }
+  var profile = Z.State.spaceProfile;
+  if(!profile){ toast('Space not loaded.'); return; }
+  var arr = _getCardsFromProfile(profile);
+  if(idx < 0 || idx >= arr.length){ toast('Card not found.'); return; }
+  Z.State._cdViewIdx = idx;
+  Z.showView('card-detail', targetUserId + '|' + idx);
 };
 
 /* ============================================================
-   CARD VIEWER (visitor)
+   ROUTER — card-detail, gallery-page
    ============================================================ */
-Z.openCardViewer = function(idx){
-  var arr = getCards();
-  if(idx < 0 || idx >= arr.length){ toast('Card not found.'); return; }
-  var card = arr[idx];
+var _prevRenderCard = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'card-detail') return _renderCardDetailPage(param);
+  if(view === 'gallery-page') return _renderGalleryPage(param);
+  return _prevRenderCard.call(this, view, param);
+};
 
-  /* Gallery opens existing gallery modal */
+function _renderCardDetailPage(param){
+  var parts = String(param || '').split('|');
+  var userId = parts[0];
+  var idx = parseInt(parts[1], 10) || 0;
+
+  var profile = (Z.State.spaceProfile && Z.State.spaceProfile.id === userId)
+    ? Z.State.spaceProfile
+    : (Z.getProfileById ? Z.getProfileById(userId) : null);
+  if(!profile) return Z.emptyState({ icon:'fa-solid fa-user-slash', title:'Profile not loaded.' });
+
+  var arr = _getCardsFromProfile(profile);
+  if(idx < 0 || idx >= arr.length) return Z.emptyState({ icon:'fa-solid fa-square', title:'Card not found.' });
+
+  var card = arr[idx];
+  var isOwner = me() && me().id === userId;
+
   if(card.type === 'gallery'){
-    Z.openSpaceGallery();
-    return;
+    setTimeout(function(){ Z.showView('gallery-page', userId); }, 30);
+    return '<div style="padding:40px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
   }
 
-  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
-  h += '<div class="sheet-handle"></div>';
-  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">' + esc(card.title || 'Card') + '</h3>';
-  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
-  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
 
-  /* Banner */
-  var bg = card.banner_gradient || 'linear-gradient(135deg,#10b981,#065f46)';
-  h += '<div style="border-radius:14px;padding:24px;background:' + bg + ';min-height:100px;margin-bottom:14px;position:relative;overflow:hidden;">';
-  if(card.subtitle) h += '<div style="font-size:11px;font-weight:900;color:rgba(255,255,255,.85);letter-spacing:.6px;text-transform:uppercase;margin-bottom:6px;">' + esc(card.subtitle) + '</div>';
-  h += '<div style="font-size:18px;font-weight:900;color:#fff;">' + esc(card.title) + '</div>';
+  /* Header */
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(card.title || 'Card') + '</h2>';
   h += '</div>';
+  if(isOwner){
+    h += '<button onclick="Z.openCardEditor(' + idx + ')" style="padding:7px 14px;border-radius:16px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-size:11px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-pen"></i> Edit</button>';
+  }
+  h += '</div>';
+
+  /* Banner / Thumbnail header */
+  var bg = card.banner_gradient || DEFAULT_BANNER;
+  h += '<div style="border-radius:16px;overflow:hidden;position:relative;min-height:180px;background:' + bg + ';display:flex;flex-direction:column;justify-content:flex-end;padding:20px;' + (card.thumbnail_url ? 'background-image:url(' + card.thumbnail_url + ');background-size:cover;background-position:center;' : '') + '">';
+  if(card.thumbnail_url) h += '<div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,.15));"></div>';
+  h += '<div style="position:relative;z-index:1;">';
+  h += '<div style="font-size:10px;font-weight:900;color:rgba(255,255,255,.85);letter-spacing:.8px;text-transform:uppercase;margin-bottom:6px;"><i class="' + _typeIcon(card.type) + '"></i> ' + _typeLabel(card.type) + '</div>';
+  h += '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.2;">' + esc(card.title || _typeLabel(card.type)) + '</div>';
+  if(card.subtitle) h += '<div style="font-size:13px;color:rgba(255,255,255,.85);margin-top:6px;">' + esc(card.subtitle) + '</div>';
+  h += '</div></div>';
 
   /* Description */
   if(card.description){
-    h += '<div style="font-size:13px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;word-break:break-word;padding:12px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;margin-bottom:14px;">' + esc(card.description) + '</div>';
+    h += '<div style="padding:16px;border-radius:14px;background:#111827;border:1px solid #1e293b;font-size:13.5px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(card.description) + '</div>';
   }
 
-  /* Link */
+  /* Link button */
   if(card.link_url){
-    h += '<button onclick="Z._openCardLink(\'' + esc(card.link_url) + '\')" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">' + esc(card.link_label || 'Open') + '</button>';
+    h += '<button onclick="Z._openAnyLink(\'' + esc(card.link_url) + '\')" style="width:100%;padding:16px;border-radius:14px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;"><i class="fa-solid fa-arrow-up-right-from-square" style="margin-right:6px;"></i> ' + esc(card.link_label || 'Open') + '</button>';
   }
 
-  h += '</div></div></div>';
-  Z.openSheet(h);
-};
+  h += '</div>';
+  return h;
+}
 
-Z._openCardLink = function(url){
-  Z.closeSheet();
-  if(!url) return;
+/* ============================================================
+   GALLERY PAGE
+   ============================================================ */
+function _renderGalleryPage(userId){
+  var profile = (Z.State.spaceProfile && Z.State.spaceProfile.id === userId)
+    ? Z.State.spaceProfile
+    : (Z.getProfileById ? Z.getProfileById(userId) : null);
+  if(!profile) return Z.emptyState({ icon:'fa-solid fa-user-slash', title:'Profile not loaded.' });
+  var isOwner = me() && me().id === userId;
+
+  var arr = _getCardsFromProfile(profile);
+  var card = arr.find(function(c){ return c.type === 'gallery'; });
+  if(!card) return Z.emptyState({ icon:'fa-solid fa-images', title:'No gallery card.' });
+
+  var items = card.gallery_items || [];
+  var cover = card.cover_image_url;
+
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:15px;">' + esc(card.title || 'Gallery') + '</h2>';
+  h += '</div>';
+  if(isOwner){
+    h += '<button onclick="Z.openCardEditor(' + arr.indexOf(card) + ')" style="padding:7px 14px;border-radius:16px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-size:11px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-pen"></i> Manage</button>';
+  }
+  h += '</div>';
+
+  /* Cover */
+  if(cover){
+    h += '<div style="border-radius:16px;overflow:hidden;aspect-ratio:16/9;background:#000;"><img src="' + esc(cover) + '" style="width:100%;height:100%;object-fit:cover;display:block;"></div>';
+  }
+  if(card.subtitle){
+    h += '<div style="font-size:12.5px;color:#94a3b8;text-align:center;">' + esc(card.subtitle) + '</div>';
+  }
+
+  if(!items.length){
+    h += '<div style="padding:40px;border-radius:14px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">' + (isOwner ? 'Tap Manage to add media.' : 'No media yet.') + '</div>';
+  } else {
+    h += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">';
+    items.forEach(function(it){
+      h += '<div style="border-radius:12px;overflow:hidden;background:#0f172a;border:1px solid #1e293b;">';
+      h += '<div style="aspect-ratio:1;background:#000;position:relative;">';
+      if(it.media_type === 'video'){
+        h += '<video src="' + esc(it.url) + '" controls preload="metadata" playsinline style="width:100%;height:100%;object-fit:cover;background:#000;display:block;"></video>';
+      } else {
+        h += '<img src="' + esc(it.url) + '" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in;" onclick="Z.openImageLightbox(\'' + esc(it.url) + '\')">';
+      }
+      h += '</div>';
+      if(it.title){
+        h += '<div style="padding:8px 10px;font-size:11px;color:#cbd5e1;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.title) + '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+/* ============================================================
+   LINK OPENER — universal
+   ============================================================ */
+Z._openAnyLink = function(url){
+  if(!url){ toast('No link set.', 'error'); return; }
+  url = String(url).trim();
   try {
-    /* Internal hash link — navigate within app */
+    /* Deep hash links (#post-xxx, #spark-xxx, #video-xxx, #space-xxx) */
     if(url.indexOf('#') === 0){
-      Z.closeSheet();
-      window.location.hash = url.substring(1);
-      return;
-    }
-    /* Internal route keyword like "spark", "home", "galleria" */
-    var knownRoutes = ['home','spark','galleria','lounge','circles','people','members','events','playlists'];
-    if(knownRoutes.indexOf(url) !== -1){
-      Z.closeSheet();
-      Z.showView(url);
+      window.location.hash = url;
       return;
     }
     /* External URL */
@@ -16048,66 +16330,62 @@ Z._openCardLink = function(url){
       window.open(url, '_blank', 'noopener');
       return;
     }
-    toast('Invalid link.', 'error');
+    /* Route keywords */
+    var routes = ['home','spark','galleria','lounge','circles','people','members','events','playlists','analytics','wallet','public-home','status-home','notifications'];
+    if(routes.indexOf(url) !== -1){ Z.showView(url); return; }
+    /* Market shortcut */
+    if(url === 'market'){ Z.showView('galleria-cat', 'digital-market'); return; }
+    /* Fallback: try as external */
+    window.open(url, '_blank', 'noopener');
   } catch(e){ toast('Could not open link.', 'error'); }
 };
 
 /* ============================================================
-   GALLERY LIMIT FIX — 20 → 100
+   BACKWARD COMPAT — old openSpaceAbout/Offer/Featured/Promoted
    ============================================================ */
-var _prevOpenGallery = Z.openSpaceGallery;
-if(typeof _prevOpenGallery === 'function'){
-  Z.openSpaceGallery = async function(){
-    /* Temporarily patch: intercept the inner query limit is not straightforward,
-       so we override the whole function to load unlimited */
-    var userId = Z.State.currentParam;
-    var u = me();
-    var isOwner = u && u.id === userId;
-    var c = db(); if(!c) return;
-    var r = await c.from('user_gallery').select('url').eq('user_id', userId).order('position', {ascending:true}).limit(100);
-    var items = r.data || [];
-    var h = '<div class="modal-overlay" onclick="if(event.target===this)Z.closeModal()"><div class="modal-box" style="max-width:520px;">';
-    h += '<div class="modal-header"><h3>Gallery · ' + items.length + ' item' + (items.length===1?'':'s') + '</h3><button class="modal-close" onclick="Z.closeModal()"><i class="fa-solid fa-xmark"></i></button></div>';
-    if(isOwner) h += '<button class="btn-primary" style="margin-bottom:12px;" onclick="Z.uploadGalleryImage()"><i class="fa-solid fa-plus"></i> Add image</button>';
-    if(!items.length){
-      h += '<div style="text-align:center;padding:24px;color:#64748b;font-size:12px;">' + (isOwner ? 'Add images to your gallery.' : 'No images yet.') + '</div>';
-    } else {
-      h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
-      items.forEach(function(it){
-        h += '<div style="position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#0b1220;">';
-        h += '<img src="' + esc(it.url) + '" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in;" onclick="Z.openImageLightbox(\'' + esc(it.url) + '\')">';
-        if(isOwner){
-          h += '<button onclick="event.stopPropagation();Z.deleteGalleryImage(\'' + esc(it.url) + '\')" style="position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;background:rgba(161,98,98,.85);border:none;color:#fff;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-trash"></i></button>';
-        }
-        h += '</div>';
-      });
-      h += '</div>';
-    }
-    h += '</div></div>';
-    Z.openModal(h);
-  };
-}
-
-Z.deleteGalleryImage = async function(url){
-  if(!confirm('Remove this image?')) return;
-  var u = me();
-  var c = db();
-  if(!u || !c) return;
-  try {
-    var r = await c.from('user_gallery').delete().eq('user_id', u.id).eq('url', url);
-    if(r.error) throw r.error;
-    toast('Image removed.');
-    Z.closeModal();
-    setTimeout(function(){ Z.openSpaceGallery(); }, 200);
-    if(Z.State.currentView === 'public-profile'){
-      Z.sp5RenderContent(Z.State.spaceUserId, me() && me().id === Z.State.spaceUserId);
-    }
-  } catch(e){ toast('Failed.', 'error'); }
+Z.openSpaceGallery = function(){
+  var targetUserId = Z.State.spaceUserId || (me() && me().id);
+  if(!targetUserId) return;
+  Z.showView('gallery-page', targetUserId);
+};
+Z.openSpaceFeatured = function(){
+  var targetUserId = Z.State.spaceUserId;
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+  var arr = _getCardsFromProfile(profile);
+  var idx = arr.findIndex(function(c){ return c.type === 'featured'; });
+  if(idx === -1){ toast('No featured card.'); return; }
+  Z.openCardViewer(idx);
+};
+Z.openSpacePromoted = function(){
+  var targetUserId = Z.State.spaceUserId;
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+  var arr = _getCardsFromProfile(profile);
+  var idx = arr.findIndex(function(c){ return c.type === 'promoted'; });
+  if(idx === -1){ toast('No promoted card.'); return; }
+  Z.openCardViewer(idx);
+};
+Z.openAboutCard = function(){
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+  var arr = _getCardsFromProfile(profile);
+  var idx = arr.findIndex(function(c){ return c.type === 'about'; });
+  if(idx === -1){ toast('No about card.'); return; }
+  Z.openCardViewer(idx);
+};
+Z.openOfferCard = function(){
+  var profile = Z.State.spaceProfile;
+  if(!profile) return;
+  var arr = _getCardsFromProfile(profile);
+  var idx = arr.findIndex(function(c){ return c.type === 'offer'; });
+  if(idx === -1){ toast('No offer card.'); return; }
+  Z.openCardViewer(idx);
 };
 
-console.log('[Cards System] ready — editor · viewer · delete · link picker · gallery unlimited');
+console.log('[Cards System v2] ready');
 })();
-</script>     
+</script>
      
 <!-- ============================================================
      SECTION 9 — CIRCLES
