@@ -12150,63 +12150,105 @@ function paintSearchBarD(){
   if(!slot) return;
   if(slot.querySelector('[data-sp-search]')) return;
 
-  var mode = Z.State._spSearchMode || 'space';
+  if(!Z.State._spSearchMode) Z.State._spSearchMode = 'all';
+
   var sub = Z.State.spacePublicTab || 'sparks';
-  var placeholder = mode === 'all'
-    ? 'Search SPACEs, sparks, videos…'
-    : (sub === 'videos' ? 'Search videos in this SPACE…' : 'Search sparks in this SPACE…');
+  var placeholder = sub === 'videos' ? 'Search videos…' : 'Search sparks…';
 
   slot.innerHTML =
-    '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
-      '<button data-sp-mode="space" style="flex:1;padding:8px 12px;border-radius:10px;border:1px solid ' + (mode === 'space' ? 'rgba(16,185,129,.45)' : '#1e293b') + ';background:' + (mode === 'space' ? 'rgba(16,185,129,.12)' : '#0f172a') + ';color:' + (mode === 'space' ? '#10b981' : '#94a3b8') + ';font-weight:900;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;"><i class="fa-solid fa-user"></i> This SPACE</button>' +
-      '<button data-sp-mode="all" style="flex:1;padding:8px 12px;border-radius:10px;border:1px solid ' + (mode === 'all' ? 'rgba(59,130,246,.45)' : '#1e293b') + ';background:' + (mode === 'all' ? 'rgba(59,130,246,.12)' : '#0f172a') + ';color:' + (mode === 'all' ? '#60a5fa' : '#94a3b8') + ';font-weight:900;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;"><i class="fa-solid fa-globe"></i> All ZYNIX</button>' +
-    '</div>' +
     '<div style="position:relative;">' +
       '<input data-sp-search="1" type="text" placeholder="' + esc(placeholder) + '" value="' + esc(Z.State._spSearch || '') + '" ' +
-      'style="width:100%;padding:11px 40px 11px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">' +
-      '<i class="fa-solid fa-magnifying-glass" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#64748b;font-size:12px;pointer-events:none;"></i>' +
+      'style="width:100%;padding:11px 78px 11px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;box-sizing:border-box;outline:none;">' +
+      '<button data-sp-mode="space" type="button" title="Search this SPACE" style="position:absolute;right:42px;top:50%;transform:translateY(-50%);width:30px;height:30px;border-radius:8px;border:1px solid #1e293b;background:#111827;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:all .15s;"><i class="fa-solid fa-user" style="font-size:11px;"></i></button>' +
+      '<button data-sp-mode="all" type="button" title="Search all ZYNIX" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:30px;height:30px;border-radius:8px;border:1px solid #1e293b;background:#111827;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:all .15s;"><i class="fa-solid fa-globe" style="font-size:11px;"></i></button>' +
     '</div>' +
     '<div id="sp-search-results" style="margin-top:12px;"></div>';
 
-  /* Mode toggle buttons */
+  paintModeIcons();
+  wireSearchInput();
+}
+
+function paintModeIcons(){
+  var slot = document.getElementById('sp5-search-slot');
+  if(!slot) return;
+  var mode = Z.State._spSearchMode || 'all';
+  var spaceBtn = slot.querySelector('[data-sp-mode="space"]');
+  var allBtn = slot.querySelector('[data-sp-mode="all"]');
+
+  function style(btn, active, color){
+    if(!btn) return;
+    btn.style.borderColor = active ? color + 'aa' : '#1e293b';
+    btn.style.background = active ? color + '22' : '#111827';
+    btn.style.color = active ? color : '#64748b';
+  }
+  style(spaceBtn, mode === 'space', '#10b981');
+  style(allBtn, mode === 'all', '#60a5fa');
+}
+
+function wireSearchInput(){
+  var slot = document.getElementById('sp5-search-slot');
+  if(!slot) return;
+
+  /* Mode buttons — direct DOM, no re-render */
   slot.querySelectorAll('[data-sp-mode]').forEach(function(b){
-    b.addEventListener('click', function(){
+    if(b._spHooked) return; b._spHooked = true;
+    b.addEventListener('click', function(e){
+      e.preventDefault();
       var m = this.getAttribute('data-sp-mode');
       if(Z.State._spSearchMode === m) return;
       Z.State._spSearchMode = m;
-      Z.State._spSearch = '';
-      paintSearchBarD();
-      /* Show/hide default grids */
-      var defaultGrid = document.getElementById('sp5-public-sgrid') || document.getElementById('sp5-public-vgrid');
-      var resHost = document.getElementById('sp-search-results');
-      if(m === 'all'){
-        if(defaultGrid) defaultGrid.style.display = 'none';
-        var trend = document.getElementById('sp5-trending-slot');
-        if(trend) trend.style.display = 'none';
-      } else {
-        if(defaultGrid) defaultGrid.style.display = '';
-        var trend2 = document.getElementById('sp5-trending-slot');
-        if(trend2) trend2.style.display = '';
-        if(resHost) resHost.innerHTML = '';
-      }
+      paintModeIcons();
+      /* Re-run current query in new mode */
+      handleSearchInput();
     });
   });
 
-  /* Input handler */
+  /* Input */
   var inp = slot.querySelector('[data-sp-search]');
-  if(inp){
+  if(inp && !inp._spHooked){
+    inp._spHooked = true;
     var deb = null;
     inp.addEventListener('input', function(){
       Z.State._spSearch = this.value;
       if(deb) clearTimeout(deb);
-      deb = setTimeout(function(){
-        if(Z.State._spSearchMode === 'all'){
-          runGlobalSearch(Z.State._spSearch);
-        } else {
-          filterGridD(Z.State._spSearch);
-        }
-      }, 220);
+      deb = setTimeout(handleSearchInput, 220);
     });
+  }
+}
+
+function _toggleGridArea(show){
+  var ids = ['sp5-public-sgrid','sp5-public-vgrid','sp5-trending-slot','sp5-videos-rating-host','sp5-fv-app-host'];
+  ids.forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.style.display = show ? '' : 'none';
+  });
+  var host = document.getElementById('sp5-content-host');
+  if(host){
+    host.querySelectorAll('.sp5-sec-head').forEach(function(el){
+      el.style.display = show ? '' : 'none';
+    });
+  }
+}
+
+function handleSearchInput(){
+  var q = (Z.State._spSearch || '').trim();
+  var mode = Z.State._spSearchMode || 'all';
+  var resHost = document.getElementById('sp-search-results');
+
+  /* Empty query → always show grid */
+  if(!q){
+    _toggleGridArea(true);
+    if(resHost) resHost.innerHTML = '';
+    return;
+  }
+
+  if(mode === 'all'){
+    _toggleGridArea(false);
+    runGlobalSearch(q);
+  } else {
+    _toggleGridArea(true);
+    if(resHost) resHost.innerHTML = '';
+    filterGridD(q);
   }
 }
 
@@ -12274,7 +12316,6 @@ async function runGlobalSearch(q){
   }
   host.innerHTML = parts.join('');
 }
-
 function filterGridD(q){
   var host = document.getElementById('sp5-content-host');
   if(!host) return;
