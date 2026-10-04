@@ -8182,9 +8182,8 @@ function renderHeader(p, isOwner, rating, bondCount){
     var toggleFn    = (Z.State.spaceTab === 'public') ? 'Z.sp5GoMySpaceView()' : 'Z.sp5GoPublicView()';
     actions += '<button class="sp5-act" data-toggle-btn="1" onclick="' + toggleFn + '" title="' + toggleLabel + '" style="width:auto;padding:0 12px;font-size:11px;font-weight:900;gap:6px;display:inline-flex;align-items:center;">' +
                '<i class="' + toggleIcon + '"></i> ' + toggleLabel + '</button>';
-    actions += '<button class="sp5-act gear" onclick="Z.openSpaceSettings()" title="Settings"><i class="fa-solid fa-gear"></i></button>';
-    actions += '<button class="sp5-act" onclick="Z.openSpaceMoreSheet(\'' + esc(p.id) + '\')" title="More"><i class="fa-solid fa-ellipsis"></i></button>';
-    actions += '<button class="sp5-act" onclick="Z.shareSpace(\'' + esc(p.id) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
+    actions += '<button class="sp5-act gear" onclick="Z.showView(\'owner-dashboard\')" title="Dashboard"><i class="fa-solid fa-gauge-high"></i></button>';
+    actions += '<button class="sp5-act" onclick="Z.openPrivacyPopup()" title="Privacy"><i class="fa-solid fa-shield-halved"></i></button>';
   } else {
     var cs = (typeof Z.getConnectionState === 'function') ? Z.getConnectionState(p.id) : 'none';
     var cIcon = 'fa-solid fa-user-plus', cTitle = 'Connect', cAct = "Z.sendConnectRequest('" + esc(p.id) + "')";
@@ -15038,6 +15037,158 @@ Z.showView = function(view, param){
 };
 
 console.log('[Playlists + Events] ready');
+})();
+</script>
+
+<!-- ============================================================
+     OWNER DASHBOARD STUB + PRIVACY POPUP
+     Paste BEFORE Section 9 comment
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixDashboardStub) return; Z.__zynixDashboardStub = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function me(){ return Z.State.currentUser || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+/* ============================================================
+   PRIVACY POPUP — 3 consolidated toggles
+   ============================================================ */
+Z.openPrivacyPopup = function(){
+  var u = me();
+  if(!u) return;
+  var c = db();
+  if(!c) return;
+
+  var spaceHidden = (u.hide_from_space_search === false) ? false : true;
+  var discHidden  = !!u.hide_from_discovery;
+  var dirHidden   = (u.hide_from_member_directory === false) ? false : true;
+
+  function row(id, label, sub, hidden){
+    var on = !hidden;
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.05);">' +
+      '<div style="flex:1;min-width:0;padding-right:12px;">' +
+        '<div style="font-size:13px;font-weight:800;color:#fff;">' + label + '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;margin-top:3px;line-height:1.4;">' + sub + '</div>' +
+      '</div>' +
+      '<button data-priv-toggle="' + id + '" data-on="' + (on ? '1' : '0') + '" style="padding:7px 14px;border-radius:16px;border:1px solid ' + (on ? 'rgba(16,185,129,.4)' : '#1e293b') + ';background:' + (on ? 'rgba(16,185,129,.12)' : '#0f172a') + ';color:' + (on ? '#10b981' : '#94a3b8') + ';font-weight:900;font-size:11px;cursor:pointer;flex-shrink:0;">' + (on ? 'Visible' : 'Hidden') + '</button>' +
+    '</div>';
+  }
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;"><i class="fa-solid fa-shield-halved" style="color:#10b981;margin-right:6px;"></i> Privacy</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;">';
+
+  h += row('hide_from_space_search', 'SPACE search',
+    'Appear in ZYNIX SPACE search results', spaceHidden);
+  h += row('hide_from_discovery', 'Discover People',
+    'Appear in Discover People search and recommendations', discHidden);
+  h += row('hide_from_member_directory', 'SPACE directories',
+    'Visible to other bonded members of the SPACEs you Bond', dirHidden);
+
+  h += '<div style="margin-top:16px;padding:12px;border-radius:10px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.28);font-size:11px;color:#cbd5e1;line-height:1.6;">';
+  h += '<b style="color:#60a5fa;">Note:</b> SPACE search uses only your SPACE name, description, and keywords. Your profile name never appears there.';
+  h += '</div>';
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    document.querySelectorAll('[data-priv-toggle]').forEach(function(b){
+      b.addEventListener('click', async function(){
+        var field = this.getAttribute('data-priv-toggle');
+        var wasOn = this.getAttribute('data-on') === '1';
+        var willBeOn = !wasOn;
+        var willBeHidden = !willBeOn;
+        var btn = this;
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+        try {
+          var patch = {};
+          patch[field] = willBeHidden;
+          var r = await c.from('profiles').update(patch).eq('id', u.id);
+          if(r.error) throw r.error;
+          Z.State.currentUser[field] = willBeHidden;
+          btn.setAttribute('data-on', willBeOn ? '1' : '0');
+          btn.textContent = willBeOn ? 'Visible' : 'Hidden';
+          btn.style.borderColor = willBeOn ? 'rgba(16,185,129,.4)' : '#1e293b';
+          btn.style.background = willBeOn ? 'rgba(16,185,129,.12)' : '#0f172a';
+          btn.style.color = willBeOn ? '#10b981' : '#94a3b8';
+          var labels = {
+            hide_from_space_search: 'SPACE search',
+            hide_from_discovery: 'Discover People',
+            hide_from_member_directory: 'SPACE directories'
+          };
+          toast(willBeOn
+            ? 'Now visible on ' + labels[field]
+            : 'Now hidden from ' + labels[field]);
+        } catch(e){
+          toast('Failed to save.', 'error');
+        } finally {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        }
+      });
+    });
+  }, 40);
+};
+
+/* ============================================================
+   OWNER DASHBOARD — temporary stub (full version in Part 3)
+   ============================================================ */
+var _prevRenderDash = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'owner-dashboard') return renderOwnerDashboardStub();
+  return _prevRenderDash.call(this, view, param);
+};
+
+function renderOwnerDashboardStub(){
+  var u = me();
+  if(!u) return Z.emptyState({ icon:'fa-solid fa-user-lock', title:'Login first.' });
+  var pid = u.id;
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-gauge-high" style="color:#10b981;"></i> Dashboard</h2>';
+  h += '</div></div>';
+  h += '<div style="padding:14px;border-radius:14px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.3);font-size:12px;color:#cbd5e1;line-height:1.6;">';
+  h += 'Full dashboard is coming in the next update. For now, use the essential tools below.';
+  h += '</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:10px;">';
+
+  h += '<button onclick="Z.showView(\'space-settings\')" style="width:100%;padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;">';
+  h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-gear" style="color:#10b981;font-size:14px;"></i></div>';
+  h += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">Settings</div><div style="font-size:11px;color:#94a3b8;">All SPACE settings</div></div>';
+  h += '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i></button>';
+
+  h += '<button onclick="Z.openSpaceMoreSheet(\'' + esc(pid) + '\')" style="width:100%;padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;">';
+  h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(96,165,250,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-ellipsis" style="color:#60a5fa;font-size:14px;"></i></div>';
+  h += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">More</div><div style="font-size:11px;color:#94a3b8;">Ratings, Watch Later, About</div></div>';
+  h += '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i></button>';
+
+  h += '<button onclick="Z.shareSpace(\'' + esc(pid) + '\')" style="width:100%;padding:14px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;">';
+  h += '<div style="width:36px;height:36px;border-radius:10px;background:rgba(139,92,246,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-share-nodes" style="color:#a78bfa;font-size:14px;"></i></div>';
+  h += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">Share SPACE</div><div style="font-size:11px;color:#94a3b8;">Send link to friends</div></div>';
+  h += '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i></button>';
+
+  h += '</div></div>';
+  return h;
+}
+
+console.log('[Dashboard Part 1] header swap + privacy popup + dashboard stub');
 })();
 </script>     
 <!-- ============================================================
