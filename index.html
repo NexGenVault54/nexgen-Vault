@@ -7551,6 +7551,15 @@ Z.sp5Load = async function(userId, isOwner){
     return null;
   })();
 
+  /* Direct fetch of space_data (includes cards) */
+  var spaceDataP = (async function(){
+    try {
+      var r = await c.from('profiles').select('space_data').eq('id', userId).maybeSingle();
+      if(!r.error && r.data && r.data.space_data) return r.data.space_data;
+    } catch(e){}
+    return null;
+  })();
+
   var ratingP = (async function(){
     try {
       var r = await c.rpc('space_space_rating', { p_space_id: userId });
@@ -7569,11 +7578,19 @@ Z.sp5Load = async function(userId, isOwner){
 
   var contentP = Z.sp5FetchContent({ id: userId });
 
-  var profile = await profileP;
+  var both = await Promise.all([profileP, spaceDataP]);
+  var profile = both[0];
+  var sd = both[1];
+
   if(!profile){
     var hh = document.getElementById('sp5-head-host');
     if(hh) hh.innerHTML = Z.emptyState({ icon:'fa-solid fa-user-slash', title:'User not found.' });
     return;
+  }
+
+  /* Merge space_data into profile (cards live here) */
+  if(sd && typeof sd === 'object'){
+    profile.space_data = Object.assign({}, profile.space_data || {}, sd);
   }
 
   var arr = Z.State.allProfiles || [];
@@ -7592,7 +7609,6 @@ Z.sp5Load = async function(userId, isOwner){
   Z.sp5RenderHeader(userId, isOwner);
   Z.sp5RenderContent(userId, isOwner);
 };
-
 /* ============================================================
    HEADER PAINT (separate from content — no flicker)
    ============================================================ */
