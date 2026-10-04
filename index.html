@@ -7789,12 +7789,12 @@ function renderPublicSpace(userId, isOwner){
     }).catch(function(){ Z._globalRepaintPending = false; });
   }
 
+   h += '<div id="sp5-search-slot"></div>';
+
   h += '<div class="sp5-subtabs">';
   h += '<button class="sp5-subtab" ' + (sub === 'videos' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'videos\')"><i class="fa-solid fa-film"></i> Public Full Videos <span class="cnt">' + videos.length + '</span></button>';
   h += '<button class="sp5-subtab" ' + (sub === 'sparks' ? 'data-active="1"' : '') + ' onclick="Z.sp5SwitchPublicTab(\'sparks\')"><i class="fa-solid fa-bolt"></i> Public Sparks <span class="cnt">' + sparks.length + '</span></button>';
   h += '</div>';
-
-  h += '<div id="sp5-search-slot"></div>';
 
     h += '<div class="sp5-sec-head" style="margin-bottom:0;">';
   h += '<div class="sp5-sec-title">' + (sub === 'videos' ? '<i class="fa-solid fa-film" style="color:#10b981;"></i> Full Videos' : '<i class="fa-solid fa-bolt" style="color:#10b981;"></i> Sparks') + ' <span class="cnt">' + (sub === 'videos' ? videos.length : sparks.length) + '</span></div>';
@@ -15189,6 +15189,130 @@ function renderOwnerDashboardStub(){
 }
 
 console.log('[Dashboard Part 1] header swap + privacy popup + dashboard stub');
+})();
+</script> 
+
+<!-- ============================================================
+     DASHBOARD — SPACE Name + Keywords Editor
+     Paste BEFORE Section 9
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixSpaceEditor) return; Z.__zynixSpaceEditor = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function me(){ return Z.State.currentUser || null; }
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function toast(m,t){ if(Z.toast) Z.toast(m,t); }
+
+Z.openSpaceEditor = function(){
+  var u = me();
+  if(!u){ Z.openAuthModal('login'); return; }
+  var c = db();
+  if(!c) return;
+
+  var sd = u.space_data || {};
+  var name = (sd.name || '').trim();
+  var desc = (sd.description || '').trim();
+  var kws = Array.isArray(u.space_keywords) ? u.space_keywords.join(', ') : '';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">SPACE Search Identity</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+
+  h += '<div style="font-size:11px;color:#cbd5e1;line-height:1.65;margin-bottom:14px;padding:12px;border-radius:10px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.28);">';
+  h += 'These fields power SPACE search. Only your SPACE name, description, and keywords appear in results. Your profile name never does.';
+  h += '</div>';
+
+  /* SPACE name */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">SPACE name</label>';
+  h += '<input id="spe-name" type="text" maxlength="60" value="' + esc(name) + '" placeholder="e.g. Health Tips Daily" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:4px;">';
+  h += '<div style="font-size:10.5px;color:#64748b;margin-bottom:14px;">Leave empty to hide from SPACE search.</div>';
+
+  /* Description */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Description</label>';
+  h += '<textarea id="spe-desc" maxlength="300" rows="3" placeholder="Short description of what your SPACE offers" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;color:#fff;font-size:13px;outline:none;resize:vertical;box-sizing:border-box;margin-bottom:14px;font-family:inherit;">' + esc(desc) + '</textarea>';
+
+  /* Keywords */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Keywords (up to 5)</label>';
+  h += '<input id="spe-kws" type="text" value="' + esc(kws) + '" placeholder="health, fitness, workouts" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:4px;">';
+  h += '<div id="spe-kws-count" style="font-size:10.5px;color:#64748b;margin-bottom:16px;">0 of 5 used</div>';
+
+  h += '<button id="spe-save" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Save</button>';
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+
+  setTimeout(function(){
+    var kwsInp = document.getElementById('spe-kws');
+    var kwsCount = document.getElementById('spe-kws-count');
+    function updateCount(){
+      var arr = (kwsInp.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+      var n = arr.length;
+      kwsCount.textContent = n + ' of 5 used';
+      kwsCount.style.color = n > 5 ? '#a16262' : '#64748b';
+    }
+    updateCount();
+    kwsInp.addEventListener('input', updateCount);
+
+    var saveBtn = document.getElementById('spe-save');
+    saveBtn.addEventListener('click', async function(){
+      var newName = (document.getElementById('spe-name').value || '').trim();
+      var newDesc = (document.getElementById('spe-desc').value || '').trim();
+      var newKwsRaw = (document.getElementById('spe-kws').value || '').trim();
+      var newKws = newKwsRaw
+        ? newKwsRaw.split(',').map(function(s){ return s.trim().toLowerCase(); }).filter(Boolean)
+        : [];
+
+      if(newKws.length > 5){
+        toast('Max 5 keywords.', 'error');
+        return;
+      }
+
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+
+      try {
+        var sdNew = Object.assign({}, u.space_data || {});
+        sdNew.name = newName;
+        sdNew.description = newDesc;
+
+        var r1 = await c.from('profiles').update({
+          space_data: sdNew,
+          space_keywords: newKws
+        }).eq('id', u.id);
+
+        if(r1.error) throw r1.error;
+
+        if(Z.State.currentUser){
+          Z.State.currentUser.space_data = sdNew;
+          Z.State.currentUser.space_keywords = newKws;
+        }
+        if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
+          Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, sdNew);
+        }
+
+        Z.closeSheet();
+        toast('SPACE identity saved.');
+      } catch(e){
+        toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+        saveBtn.disabled = false; saveBtn.textContent = 'Save';
+      }
+    });
+  }, 40);
+};
+
+/* Wire as new button in Dashboard stub — add to Part 3 when full build happens */
+console.log('[SPACE Editor] ready');
 })();
 </script>     
 <!-- ============================================================
