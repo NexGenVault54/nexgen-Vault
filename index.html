@@ -38746,6 +38746,86 @@ Z.pingUser = function(otherId){
 
 console.log('[DMs] ready — inbox · chat · ping activated');
 })();
+</script>
+
+<!-- CFAR RETRY FIX v1 — clears stuck flags on transient failures -->
+<!-- Removes cleanly: delete this entire <script>...</script> block -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixCfarRetryFixV1) return; Z.__zynixCfarRetryFixV1 = true;
+
+/* Terminal error codes — do NOT retry, leave flag true */
+var TERMINAL = {
+  'cannot_claim_own': 1,
+  'no_cfar': 1,
+  'budget_exhausted': 1,
+  'bad_slot': 1,
+  'already_claimed': 1,
+  'not_authenticated': 1
+};
+
+var MAX_RETRIES = 3;
+var _retryCount = {};
+
+function _patch(c){
+  if(!c || c.__zynixCfarRetryPatched) return c;
+  c.__zynixCfarRetryPatched = true;
+
+  var _origRpc = c.rpc.bind(c);
+  c.rpc = function(fn, params, opts){
+    var pr = _origRpc(fn, params, opts);
+    if(fn !== 'cfar_claim_view' || !pr || !pr.then) return pr;
+
+    return pr.then(function(res){
+      try {
+        /* Success — leave flag alone (correctly true) */
+        if(res && !res.error && res.data && res.data.ok === true) return res;
+
+        var errCode = (res && res.data && res.data.error) || 'unknown';
+
+        /* Terminal error — leave flag true, no retry */
+        if(TERMINAL[errCode]) return res;
+
+        /* Retryable failure — clear flag so next timeupdate retries */
+        var vid = params && params.p_spark_id;
+        var slot = params && params.p_minute_slot;
+        if(!vid || slot == null) return res;
+
+        var k = vid + '|' + slot;
+        _retryCount[k] = (_retryCount[k] || 0) + 1;
+
+        if(_retryCount[k] > MAX_RETRIES) return res;
+
+        try {
+          if(Z._cfarClaimed && Z._cfarClaimed[vid]){
+            delete Z._cfarClaimed[vid][slot];
+          }
+        } catch(e){}
+
+        /* Toast only on first retry — avoids spam */
+        if(_retryCount[k] === 1){
+          try { Z.toast('Reward pending — retrying…'); } catch(e){}
+        }
+      } catch(e){}
+      return res;
+    });
+  };
+  return c;
+}
+
+/* Wrap Z.sb — every client instance gets patched */
+var _origSb = Z.sb;
+Z.sb = function(){
+  var c = _origSb.apply(this, arguments);
+  if(c) _patch(c);
+  return c;
+};
+try { var _existing = _origSb(); if(_existing) _patch(_existing); } catch(e){}
+
+console.log('[CFAR Retry Fix v1] active');
+})();
 </script>     
      
 </body>
