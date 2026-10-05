@@ -40918,6 +40918,152 @@ setInterval(function(){
 console.log('[Ad TV Cosmetic] stage now shows reason instead of Loading…');
 })();
 </script>
+
+<!-- Ad TV + Public Home — 4 targeted fixes -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAdTVFix4) return; Z.__zynixAdTVFix4 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+/* ============================================================
+   FIX 1: Unmute button on ad video
+   ============================================================ */
+var _unmuteAttached = false;
+function attachUnmute(){
+  var stage = document.getElementById('adtv-stage');
+  if(!stage) return;
+  var video = stage.querySelector('#adtv-video');
+  if(!video) return;
+  var existing = document.getElementById('adtv-unmute');
+  if(existing) return;
+
+  var btn = document.createElement('button');
+  btn.id = 'adtv-unmute';
+  btn.title = 'Toggle sound';
+  btn.style.cssText = 'position:absolute;top:12px;left:12px;width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.62);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.18);color:#fff;cursor:pointer;z-index:20;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0;';
+  btn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
+  btn.addEventListener('click', function(e){
+    e.stopPropagation();
+    video.muted = !video.muted;
+    if(!video.muted){ try { video.volume = 1; } catch(err){} }
+    btn.innerHTML = video.muted
+      ? '<i class="fa-solid fa-volume-xmark"></i>'
+      : '<i class="fa-solid fa-volume-high"></i>';
+  });
+  stage.appendChild(btn);
+}
+
+/* ============================================================
+   FIX 2: Preload next ad media to reduce inter-ad gap
+   ============================================================ */
+var _lastStageText = '';
+setInterval(function(){
+  if(Z.State.currentView !== 'public-home') return;
+  var inner = document.getElementById('adtv-stage-inner');
+  if(!inner) return;
+  var txt = (inner.textContent || '').trim();
+  if(txt === _lastStageText) return;
+  _lastStageText = txt;
+
+  /* Warm up next ad when we see the transition message */
+  if(txt.indexOf('Loading next') !== -1 || txt.indexOf('Starting next') !== -1){
+    try {
+      var ads = (Z.State.adminAds) || [];
+      if(ads.length){
+        ads.slice(0,2).forEach(function(ad){
+          if(ad && ad.media_url && ad.media_type === 'video'){
+            var v = document.createElement('video');
+            v.src = ad.media_url;
+            v.preload = 'auto';
+            v.muted = true;
+            v.style.display = 'none';
+            document.body.appendChild(v);
+            setTimeout(function(){ try { v.remove(); } catch(e){} }, 10000);
+          }
+        });
+      }
+    } catch(e){}
+  }
+}, 250);
+
+/* ============================================================
+   FIX 3: Timeline re-render after DB fetch completes
+   ============================================================ */
+function repaintTimeline(){
+  if(Z.State.currentView !== 'public-home') return;
+  var oldPanel = document.querySelector('.zn-build-panel');
+  if(!oldPanel) return;
+
+  var tl = Z.State.buildTimeline || { phases:[], percent:41, currentPhaseLabel:'Building Core Features' };
+  var phases = tl.phases || [];
+  var pct = Math.max(0, Math.min(100, Number(tl.percent) || 0));
+
+  var nh = '';
+  nh += '<div class="zn-build-spinner">Z</div>';
+  nh += '<div class="zn-build-headline">Something is being built.</div>';
+  nh += '<div class="zn-build-bar-wrap"><div class="zn-build-bar-fill" style="width:' + pct + '%;"></div></div>';
+  nh += '<div class="zn-build-bar-meta"><span>' + esc(tl.currentPhaseLabel || 'Building Core Features') + '</span><span class="zn-build-bar-pct">' + pct + '%</span></div>';
+  if(phases.length){
+    nh += '<div class="zn-timeline">';
+    phases.forEach(function(p){
+      var cls = p.status === 'completed' ? 'done' : (p.status === 'in_progress' ? 'current' : 'pending');
+      var dot = p.status === 'completed' ? '<i class="fa-solid fa-check"></i>' : (p.status === 'in_progress' ? '<i class="fa-solid fa-play"></i>' : '');
+      nh += '<div class="zn-phase ' + cls + '"><div class="zn-phase-dot">' + dot + '</div>' +
+        '<div class="zn-phase-body"><div class="zn-phase-top"><div class="zn-phase-title">' + esc(p.title || '') + '</div>' +
+        '<div class="zn-phase-target">' + esc(p.target_label || '') + '</div></div>' +
+        (p.description ? '<div class="zn-phase-desc">' + esc(p.description) + '</div>' : '') +
+      '</div></div>';
+    });
+    nh += '</div>';
+  }
+  oldPanel.innerHTML = nh;
+}
+
+/* Wrap loadBuildTimeline so we re-render once data arrives */
+var _prevLoadTimeline = Z.loadBuildTimeline;
+if(typeof _prevLoadTimeline === 'function'){
+  Z.loadBuildTimeline = async function(){
+    var r = await _prevLoadTimeline.apply(this, arguments);
+    setTimeout(repaintTimeline, 40);
+    setTimeout(repaintTimeline, 400);
+    return r;
+  };
+}
+
+/* Also re-render on every public-home visit */
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'public-home'){
+    setTimeout(repaintTimeline, 200);
+    setTimeout(repaintTimeline, 700);
+    setTimeout(repaintTimeline, 1500);
+    setTimeout(attachUnmute, 300);
+  }
+  return r;
+};
+
+/* ============================================================
+   FIX 4: Retry timeline fetch if it failed silently at boot
+   ============================================================ */
+setTimeout(function(){
+  var tl = Z.State.buildTimeline;
+  if(!tl || !tl.phases || !tl.phases.length){
+    try { Z.loadBuildTimeline(); } catch(e){}
+  }
+}, 3000);
+
+console.log('[Ad TV + Timeline Fix] 4 fixes active');
+})();
+</script>
      
 </body>
 </html>
