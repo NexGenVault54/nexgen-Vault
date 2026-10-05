@@ -1503,12 +1503,11 @@ function wireSubs4(headKey){
       e.stopPropagation();
       var id = this.getAttribute('data-ldg4-del-sub');
       var name = this.getAttribute('data-ldg4-del-sub-name');
-      if(!confirm('Delete sub-section "' + name + '"?\n\nIf it has entries, delete will be blocked.')) return;
+           if(!confirm('Delete sub-section "' + name + '"?\n\nEntries remain under the head, only the label is removed.')) return;
       sb.rpc('admin_subhead_delete', { p_id: id }).then(function(r){
         if(r.error){
           var msg = r.error.message;
-          if(msg.indexOf('subhead_has_entries') !== -1) toast('This sub-section has entries. Remove them first.', true);
-          else if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can delete.', true);
+          if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can delete.', true);
           else toast('Failed: ' + msg, true);
           return;
         }
@@ -1540,16 +1539,61 @@ function wireSubs4(headKey){
 }
 
 function openEditSubModal(id, oldName, headKey){
-  var newName = prompt('Rename sub-section:', oldName);
-  if(newName === null) return;
-  newName = newName.trim();
-  if(newName.length < 2){ toast('Name too short.', true); return; }
-  var newDesc = prompt('Description (optional):', '');
-  if(newDesc === null) newDesc = '';
-  sb.rpc('admin_subhead_update', { p_id: id, p_name: newName, p_desc: newDesc || null }).then(function(r){
-    if(r.error){ toast('Failed: ' + r.error.message, true); return; }
-    toast('Updated.');
-    loadSubs4(headKey);
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'adm-l4-editsub';
+  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '480px';
+
+  inner.innerHTML =
+    '<h3>Rename Sub-section</h3>' +
+    '<div class="adm-form-row">' +
+      '<label>Name</label>' +
+      '<input id="adm-es-name" type="text" maxlength="80" value="' + esc(oldName) + '" placeholder="e.g. Web Developer">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Description (optional)</label>' +
+      '<input id="adm-es-desc" type="text" maxlength="200" placeholder="Short note">' +
+    '</div>' +
+    '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">' +
+      'Renaming a sub-section does not affect entries. New name applies to future entries.' +
+    '</div>' +
+    '<div class="row">' +
+      '<button class="adm-btn primary" id="adm-es-save" style="flex:1;">Save</button>' +
+      '<button class="adm-btn ghost" id="adm-es-cancel">Cancel</button>' +
+    '</div>';
+
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  setTimeout(function(){
+    var inp = document.getElementById('adm-es-name');
+    if(inp){ inp.focus(); inp.select(); }
+  }, 50);
+
+  document.getElementById('adm-es-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  document.getElementById('adm-es-save').addEventListener('click', function(){
+    var btn = this;
+    var nv = (document.getElementById('adm-es-name').value || '').trim();
+    var dv = (document.getElementById('adm-es-desc').value || '').trim();
+    if(nv.length < 2){ toast('Name too short.', true); return; }
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    sb.rpc('admin_subhead_update', { p_id: id, p_name: nv, p_desc: dv || null }).then(function(r){
+      if(r.error){
+        toast('Failed: ' + r.error.message, true);
+        btn.disabled = false;
+        btn.textContent = 'Save';
+        return;
+      }
+      toast('Updated.');
+      shell.remove();
+      loadSubs4(headKey);
+    });
   });
 }
 
