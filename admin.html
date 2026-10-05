@@ -1260,16 +1260,24 @@ async function renderLedger(main){
 
 async function loadLedgerSummary(){
   var host = $('adm-ldg-heads'); if(!host) return;
-  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
 
   try {
-    var r = await sb.rpc('admin_ledger_by_head', { p_month: ledgerState2.month || null });
-    if(r.error){ host.innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;padding:20px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
-    var rows = r.data || [];
+    /* Fetch BOTH catalog and aggregated totals in parallel */
+    var rCat = await sb.rpc('admin_ledger_heads');
+    var rTot = await sb.rpc('admin_ledger_by_head', { p_month: ledgerState2.month || null });
 
-    /* Totals for KPI cards */
+    if(rCat.error){ host.innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;padding:20px;">Failed: ' + esc(rCat.error.message) + '</div>'; return; }
+    var catalog = rCat.data || [];
+    var totals = (rTot.error || !rTot.data) ? [] : rTot.data;
+
+    /* Map aggregated totals by head key */
+    var totalMap = {};
+    totals.forEach(function(x){ totalMap[x.head_key] = x; });
+
+    /* Total KPIs */
     var totalIn = 0, totalEx = 0;
-    rows.forEach(function(x){
+    totals.forEach(function(x){
       if(x.entry_type === 'income') totalIn += Number(x.total);
       else totalEx += Number(x.total);
     });
@@ -1279,65 +1287,79 @@ async function loadLedgerSummary(){
     if(exEl) exEl.textContent = money(totalEx);
     if(netEl){ netEl.textContent = money(net); netEl.style.color = net >= 0 ? '#10b981' : '#a16262'; }
 
-    /* Filter by type */
-    var list = rows;
-    if(ledgerState2.type !== 'all') list = list.filter(function(x){ return x.entry_type === ledgerState2.type; });
+    /* Filter heads by selected type */
+    var heads = catalog;
+    if(ledgerState2.type !== 'all'){
+      heads = heads.filter(function(h){ return h.entry_type === ledgerState2.type; });
+    }
 
-    if(!list.length){
-      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">' +
-        'No entries in this range. ' +
-        '<div style="font-size:11px;color:#64748b;margin-top:8px;">Income and expense heads will auto-populate as events occur. You can also add manual entries.</div>' +
-      '</div>';
+    if(!heads.length){
+      host.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;font-size:12px;">No heads available.</div>';
       return;
     }
 
-    /* Group: entry_type → category → heads */
+    /* Group: entry_type → category → heads (from catalog) */
     var grouped = { income: {}, expense: {} };
-    list.forEach(function(x){
-      var t = x.entry_type;
-      var c = x.category || 'Uncategorized';
+    heads.forEach(function(h){
+      var t = h.entry_type;
+      var c = h.category || 'Uncategorized';
       if(!grouped[t][c]) grouped[t][c] = [];
-      grouped[t][c].push(x);
+      grouped[t][c].push(h);
     });
 
     function renderGroup(entryType, title, color){
-      if(!grouped[entryType]) return '';
       var cats = grouped[entryType];
+      if(!cats) return '';
       var catKeys = Object.keys(cats).sort();
       if(!catKeys.length) return '';
 
       var groupTotal = 0;
-      catKeys.forEach(function(k){ cats[k].forEach(function(x){ groupTotal += Number(x.total); }); });
+      catKeys.forEach(function(k){
+        cats[k].forEach(function(h){
+          var tot = totalMap[h.head_key];
+          if(tot) groupTotal += Number(tot.total);
+        });
+      });
 
-      var h = '<div style="margin-bottom:22px;">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 4px;border-bottom:2px solid ' + color + '33;margin-bottom:12px;">';
-      h += '<div style="font-size:14px;font-weight:900;color:' + color + ';letter-spacing:.4px;text-transform:uppercase;">' + title + '</div>';
-      h += '<div style="font-size:16px;font-weight:900;color:' + color + ';">' + money(groupTotal) + '</div>';
-      h += '</div>';
+      var hh = '<div style="margin-bottom:22px;">';
+      hh += '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 4px;border-bottom:2px solid ' + color + '33;margin-bottom:12px;">';
+      hh += '<div style="font-size:14px;font-weight:900;color:' + color + ';letter-spacing:.4px;text-transform:uppercase;">' + title + '</div>';
+      hh += '<div style="font-size:16px;font-weight:900;color:' + color + ';">' + money(groupTotal) + '</div>';
+      hh += '</div>';
 
       catKeys.forEach(function(cat){
-        var items = cats[cat].sort(function(a,b){ return Number(b.total) - Number(a.total); });
-        var catTotal = items.reduce(function(s,x){ return s + Number(x.total); }, 0);
-
-        h += '<div style="margin-bottom:14px;">';
-        h += '<div style="display:flex;justify-content:space-between;padding:6px 4px;font-size:11px;color:#94a3b8;font-weight:900;letter-spacing:.4px;text-transform:uppercase;">';
-        h += '<span>' + esc(cat) + '</span>';
-        h += '<span>' + money(catTotal) + '</span>';
-        h += '</div>';
-
-        items.forEach(function(x){
-          h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:#131c30;border:1px solid #1e293b;border-radius:9px;margin-bottom:4px;font-size:12.5px;cursor:pointer;" data-ldg-head="' + esc(x.head_key) + '">';
-          h += '<div style="flex:1;min-width:0;">';
-          h += '<div style="font-weight:800;color:#fff;">' + esc(x.display_name) + '</div>';
-          h += '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + x.entry_count + ' entr' + (x.entry_count === 1 ? 'y' : 'ies') + '</div>';
-          h += '</div>';
-          h += '<div style="font-weight:900;color:' + color + ';white-space:nowrap;">' + money(x.total) + '</div>';
-          h += '</div>';
+        var items = cats[cat].sort(function(a,b){ return (a.display_order||0) - (b.display_order||0); });
+        var catTotal = 0;
+        items.forEach(function(h2){
+          var tot = totalMap[h2.head_key];
+          if(tot) catTotal += Number(tot.total);
         });
-        h += '</div>';
+
+        hh += '<div style="margin-bottom:14px;">';
+        hh += '<div style="display:flex;justify-content:space-between;padding:6px 4px;font-size:11px;color:#94a3b8;font-weight:900;letter-spacing:.4px;text-transform:uppercase;">';
+        hh += '<span>' + esc(cat) + '</span>';
+        hh += '<span>' + money(catTotal) + '</span>';
+        hh += '</div>';
+
+        items.forEach(function(h2){
+          var tot = totalMap[h2.head_key];
+          var amt = tot ? Number(tot.total) : 0;
+          var cnt = tot ? tot.entry_count : 0;
+          var dim = amt === 0 ? 'opacity:.65;' : '';
+          hh += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:#131c30;border:1px solid #1e293b;border-radius:9px;margin-bottom:4px;font-size:12.5px;' + dim + '">';
+          hh += '<div style="flex:1;min-width:0;">';
+          hh += '<div style="font-weight:800;color:#fff;">' + esc(h2.display_name) +
+                (h2.auto_wired ? ' <span style="font-size:8.5px;color:#60a5fa;background:rgba(59,130,246,.12);padding:1px 6px;border-radius:5px;letter-spacing:.3px;">AUTO</span>' : ' <span style="font-size:8.5px;color:#94a3b8;background:rgba(148,163,184,.10);padding:1px 6px;border-radius:5px;letter-spacing:.3px;">MANUAL</span>') +
+                '</div>';
+          hh += '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + cnt + ' entr' + (cnt === 1 ? 'y' : 'ies') + (h2.description ? ' · ' + esc(h2.description) : '') + '</div>';
+          hh += '</div>';
+          hh += '<div style="font-weight:900;color:' + color + ';white-space:nowrap;">' + money(amt) + '</div>';
+          hh += '</div>';
+        });
+        hh += '</div>';
       });
-      h += '</div>';
-      return h;
+      hh += '</div>';
+      return hh;
     }
 
     var finalHtml = '';
@@ -1349,11 +1371,6 @@ async function loadLedgerSummary(){
     }
 
     host.innerHTML = finalHtml;
-
-    /* Click on a head → show recent entries */
-    host.querySelectorAll('[data-ldg-head]').forEach(function(el){
-      el.addEventListener('click', function(){ openLedgerHeadDetail(this.getAttribute('data-ldg-head')); });
-    });
   } catch(e){ console.error('[admin ledger]', e); }
 }
 
