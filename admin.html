@@ -1202,100 +1202,257 @@ if(!document.getElementById('zynix-adm-c4-css')){
 /* ============================================================
    LEDGER PAGE
    ============================================================ */
-var ledgerState = { type:'all', head:null };
+var ledgerState2 = { month: '', category: null, type: 'all', view: 'heads' };
 
 async function renderLedger(main){
+  var monthNow = new Date().toISOString().slice(0,7);
   main.innerHTML =
     '<div class="adm-page-title">Ledger</div>' +
-    '<div class="adm-page-sub">Platform income, expenses, rebates. Manual entries allowed for super_admin.</div>' +
-    '<button id="adm-ldg-add" style="padding:10px 16px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;margin-bottom:14px;">' +
-      '<i class="fa-solid fa-plus"></i> Add manual entry' +
-    '</button>' +
-    '<div class="adm-chips">' +
-      '<button class="adm-chip active" data-ltype="all">All</button>' +
-      '<button class="adm-chip" data-ltype="income">Income</button>' +
-      '<button class="adm-chip" data-ltype="expense">Expense</button>' +
-    '</div>' +
-    '<div id="adm-ldg-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+    '<div class="adm-page-sub">Platform income and expenses. All heads auto-aggregate from events. Manual entries allowed for super_admin.</div>' +
 
-  document.querySelectorAll('[data-ltype]').forEach(function(b){
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">' +
+      '<input id="adm-ldg-month" type="month" value="' + (ledgerState2.month || '') + '" style="padding:9px 11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:12px;outline:none;">' +
+      '<button id="adm-ldg-clear" class="adm-btn ghost" style="font-size:11px;padding:8px 12px;">All months</button>' +
+      '<button id="adm-ldg-add" class="adm-btn primary" style="font-size:11px;padding:8px 14px;margin-left:auto;"><i class="fa-solid fa-plus"></i> Add manual entry</button>' +
+    '</div>' +
+
+    '<div class="adm-chips">' +
+      '<button class="adm-chip active" data-ldg-type="all">All</button>' +
+      '<button class="adm-chip" data-ldg-type="income">Income</button>' +
+      '<button class="adm-chip" data-ldg-type="expense">Expense</button>' +
+    '</div>' +
+
+    '<div id="adm-ldg-summary" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">' +
+      '<div class="adm-kpi green"><div class="lbl">Income</div><div class="val" id="adm-ldg-tot-in">—</div></div>' +
+      '<div class="adm-kpi red"><div class="lbl">Expense</div><div class="val" id="adm-ldg-tot-ex">—</div></div>' +
+      '<div class="adm-kpi blue"><div class="lbl">Net</div><div class="val" id="adm-ldg-tot-net">—</div></div>' +
+    '</div>' +
+
+    '<div id="adm-ldg-heads"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+
+  /* Wire controls */
+  var mIn = $('adm-ldg-month');
+  if(mIn && !mIn._hooked){
+    mIn._hooked = true;
+    mIn.addEventListener('change', function(){ ledgerState2.month = this.value; loadLedgerSummary(); });
+  }
+  var cl = $('adm-ldg-clear');
+  if(cl) cl.addEventListener('click', function(){
+    ledgerState2.month = '';
+    if(mIn) mIn.value = '';
+    loadLedgerSummary();
+  });
+  var addBtn = $('adm-ldg-add');
+  if(addBtn) addBtn.addEventListener('click', openLedgerAddCatalog);
+
+  document.querySelectorAll('[data-ldg-type]').forEach(function(b){
     if(b._hooked) return; b._hooked = true;
     b.addEventListener('click', function(){
-      ledgerState.type = this.getAttribute('data-ltype');
-      document.querySelectorAll('[data-ltype]').forEach(function(x){ x.classList.remove('active'); });
+      ledgerState2.type = this.getAttribute('data-ldg-type');
+      document.querySelectorAll('[data-ldg-type]').forEach(function(x){ x.classList.remove('active'); });
       this.classList.add('active');
-      loadLedger();
+      loadLedgerSummary();
     });
   });
 
-  var addBtn = $('adm-ldg-add');
-  if(addBtn) addBtn.addEventListener('click', openLedgerAdd);
-
-  loadLedger();
+  loadLedgerSummary();
 }
 
-async function loadLedger(){
-  var host = $('adm-ldg-list'); if(!host) return;
+async function loadLedgerSummary(){
+  var host = $('adm-ldg-heads'); if(!host) return;
   host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
+
   try {
-    var r = await sb.rpc('admin_ledger_list', {
-      p_type: ledgerState.type, p_head: ledgerState.head, p_limit: 200, p_offset: 0
+    var r = await sb.rpc('admin_ledger_by_head', { p_month: ledgerState2.month || null });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;padding:20px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var rows = r.data || [];
+
+    /* Totals for KPI cards */
+    var totalIn = 0, totalEx = 0;
+    rows.forEach(function(x){
+      if(x.entry_type === 'income') totalIn += Number(x.total);
+      else totalEx += Number(x.total);
     });
-    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
-    var list = r.data || [];
+    var net = totalIn - totalEx;
+    var inEl = $('adm-ldg-tot-in'), exEl = $('adm-ldg-tot-ex'), netEl = $('adm-ldg-tot-net');
+    if(inEl) inEl.textContent = money(totalIn);
+    if(exEl) exEl.textContent = money(totalEx);
+    if(netEl){ netEl.textContent = money(net); netEl.style.color = net >= 0 ? '#10b981' : '#a16262'; }
+
+    /* Filter by type */
+    var list = rows;
+    if(ledgerState2.type !== 'all') list = list.filter(function(x){ return x.entry_type === ledgerState2.type; });
+
     if(!list.length){
-      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;">No entries yet. Add manual entry or wait for revenue.</div>';
+      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">' +
+        'No entries in this range. ' +
+        '<div style="font-size:11px;color:#64748b;margin-top:8px;">Income and expense heads will auto-populate as events occur. You can also add manual entries.</div>' +
+      '</div>';
       return;
     }
-    var h = '';
+
+    /* Group: entry_type → category → heads */
+    var grouped = { income: {}, expense: {} };
+    list.forEach(function(x){
+      var t = x.entry_type;
+      var c = x.category || 'Uncategorized';
+      if(!grouped[t][c]) grouped[t][c] = [];
+      grouped[t][c].push(x);
+    });
+
+    function renderGroup(entryType, title, color){
+      if(!grouped[entryType]) return '';
+      var cats = grouped[entryType];
+      var catKeys = Object.keys(cats).sort();
+      if(!catKeys.length) return '';
+
+      var groupTotal = 0;
+      catKeys.forEach(function(k){ cats[k].forEach(function(x){ groupTotal += Number(x.total); }); });
+
+      var h = '<div style="margin-bottom:22px;">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 4px;border-bottom:2px solid ' + color + '33;margin-bottom:12px;">';
+      h += '<div style="font-size:14px;font-weight:900;color:' + color + ';letter-spacing:.4px;text-transform:uppercase;">' + title + '</div>';
+      h += '<div style="font-size:16px;font-weight:900;color:' + color + ';">' + money(groupTotal) + '</div>';
+      h += '</div>';
+
+      catKeys.forEach(function(cat){
+        var items = cats[cat].sort(function(a,b){ return Number(b.total) - Number(a.total); });
+        var catTotal = items.reduce(function(s,x){ return s + Number(x.total); }, 0);
+
+        h += '<div style="margin-bottom:14px;">';
+        h += '<div style="display:flex;justify-content:space-between;padding:6px 4px;font-size:11px;color:#94a3b8;font-weight:900;letter-spacing:.4px;text-transform:uppercase;">';
+        h += '<span>' + esc(cat) + '</span>';
+        h += '<span>' + money(catTotal) + '</span>';
+        h += '</div>';
+
+        items.forEach(function(x){
+          h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:#131c30;border:1px solid #1e293b;border-radius:9px;margin-bottom:4px;font-size:12.5px;cursor:pointer;" data-ldg-head="' + esc(x.head_key) + '">';
+          h += '<div style="flex:1;min-width:0;">';
+          h += '<div style="font-weight:800;color:#fff;">' + esc(x.display_name) + '</div>';
+          h += '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + x.entry_count + ' entr' + (x.entry_count === 1 ? 'y' : 'ies') + '</div>';
+          h += '</div>';
+          h += '<div style="font-weight:900;color:' + color + ';white-space:nowrap;">' + money(x.total) + '</div>';
+          h += '</div>';
+        });
+        h += '</div>';
+      });
+      h += '</div>';
+      return h;
+    }
+
+    var finalHtml = '';
+    if(ledgerState2.type === 'all' || ledgerState2.type === 'income'){
+      finalHtml += renderGroup('income', 'Income', '#10b981');
+    }
+    if(ledgerState2.type === 'all' || ledgerState2.type === 'expense'){
+      finalHtml += renderGroup('expense', 'Expense', '#a16262');
+    }
+
+    host.innerHTML = finalHtml;
+
+    /* Click on a head → show recent entries */
+    host.querySelectorAll('[data-ldg-head]').forEach(function(el){
+      el.addEventListener('click', function(){ openLedgerHeadDetail(this.getAttribute('data-ldg-head')); });
+    });
+  } catch(e){ console.error('[admin ledger]', e); }
+}
+
+async function openLedgerHeadDetail(headKey){
+  var h = '<div class="adm-modal-overlay" id="adm-ldg-det" onclick="if(event.target===this)document.getElementById(\'adm-ldg-det\').remove()">' +
+    '<div class="adm-modal" style="max-width:640px;">' +
+      '<h3>' + esc(headKey) + ' · Recent entries</h3>' +
+      '<div id="adm-ldg-det-body" style="max-height:400px;overflow-y:auto;">Loading…</div>' +
+      '<div class="row"><button class="adm-btn ghost" style="flex:1;" onclick="document.getElementById(\'adm-ldg-det\').remove()">Close</button></div>' +
+    '</div>' +
+  '</div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+  try {
+    var r = await sb.rpc('admin_ledger_list', { p_type:'all', p_head: headKey, p_limit: 100, p_offset: 0 });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){ $('adm-ldg-det-body').innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;font-size:12px;">No entries.</div>'; return; }
+    var hh = '';
     list.forEach(function(x){
       var isInc = x.entry_type === 'income';
-      h += '<div style="padding:12px 14px;border-radius:10px;background:#131c30;border:1px solid #1e293b;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
+      hh += '<div style="padding:10px 12px;border-radius:9px;background:#131c30;border:1px solid #1e293b;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
         '<div style="flex:1;min-width:0;">' +
-          '<div style="font-size:12px;font-weight:800;color:#fff;">' + esc(x.head) +
+          '<div style="font-size:12px;color:#fff;font-weight:800;">' + esc(x.description || x.ref_type || 'Entry') +
             (x.is_manual ? ' <span style="font-size:9px;color:#fbbf24;background:rgba(251,191,36,.12);padding:2px 6px;border-radius:6px;">MANUAL</span>' : '') +
           '</div>' +
-          (x.description ? '<div style="font-size:11px;color:#cbd5e1;margin-top:3px;">' + esc(x.description) + '</div>' : '') +
-          '<div style="font-size:10px;color:#64748b;margin-top:4px;">' + timeAgo(x.created_at) + ' · by @' + esc(x.recorded_by_username || 'system') + '</div>' +
+          '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + timeAgo(x.created_at) + ' · @' + esc(x.recorded_by_username || 'system') + '</div>' +
         '</div>' +
-        '<div style="font-size:14px;font-weight:900;color:' + (isInc ? '#10b981' : '#a16262') + ';white-space:nowrap;">' +
-          (isInc ? '+' : '−') + money(x.amount) +
+        '<div style="font-weight:900;font-size:13px;color:' + (isInc?'#10b981':'#a16262') + ';white-space:nowrap;">' +
+          (isInc?'+':'−') + money(x.amount) +
         '</div>' +
       '</div>';
     });
-    host.innerHTML = h;
-  } catch(e){}
+    $('adm-ldg-det-body').innerHTML = hh;
+  } catch(e){ $('adm-ldg-det-body').innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;">Failed.</div>'; }
 }
 
-function openLedgerAdd(){
-  var h = '<div class="adm-modal-overlay" id="adm-ldg-modal" onclick="if(event.target===this)document.getElementById(\'adm-ldg-modal\').remove()">' +
+async function openLedgerAddCatalog(){
+  /* Load heads from catalog */
+  var heads = [];
+  try {
+    var r = await sb.rpc('admin_ledger_heads');
+    if(!r.error) heads = r.data || [];
+  } catch(e){}
+
+  var incomeOpts = heads.filter(function(h){ return h.entry_type === 'income'; }).map(function(h){
+    return '<option value="' + esc(h.head_key) + '">' + esc(h.display_name) + (h.category ? ' · ' + esc(h.category) : '') + '</option>';
+  }).join('');
+  var expenseOpts = heads.filter(function(h){ return h.entry_type === 'expense'; }).map(function(h){
+    return '<option value="' + esc(h.head_key) + '">' + esc(h.display_name) + (h.category ? ' · ' + esc(h.category) : '') + '</option>';
+  }).join('');
+
+  var h = '<div class="adm-modal-overlay" id="adm-ldg-add-modal" onclick="if(event.target===this)document.getElementById(\'adm-ldg-add-modal\').remove()">' +
     '<div class="adm-modal" onclick="event.stopPropagation()">' +
       '<h3>Add Manual Ledger Entry</h3>' +
+      '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">' +
+        'Manual entries are for things not auto-wired — infrastructure costs, one-off refunds, misc income. Choose a head from the catalog so reports stay consistent.' +
+      '</div>' +
       '<div class="adm-form-row"><label>Type</label>' +
-        '<select id="adm-ldg-type"><option value="income">Income</option><option value="expense">Expense</option></select>' +
+        '<select id="adm-ldg-type2"><option value="income">Income</option><option value="expense">Expense</option></select>' +
       '</div>' +
       '<div class="adm-form-row"><label>Head</label>' +
-        '<input id="adm-ldg-head" placeholder="e.g. Domain purchase, Refund fee, Misc income" maxlength="80">' +
+        '<select id="adm-ldg-head2">' +
+          '<optgroup label="Income" id="adm-ldg-opt-in">' + incomeOpts + '</optgroup>' +
+          '<optgroup label="Expense" id="adm-ldg-opt-ex">' + expenseOpts + '</optgroup>' +
+        '</select>' +
       '</div>' +
       '<div class="adm-form-row"><label>Amount (USD)</label>' +
-        '<input id="adm-ldg-amt" type="number" step="0.01" min="0.01" placeholder="0.00">' +
+        '<input id="adm-ldg-amt2" type="number" step="0.01" min="0.01" placeholder="0.00">' +
       '</div>' +
       '<div class="adm-form-row"><label>Description (optional)</label>' +
-        '<textarea id="adm-ldg-desc" maxlength="300" placeholder="Notes about this entry"></textarea>' +
+        '<textarea id="adm-ldg-desc2" maxlength="300" placeholder="Context for audit"></textarea>' +
       '</div>' +
       '<div class="row">' +
-        '<button class="adm-btn primary" id="adm-ldg-submit" style="flex:1;">Add entry</button>' +
-        '<button class="adm-btn ghost" onclick="document.getElementById(\'adm-ldg-modal\').remove()">Cancel</button>' +
+        '<button class="adm-btn primary" id="adm-ldg-submit2" style="flex:1;">Add entry</button>' +
+        '<button class="adm-btn ghost" onclick="document.getElementById(\'adm-ldg-add-modal\').remove()">Cancel</button>' +
       '</div>' +
     '</div>' +
   '</div>';
   document.body.insertAdjacentHTML('beforeend', h);
-  $('adm-ldg-submit').addEventListener('click', async function(){
-    var type = $('adm-ldg-type').value;
-    var head = ($('adm-ldg-head').value || '').trim();
-    var amt = parseFloat($('adm-ldg-amt').value || '0');
-    var desc = ($('adm-ldg-desc').value || '').trim();
-    if(head.length < 2){ toast('Head too short.', true); return; }
+
+  /* Filter heads by type */
+  function refreshHeads(){
+    var t = $('adm-ldg-type2').value;
+    var inG = $('adm-ldg-opt-in'), exG = $('adm-ldg-opt-ex');
+    if(!inG || !exG) return;
+    inG.style.display  = (t === 'income') ? '' : 'none';
+    exG.style.display  = (t === 'expense') ? '' : 'none';
+    var sel = $('adm-ldg-head2');
+    if(sel) sel.value = (t === 'income' ? (sel.querySelector('#adm-ldg-opt-in option')||{}).value : (sel.querySelector('#adm-ldg-opt-ex option')||{}).value) || '';
+  }
+  $('adm-ldg-type2').addEventListener('change', refreshHeads);
+  refreshHeads();
+
+  $('adm-ldg-submit2').addEventListener('click', async function(){
+    var type = $('adm-ldg-type2').value;
+    var head = $('adm-ldg-head2').value;
+    var amt = parseFloat($('adm-ldg-amt2').value || '0');
+    var desc = ($('adm-ldg-desc2').value || '').trim();
+    if(!head){ toast('Pick a head.', true); return; }
     if(!amt || amt <= 0){ toast('Enter a valid amount.', true); return; }
     this.disabled = true; this.textContent = 'Adding…';
     try {
@@ -1304,8 +1461,8 @@ function openLedgerAdd(){
       });
       if(r.error) throw r.error;
       toast('Entry added.');
-      $('adm-ldg-modal').remove();
-      loadLedger();
+      $('adm-ldg-add-modal').remove();
+      loadLedgerSummary();
     } catch(e){
       toast('Failed: ' + ((e && e.message) || 'unknown'), true);
       this.disabled = false; this.textContent = 'Add entry';
