@@ -1378,49 +1378,32 @@ async function loadSubs4(headKey){
   host.innerHTML = '<div style="text-align:center;padding:12px;color:#64748b;font-size:11px;">Loading…</div>';
 
   try {
-    var r1 = await sb.rpc('admin_subheads_list', { p_head: headKey });
-    var r2 = await sb.rpc('admin_subheads_summary', { p_head: headKey, p_month: ledgerState4.month || null });
-    var subs = (!r1.error && r1.data) ? r1.data : [];
-    var sums = (!r2.error && r2.data) ? r2.data : [];
-
-    var all = {};
-    subs.forEach(function(s){ all[s.subhead_name] = { id: s.id, total: 0, count: 0, description: s.description || '' }; });
-    sums.forEach(function(s){
-      if(!all[s.subhead_name]) all[s.subhead_name] = { id: null, total: 0, count: 0, description: '' };
-      all[s.subhead_name].total = Number(s.total) || 0;
-      all[s.subhead_name].count = Number(s.entry_count) || 0;
-    });
+    var r = await sb.rpc('admin_ledger_entries_for_head', { p_head: headKey, p_subhead: null, p_limit: 500 });
+    var entries = (!r.error && r.data) ? r.data : [];
 
     var h = '';
-
-    /* ONE button only — Add entry */
     h += '<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">';
-    h += '<button data-ldg4-add-entry-for-head="' + esc(headKey) + '" class="adm-btn primary" style="font-size:11.5px;padding:7px 14px;"><i class="fa-solid fa-plus"></i> Add entry</button>';
+    h += '<button data-ldg4-add-item="' + esc(headKey) + '" class="adm-btn primary" style="font-size:11.5px;padding:7px 14px;"><i class="fa-solid fa-plus"></i> Add</button>';
     h += '</div>';
 
-    var names = Object.keys(all).sort();
-    if(!names.length){
-      h += '<div style="padding:14px;text-align:center;color:#64748b;font-size:11.5px;background:rgba(0,0,0,.2);border-radius:8px;">No sub-sections yet. Add an entry — you can type a new sub-section name inside.</div>';
+    if(!entries.length){
+      h += '<div style="padding:14px;text-align:center;color:#64748b;font-size:11.5px;background:rgba(0,0,0,.2);border-radius:8px;">No items yet. Click "Add" above.</div>';
     } else {
-      names.forEach(function(name){
-        var e = all[name];
+      entries.forEach(function(e){
+        var name = e.subhead_name || '(no name)';
+        var isInc = e.entry_type === 'income';
+        var color = isInc ? '#10b981' : '#a16262';
         h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 11px;background:rgba(0,0,0,.25);border-radius:8px;margin-bottom:5px;">';
         h += '<div style="flex:1;min-width:0;">';
         h += '<div style="font-size:12.5px;color:#e2e8f0;font-weight:700;">' + esc(name) + '</div>';
-        h += '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + e.count + ' entr' + (e.count === 1 ? 'y' : 'ies') + (e.description ? ' · ' + esc(e.description) : '') + '</div>';
+        if(e.description) h += '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + esc(e.description) + '</div>';
         h += '</div>';
-        h += '<div style="font-size:12.5px;font-weight:900;color:#10b981;white-space:nowrap;margin-right:6px;">' + money(e.total) + '</div>';
-        if(e.id){
-          h += '<button data-ldg4-edit-sub="' + e.id + '" data-ldg4-edit-sub-name="' + esc(name) + '" data-ldg4-edit-sub-head="' + esc(headKey) + '" title="Rename" style="background:transparent;border:none;color:#60a5fa;font-size:12px;cursor:pointer;padding:5px;"><i class="fa-solid fa-pen"></i></button>';
-          h += '<button data-ldg4-del-sub="' + e.id + '" data-ldg4-del-sub-name="' + esc(name) + '" data-ldg4-del-sub-head="' + esc(headKey) + '" title="Delete" style="background:transparent;border:none;color:#a16262;font-size:12px;cursor:pointer;padding:5px;"><i class="fa-solid fa-trash"></i></button>';
-        } else {
-          h += '<span title="Orphaned — no catalog entry" style="color:#64748b;font-size:11px;padding:5px;">•</span>';
-        }
+        h += '<div style="font-size:12.5px;font-weight:900;color:' + color + ';white-space:nowrap;margin-right:6px;">' + (isInc ? '+' : '−') + money(e.amount) + '</div>';
+        h += '<button data-ldg4-edit-item="' + e.id + '" data-ldg4-edit-name="' + esc(name) + '" data-ldg4-edit-amt="' + e.amount + '" data-ldg4-edit-desc="' + esc(e.description || '') + '" data-ldg4-edit-head="' + esc(headKey) + '" data-ldg4-edit-type="' + esc(e.entry_type) + '" title="Edit" style="background:transparent;border:none;color:#60a5fa;font-size:12px;cursor:pointer;padding:5px;"><i class="fa-solid fa-pen"></i></button>';
+        h += '<button data-ldg4-del-item="' + e.id + '" data-ldg4-del-name="' + esc(name) + '" title="Delete" style="background:transparent;border:none;color:#a16262;font-size:12px;cursor:pointer;padding:5px;"><i class="fa-solid fa-trash"></i></button>';
         h += '</div>';
       });
     }
-
-    h += '<button data-ldg4-view-head="' + esc(headKey) + '" style="width:100%;margin-top:10px;padding:7px;border-radius:7px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-size:10.5px;font-weight:800;cursor:pointer;">View all entries for this head</button>';
 
     host.innerHTML = h;
     wireSubs4(headKey);
@@ -1431,286 +1414,129 @@ async function loadSubs4(headKey){
 }
 
 function wireSubs4(headKey){
-  var showBtn = document.querySelector('[data-ldg4-show-sub-form="' + headKey + '"]');
-  if(showBtn) showBtn.addEventListener('click', function(e){
+  var addBtn = document.querySelector('[data-ldg4-add-item="' + headKey + '"]');
+  if(addBtn) addBtn.addEventListener('click', function(e){
     e.stopPropagation();
-    ledgerState4.addSubForm = headKey;
-    loadSubs4(headKey);
-    setTimeout(function(){ var inp = document.getElementById('adm-sa-name-' + headKey); if(inp) inp.focus(); }, 50);
+    openItemModal(headKey, null);
   });
 
-  var cancelBtn = document.querySelector('[data-ldg4-cancel-sub]');
-  if(cancelBtn) cancelBtn.addEventListener('click', function(e){
-    e.stopPropagation();
-    ledgerState4.addSubForm = null;
-    loadSubs4(headKey);
-  });
-
-  var saveBtn = document.querySelector('[data-ldg4-save-sub="' + headKey + '"]');
-  if(saveBtn) saveBtn.addEventListener('click', async function(e){
-    e.stopPropagation();
-    var nameEl = document.getElementById('adm-sa-name-' + headKey);
-    var descEl = document.getElementById('adm-sa-desc-' + headKey);
-    var name = (nameEl && nameEl.value || '').trim();
-    var desc = (descEl && descEl.value || '').trim();
-    if(name.length < 2){ toast('Name too short.', true); if(nameEl) nameEl.focus(); return; }
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    try {
-      var r = await sb.rpc('admin_subhead_create', { p_head: headKey, p_subhead: name, p_description: desc || null });
-      if(r.error) throw r.error;
-      toast('Sub-section added.');
-      ledgerState4.addSubForm = null;
-      loadSubs4(headKey);
-    } catch(e2){
-      toast('Failed: ' + ((e2 && e2.message) || 'unknown'), true);
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save sub-section';
-    }
-  });
-
-  document.querySelectorAll('[data-ldg4-edit-sub]').forEach(function(b){
+  document.querySelectorAll('[data-ldg4-edit-item]').forEach(function(b){
     b.addEventListener('click', function(e){
       e.stopPropagation();
-      var id = this.getAttribute('data-ldg4-edit-sub');
-      var oldName = this.getAttribute('data-ldg4-edit-sub-name');
-      openEditSubModal(id, oldName, headKey);
-    });
-  });
-
-  document.querySelectorAll('[data-ldg4-del-sub]').forEach(function(b){
-    b.addEventListener('click', function(e){
-      e.stopPropagation();
-      var id = this.getAttribute('data-ldg4-del-sub');
-      var name = this.getAttribute('data-ldg4-del-sub-name');
-           if(!confirm('Delete sub-section "' + name + '"?\n\nEntries remain under the head, only the label is removed.')) return;
-      sb.rpc('admin_subhead_delete', { p_id: id }).then(function(r){
-        if(r.error){
-          var msg = r.error.message;
-          if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can delete.', true);
-          else toast('Failed: ' + msg, true);
-          return;
-        }
-        toast('Deleted.');
-        loadSubs4(headKey);
+      openItemModal(headKey, {
+        id: this.getAttribute('data-ldg4-edit-item'),
+        name: this.getAttribute('data-ldg4-edit-name'),
+        amount: this.getAttribute('data-ldg4-edit-amt'),
+        description: this.getAttribute('data-ldg4-edit-desc'),
+        head: this.getAttribute('data-ldg4-edit-head'),
+        type: this.getAttribute('data-ldg4-edit-type')
       });
     });
   });
 
-  var addForHead = document.querySelector('[data-ldg4-add-entry-for-head="' + headKey + '"]');
-  if(addForHead) addForHead.addEventListener('click', function(e){
-    e.stopPropagation();
-    openAddEntryModal(headKey, null);
-  });
-
-  document.querySelectorAll('[data-ldg4-add-entry-for-sub]').forEach(function(b){
+  document.querySelectorAll('[data-ldg4-del-item]').forEach(function(b){
     b.addEventListener('click', function(e){
       e.stopPropagation();
-      var parts = this.getAttribute('data-ldg4-add-entry-for-sub').split('|');
-      openAddEntryModal(parts[0], parts[1]);
+      var id = this.getAttribute('data-ldg4-del-item');
+      var name = this.getAttribute('data-ldg4-del-name');
+      if(!confirm('Delete "' + name + '"?')) return;
+      sb.rpc('admin_ledger_delete_entry', { p_id: id }).then(function(r){
+        if(r.error){
+          if(r.error.message.indexOf('super_admin_only') !== -1) toast('Only super_admin.', true);
+          else toast('Failed: ' + r.error.message, true);
+          return;
+        }
+        toast('Deleted.');
+        loadSubs4(headKey);
+        var totEl = document.querySelector('[data-ldg4-head="' + headKey + '"]');
+        if(totEl) setTimeout(function(){ loadLedger4(); }, 300);
+      });
     });
-  });
-
-  var viewBtn = document.querySelector('[data-ldg4-view-head="' + headKey + '"]');
-  if(viewBtn) viewBtn.addEventListener('click', function(e){
-    e.stopPropagation();
-    openHeadEntriesModal(headKey);
   });
 }
 
-function openEditSubModal(id, oldName, headKey){
+function openItemModal(headKey, existing){
   var shell = document.createElement('div');
   shell.className = 'adm-modal-overlay';
-  shell.id = 'adm-l4-editsub';
+  shell.id = 'adm-l4-item';
   shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
 
   var inner = document.createElement('div');
   inner.className = 'adm-modal';
   inner.style.maxWidth = '480px';
 
+  var isEdit = !!existing;
+  var headType = existing && existing.type ? existing.type : null;
+
   inner.innerHTML =
-    '<h3>Rename Sub-section</h3>' +
+    '<h3>' + (isEdit ? 'Edit item' : 'Add item') + '</h3>' +
     '<div class="adm-form-row">' +
       '<label>Name</label>' +
-      '<input id="adm-es-name" type="text" maxlength="80" value="' + esc(oldName) + '" placeholder="e.g. Web Developer">' +
+      '<input id="adm-it-name" type="text" maxlength="80" value="' + (existing ? esc(existing.name) : '') + '" placeholder="e.g. Admin Salary, Web Developer">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Amount (USD)</label>' +
+      '<input id="adm-it-amt" type="number" step="0.01" min="0.01" value="' + (existing ? esc(existing.amount) : '') + '" placeholder="0.00">' +
     '</div>' +
     '<div class="adm-form-row">' +
       '<label>Description (optional)</label>' +
-      '<input id="adm-es-desc" type="text" maxlength="200" placeholder="Short note">' +
-    '</div>' +
-    '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">' +
-      'Renaming a sub-section does not affect entries. New name applies to future entries.' +
+      '<input id="adm-it-desc" type="text" maxlength="200" value="' + (existing ? esc(existing.description) : '') + '" placeholder="Short note">' +
     '</div>' +
     '<div class="row">' +
-      '<button class="adm-btn primary" id="adm-es-save" style="flex:1;">Save</button>' +
-      '<button class="adm-btn ghost" id="adm-es-cancel">Cancel</button>' +
+      '<button class="adm-btn primary" id="adm-it-save" style="flex:1;">' + (isEdit ? 'Save' : 'Add') + '</button>' +
+      '<button class="adm-btn ghost" id="adm-it-cancel">Cancel</button>' +
     '</div>';
 
   shell.appendChild(inner);
   document.body.appendChild(shell);
 
-  setTimeout(function(){
-    var inp = document.getElementById('adm-es-name');
-    if(inp){ inp.focus(); inp.select(); }
-  }, 50);
+  setTimeout(function(){ var i = document.getElementById('adm-it-name'); if(i){ i.focus(); if(isEdit) i.select(); } }, 50);
+  document.getElementById('adm-it-cancel').addEventListener('click', function(){ shell.remove(); });
 
-  document.getElementById('adm-es-cancel').addEventListener('click', function(){ shell.remove(); });
-
-  document.getElementById('adm-es-save').addEventListener('click', function(){
+  document.getElementById('adm-it-save').addEventListener('click', async function(){
     var btn = this;
-    var nv = (document.getElementById('adm-es-name').value || '').trim();
-    var dv = (document.getElementById('adm-es-desc').value || '').trim();
-    if(nv.length < 2){ toast('Name too short.', true); return; }
+    var name = (document.getElementById('adm-it-name').value || '').trim();
+    var amt = parseFloat(document.getElementById('adm-it-amt').value || '0');
+    var desc = (document.getElementById('adm-it-desc').value || '').trim();
+    if(name.length < 2){ toast('Name too short.', true); return; }
+    if(!amt || amt <= 0){ toast('Amount required.', true); return; }
+
     btn.disabled = true;
-    btn.textContent = 'Saving…';
-    sb.rpc('admin_subhead_update', { p_id: id, p_name: nv, p_desc: dv || null }).then(function(r){
-      if(r.error){
-        toast('Failed: ' + r.error.message, true);
-        btn.disabled = false;
-        btn.textContent = 'Save';
-        return;
-      }
-      toast('Updated.');
-      shell.remove();
-      loadSubs4(headKey);
-    });
-  });
-}
-
-function openAddEntryModal(preselectHead, preselectSub){
-  var shell = document.createElement('div');
-  shell.className = 'adm-modal-overlay';
-  shell.id = 'adm-l4-add-modal';
-  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
-
-  var inner = document.createElement('div');
-  inner.className = 'adm-modal';
-  inner.style.maxWidth = '520px';
-
-  inner.innerHTML =
-    '<h3>Add Manual Ledger Entry</h3>' +
-    '<div class="adm-form-row"><label>Type</label>' +
-      '<select id="adm-l4-type"><option value="income">Income</option><option value="expense">Expense</option></select>' +
-    '</div>' +
-    '<div class="adm-form-row"><label>Head</label>' +
-      '<select id="adm-l4-head"></select>' +
-    '</div>' +
-    '<div class="adm-form-row"><label>Sub-section (optional)</label>' +
-      '<select id="adm-l4-sub-select"></select>' +
-      '<input id="adm-l4-sub-new" placeholder="New sub-section name" maxlength="80" style="margin-top:6px;display:none;width:100%;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">' +
-    '</div>' +
-    '<div class="adm-form-row"><label>Amount (USD)</label>' +
-      '<input id="adm-l4-amt" type="number" step="0.01" min="0.01" placeholder="0.00">' +
-    '</div>' +
-    '<div class="adm-form-row"><label>Description</label>' +
-      '<textarea id="adm-l4-desc" maxlength="300" placeholder="Context for audit"></textarea>' +
-    '</div>' +
-    '<div class="row">' +
-      '<button class="adm-btn primary" id="adm-l4-save" style="flex:1;">Add entry</button>' +
-      '<button class="adm-btn ghost" id="adm-l4-cancel">Cancel</button>' +
-    '</div>';
-
-  shell.appendChild(inner);
-  document.body.appendChild(shell);
-
-  var allHeads = [];
-
-  function refreshHeads(){
-    var t = $('adm-l4-type').value;
-    var filtered = allHeads.filter(function(h){ return h.entry_type === t; });
-    var sel = $('adm-l4-head');
-    sel.innerHTML = filtered.map(function(h){
-      return '<option value="' + esc(h.head_key) + '">' + esc(h.display_name) + '</option>';
-    }).join('');
-    if(preselectHead){
-      var found = filtered.find(function(h){ return h.head_key === preselectHead; });
-      if(found) sel.value = preselectHead;
-      preselectHead = null;
-    }
-    refreshSubs();
-  }
-
-  async function refreshSubs(){
-    var head = $('adm-l4-head').value;
-    var sel = $('adm-l4-sub-select');
-    sel.innerHTML = '<option value="">(none)</option>';
-    if(!head) return;
+    btn.textContent = isEdit ? 'Saving…' : 'Adding…';
     try {
-      var r = await sb.rpc('admin_subheads_list', { p_head: head });
-      if(!r.error && r.data){
-        r.data.forEach(function(s){
-          var opt = document.createElement('option');
-          opt.value = s.subhead_name;
-          opt.textContent = s.subhead_name;
-          sel.appendChild(opt);
+      var r;
+      if(isEdit){
+        r = await sb.rpc('admin_ledger_update_entry', {
+          p_id: existing.id, p_subhead: name, p_amount: amt,
+          p_desc: desc || null, p_head: headKey
+        });
+      } else {
+        /* Get head type first */
+        var hh = await sb.rpc('admin_ledger_heads');
+        var entryType = 'expense';
+        if(!hh.error && hh.data){
+          var found = hh.data.find(function(x){ return x.head_key === headKey; });
+          if(found) entryType = found.entry_type;
+        }
+        r = await sb.rpc('admin_ledger_add', {
+          p_entry_type: entryType, p_head: headKey, p_amount: amt,
+          p_description: desc || null, p_subhead: name
         });
       }
-      var optNew = document.createElement('option');
-      optNew.value = '__new__';
-      optNew.textContent = '+ New sub-section…';
-      sel.appendChild(optNew);
-      if(preselectSub){
-        var exists = r.data && r.data.some(function(s){ return s.subhead_name === preselectSub; });
-        if(exists) sel.value = preselectSub;
-        else { sel.value = '__new__'; $('adm-l4-sub-new').value = preselectSub; $('adm-l4-sub-new').style.display = 'block'; }
-        preselectSub = null;
-      }
-    } catch(e){}
-  }
-
-  $('adm-l4-sub-select').addEventListener('change', function(){
-    var inp = $('adm-l4-sub-new');
-    if(this.value === '__new__'){ inp.style.display = 'block'; inp.focus(); }
-    else { inp.style.display = 'none'; inp.value = ''; }
-  });
-
-  $('adm-l4-type').addEventListener('change', refreshHeads);
-  $('adm-l4-head').addEventListener('change', refreshSubs);
-
-  $('adm-l4-cancel').addEventListener('click', function(){ shell.remove(); });
-
-  $('adm-l4-save').addEventListener('click', async function(){
-    var type = $('adm-l4-type').value;
-    var head = $('adm-l4-head').value;
-    var subSel = $('adm-l4-sub-select').value;
-    var subNew = ($('adm-l4-sub-new').value || '').trim();
-    var sub = (subSel === '__new__') ? subNew : subSel;
-    var amt = parseFloat($('adm-l4-amt').value || '0');
-    var desc = ($('adm-l4-desc').value || '').trim();
-
-    if(!head){ toast('Pick a head.', true); return; }
-    if(!amt || amt <= 0){ toast('Valid amount required.', true); return; }
-    if(subSel === '__new__' && sub.length < 2){ toast('Sub-section name too short.', true); return; }
-
-    this.disabled = true;
-    this.textContent = 'Adding…';
-    try {
-      var r = await sb.rpc('admin_ledger_add', {
-        p_entry_type: type, p_head: head, p_amount: amt,
-        p_description: desc || null, p_subhead: sub || null
-      });
       if(r.error) throw r.error;
-      toast('Entry added.');
+      toast(isEdit ? 'Saved.' : 'Added.');
       shell.remove();
-      var key = head;
-      if(!ledgerState4.expanded[key]) ledgerState4.expanded[key] = true;
-      loadLedger4();
-    } catch(e2){
-      toast('Failed: ' + ((e2 && e2.message) || 'unknown'), true);
-      this.disabled = false;
-      this.textContent = 'Add entry';
+      loadSubs4(headKey);
+      setTimeout(function(){ loadLedger4(); }, 250);
+    } catch(e){
+      toast('Failed: ' + ((e && e.message) || 'unknown'), true);
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'Save' : 'Add';
     }
-  });
-
-  sb.rpc('admin_ledger_heads').then(function(r){
-    allHeads = (!r.error && r.data) ? r.data : [];
-    if(preselectHead){
-      var h = allHeads.find(function(x){ return x.head_key === preselectHead; });
-      if(h){ $('adm-l4-type').value = h.entry_type; }
-    }
-    refreshHeads();
   });
 }
+
+
 
 async function openHeadEntriesModal(headKey){
   var h = '<div class="adm-modal-overlay" id="adm-ldg4-entries" onclick="if(event.target===this)document.getElementById(\'adm-ldg4-entries\').remove()">' +
