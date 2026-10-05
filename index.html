@@ -40349,6 +40349,492 @@ setInterval(function(){
 
 console.log('[P6 Fix] videoGraveyard capped at 50');
 })();
+</script> 
+
+<!-- ============================================================
+     Ad TV v2 — Watch and Earn
+     Dot tap · Claim · Wallet routing · Full guide · Session
+     Replaces existing Ad TV display. Section 4B behaviour unchanged.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAdTVv2) return; Z.__zynixAdTVv2 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+
+/* Device fingerprint (stable per browser) */
+var _devHashCache = null;
+async function deviceHash(){
+  if(_devHashCache) return _devHashCache;
+  try {
+    var raw = [navigator.userAgent, navigator.language,
+               screen.width + 'x' + screen.height,
+               Intl.DateTimeFormat().resolvedOptions().timeZone,
+               navigator.hardwareConcurrency || 0].join('|');
+    var buf = new TextEncoder().encode(raw);
+    var h = await crypto.subtle.digest('SHA-256', buf);
+    _devHashCache = Array.from(new Uint8Array(h)).map(function(b){
+      return b.toString(16).padStart(2,'0');
+    }).join('');
+  } catch(e){
+    _devHashCache = 'dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,10);
+  }
+  return _devHashCache;
+}
+
+/* State machine */
+var S = {
+  ads: [],
+  currentAdIdx: 0,
+  activeAd: null,
+  sessionToken: null,
+  startedAt: 0,
+  dotShownAt: 0,
+  dotTapAt: null,
+  dotTimeout: null,
+  claimTimeout: null,
+  adEndTimeout: null,
+  eligibility: null,
+  running: false,
+  paused: false
+};
+
+/* ---------- HTML ---------- */
+function adTVHTML(){
+  var h = '<div id="ad-tv-v2-root" class="zn-ad-tv">';
+
+  /* Header */
+  h += '<div class="zn-ad-tv-head">';
+  h += '<div class="zn-ad-tv-brand">';
+  h += '<div class="zn-ad-tv-icon" style="width:44px;height:44px;font-size:19px;"><i class="fa-solid fa-tv"></i></div>';
+  h += '<div><div class="zn-ad-tv-name" style="font-size:18px;line-height:1.15;">Watch and Earn</div>';
+  h += '<div class="zn-ad-tv-sub">10s ad · $0.02 per view · cap $8/day</div></div></div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;">';
+  h += '<button data-adtv-help="1" title="How it works" style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;cursor:pointer;font-size:13px;font-weight:900;">?</button>';
+  h += '<div class="zn-ad-tv-phase">PHASE 2</div>';
+  h += '</div>';
+  h += '</div>';
+
+  /* Status strip */
+  h += '<div id="adtv-status-strip" style="display:flex;justify-content:space-between;align-items:center;padding:0 16px 10px;">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:800;"><i class="fa-solid fa-user-check" style="color:#10b981;"></i> <span id="adtv-elig-text">Checking…</span></div>';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:800;">Today: <span id="adtv-daily-text" style="color:#10b981;">$0.00 / $8.00</span></div>';
+  h += '</div>';
+
+  /* Stage */
+  h += '<div class="zn-ad-stage" id="adtv-stage" style="position:relative;">';
+  h += '<div class="zn-ad-stage-glow"></div>';
+  h += '<div class="zn-ad-stage-inner" id="adtv-stage-inner">';
+  h += '<div class="zn-ad-play"><i class="fa-solid fa-play"></i></div>';
+  h += '<div class="zn-ad-headline">Loading…</div>';
+  h += '</div>';
+  h += '</div>';
+
+  /* Progress + dot target */
+  h += '<div class="zn-ad-progress-track"><div class="zn-ad-progress-fill" id="adtv-progress"></div></div>';
+
+  /* Action row */
+  h += '<div id="adtv-action-row" style="padding:12px 16px 16px;display:flex;justify-content:center;">';
+  h += '<button id="adtv-claim-btn" style="display:none;padding:14px 32px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Claim $0.02</button>';
+  h += '<div id="adtv-info-msg" style="font-size:11.5px;color:#94a3b8;text-align:center;line-height:1.55;padding:6px 20px;"></div>';
+  h += '</div>';
+
+  h += '</div>';
+  return h;
+}
+
+/* ---------- Override ---------- */
+Z.renderAdTV = function(){
+  setTimeout(wireAdTV, 80);
+  setTimeout(wireAdTV, 400);
+  return adTVHTML();
+};
+
+/* Kill old module-level ad renderer (its target #zn-ad-stage won't exist) */
+Z.nextAdInTV = function(){ /* no-op, ours handles rotation */ };
+
+/* ---------- Wiring ---------- */
+var _wired = false;
+function wireAdTV(){
+  if(_wired) return;
+  var root = document.getElementById('ad-tv-v2-root');
+  if(!root) return;
+  _wired = true;
+
+  var help = root.querySelector('[data-adtv-help]');
+  if(help) help.addEventListener('click', openAdTVGuide);
+
+  var claim = document.getElementById('adtv-claim-btn');
+  if(claim) claim.addEventListener('click', onClaim);
+
+  loadEligibilityAndStart();
+}
+
+/* ---------- Eligibility ---------- */
+async function loadEligibilityAndStart(){
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  if(!Z.State.currentUser){
+    setInfo('Log in to watch and earn.');
+    return;
+  }
+  try {
+    var r = await c.rpc('ad_check_eligibility');
+    if(r.error){ setInfo('Could not check eligibility.'); return; }
+    S.eligibility = r.data;
+    paintEligibility();
+    if(r.data && r.data.can_earn === true){
+      loadAdsList().then(startNextAd);
+    }
+  } catch(e){
+    setInfo('Could not check eligibility.');
+  }
+}
+
+function paintEligibility(){
+  var el = document.getElementById('adtv-elig-text');
+  var daily = document.getElementById('adtv-daily-text');
+  if(S.eligibility && S.eligibility.daily_earned != null && daily){
+    daily.textContent = money(S.eligibility.daily_earned) + ' / $8.00';
+  }
+  if(!el || !S.eligibility) return;
+  var e = S.eligibility;
+  if(e.can_earn){
+    el.innerHTML = '<span style="color:#10b981;">Eligible</span>';
+    return;
+  }
+  var reasons = {
+    account_too_young: 'Account must be 90 days old',
+    not_active_user: 'Active User status required',
+    tier_too_low: 'Upgrade to Pro or higher',
+    daily_cap_reached: 'Daily cap reached · come back tomorrow'
+  };
+  el.innerHTML = '<span style="color:#a18554;">' + esc(reasons[e.reason] || 'Not eligible') + '</span>';
+}
+
+function setInfo(msg){
+  var el = document.getElementById('adtv-info-msg');
+  if(el) el.innerHTML = msg;
+}
+
+/* ---------- Load ads ---------- */
+async function loadAdsList(){
+  try {
+    if(!Z.State.adminAds || !Z.State.adminAds.length){
+      if(typeof Z.loadAds === 'function'){ await Z.loadAds(); }
+    }
+    S.ads = (Z.State.adminAds || []).filter(function(a){ return a && a.is_active !== false; });
+  } catch(e){}
+  return S.ads;
+}
+
+/* ---------- Session flow ---------- */
+async function startNextAd(){
+  if(S.running) return;
+  if(!S.ads.length){
+    setInfo('No ads available right now. Check back soon.');
+    return;
+  }
+  if(!S.eligibility || !S.eligibility.can_earn){
+    setInfo('You are not eligible for ad earnings yet. Tap ? to see why.');
+    return;
+  }
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  /* Try ads in order, skip already-watched-today */
+  var tried = 0;
+  var chosen = null, token = null;
+  var devHash = await deviceHash();
+
+  while(tried < S.ads.length){
+    var ad = S.ads[S.currentAdIdx % S.ads.length];
+    S.currentAdIdx = (S.currentAdIdx + 1) % S.ads.length;
+    tried++;
+    try {
+      var r = await c.rpc('ad_start_view', { p_ad_id: ad.id, p_device_hash: devHash });
+      if(r.error){
+        if(r.data && r.data.error === 'already_watched_today'){ continue; }
+        if(r.data && r.data.error === 'daily_cap_reached'){ S.eligibility.can_earn = false; paintEligibility(); setInfo('Daily cap reached. Come back tomorrow.'); return; }
+        if(r.data && r.data.error === 'device_collision'){ setInfo('Ad earning is not available on this device. One device = one earning account.'); return; }
+        continue;
+      }
+      if(r.data && r.data.ok){
+        chosen = ad; token = r.data.token; break;
+      }
+    } catch(e){ continue; }
+  }
+
+  if(!chosen){
+    setInfo('All ads watched today. Come back tomorrow.');
+    return;
+  }
+
+  S.activeAd = chosen;
+  S.sessionToken = token;
+  S.startedAt = Date.now();
+  S.dotShownAt = 0;
+  S.dotTapAt = null;
+  S.running = true;
+  paintStage();
+  paintProgress(0);
+  scheduleDot();
+  scheduleAdEnd();
+}
+
+function paintStage(){
+  var stage = document.getElementById('adtv-stage');
+  if(!stage || !S.activeAd) return;
+  var ad = S.activeAd;
+
+  var mediaHtml = '';
+  if(ad.media_type === 'video' && ad.media_url){
+    mediaHtml = '<video id="adtv-video" src="' + esc(ad.media_url) + '" autoplay muted playsinline preload="metadata" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;"></video>';
+  } else if(ad.media_type === 'image' && ad.media_url){
+    mediaHtml = '<img src="' + esc(ad.media_url) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;">';
+  } else {
+    var bgMap = { 'deep-blue':'linear-gradient(135deg,#1e3a8a,#312e81)', 'navy':'linear-gradient(135deg,#0f172a,#1e293b)', 'purple':'linear-gradient(135deg,#4c1d95,#5b21b6)', 'teal':'linear-gradient(135deg,#0d9488,#0f766e)', 'green':'linear-gradient(135deg,#065f46,#047857)', 'burgundy':'linear-gradient(135deg,#7f1d1d,#991b1b)', 'rose':'linear-gradient(135deg,#9f1239,#be123c)', 'plum':'linear-gradient(135deg,#581c87,#701a75)', 'slate':'linear-gradient(135deg,#334155,#475569)' };
+    mediaHtml = '<div style="position:absolute;inset:0;background:' + (bgMap[ad.bg_id] || bgMap['deep-blue']) + ';z-index:1;"></div>';
+  }
+
+  var overlay = '<div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,.15));z-index:2;pointer-events:none;"></div>';
+  var content = '<div style="position:absolute;left:0;right:0;bottom:0;padding:22px;z-index:3;pointer-events:none;">';
+  if(ad.heading) content += '<div style="font-size:24px;font-weight:900;color:#fff;line-height:1.15;text-shadow:0 2px 12px rgba(0,0,0,.65);">' + esc(ad.heading) + '</div>';
+  if(ad.subtitle) content += '<div style="font-size:13px;color:rgba(255,255,255,.88);margin-top:8px;line-height:1.5;text-shadow:0 1px 8px rgba(0,0,0,.6);">' + esc(ad.subtitle) + '</div>';
+  content += '</div>';
+
+  var dot = '<div id="adtv-dot" style="display:none;position:absolute;width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);box-shadow:0 0 0 4px rgba(16,185,129,.35),0 0 20px rgba(16,185,129,.85);cursor:pointer;z-index:10;animation:adtvPulse 1s ease-in-out infinite;"></div>';
+  var dotStyle = '<style>@keyframes adtvPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.75}}</style>';
+
+  stage.innerHTML = mediaHtml + overlay + content + dot + dotStyle;
+
+  /* Ensure video plays */
+  var v = document.getElementById('adtv-video');
+  if(v){
+    v.addEventListener('loadeddata', function(){
+      try { v.play().catch(function(){ v.muted = true; v.play().catch(function(){}); }); } catch(e){}
+    });
+  }
+}
+
+/* ---------- Dot ---------- */
+function scheduleDot(){
+  var delay = 3000 + Math.floor(Math.random() * 4000); /* 3–7 sec */
+  S.dotTimeout = setTimeout(showDot, delay);
+}
+
+function showDot(){
+  if(!S.running) return;
+  var dot = document.getElementById('adtv-dot');
+  var stage = document.getElementById('adtv-stage');
+  if(!dot || !stage) return;
+  var sw = stage.clientWidth, sh = stage.clientHeight;
+  var pad = 40;
+  var x = pad + Math.random() * Math.max(20, sw - 2*pad - 32);
+  var y = pad + Math.random() * Math.max(20, sh - 2*pad - 32);
+  dot.style.left = x + 'px';
+  dot.style.top = y + 'px';
+  dot.style.display = 'block';
+  S.dotShownAt = Date.now();
+  dot.addEventListener('click', onDotTap);
+  /* Auto-hide after 3 sec if user doesn't tap */
+  setTimeout(function(){
+    if(S.dotShownAt && !S.dotTapAt){
+      S.dotShownAt = 0;
+      if(dot && dot.parentNode) dot.style.display = 'none';
+    }
+  }, 3000);
+}
+
+function onDotTap(e){
+  if(e) e.stopPropagation();
+  var dot = document.getElementById('adtv-dot');
+  if(dot){ dot.style.display = 'none'; dot.style.background = '#10b981'; }
+  S.dotTapAt = Date.now() - S.dotShownAt;
+  Z.haptic(15);
+}
+
+/* ---------- Ad end ---------- */
+function scheduleAdEnd(){
+  S.adEndTimeout = setTimeout(onAdEnd, 10000);
+  /* progress bar */
+  var p = document.getElementById('adtv-progress');
+  var start = Date.now();
+  var iv = setInterval(function(){
+    if(!S.running){ clearInterval(iv); return; }
+    var el = Date.now() - start;
+    var pct = Math.min(100, (el / 10000) * 100);
+    if(p) p.style.width = pct + '%';
+    if(pct >= 100) clearInterval(iv);
+  }, 100);
+}
+
+function onAdEnd(){
+  S.running = false;
+  if(!S.dotTapAt){
+    /* no dot tap — no earning */
+    setInfo('Ad completed but dot was not tapped. No earning this time.');
+    setTimeout(nextRound, 2500);
+    return;
+  }
+  var btn = document.getElementById('adtv-claim-btn');
+  if(btn){
+    btn.style.display = 'inline-block';
+    btn.disabled = false;
+    btn.textContent = 'Claim $0.02';
+    btn.dataset.claimStart = Date.now();
+  }
+  setInfo('Tap Claim within 3 seconds.');
+  /* auto-expire claim */
+  setTimeout(function(){
+    if(S.running) return;
+    if(btn && btn.style.display !== 'none'){
+      btn.style.display = 'none';
+      setInfo('Claim missed. Starting next ad.');
+      setTimeout(nextRound, 1500);
+    }
+  }, 3000);
+}
+
+async function onClaim(){
+  var btn = document.getElementById('adtv-claim-btn');
+  if(!btn || btn.style.display === 'none') return;
+  var claimMs = Date.now() - Number(btn.dataset.claimStart || Date.now());
+  btn.disabled = true; btn.textContent = 'Claiming…';
+
+  var c = Z.sb && Z.sb();
+  if(!c || !S.sessionToken){ setInfo('Session expired.'); return; }
+
+  try {
+    var r = await c.rpc('ad_claim_earn', {
+      p_session_token: S.sessionToken,
+      p_dot_tap_ms: S.dotTapAt,
+      p_claim_ms: claimMs
+    });
+    if(r.error) throw r.error;
+    var d = r.data || {};
+    btn.style.display = 'none';
+
+    if(d.wallet_credited && d.credited_amount > 0){
+      Z.toast('+' + money(d.credited_amount) + ' added to Cash wallet');
+      if(typeof Z.animateDollar === 'function'){ Z.animateDollar(Number(d.credited_amount)); }
+      if(typeof Z.refreshSession === 'function'){ try { await Z.refreshSession(); } catch(e){} }
+      if(typeof Z.updateHeader === 'function'){ try { Z.updateHeader(); } catch(e){} }
+      if(typeof Z.incWalletBadge === 'function'){ Z.incWalletBadge(1); }
+    } else if(d.pending > 0){
+      Z.toast('+' + money(d.earned) + ' earned · ' + money(d.pending) + ' pending batch');
+    }
+
+    /* refresh eligibility for daily counter */
+    try {
+      var e = await c.rpc('ad_check_eligibility');
+      if(!e.error){ S.eligibility = e.data; paintEligibility(); }
+    } catch(e2){}
+
+    setInfo('Nice. Next ad loading…');
+    S.sessionToken = null;
+    setTimeout(nextRound, 1200);
+  } catch(e){
+    var msg = (e && e.message) || 'unknown';
+    if(msg.indexOf('daily_cap_reached') !== -1){
+      setInfo('Daily cap reached. Come back tomorrow.');
+    } else if(msg.indexOf('session_expired') !== -1 || msg.indexOf('session_invalid') !== -1){
+      setInfo('Session expired. Starting next ad.');
+    } else {
+      setInfo('Claim failed. Starting next ad.');
+    }
+    btn.style.display = 'none';
+    setTimeout(nextRound, 1800);
+  }
+}
+
+function nextRound(){
+  if(Z.State.currentView !== 'public-home') return;
+  var stage = document.getElementById('adtv-stage-inner');
+  if(stage){
+    stage.innerHTML = '<div class="zn-ad-play"><i class="fa-solid fa-play"></i></div><div class="zn-ad-headline">Loading next…</div>';
+  }
+  S.dotTapAt = null;
+  S.sessionToken = null;
+  setTimeout(startNextAd, 400);
+}
+
+/* ---------- Pause on leave (Design D: no resume, next session new) ---------- */
+function pauseAdTV(){
+  S.paused = true;
+  if(S.dotTimeout) clearTimeout(S.dotTimeout);
+  if(S.claimTimeout) clearTimeout(S.claimTimeout);
+  if(S.adEndTimeout) clearTimeout(S.adEndTimeout);
+  var v = document.getElementById('adtv-video');
+  if(v){ try { v.pause(); } catch(e){} }
+  S.running = false;
+  S.sessionToken = null;
+}
+
+var _prevShow = Z.showView;
+Z.showView = function(view, param){
+  if(Z.State.currentView === 'public-home' && view !== 'public-home'){
+    pauseAdTV();
+    _wired = false;
+  }
+  var r = _prevShow.apply(this, arguments);
+  if(view === 'public-home'){
+    _wired = false;
+    setTimeout(wireAdTV, 120);
+    setTimeout(wireAdTV, 500);
+  }
+  return r;
+};
+
+/* ---------- Help guide ---------- */
+function openAdTVGuide(){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;" onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:90vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header" style="align-items:center;display:flex;justify-content:space-between;">';
+  h += '<h3 style="font-size:14px;font-weight:900;">Watch and Earn — Full Guide</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+
+  function sec(title, body){
+    return '<div style="margin-bottom:16px;">' +
+      '<div style="font-size:12.5px;font-weight:900;color:#10b981;margin-bottom:6px;">' + title + '</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">' + body + '</div>' +
+    '</div>';
+  }
+
+  h += sec('What it is', 'Brands publish ads on ZYNIX. You watch, and you earn real money. 10-second ads, $0.02 per completed view. Up to $8.00 per day.');
+  h += sec('Rates', '· 10-second ad → <b style="color:#fff;">$0.02</b><br>· Daily cap → <b style="color:#fff;">$8.00</b> (400 ads/day)<br>· No monthly cap. Daily cap resets each midnight UTC.');
+  h += sec('How to earn', '· An ad plays. Watch it.<br>· Between 3 and 7 seconds in, a <b style="color:#10b981;">green-blue dot</b> appears.<br>· Tap the dot within 3 seconds.<br>· When the ad ends, tap <b>Claim</b> within 3 seconds.<br>· Your $0.02 is added to your pending batch.');
+  h += sec('Payout to wallet', 'Every 20 ads ($0.40) are grouped and credited as one wallet deposit. You will see a toast, a floating dollar animation, and a wallet badge increment. No micro-transactions.');
+  h += sec('Eligibility', 'All four must be true:<br>· Email verified<br>· Account is at least <b style="color:#fff;">90 days</b> old<br>· <b style="color:#fff;">Active User</b> status is met this month<br>· Subscription tier is <b style="color:#fff;">Pro or higher</b> ($20+)');
+  h += sec('Anti-fraud rules', '· <b>One device = one earning account.</b> Same device_hash across two accounts → Ad earning disabled on that device.<br>· Same ad can only be watched once per day per user.<br>· Dot tap window: 200ms–3000ms. Instant taps and slow taps are rejected.<br>· Tab hidden or navigate away = ad pauses. Return = new ad session. <b>No resume.</b>');
+  h += sec('Fake accounts and bot farming', '<b style="color:#a16262;">Zero tolerance.</b> Automated watching, running ads in the background, or using multiple accounts to farm rewards is a permanent ban. Wallet frozen. All pending credits forfeited. This is enforced by device-hash, timing analysis, and manual review of high earners.');
+  h += sec('What you cannot do', '· Watch in background or on a hidden tab<br>· Use scripts, extensions, or automation<br>· Run two accounts on one device<br>· Miss the dot or the claim — you get nothing for that ad');
+  h += sec('Advertiser commitment', 'Every completed view is verified server-side. Advertiser is charged only for real, verified views. Paused, skipped, and bot views are excluded.');
+
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:16px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:13px;cursor:pointer;">Close</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+}
+
+/* ---------- Boot ---------- */
+if(Z.State.currentUser){
+  setTimeout(function(){ if(Z.State.currentView === 'public-home') wireAdTV(); }, 1500);
+}
+
+console.log('[Ad TV v2] ready — dot tap · claim · wallet batch · full guide');
+})();
 </script>     
      
 </body>
