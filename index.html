@@ -40835,7 +40835,89 @@ if(Z.State.currentUser){
 
 console.log('[Ad TV v2] ready — dot tap · claim · wallet batch · full guide');
 })();
-</script>     
+</script>
+
+<!-- Ad TV v2 Cosmetic Fix — show proper reason instead of "Loading…" -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAdTVCosmetic) return; Z.__zynixAdTVCosmetic = true;
+
+/* Replace the eligibility-check UI update to also paint the stage */
+var _prevPaint = Z.paintEligibility;
+/* paintEligibility is private to Ad TV v2 IIFE — cannot be overridden directly.
+   Instead: patch the stage after eligibility check runs. */
+
+function paintStageReason(reason){
+  var stageInner = document.getElementById('adtv-stage-inner');
+  if(!stageInner) return;
+  var reasons = {
+    account_too_young: 'Account must be 90 days old',
+    not_active_user: 'Active User status required this month',
+    tier_too_low: 'Upgrade to Pro ($25) or higher',
+    daily_cap_reached: 'Daily cap reached · Come back tomorrow',
+    not_logged_in: 'Please log in to earn',
+    no_ads: 'No ads available right now'
+  };
+  var msg = reasons[reason] || (reason ? reason.replace(/_/g,' ') : 'Not eligible');
+  stageInner.innerHTML =
+    '<div class="zn-ad-play" style="background:rgba(161,133,84,.15);border-color:rgba(161,133,84,.4);">' +
+      '<i class="fa-solid fa-lock" style="color:#a18554;"></i>' +
+    '</div>' +
+    '<div class="zn-ad-headline" style="color:#e2e8f0;">' + msg + '</div>' +
+    '<div class="zn-ad-desc">Tap the <b>?</b> button for full rules and how to become eligible.</div>';
+}
+
+function paintStageReady(){
+  var stageInner = document.getElementById('adtv-stage-inner');
+  if(!stageInner) return;
+  stageInner.innerHTML =
+    '<div class="zn-ad-play"><i class="fa-solid fa-play"></i></div>' +
+    '<div class="zn-ad-headline">Loading ad…</div>';
+}
+
+function paintStageDone(){
+  var stageInner = document.getElementById('adtv-stage-inner');
+  if(!stageInner) return;
+  stageInner.innerHTML =
+    '<div class="zn-ad-play" style="background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.4);">' +
+      '<i class="fa-solid fa-check" style="color:#10b981;"></i>' +
+    '</div>' +
+    '<div class="zn-ad-headline" style="color:#10b981;">All ads watched today</div>' +
+    '<div class="zn-ad-desc">Daily cap reached. Come back tomorrow for more earnings.</div>';
+}
+
+/* Watch the ad-stage DOM — when eligibility changes, update the stage.
+   This is non-invasive: it observes but does not modify v2's flow. */
+var _lastReason = '__init__';
+setInterval(function(){
+  if(Z.State.currentView !== 'public-home') return;
+  var stageInner = document.getElementById('adtv-stage-inner');
+  if(!stageInner) return;
+
+  /* Only act when v2 shows the loading placeholder AND user is ineligible */
+  var txt = (stageInner.textContent || '').toLowerCase();
+  var isPlaceholder = txt.indexOf('loading') !== -1;
+  if(!isPlaceholder) return;
+
+  /* Peek at eligibility — cached by v2's own calls; re-check cheaply */
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  if(!Z.State.currentUser){ paintStageReason('not_logged_in'); return; }
+
+  c.rpc('ad_check_eligibility').then(function(r){
+    if(r.error) return;
+    var e = r.data || {};
+    if(e.can_earn){ paintStageReady(); }
+    else if(e.reason){ paintStageReason(e.reason); }
+    else { paintStageReason('unknown'); }
+  }).catch(function(){});
+}, 1500);
+
+console.log('[Ad TV Cosmetic] stage now shows reason instead of Loading…');
+})();
+</script>
      
 </body>
 </html>
