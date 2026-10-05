@@ -40194,6 +40194,161 @@ try { var _existing = _origSb(); if(_existing) _patch(_existing); } catch(e){}
 
 console.log('[CFAR Retry Fix v1] active');
 })();
+</script>
+
+<!-- P1 Fix — wire _blockedIds so block/unblock affects public feeds -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixP1Fix) return; Z.__zynixP1Fix = true;
+
+Z.State._blockedIds = Z.State._blockedIds || [];
+
+async function loadBlockedIds(){
+  var u = Z.State.currentUser;
+  if(!u){ Z.State._blockedIds = []; return; }
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+  try {
+    var r = await c.from('user_blocks').select('blocked_id').eq('blocker_id', u.id);
+    if(!r.error && r.data){
+      Z.State._blockedIds = r.data.map(function(x){ return x.blocked_id; });
+    }
+  } catch(e){}
+}
+Z._loadBlockedIds = loadBlockedIds;
+
+/* Update cache when user blocks/unblocks */
+var _origToggle = Z._toggleBlock;
+if(typeof _origToggle === 'function'){
+  Z._toggleBlock = async function(userId, isCurrentlyBlocked){
+    var r = await _origToggle.apply(this, arguments);
+    try {
+      var arr = Z.State._blockedIds || [];
+      if(isCurrentlyBlocked){
+        Z.State._blockedIds = arr.filter(function(id){ return id !== userId; });
+      } else {
+        if(arr.indexOf(userId) === -1) arr.push(userId);
+        Z.State._blockedIds = arr;
+      }
+    } catch(e){}
+    return r;
+  };
+}
+
+/* Load on session refresh */
+var _prevRefresh = Z.refreshSession;
+if(typeof _prevRefresh === 'function'){
+  Z.refreshSession = async function(){
+    var r = await _prevRefresh.apply(this, arguments);
+    if(Z.State.currentUser){ await loadBlockedIds(); }
+    return r;
+  };
+}
+
+/* Load on reloadData */
+var _prevReload = Z.reloadData;
+if(typeof _prevReload === 'function'){
+  Z.reloadData = async function(){
+    var r = await _prevReload.apply(this, arguments);
+    if(Z.State.currentUser){ await loadBlockedIds(); }
+    return r;
+  };
+}
+
+/* Clear on logout */
+var _prevLogout = Z.logout;
+if(typeof _prevLogout === 'function'){
+  Z.logout = async function(){
+    Z.State._blockedIds = [];
+    return _prevLogout.apply(this, arguments);
+  };
+}
+
+/* Initial load */
+setTimeout(function(){ if(Z.State.currentUser) loadBlockedIds(); }, 2500);
+
+console.log('[P1 Fix] _blockedIds wired');
+})();
+</script>
+
+<!-- P4 Fix — Locked videos open Bond sheet (ZYNIX subscription = Bond) -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixP4Fix) return; Z.__zynixP4Fix = true;
+
+/* In ZYNIX, "Bond" = subscription (like YouTube channel sub).
+   Locked videos previously opened a "coming soon" stub.
+   Now they open the real Bond flow. */
+Z.openSubscribeSheet = function(creatorId){
+  if(!creatorId) return;
+  var me = Z.State.currentUser;
+  if(!me){ Z.openAuthModal('login'); return; }
+  if(me.id === creatorId){ Z.toast('You cannot bond your own SPACE.'); return; }
+
+  var c = Z.sb && Z.sb();
+  if(!c) return;
+
+  c.rpc('space_bond_state', { p_creator_id: creatorId }).then(function(r){
+    if(r.error || !r.data){ Z.toast('Could not load bond state.'); return; }
+    var d = r.data;
+    if(d.bonded){
+      Z.toast('You are already bonded to this SPACE.');
+      return;
+    }
+    var rate = Number(d.rate) || 0;
+    var rateTxt = rate > 0 ? ('$' + rate.toFixed(2)) : 'Free';
+
+    var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">';
+    h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:70vh;">';
+    h += '<div class="sheet-handle"></div>';
+    h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Bond to this SPACE</h3>';
+    h += '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+    h += '<div class="sheet-body" style="padding:16px;">';
+    h += '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.7;margin-bottom:16px;">Bonding unlocks this creator\'s Full Videos. It works like a channel subscription on YouTube.</div>';
+    h += '<div style="padding:14px;border-radius:12px;background:rgba(0,0,0,.25);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">';
+    h += '<span style="font-size:12px;color:#94a3b8;">Monthly</span>';
+    h += '<span style="font-size:20px;font-weight:900;color:#10b981;">' + rateTxt + '</span>';
+    h += '</div>';
+    h += '<button id="zynix-p4-bond-confirm" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">Confirm Bond</button>';
+    h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+    h += '</div></div></div>';
+    Z.openSheet(h);
+
+    setTimeout(function(){
+      var btn = document.getElementById('zynix-p4-bond-confirm');
+      if(btn) btn.addEventListener('click', function(){
+        Z.closeSheet();
+        if(typeof Z.bondUser === 'function') Z.bondUser(creatorId);
+      });
+    }, 40);
+  }).catch(function(){ Z.toast('Could not load bond state.'); });
+};
+
+console.log('[P4 Fix] Locked videos open Bond sheet');
+})();
+</script>
+
+<!-- P6 Fix — cap videoGraveyard to 50 entries -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixP6Fix) return; Z.__zynixP6Fix = true;
+
+/* Video graveyard grows unbounded on heavy navigation.
+   Cap it to the last 50 detached videos. */
+setInterval(function(){
+  if(Z._videoGraveyard && Z._videoGraveyard.length > 50){
+    Z._videoGraveyard = Z._videoGraveyard.slice(-50);
+  }
+}, 5000);
+
+console.log('[P6 Fix] videoGraveyard capped at 50');
+})();
 </script>     
      
 </body>
