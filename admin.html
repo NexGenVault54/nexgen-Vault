@@ -2058,6 +2058,397 @@ console.log('[Admin Final Dispatcher] active');
 })();
 </script>
 
+<!-- ============================================================
+     ZYNIX Admin — Chunk 7A
+     User List Advanced + Full Detail Page (replaces modal)
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin;
+if(!Admin) return;
+if(Admin.__chunk7A) return; Admin.__chunk7A = true;
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  if(s < 2592000) return Math.floor(s/86400) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+/* ============================================================
+   USER LIST (Advanced) — overrides Chunk 2's version
+   ============================================================ */
+var userState7 = { search:'', filter:'all', list:[] };
+
+async function renderUsersAdvanced(main){
+  main.innerHTML =
+    '<div class="adm-page-title">Users</div>' +
+    '<div class="adm-page-sub">Search, view full profile, and manage user accounts.</div>' +
+    '<input id="adm-u7-search" class="adm-search" placeholder="Search by name, username, or email…">' +
+    '<div class="adm-chips">' +
+      '<button class="adm-chip active" data-u7-filter="all">All</button>' +
+      '<button class="adm-chip" data-u7-filter="active">Active</button>' +
+      '<button class="adm-chip" data-u7-filter="paid">Paid tiers</button>' +
+      '<button class="adm-chip" data-u7-filter="banned">Banned</button>' +
+    '</div>' +
+    '<div id="adm-u7-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+
+  var search = $('adm-u7-search');
+  if(search && !search._hooked7){
+    search._hooked7 = true;
+    var deb = null;
+    search.addEventListener('input', function(){
+      userState7.search = this.value.trim();
+      if(deb) clearTimeout(deb);
+      deb = setTimeout(loadUsers7, 250);
+    });
+  }
+  document.querySelectorAll('[data-u7-filter]').forEach(function(b){
+    if(b._hooked7) return; b._hooked7 = true;
+    b.addEventListener('click', function(){
+      userState7.filter = this.getAttribute('data-u7-filter');
+      document.querySelectorAll('[data-u7-filter]').forEach(function(x){ x.classList.remove('active'); });
+      this.classList.add('active');
+      loadUsers7();
+    });
+  });
+  loadUsers7();
+}
+
+async function loadUsers7(){
+  var host = $('adm-u7-list'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  try {
+    var r = await sb.rpc('admin_list_users', {
+      p_search: userState7.search || null,
+      p_filter: userState7.filter, p_limit: 100, p_offset: 0
+    });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    userState7.list = r.data || [];
+    if(!userState7.list.length){
+      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;">No users match.</div>';
+      return;
+    }
+    var h = '';
+    userState7.list.forEach(function(u){
+      var pill = u.is_banned
+        ? '<span style="font-size:9.5px;font-weight:900;padding:3px 8px;border-radius:10px;background:rgba(161,98,98,.15);color:#a16262;border:1px solid rgba(161,98,98,.4);">BANNED</span>'
+        : (u.package && u.package !== 'free'
+           ? '<span style="font-size:9.5px;font-weight:900;padding:3px 8px;border-radius:10px;background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.35);">' + esc(String(u.package).toUpperCase()) + '</span>'
+           : '<span style="font-size:9.5px;font-weight:900;padding:3px 8px;border-radius:10px;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.3);">FREE</span>');
+
+      h += '<div data-u7-open="' + esc(u.id) + '" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:6px;cursor:pointer;">' +
+        '<img src="' + esc(u.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(u.name||'U') + '&background=111827&color=34d399')) + '" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+            '<span style="font-size:13px;font-weight:800;color:#fff;">' + esc(u.name || u.username || 'User') + '</span>' + pill +
+          '</div>' +
+          '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">' + esc(u.email || u.username || '') + '</div>' +
+        '</div>' +
+        '<div style="font-size:10px;color:#64748b;text-align:right;flex-shrink:0;">' +
+          '<div>' + timeAgo(u.created_at) + '</div>' +
+          '<div>' + money(u.wallet_cash) + ' · ' + money(u.wallet_bounty) + '</div>' +
+        '</div>' +
+        '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i>' +
+      '</div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-u7-open]').forEach(function(el){
+      el.addEventListener('click', function(){ openUserDetailPage(this.getAttribute('data-u7-open')); });
+    });
+  } catch(e){ console.error('[admin users7]', e); }
+}
+
+/* ============================================================
+   FULL USER DETAIL PAGE (not modal)
+   ============================================================ */
+async function openUserDetailPage(userId){
+  var main = $('adm-main'); if(!main) return;
+  main.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i> Loading user…</div>';
+
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+
+  try {
+    var r = await sb.rpc('admin_user_detail', { p_user_id: userId });
+    if(r.error){ main.innerHTML = '<div style="padding:40px;text-align:center;color:#a16262;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var u = r.data || {};
+
+    var tierLabel = (u.package && u.package !== 'free') ? String(u.package).toUpperCase() : 'FREE';
+    var tierColor = (u.package && u.package !== 'free') ? '#10b981' : '#94a3b8';
+    var bannedBanner = u.is_banned
+      ? '<div style="padding:12px;border-radius:10px;background:rgba(161,98,98,.12);border:1px solid rgba(161,98,98,.5);color:#fca5a5;font-size:12.5px;margin-bottom:14px;"><b>BANNED</b> · ' + esc(u.ban_reason || 'No reason recorded') + ' · ' + timeAgo(u.banned_at) + '</div>'
+      : '';
+
+    var fvColors = { approved: '#10b981', pending: '#fbbf24', rejected: '#a16262', none: '#64748b' };
+    var fvColor = fvColors[u.fv_status] || '#64748b';
+    var fvLabel = u.fv_status === 'none' ? 'Not Applied' : u.fv_status.toUpperCase();
+
+    /* Pending count total */
+    var pendingTotal = (u.reports_against||0) + (u.pending_appeals||0) + (u.fv_status==='pending' ? 1 : 0);
+
+    var h = '';
+
+    /* Back button */
+    h += '<button id="adm-u7-back" style="padding:8px 14px;border-radius:9px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:800;font-size:11.5px;cursor:pointer;margin-bottom:16px;">' +
+      '<i class="fa-solid fa-arrow-left"></i> Back to Users</button>';
+
+    h += bannedBanner;
+
+    /* Identity header */
+    h += '<div style="display:flex;gap:14px;align-items:flex-start;padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(59,130,246,.05));border:1px solid rgba(16,185,129,.3);margin-bottom:16px;">' +
+      '<img src="' + esc(u.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(u.name||'U') + '&background=111827&color=34d399')) + '" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:2px solid rgba(16,185,129,.5);flex-shrink:0;">' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:19px;font-weight:900;color:#fff;">' + esc(u.name || 'Unnamed') + '</div>' +
+        '<div style="font-size:12px;color:#94a3b8;margin-top:2px;">@' + esc(u.username || '—') + ' · ' + esc(u.email || '—') + '</div>' +
+        (u.profession ? '<div style="font-size:11.5px;color:#cbd5e1;margin-top:6px;">' + esc(u.profession) + '</div>' : '') +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">' +
+          '<span style="font-size:10px;font-weight:900;padding:4px 10px;border-radius:10px;background:' + tierColor + '22;color:' + tierColor + ';border:1px solid ' + tierColor + '66;">' + tierLabel + '</span>' +
+          '<span style="font-size:10px;font-weight:900;padding:4px 10px;border-radius:10px;background:' + fvColor + '22;color:' + fvColor + ';border:1px solid ' + fvColor + '66;"><i class="fa-solid fa-film"></i> FV ' + fvLabel + '</span>' +
+          (u.active_this_month ? '<span style="font-size:10px;font-weight:900;padding:4px 10px;border-radius:10px;background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.4);"><i class="fa-solid fa-check"></i> Active User</span>' : '<span style="font-size:10px;font-weight:900;padding:4px 10px;border-radius:10px;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.3);">Not Active</span>') +
+          (u.is_banned ? '<span style="font-size:10px;font-weight:900;padding:4px 10px;border-radius:10px;background:rgba(161,98,98,.15);color:#fca5a5;border:1px solid rgba(161,98,98,.5);">BANNED</span>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+    /* Pending alert */
+    if(pendingTotal > 0){
+      h += '<div style="padding:12px 14px;border-radius:12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.4);margin-bottom:16px;">' +
+        '<div style="font-size:11.5px;font-weight:900;color:#fbbf24;letter-spacing:.4px;"><i class="fa-solid fa-triangle-exclamation"></i> PENDING ACTIONS · ' + pendingTotal + '</div>' +
+        '<div style="font-size:11.5px;color:#cbd5e1;margin-top:6px;line-height:1.7;">' +
+          (u.reports_against > 0 ? '• ' + u.reports_against + ' report' + (u.reports_against===1?'':'s') + ' against this user<br>' : '') +
+          (u.pending_appeals > 0 ? '• ' + u.pending_appeals + ' appeal' + (u.pending_appeals===1?'':'s') + ' awaiting decision<br>' : '') +
+          (u.fv_status === 'pending' ? '• Full Video Access application under review<br>' : '') +
+        '</div>' +
+      '</div>';
+    }
+
+    /* Two-column grid */
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">';
+
+    /* SPACE box */
+    h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:8px;">SPACE IDENTITY</div>' +
+      '<div style="font-size:15px;font-weight:900;color:#fff;">' + esc(u.space_name || '(not set)') + '</div>' +
+      '<div style="font-size:11px;color:#64748b;margin-top:4px;">Channel name · editable by owner until FV approved</div>' +
+      '<div style="font-size:11px;color:#94a3b8;margin-top:8px;"><b style="color:#e2e8f0;">' + (u.bonded_count||0) + '</b> bonded subscriber' + (u.bonded_count===1?'':'s') + '</div>' +
+    '</div>';
+
+    /* Wallet box */
+    h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:8px;">WALLET</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;margin-bottom:6px;"><span>Cash</span><b style="color:#10b981;">' + money(u.wallet_cash) + '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;"><span>Bounty</span><b style="color:#60a5fa;">' + money(u.wallet_bounty) + '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:13px;color:#fff;margin-top:10px;padding-top:10px;border-top:1px solid #1e293b;"><span>Total</span><b>' + money((Number(u.wallet_cash)||0) + (Number(u.wallet_bounty)||0)) + '</b></div>' +
+    '</div>';
+
+    /* Stats box */
+    h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:8px;">CONTENT</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;margin-bottom:6px;"><span>Posts</span><b style="color:#fff;">' + (u.posts_count||0) + '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;"><span>Sparks</span><b style="color:#fff;">' + (u.sparks_count||0) + '</b></div>' +
+    '</div>';
+
+    /* Dates box */
+    h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:8px;">TIMELINE</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;margin-bottom:6px;"><span>Joined</span><b style="color:#fff;">' + (u.created_at ? new Date(u.created_at).toLocaleDateString() : '—') + '</b></div>' +
+      (u.package_activated_at ? '<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;"><span>Tier activated</span><b style="color:#fff;">' + new Date(u.package_activated_at).toLocaleDateString() + '</b></div>' : '') +
+    '</div>';
+
+    h += '</div>';
+
+    /* Actions */
+    h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:16px;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:10px;">ADMIN ACTIONS</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+
+    if(u.is_banned){
+      h += '<button data-u7-act="unban" class="adm-btn primary" style="font-size:12px;">Unban user</button>';
+    } else {
+      h += '<button data-u7-act="ban" class="adm-btn danger" style="font-size:12px;">Ban user</button>';
+      h += '<button data-u7-act="warn" class="adm-btn ghost" style="font-size:12px;">Send warning</button>';
+    }
+    h += '<button data-u7-act="message" class="adm-btn ghost" style="font-size:12px;">Send message</button>';
+    h += '<button data-u7-act="wallet" class="adm-btn ghost" style="font-size:12px;">Adjust wallet</button>';
+    h += '<button data-u7-act="refresh" class="adm-btn ghost" style="font-size:12px;">Refresh</button>';
+    h += '</div></div>';
+
+    main.innerHTML = h;
+
+    /* Wire */
+    $('adm-u7-back').addEventListener('click', function(){
+      window.AdminChunk7A.renderUsers(main);
+    });
+    main.querySelectorAll('[data-u7-act]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var act = this.getAttribute('data-u7-act');
+        if(act === 'ban') banUser7(userId);
+        else if(act === 'unban') unbanUser7(userId);
+        else if(act === 'warn') warnUser7(userId);
+        else if(act === 'message') messageUser7(userId);
+        else if(act === 'wallet') walletAdjust7(userId);
+        else if(act === 'refresh') openUserDetailPage(userId);
+      });
+    });
+  } catch(e){
+    console.error('[admin user detail]', e);
+    main.innerHTML = '<div style="padding:40px;text-align:center;color:#a16262;">Failed to load user.</div>';
+  }
+}
+
+/* ---------- Action handlers ---------- */
+async function banUser7(userId){
+  var reason = prompt('Reason for ban:', '');
+  if(reason === null) return;
+  if(!reason.trim() || reason.trim().length < 3){ toast('Reason required.', true); return; }
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  try {
+    var r = await sb.rpc('admin_ban_user', { p_user_id: userId, p_reason: reason.trim() });
+    if(r.error) throw r.error;
+    toast('User banned.');
+    openUserDetailPage(userId);
+  } catch(e){ toast('Failed: ' + ((e&&e.message)||'unknown'), true); }
+}
+
+async function unbanUser7(userId){
+  if(!confirm('Unban this user?')) return;
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  try {
+    var r = await sb.rpc('admin_unban_user', { p_user_id: userId });
+    if(r.error) throw r.error;
+    toast('User unbanned.');
+    openUserDetailPage(userId);
+  } catch(e){ toast('Failed: ' + ((e&&e.message)||'unknown'), true); }
+}
+
+async function warnUser7(userId){
+  var msg = prompt('Warning message to user:', '');
+  if(msg === null || !msg.trim()) return;
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  try {
+    var r = await sb.from('notifications').insert({
+      user_id: userId, message: '[Warning] ' + msg.trim(), read: false, deliver_at: new Date().toISOString()
+    });
+    if(r.error) throw r.error;
+    toast('Warning sent.');
+  } catch(e){ toast('Failed: ' + ((e&&e.message)||'unknown'), true); }
+}
+
+async function messageUser7(userId){
+  var title = prompt('Message title:', '');
+  if(title === null) return;
+  var body = prompt('Message body:', '');
+  if(body === null || !body.trim()) return;
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  try {
+    var r = await sb.from('notifications').insert({
+      user_id: userId, message: (title.trim() ? '[' + title.trim() + '] ' : '') + body.trim(), read: false, deliver_at: new Date().toISOString()
+    });
+    if(r.error) throw r.error;
+    toast('Message sent.');
+  } catch(e){ toast('Failed: ' + ((e&&e.message)||'unknown'), true); }
+}
+
+async function walletAdjust7(userId){
+  var amountStr = prompt('Amount (+ to add, − to remove):', '');
+  if(amountStr === null) return;
+  var amt = parseFloat(amountStr);
+  if(!amt || isNaN(amt)){ toast('Invalid amount.', true); return; }
+  var reason = prompt('Reason:', '');
+  if(reason === null || !reason.trim()) return;
+  var wallet = prompt('Which wallet? Type "cash" or "bounty":', 'cash');
+  if(!wallet || ['cash','bounty'].indexOf(wallet.toLowerCase()) === -1){ toast('Invalid wallet.', true); return; }
+  var sb = window.supabase.createClient(
+    'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  /* Manual adjustment via direct update + ledger entry */
+  try {
+    var field = wallet.toLowerCase() === 'cash' ? 'wallet_cash' : 'wallet_bounty';
+    var pr = await sb.from('profiles').select(field).eq('id', userId).maybeSingle();
+    if(pr.error || !pr.data) throw new Error('cannot_read_wallet');
+    var cur = Number(pr.data[field]) || 0;
+    var next = cur + amt;
+    if(next < 0) throw new Error('would_go_negative');
+    var upd = await sb.from('profiles').update({ [field]: next }).eq('id', userId);
+    if(upd.error) throw upd.error;
+    await sb.from('wallet_transactions').insert({
+      user_id: userId, amount: amt, type: amt > 0 ? 'credit' : 'debit',
+      reason: 'admin_adjustment', metadata: { reason: reason.trim(), by: 'admin' }
+    });
+    toast('Wallet adjusted by ' + money(amt) + '.');
+    openUserDetailPage(userId);
+  } catch(e){
+    toast('Failed: ' + ((e&&e.message)||'unknown'), true);
+  }
+}
+
+/* ============================================================
+   EXPOSE + OVERRIDE
+   ============================================================ */
+window.AdminChunk7A = {
+  renderUsers: renderUsersAdvanced,
+  renderUserDetailPage: openUserDetailPage
+};
+
+/* Override Chunk 2's renderUsers */
+function overrideChunk2(){
+  if(window.AdminChunk2 && window.AdminChunk2.renderUsers){
+    window.AdminChunk2.renderUsers = renderUsersAdvanced;
+    return true;
+  }
+  return false;
+}
+if(!overrideChunk2()){
+  var tries = 0;
+  var iv = setInterval(function(){
+    tries++;
+    if(overrideChunk2() || tries > 40) clearInterval(iv);
+  }, 250);
+}
+
+/* Override dispatcher's users route */
+function overrideDispatcher(){
+  /* The dispatcher (from earlier) references window.AdminChunk2.renderUsers
+     at call time — so if we've replaced the property, it just works. */
+}
+setTimeout(overrideDispatcher, 500);
+
+console.log('[Admin Chunk 7A] users advanced + full detail page ready');
+})();
+</script>
 
 </body>
 </html>
