@@ -1804,51 +1804,85 @@ console.log('[ZYNIX Admin — Chunk 5] ads · analytics · notifications · sett
 })();
 </script>
 
-<!-- Chunk 5 — nav wiring (attach new pages to sidebar) -->
+<!-- ============================================================
+     ADMIN FINAL DISPATCHER
+     Wires sidebar after login, routes to all chunk pages
+     ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Admin = window.Admin; if(!Admin) return;
-if(Admin.__chunk5Nav) return; Admin.__chunk5Nav = true;
+if(Admin.__finalDispatcher) return; Admin.__finalDispatcher = true;
 
-/* Re-wire sidebar to include Chunk 4 + Chunk 5 pages */
-function rewire(){
-  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(btn){
+function route(nav){
+  var main = document.getElementById('adm-main');
+  if(!main) return;
+  var C2 = window.AdminChunk2 || {};
+  var C3 = window.AdminChunk3 || {};
+  var C4 = window.AdminChunk4 || {};
+  var C5 = window.AdminChunk5 || {};
+  try {
+    if(nav === 'dashboard'     && C2.renderDashboard)     return C2.renderDashboard(main);
+    if(nav === 'users'         && C2.renderUsers)         return C2.renderUsers(main);
+    if(nav === 'admin-log'     && C2.renderAdminLog)      return C2.renderAdminLog(main);
+    if(nav === 'content-queue' && C3.renderContentQueue)  return C3.renderContentQueue(main);
+    if(nav === 'reports'       && C3.renderReports)       return C3.renderReports(main);
+    if(nav === 'appeals'       && C3.renderAppeals)       return C3.renderAppeals(main);
+    if(nav === 'ledger'        && C4.renderLedger)        return C4.renderLedger(main);
+    if(nav === 'pools'         && C4.renderPools)         return C4.renderPools(main);
+    if(nav === 'payouts'       && C4.renderPayouts)       return C4.renderPayouts(main);
+    if(nav === 'ads'           && C5.renderAds)           return C5.renderAds(main);
+    if(nav === 'analytics'     && C5.renderAnalytics)     return C5.renderAnalytics(main);
+    if(nav === 'notifications' && C5.renderNotifications) return C5.renderNotifications(main);
+    if(nav === 'settings'      && C5.renderSettings)      return C5.renderSettings(main);
+  } catch(e){ console.error('[admin route]', nav, e); }
+  main.innerHTML = '<div class="adm-page-title">' + nav + '</div>' +
+    '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;">' +
+      'This page is being built. Coming in a later update.' +
+    '</div>';
+}
+
+function wireSidebar(){
+  var items = document.querySelectorAll('#adm-sidebar .nav-item');
+  if(!items.length) return;
+  var didWire = false;
+  items.forEach(function(btn){
+    if(btn._admFinalHooked) return;
+    didWire = true;
     var nav = btn.getAttribute('data-nav');
+    /* Clone to strip ALL previous listeners (Chunk 1 + old nav wiring) */
     var clone = btn.cloneNode(true);
+    clone._admFinalHooked = true;
     btn.parentNode.replaceChild(clone, btn);
     clone.addEventListener('click', function(){
       Admin.currentView = nav;
       document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
         b.classList.toggle('active', b.getAttribute('data-nav') === nav);
       });
-      var main = document.getElementById('adm-main');
-      var C3 = window.AdminChunk3 || {};
-      var C4 = window.AdminChunk4 || {};
-      var C5 = window.AdminChunk5 || {};
-      if(nav === 'dashboard' && Admin.__renderDashboard) return Admin.__renderDashboard(main);
-      if(nav === 'content-queue' && C3.renderContentQueue) return C3.renderContentQueue(main);
-      if(nav === 'reports' && C3.renderReports) return C3.renderReports(main);
-      if(nav === 'appeals' && C3.renderAppeals) return C3.renderAppeals(main);
-      if(nav === 'ledger' && C4.renderLedger) return C4.renderLedger(main);
-      if(nav === 'pools' && C4.renderPools) return C4.renderPools(main);
-      if(nav === 'payouts' && C4.renderPayouts) return C4.renderPayouts(main);
-      if(nav === 'ads' && C5.renderAds) return C5.renderAds(main);
-      if(nav === 'analytics' && C5.renderAnalytics) return C5.renderAnalytics(main);
-      if(nav === 'notifications' && C5.renderNotifications) return C5.renderNotifications(main);
-      if(nav === 'settings' && C5.renderSettings) return C5.renderSettings(main);
-      /* Chunk 2 pages */
-      if(nav === 'users' && window.AdminChunk2 && window.AdminChunk2.renderUsers) return window.AdminChunk2.renderUsers(main);
-      if(nav === 'admin-log' && window.AdminChunk2 && window.AdminChunk2.renderAdminLog) return window.AdminChunk2.renderAdminLog(main);
-      main.innerHTML = '<div class="adm-page-title">' + nav + '</div><div class="adm-placeholder"><h3>Coming soon</h3></div>';
+      route(nav);
     });
   });
+  return didWire;
 }
-window.__rewireAdminSidebar = rewire;
-rewire();
+
+/* Poll for sidebar every second — wires it the moment it appears after login */
+setInterval(wireSidebar, 1000);
+setTimeout(wireSidebar, 300);
+
+/* If a page currently shows the old placeholder, auto-render the current view */
+setInterval(function(){
+  var main = document.getElementById('adm-main');
+  if(!main) return;
+  if(main.innerHTML.indexOf('Coming in a later update') === -1 &&
+     main.innerHTML.indexOf('will be built in Chunk') === -1) return;
+  /* On old placeholder — force re-render */
+  var nav = Admin.currentView || 'dashboard';
+  route(nav);
+}, 2000);
+
+console.log('[Admin Final Dispatcher] active');
 })();
 </script>
-
 
 
 </body>
