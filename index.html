@@ -41231,49 +41231,59 @@ console.log('[Ad TV Keep-Alive] active');
 })();
 </script>
 
-
 <!-- ============================================================
-     SECTION 20 — DISCOVER PEOPLE (definitive consolidated build)
+     SECTION 20 v2 — DISCOVER PEOPLE (definitive)
      ============================================================
-     This section OVERRIDES and SUPERSEDES the scattered Discover
-     People code across Sections 4, 11, and 15. It is fully additive
-     (no old function bodies are edited) — only public API functions
-     are redefined so existing call sites automatically pick up the
-     new behaviour.
+     CONTEXT: Profile-based connection requests (Home / feed experience).
 
-     What this section delivers:
-       1. Defines Z.renderConnectButton (was MISSING — the root
-          cause that silently broke Discover on Home + People page)
-       2. Rewrites the recommendation engine with 6 rotating cycles
-       3. Rewrites the search algorithm with ranked layers
-       4. Rewrites the People full page (Facebook-style rich cards)
-       5. Repositions Home Discover strip after the 10th post
-       6. Injects Lounge Discover row above the status strip
-       7. Adds a global "Different people" refresh action
+     IDENTITY RULE — CRITICAL:
+       • Profile name (name || username) is the ONLY identity shown here.
+       • space_data.name is NEVER read in this section — that name
+         belongs to SPACE (Section 8). Space owners are found via SPACE
+         search, not here.
+       • Developer hint: if you ever feel tempted to show space name,
+         stop. That's a different system.
 
-     Supersedes (with new definitions):
-       Z.renderDiscoverStrip       (was: Section 4, hardcoded hostId)
-       Z.renderPeople              (was: Section 11)
-       Z.refreshPeopleList         (was: Section 11)
-       Z.onPeopleSearch            (was: Section 11)
-       Z.setPeopleFilter           (was: Section 11)
+     ACTION RULE — CRITICAL:
+       • "Connect" = a friend request (accept/reject needed).
+       • NOT the same as "Bond" (SPACE subscription, one-shot paid,
+         no request, no accept flow).
+       • Bond functions (getBondState, getBondStateSync, bondUser) are
+         NOT imported here. Section 8 owns Bond, and it stays untouched.
 
-     Wraps (behaviour preserved, DOM repositioned after render):
-       Z.renderHome                (moves discover host after 10th post)
-       Z.renderLounge              (injects discover host before status)
+     RATE RULE:
+       • Button shows the viewed profile's bounty_settings.connect.
+       • No default. If rate is 0 or missing, button shows plain
+         "Connect" without amount.
 
-     DO NOT remove this block — Discover People depends entirely on it.
+     PRIVACY RULE — CRITICAL:
+       • A profile with hide_from_discovery === true must NOT appear
+         anywhere in this section — not in strip, not in search, not
+         in recommendations, not via filters.
+       • Enforced by isPrivacyHidden() at every scoring/filter point.
+
+     WALLET:
+       • Wallet routing is server-side. This section only displays the
+         rate; it never moves money.
+
+     FRESH SIGNUP:
+       • Strip is visible for empty feeds (relocates after 10th post
+         only when feed has ≥ 10 posts).
+
+     OVERRIDES (public API):
+       Z.renderConnectButton, Z.renderDiscoverStrip,
+       Z.renderPeople, Z.refreshPeopleList,
+       Z.onPeopleSearch, Z.setPeopleFilter,
+       Z.sendConnectRequest, Z.acceptConnection, Z.rejectConnection
      ============================================================ -->
 <script>
 (function(){
 'use strict';
-var Z = window.Z;
-if(!Z) return;
-if(Z.__zynixDiscoverPeopleV1) return;
-Z.__zynixDiscoverPeopleV1 = true;
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixDiscoverPeopleV2) return; Z.__zynixDiscoverPeopleV2 = true;
 
 /* ============================================================
-   SHARED HELPERS
+   HELPERS
    ============================================================ */
 function esc(s){
   if(s == null) return '';
@@ -41281,121 +41291,183 @@ function esc(s){
     return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
   });
 }
+
+/* Profile name ONLY. Never space name. */
+function personName(p){
+  if(!p) return 'User';
+  return p.name || p.username || 'User';
+}
+
 function safeAvatar(p){
-  if(typeof Z.displayAvatar === 'function'){ try { return Z.displayAvatar(p); } catch(e){} }
-  var n = (p && (p.name || p.username)) || 'U';
+  if(typeof Z.displayAvatar === 'function'){
+    try { return Z.displayAvatar(p); } catch(e){}
+  }
+  var n = personName(p);
   return 'https://ui-avatars.com/api/?name=' + encodeURIComponent(n) + '&background=111827&color=34d399';
 }
+
 function isOnlineNow(p){
   if(!p || !p.last_seen_at) return false;
   var ms = Date.now() - new Date(p.last_seen_at).getTime();
-  return ms >= 0 && ms < 5 * 60 * 1000; // 5 min
+  return ms >= 0 && ms < 5 * 60 * 1000;
 }
-function tierRank(pkg){
-  var map = { business: 6, elite: 5, pro: 4, member: 3, contributor: 2, free: 1 };
-  return map[pkg] || 0;
+
+/* PRIVACY FILTER — critical. Only hide if explicitly true. */
+function isPrivacyHidden(p){
+  if(!p) return true;
+  if(p.is_banned === true) return true;
+  return p.hide_from_discovery === true;
 }
-function tierBadge(p){
-  var pkg = p && p.package ? String(p.package) : 'free';
-  var map = {
-    business: { l:'BIZ', c:'#fbbf24' },
-    elite:    { l:'ELITE', c:'#a78bfa' },
-    pro:      { l:'PRO', c:'#60a5fa' },
-    member:   { l:'MEMBER', c:'#10b981' },
-    free:     null
-  };
-  var m = map[pkg];
-  if(!m) return '';
-  return '<span style="font-size:8.5px;font-weight:900;padding:2px 7px;border-radius:6px;' +
-         'background:' + m.c + '22;color:' + m.c + ';border:1px solid ' + m.c + '66;letter-spacing:.5px;">' +
-         m.l + '</span>';
+
+/* Rate — from viewed profile's settings. No default. */
+function getConnectRate(p){
+  if(!p || !p.bounty_settings) return 0;
+  var r = Number(p.bounty_settings.connect) || 0;
+  return r > 0 ? r : 0;
 }
-function getBondRateFor(uid){
-  try {
-    if(typeof Z.getBondStateSync === 'function'){
-      var b = Z.getBondStateSync(uid);
-      return Number(b && b.rate) || 0;
-    }
-  } catch(e){}
-  return 0;
-}
-function getConnectBountySafe(p){
-  try {
-    if(typeof Z.getConnectBounty === 'function') return Number(Z.getConnectBounty(p)) || 0;
-  } catch(e){}
-  return 0;
-}
+
 function getConnStateSafe(uid){
   try {
     if(typeof Z.getConnectionState === 'function') return Z.getConnectionState(uid);
   } catch(e){}
   return 'none';
 }
+
+function tierRank(pkg){
+  var m = { business:6, elite:5, pro:4, member:3, contributor:2, free:1 };
+  return m[pkg] || 0;
+}
+
+function tierBadge(p){
+  var pkg = (p && p.package) ? String(p.package) : 'free';
+  var map = {
+    business: { l:'BIZ',   c:'#fbbf24' },
+    elite:    { l:'ELITE', c:'#a78bfa' },
+    pro:      { l:'PRO',   c:'#60a5fa' },
+    member:   { l:'MEMBER',c:'#10b981' }
+  };
+  var m = map[pkg];
+  if(!m) return '';
+  return '<span style="font-size:8.5px;font-weight:900;padding:2px 7px;border-radius:6px;' +
+    'background:' + m.c + '22;color:' + m.c + ';border:1px solid ' + m.c + '66;' +
+    'letter-spacing:.5px;">' + m.l + '</span>';
+}
+
 function ratingOf(p){
-  var avg = Number(p && p.rating_avg) || 0;
-  var cnt = Number(p && p.rating_count) || 0;
-  return { avg: avg, cnt: cnt };
+  return {
+    avg: Number(p && p.rating_avg) || 0,
+    cnt: Number(p && p.rating_count) || 0
+  };
 }
 
 /* ============================================================
-   PART 1 — Z.renderConnectButton  (the missing piece)
-   ============================================================
-   Four states drive the button:
-     • none            → "Bond · $X.XX" (green gradient, clickable)
-     • connecting_out  → "Pending" (amber, disabled)
-     • connecting_in   → "Accept" (blue, clickable — accept invite)
-     • connected       → "✓ Bonded" (muted green, disabled)
+   PART 1 — CONNECT BUTTON (the missing piece)
    ============================================================ */
 Z.renderConnectButton = function(userId){
   var me = Z.State.currentUser;
   if(!me || !userId || userId === me.id) return '';
-
-  var profile = (typeof Z.getProfileById === 'function') ? Z.getProfileById(userId) : null;
+  var p = (typeof Z.getProfileById === 'function') ? Z.getProfileById(userId) : null;
   var cs = getConnStateSafe(userId);
-  var bounty = getConnectBountySafe(profile);
+  var rate = getConnectRate(p);
+  var priceTxt = rate > 0
+    ? ' <span style="opacity:.75;font-size:10px;">$' + rate.toFixed(2) + '</span>'
+    : '';
   var uEsc = esc(userId);
 
   if(cs === 'connected'){
-    return '<button disabled title="Already bonded" ' +
-      'style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);' +
-      'color:#10b981;font-weight:900;font-size:11px;padding:7px 14px;border-radius:8px;' +
-      'cursor:default;display:inline-flex;align-items:center;gap:5px;">' +
-      '<i class="fa-solid fa-check"></i> Bonded</button>';
+    return '<button disabled title="Already connected" style="' +
+      'background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);color:#10b981;' +
+      'font-weight:900;font-size:11px;padding:7px 12px;border-radius:8px;cursor:default;' +
+      'display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">' +
+      '<i class="fa-solid fa-check"></i> Connected</button>';
   }
   if(cs === 'connecting_out'){
-    return '<button disabled title="Bond request pending" ' +
-      'style="background:rgba(161,133,84,.12);border:1px solid rgba(161,133,84,.45);' +
-      'color:#a18554;font-weight:900;font-size:11px;padding:7px 14px;border-radius:8px;' +
-      'cursor:default;display:inline-flex;align-items:center;gap:5px;">' +
-      '<i class="fa-regular fa-clock"></i> Pending</button>';
+    return '<button disabled title="Request pending" style="' +
+      'background:rgba(161,133,84,.12);border:1px solid rgba(161,133,84,.45);color:#a18554;' +
+      'font-weight:900;font-size:11px;padding:7px 12px;border-radius:8px;cursor:not-allowed;' +
+      'display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">' +
+      '<i class="fa-regular fa-clock"></i> Connecting</button>';
   }
   if(cs === 'connecting_in'){
     return '<button onclick="event.stopPropagation();Z.acceptIncomingBond(\'' + uEsc + '\')" ' +
-      'title="Accept bond request" ' +
-      'style="background:linear-gradient(135deg,#3b82f6,#60a5fa);border:none;color:#000;' +
-      'font-weight:900;font-size:11px;padding:7px 14px;border-radius:8px;cursor:pointer;' +
-      'display:inline-flex;align-items:center;gap:5px;">' +
+      'title="Accept connect request" style="' +
+      'background:linear-gradient(135deg,#3b82f6,#60a5fa);border:none;color:#000;' +
+      'font-weight:900;font-size:11px;padding:7px 12px;border-radius:8px;cursor:pointer;' +
+      'display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">' +
       '<i class="fa-solid fa-handshake"></i> Accept</button>';
   }
-  // none
   return '<button onclick="event.stopPropagation();Z.sendConnectRequest(\'' + uEsc + '\')" ' +
-    'title="Send bond request" ' +
-    'style="background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;' +
-    'font-weight:900;font-size:11px;padding:7px 14px;border-radius:8px;cursor:pointer;' +
-    'display:inline-flex;align-items:center;gap:5px;">' +
-    '<i class="fa-solid fa-link"></i> Bond' +
-    (bounty > 0 ? ' <span style="opacity:.7;font-size:10px;">$' + bounty.toFixed(2) + '</span>' : '') +
-    '</button>';
+    'title="Send connect request" style="' +
+    'background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;' +
+    'font-weight:900;font-size:11px;padding:7px 12px;border-radius:8px;cursor:pointer;' +
+    'display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">' +
+    '<i class="fa-solid fa-user-plus"></i> Connect' + priceTxt + '</button>';
 };
 
 /* ============================================================
-   PART 2 — Recommendation Engine
-   ============================================================
-   Six cycles. Each refresh advances the cycle index. The user
-   never sees the same ordering twice in a row.
+   PART 2 — MISSING CONNECTION FUNCTIONS (pre-existing bug)
+   ============================================================ */
+Z.sendConnectRequest = async function(userId){
+  if(!userId) return;
+  var me = Z.State.currentUser;
+  if(!me) return;
+  if(userId === me.id) return;
+  try {
+    await Z.DB.sendConnectRequest(userId);
+    try { await Z.DB.loadConnections(); } catch(e){}
+    Z.refreshAllDiscoverStrips();
+    if(Z.State.currentView === 'public-profile' && typeof Z.sp5RenderHeader === 'function'){
+      try { Z.sp5RenderHeader(Z.State.currentParam, false); } catch(e){}
+    }
+    try { Z.toast('Request sent'); } catch(e){}
+    try { Z.haptic(10); } catch(e){}
+  } catch(e){
+    var msg = (e && e.message) ? e.message.toLowerCase() : 'unknown';
+    if(msg.indexOf('already_connected') !== -1) Z.toast('Already connected.', 'error');
+    else if(msg.indexOf('already_pending') !== -1) Z.toast('Request already pending.', 'error');
+    else if(msg.indexOf('self') !== -1) Z.toast('You cannot connect to yourself.', 'error');
+    else if(msg.indexOf('blocked') !== -1) Z.toast('Cannot connect.', 'error');
+    else Z.toast('Failed: ' + msg, 'error');
+  }
+};
+
+Z.acceptConnection = async function(requestId){
+  if(!requestId) return;
+  try {
+    await Z.DB.acceptConnectionRequest(requestId);
+    try { await Z.DB.loadConnections(); } catch(e){}
+    Z.refreshAllDiscoverStrips();
+    if(typeof Z.updateNotifBadge === 'function') Z.updateNotifBadge();
+    if(Z.State.currentView === 'notifications' && typeof Z.softRefresh === 'function'){
+      try { Z.softRefresh(); } catch(e){}
+    }
+    try { Z.toast('Connected'); Z.haptic(12); } catch(e){}
+  } catch(e){
+    try { Z.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error'); } catch(err){}
+  }
+};
+
+Z.rejectConnection = async function(requestId){
+  if(!requestId) return;
+  try {
+    await Z.DB.rejectConnectionRequest(requestId);
+    try { await Z.DB.loadConnections(); } catch(e){}
+    Z.refreshAllDiscoverStrips();
+    if(typeof Z.updateNotifBadge === 'function') Z.updateNotifBadge();
+    if(Z.State.currentView === 'notifications' && typeof Z.softRefresh === 'function'){
+      try { Z.softRefresh(); } catch(e){}
+    }
+    /* Silent — no toast, no notification back to sender (approved) */
+  } catch(e){
+    /* silent */
+  }
+};
+
+/* ============================================================
+   PART 3 — DISCOVERY CYCLES (6 rotating modes)
    ============================================================ */
 Z._discoverCycle = 0;
-var DISCOVERY_CYCLES = ['online', 'bounty', 'tier', 'recent', 'random', 'alpha'];
+var CYCLES = ['online','bounty','tier','recent','random','alpha'];
 var CYCLE_LABELS = {
   online: 'Online now',
   bounty: 'Paying the most',
@@ -41404,24 +41476,26 @@ var CYCLE_LABELS = {
   random: 'Surprise me',
   alpha:  'A → Z'
 };
-Z.getDiscoverCycle = function(){ return DISCOVERY_CYCLES[Z._discoverCycle % DISCOVERY_CYCLES.length]; };
+Z.getDiscoverCycle = function(){ return CYCLES[Z._discoverCycle % CYCLES.length]; };
 Z.getDiscoverCycleLabel = function(){ return CYCLE_LABELS[Z.getDiscoverCycle()] || 'Discover'; };
 Z.advanceDiscoverCycle = function(){
-  Z._discoverCycle = (Z._discoverCycle + 1) % DISCOVERY_CYCLES.length;
+  Z._discoverCycle = (Z._discoverCycle + 1) % CYCLES.length;
   return Z.getDiscoverCycle();
 };
 
-function scoreByMode(p, mode, me){
-  if(!p || !p.id || p.id === me.id) return -1;
-  if(p.is_banned) return -1;
-  if(p.hide_from_discovery === true) return -1;
+/* ============================================================
+   PART 4 — SCORING
+   ============================================================ */
+function scoreForCycle(p, mode, me){
+  if(!p || !p.id) return -1;
+  if(p.id === me.id) return -1;
+  if(isPrivacyHidden(p)) return -1;
 
-  var score = 100; // base floor — so nobody is 0
+  var score = 100;
   var cs = getConnStateSafe(p.id);
-  // Already-connected users get lower priority in discovery
-  if(cs === 'connected') score -= 60;
+  if(cs === 'connected')     score -= 60;
   if(cs === 'connecting_out') score -= 30;
-  if(cs === 'connecting_in') score += 40; // accept-invite gets promoted
+  if(cs === 'connecting_in')  score += 40;
 
   switch(mode){
     case 'online':
@@ -41431,50 +41505,40 @@ function scoreByMode(p, mode, me){
         score += Math.max(0, 500 - hrs);
       }
       break;
-
     case 'bounty':
       var b = (p.bounty_settings && Number(p.bounty_settings.connect)) || 0;
       score += b * 100000;
-      // small tier boost so verified bounty-offerers edge out free ones
       score += tierRank(p.package) * 100;
       break;
-
     case 'tier':
       score += tierRank(p.package) * 5000;
       if(isOnlineNow(p)) score += 200;
       break;
-
     case 'recent':
       var ageHrs = (Date.now() - new Date(p.created_at || 0).getTime()) / 3600000;
       score += Math.max(0, 5000 - ageHrs * 20);
       break;
-
     case 'random':
       score += Math.random() * 3000;
       break;
-
     case 'alpha':
-      // Alphabetical by name (score by inverse so A < B < C in desc sort)
-      var nm = String(p.name || p.username || '').toUpperCase();
+      var nm = String(personName(p)).toUpperCase();
       var firstChar = nm.charCodeAt(0) || 90;
       score += (90 - firstChar) * 10;
       break;
   }
 
-  // Universal tie-breakers (always applied)
   score += Math.random() * 20;
   return score;
 }
 
-/* ============================================================
-   PART 3 — Search Engine (ranked layers)
-   ============================================================ */
-function scoreBySearch(p, query, me){
-  if(!p || !p.id || p.id === me.id) return -1;
-  if(p.is_banned) return -1;
+function scoreForSearch(p, query, me){
+  if(!p || !p.id) return -1;
+  if(p.id === me.id) return -1;
+  if(isPrivacyHidden(p)) return -1;
 
-  var q = query.toLowerCase().trim();
-  if(!q) return scoreByMode(p, Z.getDiscoverCycle(), me);
+  var q = String(query || '').toLowerCase().trim();
+  if(!q) return scoreForCycle(p, Z.getDiscoverCycle(), me);
   var qNoAt = q.replace(/^@+/, '');
 
   var name = String(p.name || '').toLowerCase();
@@ -41483,39 +41547,35 @@ function scoreBySearch(p, query, me){
   var bio = String(p.bio || '').toLowerCase();
 
   var tier = 0;
-  if(uname === qNoAt)              tier = 100000;
-  else if(uname.indexOf(qNoAt) === 0)  tier = 90000;
-  else if(name === q)              tier = 80000;
-  else if(name.indexOf(q) === 0)       tier = 70000;
-  else if(uname.indexOf(qNoAt) !== -1) tier = 50000;
-  else if(name.indexOf(q) !== -1)      tier = 40000;
-  else if(prof.indexOf(q) !== -1)      tier = 20000;
-  else if(bio.indexOf(q) !== -1)       tier = 10000;
+  if(uname === qNoAt)                     tier = 100000;
+  else if(uname.indexOf(qNoAt) === 0)     tier = 90000;
+  else if(name === q)                     tier = 80000;
+  else if(name.indexOf(q) === 0)          tier = 70000;
+  else if(uname.indexOf(qNoAt) !== -1)    tier = 50000;
+  else if(name.indexOf(q) !== -1)         tier = 40000;
+  else if(prof.indexOf(q) !== -1)         tier = 20000;
+  else if(bio.indexOf(q) !== -1)          tier = 10000;
+  else return -1;
 
-  if(tier === 0) return -1; // no match
-
-  // Bonus layer — after match quality
   var bonus = 0;
   bonus += tierRank(p.package) * 300;
   if(isOnlineNow(p)) bonus += 400;
   var b = (p.bounty_settings && Number(p.bounty_settings.connect)) || 0;
   bonus += b * 5000;
   var cs = getConnStateSafe(p.id);
-  if(cs === 'connecting_in') bonus += 800; // they want to bond — prioritize accept
-  if(cs === 'connected') bonus -= 2000;    // already bonded — deprioritize
+  if(cs === 'connecting_in') bonus += 800;
+  if(cs === 'connected')     bonus -= 2000;
 
   return tier + bonus + Math.random() * 15;
 }
 
 /* ============================================================
-   PART 4 — Data fetch layer
+   PART 5 — DATA FETCH
    ============================================================ */
-var _discoverFetchToken = 0;
+var _stripToken = 0;
 
-async function fetchPool(){
-  // Returns the client-side profile pool, sorted by score.
-  var me = Z.State.currentUser;
-  if(!me) return [];
+async function getPool(){
+  var me = Z.State.currentUser; if(!me) return [];
   var pool = (Z.State.allProfiles || []).slice();
   if(!pool.length){
     try { await Z.DB.loadAllProfiles(); } catch(e){}
@@ -41525,66 +41585,60 @@ async function fetchPool(){
 }
 
 async function fetchRecommended(mode, limit){
-  var me = Z.State.currentUser;
-  if(!me) return [];
-  var pool = await fetchPool();
-
+  var me = Z.State.currentUser; if(!me) return [];
+  var pool = await getPool();
   var scored = pool
-    .map(function(p){ return { p: p, s: scoreByMode(p, mode, me) }; })
+    .map(function(p){ return { p:p, s: scoreForCycle(p, mode, me) }; })
     .filter(function(x){ return x.s >= 0; });
-
-  // For search or a fresh cycle, shuffle first so ties aren't deterministic
   for(var i = scored.length - 1; i > 0; i--){
     var j = Math.floor(Math.random() * (i + 1));
-    var tmp = scored[i]; scored[i] = scored[j]; scored[j] = tmp;
+    var t = scored[i]; scored[i] = scored[j]; scored[j] = t;
   }
-
-  scored.sort(function(a, b){ return b.s - a.s; });
+  scored.sort(function(a,b){ return b.s - a.s; });
   return scored.slice(0, limit).map(function(x){ return x.p; });
 }
 
 async function fetchSearch(query, limit){
-  var me = Z.State.currentUser;
-  if(!me) return [];
-  var pool = await fetchPool();
-
+  var me = Z.State.currentUser; if(!me) return [];
+  var pool = await getPool();
   var scored = pool
-    .map(function(p){ return { p: p, s: scoreBySearch(p, query, me) }; })
+    .map(function(p){ return { p:p, s: scoreForSearch(p, query, me) }; })
     .filter(function(x){ return x.s >= 0; });
-
-  scored.sort(function(a, b){ return b.s - a.s; });
+  scored.sort(function(a,b){ return b.s - a.s; });
   return scored.slice(0, limit).map(function(x){ return x.p; });
 }
 
 /* ============================================================
-   PART 5 — Card HTML builders
+   PART 6 — CARDS
    ============================================================ */
-function stripCardHTML(p, opts){
-  opts = opts || {};
+function stripCardHTML(p){
   var avatar = safeAvatar(p);
   var online = isOnlineNow(p);
   var dot = online
-    ? '<span style="position:absolute;bottom:2px;right:2px;width:12px;height:12px;border-radius:50%;' +
-      'background:#10b981;border:2px solid #0f172a;box-shadow:0 0 6px rgba(16,185,129,.8);"></span>'
+    ? '<span style="position:absolute;bottom:2px;right:2px;width:11px;height:11px;' +
+      'border-radius:50%;background:#10b981;border:2px solid #0f172a;' +
+      'box-shadow:0 0 6px rgba(16,185,129,.8);"></span>'
     : '';
-  var cs = getConnStateSafe(p.id);
 
-  return '<div style="flex:0 0 auto;width:132px;text-align:center;" data-person-id="' + esc(p.id) + '">' +
+  return '<div data-person-id="' + esc(p.id) + '" ' +
+    'style="flex:0 0 auto;width:124px;text-align:center;">' +
     '<button onclick="Z.showView(\'public-profile\',\'' + esc(p.id) + '\')" ' +
       'style="background:transparent;border:none;cursor:pointer;padding:0;width:100%;">' +
-      '<div style="position:relative;width:64px;height:64px;border-radius:50%;overflow:hidden;' +
-        'border:2px solid ' + (online ? 'rgba(16,185,129,.6)' : '#1e293b') + ';margin:0 auto;background:#0f172a;">' +
-        '<img src="' + esc(avatar) + '" style="width:100%;height:100%;object-fit:cover;" loading="lazy">' +
+      '<div style="position:relative;width:56px;height:56px;border-radius:50%;overflow:hidden;' +
+        'border:2px solid ' + (online ? 'rgba(16,185,129,.6)' : '#1e293b') + ';' +
+        'margin:0 auto;background:#0f172a;">' +
+        '<img src="' + esc(avatar) + '" loading="lazy" ' +
+          'style="width:100%;height:100%;object-fit:cover;">' +
         dot +
       '</div>' +
-      '<div style="font-size:11.5px;color:#e2e8f0;font-weight:800;margin-top:8px;' +
+      '<div style="font-size:11.5px;color:#e2e8f0;font-weight:800;margin-top:7px;' +
         'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;">' +
-        esc(p.name || 'User') +
+        esc(personName(p)) +
       '</div>' +
       '<div style="font-size:9.5px;color:#64748b;overflow:hidden;text-overflow:ellipsis;' +
         'white-space:nowrap;padding:0 4px;">@' + esc(p.username || 'user') + '</div>' +
     '</button>' +
-    '<div style="margin-top:8px;display:flex;justify-content:center;">' +
+    '<div style="margin-top:7px;display:flex;justify-content:center;">' +
       Z.renderConnectButton(p.id) +
     '</div>' +
   '</div>';
@@ -41594,16 +41648,17 @@ function fullCardHTML(p){
   var avatar = safeAvatar(p);
   var online = isOnlineNow(p);
   var tier = tierBadge(p);
-  var bounty = getConnectBountySafe(p);
+  var bounty = getConnectRate(p);
   var rating = ratingOf(p);
   var bio = String(p.bio || '').trim();
   var prof = String(p.profession || '').trim();
   var cs = getConnStateSafe(p.id);
-  var isHighValue = bounty >= 0.03 || tierRank(p.package) >= 4;
+  var isHigh = bounty >= 0.03 || tierRank(p.package) >= 4;
 
   var onlineDot = online
-    ? '<span style="position:absolute;bottom:3px;right:3px;width:14px;height:14px;border-radius:50%;' +
-      'background:#10b981;border:2px solid #131c30;box-shadow:0 0 8px rgba(16,185,129,.9);"></span>'
+    ? '<span style="position:absolute;bottom:3px;right:3px;width:14px;height:14px;' +
+      'border-radius:50%;background:#10b981;border:2px solid #131c30;' +
+      'box-shadow:0 0 8px rgba(16,185,129,.9);"></span>'
     : '';
 
   var badges = '';
@@ -41611,18 +41666,18 @@ function fullCardHTML(p){
   if(rating.cnt >= 3){
     var col = rating.avg >= 8 ? '#10b981' : rating.avg >= 4 ? '#a18554' : '#a16262';
     badges += '<span style="font-size:9.5px;font-weight:900;padding:2px 7px;border-radius:6px;' +
-              'background:' + col + '22;color:' + col + ';border:1px solid ' + col + '66;">' +
-              '★ ' + rating.avg.toFixed(1) + '</span>';
+      'background:' + col + '22;color:' + col + ';border:1px solid ' + col + '66;">' +
+      '★ ' + rating.avg.toFixed(1) + '</span>';
   }
   if(bounty > 0){
     badges += '<span style="font-size:9.5px;font-weight:900;padding:2px 7px;border-radius:6px;' +
-              'background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.4);">' +
-              '💰 $' + bounty.toFixed(2) + '</span>';
+      'background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.4);">' +
+      '$' + bounty.toFixed(2) + '</span>';
   }
   if(online){
     badges += '<span style="font-size:9.5px;font-weight:900;padding:2px 7px;border-radius:6px;' +
-              'background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.4);">' +
-              '🟢 Online</span>';
+      'background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.4);">' +
+      'Online</span>';
   }
 
   var actions = '';
@@ -41630,7 +41685,7 @@ function fullCardHTML(p){
     actions += Z.renderConnectButton(p.id);
     actions += '<button onclick="event.stopPropagation();Z.openDMWith(\'' + esc(p.id) + '\')" ' +
       'style="background:rgba(255,255,255,.04);border:1px solid #1e293b;color:#cbd5e1;' +
-      'font-weight:800;font-size:11px;padding:7px 14px;border-radius:8px;cursor:pointer;' +
+      'font-weight:800;font-size:11px;padding:7px 12px;border-radius:8px;cursor:pointer;' +
       'display:inline-flex;align-items:center;gap:5px;">' +
       '<i class="fa-regular fa-comment"></i> Message</button>';
   } else {
@@ -41639,143 +41694,159 @@ function fullCardHTML(p){
 
   return '<div data-person-id="' + esc(p.id) + '" ' +
     'style="padding:16px;border-radius:14px;background:#131c30;' +
-    'border:1px solid ' + (isHighValue ? 'rgba(251,191,36,.35)' : '#1e293b') + ';' +
-    'display:flex;gap:14px;align-items:flex-start;position:relative;transition:border-color .2s,transform .15s;' +
-    (isHighValue ? 'box-shadow:0 0 20px rgba(251,191,36,.06);' : '') + '">' +
+    'border:1px solid ' + (isHigh ? 'rgba(251,191,36,.35)' : '#1e293b') + ';' +
+    'display:flex;gap:14px;align-items:flex-start;position:relative;' +
+    (isHigh ? 'box-shadow:0 0 20px rgba(251,191,36,.06);' : '') + '">' +
 
     '<div style="position:relative;flex-shrink:0;">' +
       '<img src="' + esc(avatar) + '" loading="lazy" ' +
-        'style="width:64px;height:64px;border-radius:50%;object-fit:cover;' +
+        'style="width:60px;height:60px;border-radius:50%;object-fit:cover;' +
         'border:2px solid ' + (online ? 'rgba(16,185,129,.55)' : '#1e293b') + ';">' +
       onlineDot +
     '</div>' +
 
     '<div style="flex:1;min-width:0;">' +
-
       '<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;">' +
         '<button onclick="Z.showView(\'public-profile\',\'' + esc(p.id) + '\')" ' +
           'style="background:transparent;border:none;padding:0;cursor:pointer;font-size:15px;' +
           'font-weight:900;color:#fff;text-align:left;">' +
-          esc(p.name || 'User') +
+          esc(personName(p)) +
         '</button>' +
         '<span style="font-size:11px;color:#64748b;">@' + esc(p.username || 'user') + '</span>' +
       '</div>' +
-
       (prof ? '<div style="font-size:11.5px;color:#cbd5e1;margin-top:3px;">' + esc(prof) + '</div>' : '') +
       (bio ? '<div style="font-size:11.5px;color:#94a3b8;margin-top:4px;line-height:1.5;' +
-        'overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;' +
-        '-webkit-box-orient:vertical;">' + esc(bio) + '</div>' : '') +
-
+        'overflow:hidden;text-overflow:ellipsis;display:-webkit-box;' +
+        '-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + esc(bio) + '</div>' : '') +
       (badges ? '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:9px;">' + badges + '</div>' : '') +
-
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">' + actions + '</div>' +
-
     '</div>' +
   '</div>';
 }
 
 /* ============================================================
-   PART 6 — Strip renderer (used on Home + Lounge)
+   PART 7 — STRIP (used on Home + Lounge)
    ============================================================ */
-function skeletonStrip(){
-  var h = '<div style="padding:14px;border-radius:16px;background:#111827;border:1px solid #1e293b;">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+function stripSkeleton(compact){
+  var av = compact ? 44 : 56;
+  var h = '<div style="padding:' + (compact ? 10 : 14) + 'px;border-radius:16px;' +
+    'background:#111827;border:1px solid #1e293b;">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">';
   h += '<div class="zynix-skel" style="width:120px;height:12px;border-radius:6px;"></div>';
-  h += '<div class="zynix-skel" style="width:50px;height:10px;border-radius:6px;"></div>';
+  h += '<div class="zynix-skel" style="width:60px;height:10px;border-radius:6px;"></div>';
   h += '</div>';
   h += '<div style="display:flex;gap:12px;overflow:hidden;">';
   for(var i = 0; i < 4; i++){
-    h += '<div style="flex:0 0 auto;width:132px;text-align:center;">';
-    h += '<div class="zynix-skel" style="width:64px;height:64px;border-radius:50%;margin:0 auto;"></div>';
-    h += '<div class="zynix-skel" style="width:80%;height:10px;border-radius:5px;margin:10px auto 0;"></div>';
-    h += '<div class="zynix-skel" style="width:60%;height:8px;border-radius:5px;margin:6px auto 0;"></div>';
-    h += '<div class="zynix-skel" style="width:80px;height:22px;border-radius:8px;margin:12px auto 0;"></div>';
+    h += '<div style="flex:0 0 auto;width:' + (compact ? 100 : 124) + 'px;text-align:center;">';
+    h += '<div class="zynix-skel" style="width:' + av + 'px;height:' + av + 'px;' +
+      'border-radius:50%;margin:0 auto;"></div>';
+    if(!compact){
+      h += '<div class="zynix-skel" style="width:80%;height:10px;border-radius:5px;' +
+        'margin:10px auto 0;"></div>';
+      h += '<div class="zynix-skel" style="width:60%;height:8px;border-radius:5px;' +
+        'margin:6px auto 0;"></div>';
+    }
+    h += '<div class="zynix-skel" style="width:' + (compact ? 60 : 80) + 'px;height:20px;' +
+      'border-radius:8px;margin:' + (compact ? 6 : 12) + 'px auto 0;"></div>';
     h += '</div>';
   }
   h += '</div></div>';
   return h;
 }
 
-Z.renderDiscoverStrip = async function(hostId){
+Z.renderDiscoverStrip = async function(hostId, opts){
+  opts = opts || {};
   hostId = hostId || 'home-discover-host';
+  var compact = !!opts.compact;
   var host = document.getElementById(hostId);
   if(!host) return;
   var me = Z.State.currentUser;
   if(!me){ host.innerHTML = ''; return; }
 
-  host.innerHTML = skeletonStrip();
-
-  var myToken = ++_discoverFetchToken;
+  host.innerHTML = stripSkeleton(compact);
+  var myToken = ++_stripToken;
   var data = [];
-  try {
-    data = await fetchRecommended(Z.getDiscoverCycle(), 12);
-  } catch(e){ data = []; }
+  try { data = await fetchRecommended(Z.getDiscoverCycle(), compact ? 10 : 14); } catch(e){}
 
-  if(myToken !== _discoverFetchToken){ return; }
-  var currentHost = document.getElementById(hostId);
-  if(!currentHost) return;
-
-  if(!data.length){
-    currentHost.innerHTML = '';
-    return;
-  }
+  if(myToken !== _stripToken) return;
+  var cur = document.getElementById(hostId);
+  if(!cur) return;
+  if(!data.length){ cur.innerHTML = ''; return; }
 
   var cycleLabel = Z.getDiscoverCycleLabel();
-  var h = '<div style="padding:14px;border-radius:16px;background:#111827;border:1px solid #1e293b;">';
 
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
-  h += '<div style="display:flex;align-items:center;gap:8px;min-width:0;">';
-  h += '<i class="fa-solid fa-user-plus" style="color:#10b981;font-size:13px;"></i>';
-  h += '<div style="font-size:11.5px;font-weight:900;color:#e2e8f0;text-transform:uppercase;letter-spacing:.4px;">Discover People</div>';
-  h += '<span style="font-size:9px;font-weight:900;padding:2px 7px;border-radius:8px;' +
-       'background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.32);' +
-       'white-space:nowrap;">' + esc(cycleLabel) + '</span>';
+  /* HEADER ROW — refresh + view all inline. No separate row below. */
+  var h = '<div style="padding:' + (compact ? '10px 10px 8px' : '14px 14px 10px') + ';' +
+    'border-radius:16px;background:#111827;border:1px solid #1e293b;">';
+
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;' +
+    'margin-bottom:' + (compact ? 6 : 10) + 'px;gap:6px;">';
+
+  /* Left — title + cycle label */
+  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
+  h += '<i class="fa-solid fa-user-plus" style="color:#10b981;font-size:12px;"></i>';
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;' +
+    'text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;">Discover People</div>';
+  if(!compact){
+    h += '<span style="font-size:8.5px;font-weight:900;padding:2px 6px;border-radius:8px;' +
+      'background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.32);' +
+      'white-space:nowrap;">' + esc(cycleLabel) + '</span>';
+  }
   h += '</div>';
+
+  /* Right — refresh + view all (inline, no separate row) */
+  h += '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">';
   h += '<button onclick="event.stopPropagation();Z.advanceDiscoverCycle();Z.refreshAllDiscoverStrips();" ' +
-       'title="Show different people" ' +
-       'style="background:transparent;border:none;color:#64748b;font-size:11px;font-weight:800;' +
-       'cursor:pointer;padding:4px 8px;display:inline-flex;align-items:center;gap:5px;">' +
-       '<i class="fa-solid fa-rotate"></i> Refresh</button>';
+    'title="Show different people" ' +
+    'style="background:transparent;border:none;color:#64748b;font-size:11px;' +
+    'font-weight:800;cursor:pointer;padding:5px 6px;border-radius:6px;">' +
+    '<i class="fa-solid fa-rotate"></i></button>';
+  h += '<button onclick="event.stopPropagation();Z.showView(\'people\')" ' +
+    'title="View all people" ' +
+    'style="background:transparent;border:none;color:#10b981;font-size:10.5px;' +
+    'font-weight:900;cursor:pointer;padding:5px 8px;border-radius:6px;">' +
+    'View all <i class="fa-solid fa-chevron-right" style="font-size:9px;"></i></button>';
   h += '</div>';
 
-  h += '<div class="zynix-discover-scroll" style="display:flex;gap:12px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:thin;scrollbar-color:#334155 #0f172a;">';
+  h += '</div>';
+
+  /* Cards row */
+  h += '<div class="zynix-discover-scroll' + (compact ? ' compact' : '') + '" ' +
+    'style="display:flex;gap:' + (compact ? 10 : 12) + 'px;overflow-x:auto;' +
+    'padding:2px 2px ' + (compact ? 4 : 8) + 'px;scrollbar-width:thin;' +
+    'scrollbar-color:#334155 #0f172a;">';
   data.forEach(function(p){ h += stripCardHTML(p); });
   h += '</div>';
 
-  h += '<button onclick="Z.showView(\'people\')" ' +
-       'style="width:100%;margin-top:6px;padding:10px;border-radius:10px;' +
-       'border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.06);' +
-       'color:#10b981;font-size:11.5px;font-weight:900;cursor:pointer;">' +
-       '<i class="fa-solid fa-users"></i> View all people</button>';
-
   h += '</div>';
-  currentHost.innerHTML = h;
+  cur.innerHTML = h;
 };
 
 Z.refreshAllDiscoverStrips = function(){
-  ['home-discover-host', 'lounge-discover-host'].forEach(function(id){
-    if(document.getElementById(id)){
-      try { Z.renderDiscoverStrip(id); } catch(e){}
-    }
-  });
+  if(document.getElementById('home-discover-host')){
+    try { Z.renderDiscoverStrip('home-discover-host'); } catch(e){}
+  }
+  if(document.getElementById('lounge-discover-host')){
+    try { Z.renderDiscoverStrip('lounge-discover-host', { compact:true }); } catch(e){}
+  }
   if(Z.State.currentView === 'people'){
     try { Z.refreshPeopleList(); } catch(e){}
   }
 };
 
 /* ============================================================
-   PART 7 — Full People page (rewrite)
+   PART 8 — FULL PEOPLE PAGE
    ============================================================ */
 Z._peopleQuery = '';
 Z._peopleFilter = 'all';
 Z._peopleShowCount = 30;
 
-function filterPredicate(p, filter, me){
-  if(filter === 'online')    return isOnlineNow(p);
-  if(filter === 'verified')  return tierRank(p.package) >= 3;
-  if(filter === 'bounty')    return getConnectBountySafe(p) >= 0.01;
-  if(filter === 'bonded')    return getConnStateSafe(p.id) === 'connected';
-  if(filter === 'pending')   return getConnStateSafe(p.id) === 'connecting_in';
+function passesFilter(p, filter){
+  if(filter === 'online')   return isOnlineNow(p);
+  if(filter === 'verified') return tierRank(p.package) >= 3;
+  if(filter === 'bounty')   return getConnectRate(p) >= 0.01;
+  if(filter === 'bonded')   return getConnStateSafe(p.id) === 'connected';
+  if(filter === 'pending')  return getConnStateSafe(p.id) === 'connecting_in';
   return true;
 }
 
@@ -41791,56 +41862,63 @@ Z.renderPeople = function(){
 
   var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
 
-  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;' +
+    'align-items:center;gap:6px;margin-bottom:0;">';
   h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
-  h += '<button class="colored-back-btn" onclick="Z.goBack()" style="display:inline-flex;align-items:center;gap:6px;">';
-  h += '<i class="fa-solid fa-arrow-left"></i> Back</button>';
-  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" ' +
+    'style="display:inline-flex;align-items:center;gap:6px;">' +
+    '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;' +
+    'align-items:center;gap:6px;">';
   h += '<i class="fa-solid fa-users" style="color:#10b981;"></i> Discover People</h2>';
   h += '</div>';
-  h += '<button onclick="Z.advanceDiscoverCycle();Z.refreshPeopleList();" title="Show different people" ' +
-       'style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.4);color:#10b981;' +
-       'width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:13px;' +
-       'display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-       '<i class="fa-solid fa-rotate"></i></button>';
+  h += '<button onclick="Z.advanceDiscoverCycle();Z.refreshPeopleList();" ' +
+    'title="Show different people" ' +
+    'style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.4);' +
+    'color:#10b981;width:34px;height:34px;border-radius:50%;cursor:pointer;' +
+    'font-size:13px;display:inline-flex;align-items:center;justify-content:center;' +
+    'flex-shrink:0;">' +
+    '<i class="fa-solid fa-rotate"></i></button>';
   h += '</div>';
 
-  /* Search */
-  h += '<input id="people-search-input" type="text" placeholder="Search by name, @username, profession…" ' +
-       'value="' + esc(Z._peopleQuery) + '" autocomplete="off" ' +
-       'style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;' +
-       'padding:12px 14px;font-size:13px;color:#fff;outline:none;box-sizing:border-box;">';
+  h += '<input id="people-search-input" type="text" ' +
+    'placeholder="Search by name, @username, profession…" ' +
+    'value="' + esc(Z._peopleQuery) + '" autocomplete="off" ' +
+    'style="width:100%;background:#0f172a;border:1px solid #1e293b;' +
+    'border-radius:12px;padding:12px 14px;font-size:13px;color:#fff;' +
+    'outline:none;box-sizing:border-box;">';
 
-  /* Filter chips */
   var filters = [
     { k:'all',      l:'All' },
-    { k:'online',   l:'🟢 Online' },
-    { k:'verified', l:'⭐ Verified' },
-    { k:'bounty',   l:'💰 Bounty' },
-    { k:'pending',  l:'✉ Invites' },
-    { k:'bonded',   l:'🤝 Bonded' }
+    { k:'online',   l:'Online' },
+    { k:'verified', l:'Verified' },
+    { k:'bounty',   l:'Bounty' },
+    { k:'pending',  l:'Invites' },
+    { k:'bonded',   l:'Connected' }
   ];
   h += '<div id="people-filter-row" style="display:flex;gap:6px;flex-wrap:wrap;">';
   filters.forEach(function(f){
     var active = Z._peopleFilter === f.k;
-    h += '<button data-people-filter="' + f.k + '" ' + (active ? 'data-active="1"' : '') +
+    h += '<button data-people-filter="' + f.k + '" ' +
+      (active ? 'data-active="1"' : '') +
       ' onclick="Z.setPeopleFilter(\'' + f.k + '\')" ' +
-      'style="padding:6px 12px;border-radius:16px;font-weight:800;font-size:11px;cursor:pointer;' +
-      'border:1px solid ' + (active ? 'rgba(16,185,129,.5)' : '#1e293b') + ';' +
+      'style="padding:6px 12px;border-radius:16px;font-weight:800;font-size:11px;' +
+      'cursor:pointer;border:1px solid ' + (active ? 'rgba(16,185,129,.5)' : '#1e293b') + ';' +
       'background:' + (active ? 'rgba(16,185,129,.12)' : '#0f172a') + ';' +
       'color:' + (active ? '#10b981' : '#cbd5e1') + ';">' + f.l + '</button>';
   });
   h += '</div>';
 
-  /* Cycle / mode label */
-  h += '<div id="people-mode-label" style="display:flex;justify-content:space-between;align-items:center;padding:0 4px;">';
-  h += '<span style="font-size:10.5px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.5px;">' +
-       (Z._peopleQuery ? 'Search results' : esc(Z.getDiscoverCycleLabel())) + '</span>';
+  h += '<div id="people-mode-label" style="display:flex;justify-content:space-between;' +
+    'align-items:center;padding:0 4px;">';
+  h += '<span style="font-size:10.5px;color:#64748b;font-weight:800;' +
+    'text-transform:uppercase;letter-spacing:.5px;">' +
+    (Z._peopleQuery ? 'Search results' : esc(Z.getDiscoverCycleLabel())) + '</span>';
   h += '<span id="people-count" style="font-size:10.5px;color:#64748b;font-weight:800;"></span>';
   h += '</div>';
 
-  /* Results host */
-  h += '<div id="people-list-container" style="display:flex;flex-direction:column;gap:10px;">' + Z.skeletonRows(6) + '</div>';
+  h += '<div id="people-list-container" style="display:flex;flex-direction:column;gap:10px;">' +
+    Z.skeletonRows(6) + '</div>';
 
   h += '</div>';
 
@@ -41862,17 +41940,14 @@ Z.renderPeople = function(){
   return h;
 };
 
-Z.onPeopleSearch = function(v){
-  Z._peopleQuery = v || '';
-  Z.refreshPeopleList();
-};
+Z.onPeopleSearch = function(v){ Z._peopleQuery = v || ''; Z.refreshPeopleList(); };
 
 Z.setPeopleFilter = function(f){
   Z._peopleFilter = f || 'all';
   document.querySelectorAll('[data-people-filter]').forEach(function(b){
     var active = b.getAttribute('data-people-filter') === Z._peopleFilter;
     if(active){
-      b.setAttribute('data-active', '1');
+      b.setAttribute('data-active','1');
       b.style.borderColor = 'rgba(16,185,129,.5)';
       b.style.background = 'rgba(16,185,129,.12)';
       b.style.color = '#10b981';
@@ -41886,15 +41961,14 @@ Z.setPeopleFilter = function(f){
   Z.refreshPeopleList();
 };
 
-var _peopleRefreshToken = 0;
+var _peopleToken = 0;
 
 Z.refreshPeopleList = async function(){
-  var me = Z.State.currentUser;
-  if(!me) return;
+  var me = Z.State.currentUser; if(!me) return;
   var container = document.getElementById('people-list-container');
   if(!container) return;
 
-  var myToken = ++_peopleRefreshToken;
+  var myToken = ++_peopleToken;
   container.innerHTML = Z.skeletonRows(6);
 
   var results = [];
@@ -41906,28 +41980,27 @@ Z.refreshPeopleList = async function(){
     }
   } catch(e){ results = []; }
 
-  if(myToken !== _peopleRefreshToken) return;
-  var currentContainer = document.getElementById('people-list-container');
-  if(!currentContainer) return;
+  if(myToken !== _peopleToken) return;
+  var cur = document.getElementById('people-list-container');
+  if(!cur) return;
 
-  /* Apply filter */
-  results = results.filter(function(p){ return filterPredicate(p, Z._peopleFilter, me); });
+  results = results.filter(function(p){ return passesFilter(p, Z._peopleFilter); });
 
   var countEl = document.getElementById('people-count');
   if(countEl) countEl.textContent = results.length + ' found';
 
   var modeEl = document.getElementById('people-mode-label');
   if(modeEl){
-    var labelSpan = modeEl.querySelector('span:first-child');
-    if(labelSpan){
-      labelSpan.textContent = Z._peopleQuery && Z._peopleQuery.trim()
+    var ls = modeEl.querySelector('span:first-child');
+    if(ls){
+      ls.textContent = (Z._peopleQuery && Z._peopleQuery.trim())
         ? 'Search results'
         : Z.getDiscoverCycleLabel();
     }
   }
 
   if(!results.length){
-    currentContainer.innerHTML = Z.emptyState({
+    cur.innerHTML = Z.emptyState({
       icon: 'fa-solid fa-user-slash',
       title: Z._peopleQuery
         ? ('No people match "' + Z._peopleQuery + '".')
@@ -41935,55 +42008,49 @@ Z.refreshPeopleList = async function(){
             ? 'No people match this filter.'
             : 'No people to discover yet.'),
       cta: Z._peopleQuery
-        ? { label: 'Clear search', onclick: "(function(){Z._peopleQuery='';var i=document.getElementById('people-search-input');if(i)i.value='';Z.refreshPeopleList();})()", soft: true }
-        : { label: 'Try a different cycle', onclick: "Z.advanceDiscoverCycle();Z.refreshPeopleList();" }
+        ? { label: 'Clear search',
+            onclick: "(function(){Z._peopleQuery='';" +
+              "var i=document.getElementById('people-search-input');" +
+              "if(i)i.value='';Z.refreshPeopleList();})()",
+            soft: true }
+        : { label: 'Try a different cycle',
+            onclick: "Z.advanceDiscoverCycle();Z.refreshPeopleList();" }
     });
     return;
   }
 
   var h = '';
-  results.slice(0, Z._peopleShowCount).forEach(function(p){
-    h += fullCardHTML(p);
-  });
+  results.slice(0, Z._peopleShowCount).forEach(function(p){ h += fullCardHTML(p); });
 
   if(results.length > Z._peopleShowCount){
     h += '<button onclick="Z._peopleShowCount += 30;Z.refreshPeopleList();" ' +
       'style="width:100%;padding:12px;border-radius:12px;border:1px solid #1e293b;' +
       'background:#0f172a;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">' +
-      '<i class="fa-solid fa-plus"></i> Load 30 more (' + (results.length - Z._peopleShowCount) + ' left)</button>';
+      '<i class="fa-solid fa-plus"></i> Load 30 more (' +
+      (results.length - Z._peopleShowCount) + ' left)</button>';
   }
 
-  currentContainer.innerHTML = h;
+  cur.innerHTML = h;
 };
 
 /* ============================================================
-   PART 8 — Home integration (move host after 10th post)
+   PART 9 — HOME INTEGRATION
+   Move strip after 10th post IF feed has ≥ 10 posts.
+   Fresh signup / empty feed → keep native top position.
    ============================================================ */
 function moveHomeDiscover(){
   if(Z.State.currentView !== 'home') return;
   var host = document.getElementById('home-discover-host');
   if(!host) return;
-
-  var allPosts = document.querySelectorAll('.post-card[data-post-id]');
-  if(!allPosts.length) return;
-
   var app = document.getElementById('app-container');
   if(!app) return;
 
-  /* Keep only main-feed posts (direct descendants of the wrapper div) */
-  var mainPosts = [];
-  for(var i = 0; i < allPosts.length; i++){
-    var p = allPosts[i];
-    if(p.parentNode && p.parentNode.parentNode === app) mainPosts.push(p);
-  }
-  if(!mainPosts.length) return;
+  var posts = app.querySelectorAll('.post-card[data-post-id]');
+  if(posts.length < 10) return; /* fresh/short feed → native position */
 
-  /* Target: after the 10th post, or after the last post if fewer */
-  var target = mainPosts.length > 9 ? mainPosts[9] : mainPosts[mainPosts.length - 1];
+  var target = posts[9]; /* 10th post (0-indexed) */
   if(!target || !target.parentNode) return;
-
-  /* Idempotency — skip if already correctly placed */
-  if(target.nextSibling === host) return;
+  if(target.nextSibling === host) return; /* already placed */
 
   try { target.parentNode.insertBefore(host, target.nextSibling); } catch(e){}
 }
@@ -41991,30 +42058,29 @@ function moveHomeDiscover(){
 var _origRenderHome = Z.renderHome;
 Z.renderHome = function(){
   var html = _origRenderHome.apply(this, arguments);
-  setTimeout(moveHomeDiscover, 40);
+  setTimeout(moveHomeDiscover, 50);
   setTimeout(moveHomeDiscover, 400);
   return html;
 };
 
-/* Also re-run after soft refresh which may rebuild home DOM */
-var _origSoftRefresh = Z.softRefresh;
-if(typeof _origSoftRefresh === 'function'){
+if(typeof Z.softRefresh === 'function'){
+  var _origSoftRefresh = Z.softRefresh;
   Z.softRefresh = function(){
     var r = _origSoftRefresh.apply(this, arguments);
-    setTimeout(moveHomeDiscover, 50);
+    setTimeout(moveHomeDiscover, 60);
     setTimeout(moveHomeDiscover, 400);
     return r;
   };
 }
 
 /* ============================================================
-   PART 9 — Lounge integration (inject above status)
+   PART 10 — LOUNGE INTEGRATION
+   Inject compact strip above status. Only once.
    ============================================================ */
 function injectLoungeDiscover(){
   if(Z.State.currentView !== 'lounge') return;
   var inner = document.querySelector('.zynix-lounge-inner');
   if(!inner) return;
-
   if(document.getElementById('lounge-discover-host')) return;
 
   var statusHost = document.getElementById('lounge-status-host');
@@ -42027,40 +42093,54 @@ function injectLoungeDiscover(){
     inner.insertBefore(host, inner.firstChild);
   }
 
-  try { Z.renderDiscoverStrip('lounge-discover-host'); } catch(e){}
+  try { Z.renderDiscoverStrip('lounge-discover-host', { compact:true }); } catch(e){}
 }
 
 var _origRenderLounge = Z.renderLounge;
 Z.renderLounge = function(){
   var html = _origRenderLounge.apply(this, arguments);
-  setTimeout(injectLoungeDiscover, 60);
+  setTimeout(injectLoungeDiscover, 80);
   setTimeout(injectLoungeDiscover, 450);
   return html;
 };
 
 /* ============================================================
-   PART 10 — CSS
+   PART 11 — CSS
    ============================================================ */
 (function(){
   if(document.getElementById('zynix-discover-people-css')) return;
   var st = document.createElement('style');
   st.id = 'zynix-discover-people-css';
   st.textContent = [
-    '.zynix-discover-scroll::-webkit-scrollbar{height:8px;}',
+    '.zynix-discover-scroll::-webkit-scrollbar{height:7px;}',
     '.zynix-discover-scroll::-webkit-scrollbar-track{background:#0f172a;border-radius:4px;}',
     '.zynix-discover-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:4px;}',
     '.zynix-discover-scroll::-webkit-scrollbar-thumb:hover{background:#475569;}',
-    /* People page: 2 columns on tablet+ */
-    '@media(min-width:768px){#people-list-container{display:grid !important;grid-template-columns:1fr 1fr;gap:12px;}}',
+    /* Compact variant (Lounge) */
+    '.zynix-discover-scroll.compact > [data-person-id]{width:100px !important;}',
+    '.zynix-discover-scroll.compact > [data-person-id] > button > div:first-child{',
+      'width:44px !important;height:44px !important;',
+    '}',
+    '.zynix-discover-scroll.compact > [data-person-id] > button > div:nth-child(2){',
+      'font-size:10.5px !important;margin-top:5px !important;',
+    '}',
+    '.zynix-discover-scroll.compact > [data-person-id] > button > div:nth-child(3){',
+      'display:none !important;',
+    '}',
+    '.zynix-discover-scroll.compact > [data-person-id] > div:last-child button{',
+      'font-size:9.5px !important;padding:5px 9px !important;',
+    '}',
+    '@media(min-width:768px){',
+      '#people-list-container{display:grid !important;grid-template-columns:1fr 1fr;gap:12px;}',
+    '}',
     '#people-list-container > [data-person-id]:hover{border-color:rgba(16,185,129,.45) !important;}'
   ].join('');
   document.head.appendChild(st);
 })();
 
-console.log('[Section 20 — Discover People] definitive build ready · 6 cycles · ranked search · strip home+lounge · full page');
+console.log('[Section 20 v2 — Discover People] ready · connect-not-bond · privacy-filter · profile-name-only');
 })();
 </script>
-
      
 </body>
 </html>
