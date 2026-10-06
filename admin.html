@@ -3375,5 +3375,299 @@ console.log('[Admin Chunk 7D] ZYNIX Pools master ready');
 })();
 </script>
 
+<!-- ============================================================
+     Chunk 7E — Admin Team Manager
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin; if(!Admin) return;
+if(Admin.__chunk7E) return; Admin.__chunk7E = true;
+
+var sb = window.supabase.createClient(
+  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+);
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  if(s < 2592000) return Math.floor(s/86400) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+var ROLE_COLORS = {
+  super_admin: '#fbbf24',
+  admin:       '#10b981',
+  moderator:   '#60a5fa'
+};
+var ROLE_LABELS = {
+  super_admin: 'Super Admin',
+  admin:       'Admin',
+  moderator:   'Moderator'
+};
+
+async function renderAdminTeam(main){
+  main.innerHTML =
+    '<div class="adm-page-title">Admin Team</div>' +
+    '<div class="adm-page-sub">Manage admin accounts and roles. Only super_admins can add, edit, or remove.</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:16px;">' +
+      '<button id="at-add" class="adm-btn primary" style="font-size:12px;padding:10px 16px;"><i class="fa-solid fa-user-plus"></i> Add admin</button>' +
+      '<button id="at-refresh" class="adm-btn ghost" style="font-size:12px;padding:10px 14px;"><i class="fa-solid fa-rotate"></i> Refresh</button>' +
+    '</div>' +
+    '<div id="at-list"><div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+
+  $('at-add').addEventListener('click', openAddAdminModal);
+  $('at-refresh').addEventListener('click', loadAdmins);
+  loadAdmins();
+}
+
+async function loadAdmins(){
+  var host = $('at-list'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+
+  try {
+    var r = await sb.rpc('admin_admins_list');
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){
+      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;">No admins found.</div>';
+      return;
+    }
+
+    var me = window.Admin && window.Admin.user;
+    var h = '';
+    list.forEach(function(a){
+      var rc = ROLE_COLORS[a.role] || '#94a3b8';
+      var rl = ROLE_LABELS[a.role] || a.role;
+      var isMe = me && me.id === a.user_id;
+      var isActive = a.active;
+
+      h += '<div style="display:flex;gap:12px;align-items:center;padding:14px;background:#131c30;border:1px solid #1e293b;border-radius:12px;margin-bottom:8px;' + (!isActive ? 'opacity:.55;' : '') + '">';
+      h += '<img src="' + esc(a.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(a.name||'U') + '&background=111827&color=34d399')) + '" style="width:48px;height:48px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
+      h += '<span style="font-size:13.5px;font-weight:900;color:#fff;">' + esc(a.name || a.username || 'User') + '</span>';
+      if(isMe) h += '<span style="font-size:9px;color:#10b981;background:rgba(16,185,129,.12);padding:2px 6px;border-radius:6px;font-weight:900;">YOU</span>';
+      h += '<span style="font-size:9.5px;font-weight:900;color:' + rc + ';background:' + rc + '22;padding:3px 9px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;">' + esc(rl) + '</span>';
+      if(!isActive) h += '<span style="font-size:9.5px;font-weight:900;color:#94a3b8;background:rgba(148,163,184,.12);padding:3px 9px;border-radius:10px;">INACTIVE</span>';
+      h += '</div>';
+      h += '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">' + esc(a.email || a.username || '') + '</div>';
+      h += '<div style="font-size:10px;color:#64748b;margin-top:2px;">Granted ' + timeAgo(a.granted_at) + (a.granted_by_username ? ' · by @' + esc(a.granted_by_username) : '') + '</div>';
+      h += '</div>';
+      h += '<div style="display:flex;gap:6px;flex-shrink:0;">';
+      h += '<button data-at-edit="' + esc(a.user_id) + '" title="Edit" style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.35);color:#60a5fa;font-size:12px;cursor:pointer;padding:6px 10px;border-radius:8px;"><i class="fa-solid fa-pen"></i></button>';
+      if(!isMe){
+        h += '<button data-at-remove="' + esc(a.user_id) + '" data-at-name="' + esc(a.name || a.username || 'user') + '" title="Remove" style="background:rgba(161,98,98,.08);border:1px solid rgba(161,98,98,.4);color:#a16262;font-size:12px;cursor:pointer;padding:6px 10px;border-radius:8px;"><i class="fa-solid fa-trash"></i></button>';
+      }
+      h += '</div>';
+      h += '</div>';
+    });
+    host.innerHTML = h;
+
+    host.querySelectorAll('[data-at-edit]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var uid = this.getAttribute('data-at-edit');
+        var admin = list.find(function(x){ return x.user_id === uid; });
+        if(admin) openEditAdminModal(admin);
+      });
+    });
+    host.querySelectorAll('[data-at-remove]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var uid = this.getAttribute('data-at-remove');
+        var nm = this.getAttribute('data-at-name');
+        removeAdmin(uid, nm);
+      });
+    });
+  } catch(e){
+    console.error('[admin team]', e);
+    host.innerHTML = '<div style="text-align:center;padding:40px;color:#a16262;font-size:12px;">Failed: ' + esc(e.message || 'unknown') + '</div>';
+  }
+}
+
+function openAddAdminModal(){
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'at-add-modal';
+  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '460px';
+  inner.innerHTML =
+    '<h3>Add Admin</h3>' +
+    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">' +
+      'User must already have a ZYNIX account. Enter their registered email.' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Email</label>' +
+      '<input id="at-add-email" type="email" placeholder="user@example.com" autocomplete="off">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Role</label>' +
+      '<select id="at-add-role">' +
+        '<option value="admin">Admin — full moderation access</option>' +
+        '<option value="moderator">Moderator — reports + content only</option>' +
+        '<option value="super_admin">Super Admin — full + wallet + roles</option>' +
+      '</select>' +
+    '</div>' +
+    '<div class="row">' +
+      '<button class="adm-btn primary" id="at-add-save" style="flex:1;">Add admin</button>' +
+      '<button class="adm-btn ghost" id="at-add-cancel">Cancel</button>' +
+    '</div>';
+
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  setTimeout(function(){ var e = $('at-add-email'); if(e) e.focus(); }, 50);
+  $('at-add-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  $('at-add-save').addEventListener('click', async function(){
+    var email = ($('at-add-email').value || '').trim();
+    var role = $('at-add-role').value;
+    if(email.length < 5){ toast('Enter a valid email.', true); return; }
+    this.disabled = true;
+    this.textContent = 'Adding…';
+    try {
+      var r = await sb.rpc('admin_add_admin_by_email', { p_email: email, p_role: role });
+      if(r.error) throw r.error;
+      toast('Admin added.');
+      shell.remove();
+      loadAdmins();
+    } catch(e){
+      var msg = (e && e.message) || 'unknown';
+      if(msg.indexOf('user_not_found') !== -1) toast('No ZYNIX account with this email.', true);
+      else if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can add.', true);
+      else if(msg.indexOf('invalid_role') !== -1) toast('Invalid role.', true);
+      else toast('Failed: ' + msg, true);
+      this.disabled = false;
+      this.textContent = 'Add admin';
+    }
+  });
+}
+
+function openEditAdminModal(admin){
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'at-edit-modal';
+  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
+
+  var me = window.Admin && window.Admin.user;
+  var isMe = me && me.id === admin.user_id;
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '460px';
+  inner.innerHTML =
+    '<h3>Edit Admin</h3>' +
+    '<div style="padding:12px;border-radius:10px;background:rgba(0,0,0,.22);margin-bottom:14px;">' +
+      '<div style="display:flex;gap:10px;align-items:center;">' +
+        '<img src="' + esc(admin.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(admin.name||'U') + '&background=111827&color=34d399')) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">' +
+        '<div><div style="font-size:13px;font-weight:900;color:#fff;">' + esc(admin.name || admin.username || 'User') + '</div>' +
+        '<div style="font-size:11px;color:#94a3b8;">' + esc(admin.email || '') + '</div></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Role</label>' +
+      '<select id="at-edit-role" ' + (isMe ? 'disabled' : '') + '>' +
+        '<option value="admin" ' + (admin.role === 'admin' ? 'selected' : '') + '>Admin</option>' +
+        '<option value="moderator" ' + (admin.role === 'moderator' ? 'selected' : '') + '>Moderator</option>' +
+        '<option value="super_admin" ' + (admin.role === 'super_admin' ? 'selected' : '') + '>Super Admin</option>' +
+      '</select>' +
+      (isMe ? '<div style="font-size:10px;color:#94a3b8;margin-top:6px;">You cannot change your own role.</div>' : '') +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Status</label>' +
+      '<select id="at-edit-active" ' + (isMe ? 'disabled' : '') + '>' +
+        '<option value="true" ' + (admin.active ? 'selected' : '') + '>Active</option>' +
+        '<option value="false" ' + (!admin.active ? 'selected' : '') + '>Inactive (revoke access)</option>' +
+      '</select>' +
+      (isMe ? '<div style="font-size:10px;color:#94a3b8;margin-top:6px;">You cannot deactivate yourself.</div>' : '') +
+    '</div>' +
+    '<div class="row">' +
+      '<button class="adm-btn primary" id="at-edit-save" style="flex:1;">Save</button>' +
+      '<button class="adm-btn ghost" id="at-edit-cancel">Cancel</button>' +
+    '</div>';
+
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  $('at-edit-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  $('at-edit-save').addEventListener('click', async function(){
+    var role = $('at-edit-role').value;
+    var active = $('at-edit-active').value === 'true';
+    this.disabled = true;
+    this.textContent = 'Saving…';
+    try {
+      var r = await sb.rpc('admin_update_admin', {
+        p_user_id: admin.user_id, p_role: role, p_active: active
+      });
+      if(r.error) throw r.error;
+      toast('Admin updated.');
+      shell.remove();
+      loadAdmins();
+    } catch(e){
+      var msg = (e && e.message) || 'unknown';
+      if(msg.indexOf('cannot_deactivate_self') !== -1) toast('Cannot deactivate yourself.', true);
+      else if(msg.indexOf('cannot_downgrade_self') !== -1) toast('Cannot downgrade yourself.', true);
+      else if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can edit.', true);
+      else toast('Failed: ' + msg, true);
+      this.disabled = false;
+      this.textContent = 'Save';
+    }
+  });
+}
+
+async function removeAdmin(userId, name){
+  if(!confirm('Remove ' + name + ' from admin team?\n\nThey lose all admin access immediately.')) return;
+  try {
+    var r = await sb.rpc('admin_remove_admin', { p_user_id: userId });
+    if(r.error) throw r.error;
+    toast('Admin removed.');
+    loadAdmins();
+  } catch(e){
+    var msg = (e && e.message) || 'unknown';
+    if(msg.indexOf('cannot_remove_self') !== -1) toast('Cannot remove yourself.', true);
+    else if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can remove.', true);
+    else toast('Failed: ' + msg, true);
+  }
+}
+
+/* ============================================================
+   ROUTE INTERCEPT — override "admins" nav item
+   ============================================================ */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-nav="admins"]');
+  if(!btn) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+
+  var Admin = window.Admin;
+  if(Admin) Admin.currentView = 'admins';
+  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-nav') === 'admins');
+  });
+
+  var main = document.getElementById('adm-main');
+  if(main) renderAdminTeam(main);
+}, true);
+
+console.log('[Admin Chunk 7E] Admin Team Manager ready');
+})();
+</script>
+
 </body>
 </html>
