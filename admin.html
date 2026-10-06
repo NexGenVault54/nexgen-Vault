@@ -2635,5 +2635,372 @@ console.log('[Admin Scroll Guard] active');
 })();
 </script>
 
+<!-- ============================================================
+     Chunk 7C — Finance Hub
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin; if(!Admin) return;
+if(Admin.__chunk7C) return; Admin.__chunk7C = true;
+
+var sb = window.supabase.createClient(
+  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5MTM4NSwiZXhwIjoyMTA0MjY3Mzg1fQ.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+);
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  if(s < 2592000) return Math.floor(s/86400) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+/* ============================================================
+   FINANCE HUB PAGE
+   ============================================================ */
+var financeState = {
+  month: new Date().toISOString().slice(0,7),
+  computed: null,
+  pastMonths: []
+};
+
+var DEFAULT_TRANSFERS = [
+  { pool:'bounty',         label:'Bounty Pool',           pct:40, base:'net_profit',           color:'#10b981', enabled:true  },
+  { pool:'csf',            label:'CSF (Creator Support)', pct:10, base:'net_profit',           color:'#a78bfa', enabled:true  },
+  { pool:'peer',           label:'Peer Support Pool',     pct:5,  base:'net_profit',           color:'#60a5fa', enabled:true  },
+  { pool:'marketing',      label:'Marketing Budget',      pct:10, base:'subscription_revenue', color:'#ec4899', enabled:true  },
+  { pool:'cfar',           label:'CFAR by ZYNIX',         pct:10, base:'subscription_revenue', color:'#fbbf24', enabled:true  }
+];
+
+async function renderFinanceHub(main){
+  main.innerHTML =
+    '<div class="adm-page-title">Finance Hub</div>' +
+    '<div class="adm-page-sub">Compute monthly revenue, then transfer to pools with checkbox + % control.</div>' +
+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">' +
+      '<input id="fh-month" type="month" value="' + financeState.month + '" style="padding:10px 12px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;outline:none;">' +
+      '<button id="fh-compute" class="adm-btn primary" style="font-size:12.5px;padding:10px 16px;"><i class="fa-solid fa-calculator"></i> Compute month revenue</button>' +
+      '<button id="fh-refresh" class="adm-btn ghost" style="font-size:12px;padding:10px 14px;"><i class="fa-solid fa-rotate"></i> Refresh</button>' +
+    '</div>' +
+
+    '<div id="fh-summary"></div>' +
+
+    '<div id="fh-transfer-section"></div>' +
+
+    '<div style="margin-top:20px;">' +
+      '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px;">Past Month Records</div>' +
+      '<div id="fh-past"></div>' +
+    '</div>';
+
+  $('fh-month').addEventListener('change', function(){ financeState.month = this.value; loadFinanceState(); });
+  $('fh-compute').addEventListener('click', computeMonth);
+  $('fh-refresh').addEventListener('click', loadFinanceState);
+
+  loadFinanceState();
+}
+
+async function loadFinanceState(){
+  var sumHost = $('fh-summary');
+  var trHost = $('fh-transfer-section');
+  var pastHost = $('fh-past');
+  if(!sumHost) return;
+
+  sumHost.innerHTML = '';
+  trHost.innerHTML = '';
+  pastHost.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+
+  /* Load month summary if exists */
+  try {
+    var r = await sb.rpc('admin_monthly_revenue_list');
+    var months = (!r.error && r.data) ? r.data : [];
+    financeState.pastMonths = months;
+
+    var current = months.find(function(x){ return x.month_key === financeState.month; });
+    financeState.computed = current || null;
+
+    if(current){
+      paintSummary(current);
+      if(current.status !== 'closed') paintTransferSection(current);
+      else paintClosedNotice(current);
+    } else {
+      sumHost.innerHTML = '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12.5px;">' +
+        'No data for <b style="color:#fff;">' + esc(financeState.month) + '</b>. Click "Compute month revenue".</div>';
+    }
+    paintPastMonths(months);
+  } catch(e){
+    console.error('[finance hub]', e);
+    pastHost.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed to load.</div>';
+  }
+}
+
+function paintSummary(m){
+  var sumHost = $('fh-summary');
+  if(!sumHost) return;
+  var net = Number(m.net_profit) || 0;
+  var subRev = Number(m.subscription_revenue) || 0;
+  sumHost.innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">' +
+      '<div class="adm-kpi green"><div class="lbl">Income</div><div class="val">' + money(m.total_income) + '</div></div>' +
+      '<div class="adm-kpi red"><div class="lbl">Expense</div><div class="val">' + money(m.total_expense) + '</div></div>' +
+      '<div class="adm-kpi blue"><div class="lbl">Net Profit</div><div class="val" style="color:' + (net >= 0 ? '#60a5fa' : '#a16262') + ';">' + money(net) + '</div></div>' +
+      '<div class="adm-kpi amber"><div class="lbl">Subs Revenue</div><div class="val" style="color:#fbbf24;">' + money(subRev) + '</div></div>' +
+    '</div>' +
+    '<div style="padding:10px 12px;border-radius:10px;background:rgba(0,0,0,.25);font-size:11.5px;color:#cbd5e1;margin-bottom:16px;">' +
+      '<b style="color:#fff;">Month:</b> ' + esc(m.month_key) +
+      ' · <b style="color:#fff;">Status:</b> <span style="color:' + (m.status === 'closed' ? '#a16262' : '#10b981') + ';">' + esc(m.status.toUpperCase()) + '</span>' +
+      (m.closed_at ? ' · Closed ' + timeAgo(m.closed_at) : '') +
+    '</div>';
+}
+
+function paintClosedNotice(m){
+  var trHost = $('fh-transfer-section');
+  if(!trHost) return;
+  trHost.innerHTML =
+    '<div style="padding:16px;border-radius:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.35);font-size:12.5px;color:#cbd5e1;">' +
+      '<b style="color:#10b981;"><i class="fa-solid fa-check-circle"></i> Month closed.</b><br>' +
+      'Transfer already processed. Pools received their amounts.' +
+    '</div>';
+}
+
+function paintTransferSection(m){
+  var trHost = $('fh-transfer-section');
+  if(!trHost) return;
+  var net = Number(m.net_profit) || 0;
+  var subRev = Number(m.subscription_revenue) || 0;
+
+  var h = '';
+
+  /* Net Profit Section */
+  h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:14px;">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#60a5fa;letter-spacing:.5px;text-transform:uppercase;">Net Profit Distribution</div>';
+  h += '<div style="font-size:14px;font-weight:900;color:#60a5fa;">' + money(net) + '</div>';
+  h += '</div>';
+  DEFAULT_TRANSFERS.filter(function(t){ return t.base === 'net_profit'; }).forEach(function(t){
+    h += transferRowHTML(t, net);
+  });
+  h += '</div>';
+
+  /* Subscription Revenue Section */
+  h += '<div style="padding:14px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:14px;">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#fbbf24;letter-spacing:.5px;text-transform:uppercase;">Subscription Revenue Distribution</div>';
+  h += '<div style="font-size:14px;font-weight:900;color:#fbbf24;">' + money(subRev) + '</div>';
+  h += '</div>';
+  DEFAULT_TRANSFERS.filter(function(t){ return t.base === 'subscription_revenue'; }).forEach(function(t){
+    h += transferRowHTML(t, subRev);
+  });
+  h += '</div>';
+
+  /* Transfer button */
+  h += '<button id="fh-transfer-btn" class="adm-btn primary" style="width:100%;padding:14px;font-size:13.5px;">' +
+    '<i class="fa-solid fa-arrow-right-to-bracket"></i> Transfer to selected pools</button>';
+
+  trHost.innerHTML = h;
+
+  /* Wire inputs */
+  DEFAULT_TRANSFERS.forEach(function(t){
+    var cb = document.getElementById('fh-cb-' + t.pool);
+    var pct = document.getElementById('fh-pct-' + t.pool);
+    if(cb) cb.addEventListener('change', recalcTotals);
+    if(pct) pct.addEventListener('input', recalcTotals);
+  });
+  $('fh-transfer-btn').addEventListener('click', doTransfer);
+
+  recalcTotals();
+}
+
+function transferRowHTML(t, base){
+  return '<div style="display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">' +
+    '<input type="checkbox" id="fh-cb-' + t.pool + '" ' + (t.enabled ? 'checked' : '') + ' style="width:16px;height:16px;accent-color:#10b981;cursor:pointer;">' +
+    '<div style="font-size:12.5px;color:#e2e8f0;font-weight:700;">' + esc(t.label) +
+      '<span style="font-size:9.5px;color:#64748b;font-weight:700;margin-left:6px;">' + (t.base === 'net_profit' ? 'net profit' : 'subs rev') + '</span>' +
+    '</div>' +
+    '<input type="number" id="fh-pct-' + t.pool + '" value="' + t.pct + '" min="0" max="100" step="1" style="width:70px;padding:6px 8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:12.5px;outline:none;text-align:right;font-weight:900;">' +
+    '<div id="fh-amt-' + t.pool + '" style="font-size:12.5px;font-weight:900;color:' + t.color + ';white-space:nowrap;min-width:90px;text-align:right;">$0.00</div>' +
+  '</div>';
+}
+
+function recalcTotals(){
+  var m = financeState.computed;
+  if(!m) return;
+  var net = Number(m.net_profit) || 0;
+  var subRev = Number(m.subscription_revenue) || 0;
+  var totalOut = 0;
+  DEFAULT_TRANSFERS.forEach(function(t){
+    var cb = document.getElementById('fh-cb-' + t.pool);
+    var pct = document.getElementById('fh-pct-' + t.pool);
+    var amtEl = document.getElementById('fh-amt-' + t.pool);
+    if(!cb || !pct || !amtEl) return;
+    var base = (t.base === 'subscription_revenue') ? subRev : net;
+    var val = cb.checked ? (Number(pct.value) || 0) : 0;
+    var amt = base * val / 100;
+    amtEl.textContent = money(amt);
+    amtEl.style.opacity = cb.checked ? '1' : '.35';
+    totalOut += amt;
+  });
+  var btn = $('fh-transfer-btn');
+  if(btn){
+    var baseTotal = (Number(m.net_profit) || 0) + (Number(m.subscription_revenue) || 0);
+    var pctOfBase = baseTotal > 0 ? (totalOut / baseTotal * 100) : 0;
+    btn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> Transfer · ' + money(totalOut) + ' to selected pools';
+  }
+}
+
+async function doTransfer(){
+  var m = financeState.computed;
+  if(!m){ toast('Compute the month first.', true); return; }
+
+  var payload = [];
+  DEFAULT_TRANSFERS.forEach(function(t){
+    var cb = document.getElementById('fh-cb-' + t.pool);
+    var pct = document.getElementById('fh-pct-' + t.pool);
+    if(!cb || !pct) return;
+    payload.push({
+      pool: t.pool,
+      pct: Number(pct.value) || 0,
+      enabled: cb.checked
+    });
+  });
+
+  var enabled = payload.filter(function(x){ return x.enabled; });
+  if(!enabled.length){ toast('Select at least one pool.', true); return; }
+
+  var totalAmount = 0;
+  var net = Number(m.net_profit) || 0;
+  var subRev = Number(m.subscription_revenue) || 0;
+  enabled.forEach(function(t){
+    var base = (['marketing','cfar'].indexOf(t.pool) !== -1) ? subRev : net;
+    totalAmount += base * t.pct / 100;
+  });
+
+  if(!confirm('Transfer ' + money(totalAmount) + ' across ' + enabled.length + ' pool(s)?\n\nThis closes the month. Cannot be undone.')) return;
+
+  var btn = $('fh-transfer-btn');
+  btn.disabled = true;
+  btn.textContent = 'Transferring…';
+
+  try {
+    var r = await sb.rpc('admin_transfer_to_pools', {
+      p_month_key: m.month_key,
+      p_transfers: payload
+    });
+    if(r.error) throw r.error;
+    var d = r.data || {};
+    toast('Transferred ' + money(d.total_transferred) + ' to ' + enabled.length + ' pool(s).');
+    loadFinanceState();
+  } catch(e){
+    var msg = (e && e.message) || 'unknown';
+    if(msg.indexOf('month_already_closed') !== -1) toast('This month is already closed.', true);
+    else if(msg.indexOf('month_not_computed') !== -1) toast('Compute the month first.', true);
+    else if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin can transfer.', true);
+    else toast('Failed: ' + msg, true);
+    btn.disabled = false;
+  }
+}
+
+async function computeMonth(){
+  var btn = $('fh-compute');
+  var month = financeState.month;
+  if(!month){ toast('Pick a month.', true); return; }
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Computing…';
+  try {
+    var r = await sb.rpc('admin_compute_month_revenue', { p_month_key: month });
+    if(r.error) throw r.error;
+    toast('Computed for ' + month + '.');
+    loadFinanceState();
+  } catch(e){
+    var msg = (e && e.message) || 'unknown';
+    if(msg.indexOf('invalid_month') !== -1) toast('Invalid month format.', true);
+    else if(msg.indexOf('super_admin_only') !== -1) toast('Only super_admin.', true);
+    else toast('Failed: ' + msg, true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-calculator"></i> Compute month revenue';
+  }
+}
+
+function paintPastMonths(months){
+  var pastHost = $('fh-past');
+  if(!pastHost) return;
+  if(!months.length){
+    pastHost.innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No past records yet.</div>';
+    return;
+  }
+  var h = '';
+  months.forEach(function(m){
+    var net = Number(m.net_profit) || 0;
+    var statusCol = m.status === 'closed' ? '#10b981' : '#fbbf24';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-radius:10px;background:#131c30;border:1px solid #1e293b;margin-bottom:6px;cursor:pointer;" onclick="(function(){var el=document.getElementById(\'fh-month\');el.value=\'' + esc(m.month_key) + '\';el.dispatchEvent(new Event(\'change\'));})();">' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:13px;font-weight:800;color:#fff;">' + esc(m.month_key) + '</div>' +
+        '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">' +
+          'Net: <b style="color:#60a5fa;">' + money(net) + '</b>' +
+          ' · Subs: <b style="color:#fbbf24;">' + money(m.subscription_revenue) + '</b>' +
+        '</div>' +
+      '</div>' +
+      '<span style="font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:' + statusCol + ';background:' + statusCol + '22;padding:3px 10px;border-radius:10px;">' + esc(m.status) + '</span>' +
+    '</div>';
+  });
+  pastHost.innerHTML = h;
+}
+
+/* ============================================================
+   SIDEBAR INJECTION — add "Finance Hub" nav item
+   ============================================================ */
+function injectNavItem(){
+  var sidebar = document.getElementById('adm-sidebar');
+  if(!sidebar) return;
+  if(sidebar.querySelector('[data-nav="finance-hub"]')) return;
+  var ledgerBtn = sidebar.querySelector('[data-nav="ledger"]');
+  if(!ledgerBtn) return;
+  var btn = document.createElement('button');
+  btn.className = 'nav-item';
+  btn.setAttribute('data-nav', 'finance-hub');
+  btn.innerHTML = '<i class="fa-solid fa-sack-dollar"></i> Finance Hub';
+  ledgerBtn.parentNode.insertBefore(btn, ledgerBtn);
+}
+setInterval(injectNavItem, 1500);
+setTimeout(injectNavItem, 500);
+
+/* ============================================================
+   CLICK INTERCEPTOR — route finance-hub
+   (uses capture phase to beat the final dispatcher)
+   ============================================================ */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-nav="finance-hub"]');
+  if(!btn) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+
+  var Admin = window.Admin;
+  if(Admin) Admin.currentView = 'finance-hub';
+  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-nav') === 'finance-hub');
+  });
+
+  var main = document.getElementById('adm-main');
+  if(main) renderFinanceHub(main);
+}, true);
+
+console.log('[Admin Chunk 7C] Finance Hub ready');
+})();
+</script>
+
 </body>
 </html>
