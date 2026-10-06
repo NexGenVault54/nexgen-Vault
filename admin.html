@@ -3669,5 +3669,200 @@ console.log('[Admin Chunk 7E] Admin Team Manager ready');
 })();
 </script>
 
+<!-- ============================================================
+     Chunk 7F — Tier Analytics + Cohorts
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin; if(!Admin) return;
+if(Admin.__chunk7F) return; Admin.__chunk7F = true;
+
+var sb = window.supabase.createClient(
+  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+);
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+function pct(n, total){
+  if(!total || total <= 0) return '0%';
+  return ((n / total) * 100).toFixed(1) + '%';
+}
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+var TIER_META = [
+  { key:'free',     label:'Free',     color:'#64748b', price:0   },
+  { key:'member',   label:'Member',   color:'#10b981', price:9   },
+  { key:'pro',      label:'Pro',      color:'#60a5fa', price:25  },
+  { key:'elite',    label:'Elite',    color:'#a78bfa', price:59  },
+  { key:'business', label:'Business', color:'#fbbf24', price:349 }
+];
+
+async function renderAnalyticsEnhanced(main){
+  main.innerHTML =
+    '<div class="adm-page-title">Analytics</div>' +
+    '<div class="adm-page-sub">Tier distribution, MRR, signup cohorts, active user stats.</div>' +
+    '<div id="an-tier"><div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>' +
+    '<div id="an-active"></div>' +
+    '<div id="an-cohort"></div>';
+
+  loadTierDistribution();
+  loadActiveStats();
+  loadCohorts();
+}
+
+/* ---------- TIER DISTRIBUTION ---------- */
+async function loadTierDistribution(){
+  var host = $('an-tier'); if(!host) return;
+  try {
+    var r = await sb.rpc('admin_tier_distribution');
+    if(r.error) throw r.error;
+    var d = r.data || {};
+    var total = d.total || 0;
+
+    var h = '';
+    /* Header KPIs */
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">';
+    h += '<div class="adm-kpi blue"><div class="lbl">Total Users</div><div class="val">' + total + '</div></div>';
+    h += '<div class="adm-kpi green"><div class="lbl">MRR</div><div class="val" style="color:#10b981;">' + money(d.mrr) + '</div><div class="sub">Monthly recurring</div></div>';
+    h += '<div class="adm-kpi red"><div class="lbl">Banned</div><div class="val" style="color:#a16262;">' + (d.banned || 0) + '</div></div>';
+    h += '</div>';
+
+    /* Stacked bar */
+    h += '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:12px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px;">Tier Distribution</div>';
+    if(total > 0){
+      h += '<div style="display:flex;height:26px;border-radius:8px;overflow:hidden;background:rgba(0,0,0,.4);margin-bottom:16px;">';
+      TIER_META.forEach(function(t){
+        var cnt = d[t.key] || 0;
+        if(cnt <= 0) return;
+        var w = (cnt / total) * 100;
+        h += '<div style="flex:' + w + ';background:' + t.color + ';display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;color:#000;min-width:0;overflow:hidden;" title="' + t.label + ' · ' + cnt + '">' +
+          (w > 8 ? cnt : '') +
+        '</div>';
+      });
+      h += '</div>';
+    }
+
+    /* Tier rows */
+    h += '<div style="display:flex;flex-direction:column;gap:8px;">';
+    TIER_META.forEach(function(t){
+      var cnt = d[t.key] || 0;
+      var pc = pct(cnt, total);
+      h += '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(0,0,0,.22);border-radius:9px;">' +
+        '<span style="width:10px;height:10px;border-radius:50%;background:' + t.color + ';flex-shrink:0;"></span>' +
+        '<span style="font-size:12.5px;color:#e2e8f0;font-weight:800;min-width:70px;">' + t.label + '</span>' +
+        '<span style="font-size:11px;color:#94a3b8;min-width:60px;">' + (t.price > 0 ? '$' + t.price + '/mo' : 'Free') + '</span>' +
+        '<span style="font-size:13px;font-weight:900;color:#fff;min-width:50px;text-align:right;">' + cnt + '</span>' +
+        '<span style="font-size:11px;color:#64748b;min-width:50px;text-align:right;">' + pc + '</span>' +
+        '<span style="font-size:12px;font-weight:900;color:' + t.color + ';margin-left:auto;">' + money(cnt * t.price) + '</span>' +
+      '</div>';
+    });
+    h += '</div>';
+    h += '</div>';
+    host.innerHTML = h;
+  } catch(e){
+    console.error('[tier dist]', e);
+    host.innerHTML = '<div style="text-align:center;padding:40px;color:#a16262;font-size:12px;">Failed: ' + esc(e.message || 'unknown') + '</div>';
+  }
+}
+
+/* ---------- ACTIVE USER STATS ---------- */
+async function loadActiveStats(){
+  var host = $('an-active'); if(!host) return;
+  try {
+    var r = await sb.rpc('admin_active_user_stats');
+    if(r.error) throw r.error;
+    var d = r.data || {};
+    var compPct = Number(d.completion_pct) || 0;
+
+    var h = '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:16px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px;">Active User · ' + esc(d.month_key) + '</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">';
+    h += '<div class="adm-kpi green"><div class="lbl">Active</div><div class="val" style="color:#10b981;">' + (d.active_this_month || 0) + '</div></div>';
+    h += '<div class="adm-kpi blue"><div class="lbl">Eligible</div><div class="val" style="color:#60a5fa;">' + (d.total_eligible || 0) + '</div></div>';
+    h += '<div class="adm-kpi amber"><div class="lbl">Completion</div><div class="val" style="color:#fbbf24;">' + compPct + '%</div></div>';
+    h += '</div>';
+    h += '</div>';
+    host.innerHTML = h;
+  } catch(e){ host.innerHTML = ''; }
+}
+
+/* ---------- SIGNUP COHORTS ---------- */
+async function loadCohorts(){
+  var host = $('an-cohort'); if(!host) return;
+  try {
+    var r = await sb.rpc('admin_signup_cohorts', { p_weeks: 12 });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){
+      host.innerHTML = '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No signup data yet.</div>';
+      return;
+    }
+    var maxNew = Math.max.apply(null, list.map(function(x){ return Number(x.new_users) || 0; }).concat([1]));
+
+    var h = '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px;">Signup Cohorts · Last 12 Weeks</div>';
+
+    h += '<div style="display:grid;grid-template-columns:110px 1fr 60px 60px;gap:8px;padding:6px 4px;font-size:10px;color:#94a3b8;font-weight:900;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #1e293b;margin-bottom:8px;">';
+    h += '<span>Week of</span><span>New users</span><span style="text-align:right;">Paid</span><span style="text-align:right;">Active</span>';
+    h += '</div>';
+
+    list.forEach(function(c){
+      var cnt = Number(c.new_users) || 0;
+      var barW = maxNew > 0 ? (cnt / maxNew) * 100 : 0;
+      var dayLabel = new Date(c.week_start).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+      h += '<div style="display:grid;grid-template-columns:110px 1fr 60px 60px;gap:8px;padding:8px 4px;align-items:center;border-bottom:1px solid rgba(255,255,255,.04);">';
+      h += '<span style="font-size:11px;color:#cbd5e1;font-weight:800;">' + esc(dayLabel) + '</span>';
+      h += '<div style="display:flex;align-items:center;gap:6px;">';
+      h += '<div style="flex:1;height:16px;background:rgba(0,0,0,.3);border-radius:4px;overflow:hidden;">';
+      h += '<div style="height:100%;width:' + barW + '%;background:linear-gradient(90deg,#10b981,#3b82f6);border-radius:4px;"></div>';
+      h += '</div>';
+      h += '<span style="font-size:11px;color:#fff;font-weight:900;min-width:26px;text-align:right;">' + cnt + '</span>';
+      h += '</div>';
+      h += '<span style="font-size:11px;color:#10b981;font-weight:800;text-align:right;">' + (c.paid_users || 0) + '</span>';
+      h += '<span style="font-size:11px;color:#60a5fa;font-weight:800;text-align:right;">' + (c.active_users || 0) + '</span>';
+      h += '</div>';
+    });
+
+    h += '</div>';
+    host.innerHTML = h;
+  } catch(e){
+    console.error('[cohorts]', e);
+    host.innerHTML = '<div style="padding:24px;text-align:center;color:#a16262;font-size:12px;">Failed to load cohorts.</div>';
+  }
+}
+
+/* ============================================================
+   ROUTE INTERCEPT — override "analytics" nav item
+   ============================================================ */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-nav="analytics"]');
+  if(!btn) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+
+  var Admin = window.Admin;
+  if(Admin) Admin.currentView = 'analytics';
+  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-nav') === 'analytics');
+  });
+
+  var main = document.getElementById('adm-main');
+  if(main) renderAnalyticsEnhanced(main);
+}, true);
+
+console.log('[Admin Chunk 7F] Tier Analytics + Cohorts ready');
+})();
+</script>
+
 </body>
 </html>
