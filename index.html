@@ -40528,94 +40528,81 @@ async function startNextAd(){
   if(S.running) return;
 
   var eligible = !!(S.eligibility && S.eligibility.can_earn === true);
-  var isPlatformAd = false;
+  var me = Z.State.currentUser;
+  var myId = me ? me.id : null;
+  function isMine(a){ return a && myId && a.advertiser_id === myId; }
 
-  /* Pick ad pool based on eligibility */
-  var pool;
-  if(eligible){
-    /* Prefer paid ads, fall back to platform */
-    pool = S.ads.filter(function(a){ return a && a.is_active !== false && a.source !== 'platform'; });
-    if(!pool.length){
-      pool = S.ads.filter(function(a){ return a && a.is_active !== false && a.source === 'platform'; });
-      isPlatformAd = true;
-    }
-  } else {
-    /* Not eligible: only platform ads, no earning */
-    pool = S.ads.filter(function(a){ return a && a.is_active !== false && a.source === 'platform'; });
-    isPlatformAd = true;
-  }
-
-  if(!pool.length){
-    if(!eligible){
-      setInfo('You are not eligible for ad earnings yet. Tap ? to see why.');
-    } else {
-      setInfo('No ads available right now. Check back soon.');
-    }
-    return;
-  }
+  /* Two pools:
+     - earnable: paid ads from OTHER advertisers → eligible users only, with earning
+     - displayOnly: platform ads + own ads → everyone sees, no earning */
+  var earnable = S.ads.filter(function(a){
+    return a && a.is_active !== false && a.source !== 'platform' && !isMine(a);
+  });
+  var displayOnly = S.ads.filter(function(a){
+    return a && a.is_active !== false && (a.source === 'platform' || isMine(a));
+  });
 
   var c = Z.sb && Z.sb();
   if(!c) return;
 
-  if(isPlatformAd){
-    /* Platform ad — display only, no earning, no RPC */
-    var ad = pool[S.currentAdIdx % pool.length];
-    S.currentAdIdx = (S.currentAdIdx + 1) % pool.length;
-    S.activeAd = ad;
-    S.sessionToken = null;
-    S.platformMode = true;
-    S.startedAt = Date.now();
-    S.dotShownAt = 0;
-    S.dotTapAt = null;
-    S.running = true;
-    paintStage();
-    paintProgress(0);
-    /* No dot for platform ad — just play */
-    schedulePlatformAdEnd();
-    return;
+  var chosen = null, token = null, earnableChosen = false;
+
+  /* Try earnable first — only if user is eligible */
+  if(eligible && earnable.length){
+    var devHash = await deviceHash();
+    var tried = 0;
+    while(tried < earnable.length){
+      var ad = earnable[S.currentAdIdx % earnable.length];
+      S.currentAdIdx = (S.currentAdIdx + 1) % earnable.length;
+      tried++;
+      try {
+        var r = await c.rpc('ad_start_view', { p_ad_id: ad.id, p_device_hash: devHash });
+        if(r.error){
+          if(r.data && r.data.error === 'daily_cap_reached'){
+            S.eligibility.can_earn = false;
+            paintEligibility();
+            break;
+          }
+          continue;
+        }
+        if(r.data && r.data.ok){
+          chosen = ad; token = r.data.token; earnableChosen = true;
+          break;
+        }
+      } catch(e){ continue; }
+    }
   }
 
-  /* Paid ad — full flow with device hash + claim + earn */
-  var tried = 0;
-  var chosen = null, token = null;
-  var devHash = await deviceHash();
-
-  while(tried < pool.length){
-    var ad2 = pool[S.currentAdIdx % pool.length];
-    S.currentAdIdx = (S.currentAdIdx + 1) % pool.length;
-    tried++;
-    try {
-      var r = await c.rpc('ad_start_view', { p_ad_id: ad2.id, p_device_hash: devHash });
-      if(r.error){
-        if(r.data && r.data.error === 'already_watched_today'){ continue; }
-        if(r.data && r.data.error === 'daily_cap_reached'){ S.eligibility.can_earn = false; paintEligibility(); setInfo('Daily cap reached. Come back tomorrow.'); return; }
-        if(r.data && r.data.error === 'device_collision'){ setInfo('Ad earning is not available on this device. One device = one earning account.'); return; }
-        continue;
-      }
-      if(r.data && r.data.ok){
-        chosen = ad2; token = r.data.token; break;
-      }
-    } catch(e){ continue; }
+  /* Fall back to display-only (platform ads + own ads) */
+  if(!chosen && displayOnly.length){
+    chosen = displayOnly[S.currentAdIdx % displayOnly.length];
+    S.currentAdIdx = (S.currentAdIdx + 1) % displayOnly.length;
+    earnableChosen = false;
   }
 
   if(!chosen){
-    setInfo('All ads watched today. Come back tomorrow.');
+    if(!eligible) setInfo('No ads available right now. Tap ? for eligibility rules.');
+    else setInfo('No ads available right now. Check back soon.');
     return;
   }
 
   S.activeAd = chosen;
   S.sessionToken = token;
-  S.platformMode = false;
+  S.platformMode = !earnableChosen;
   S.startedAt = Date.now();
   S.dotShownAt = 0;
   S.dotTapAt = null;
   S.running = true;
   paintStage();
   paintProgress(0);
-  scheduleDot();
-  scheduleAdEnd();
-}
 
+  if(earnableChosen){
+    scheduleDot();
+    scheduleAdEnd();
+  } else {
+    schedulePlatformAdEnd();
+  }
+}
 function paintStage(){
   var stage = document.getElementById('adtv-stage');
   if(!stage || !S.activeAd) return;
@@ -40645,9 +40632,29 @@ function paintStage(){
   /* Ensure video plays */
   var v = document.getElementById('adtv-video');
   if(v){
+    if(Z._sparkAudioUnlocked || Z.State._userGestureUnlocked){
+      try { v.muted = false; v.volume = 1; } catch(e){}
+    }
     v.addEventListener('loadeddata', function(){
       try { v.play().catch(function(){ v.muted = true; v.play().catch(function(){}); }); } catch(e){}
     });
+
+    var existing = document.getElementById('adtv-unmute');
+    if(existing) existing.remove();
+    var muteBtn = document.createElement('button');
+    muteBtn.id = 'adtv-unmute';
+    muteBtn.type = 'button';
+    muteBtn.title = 'Toggle sound';
+    muteBtn.style.cssText = 'position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.62);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.18);color:#fff;cursor:pointer;z-index:25;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0;';
+    muteBtn.innerHTML = v.muted ? '<i class="fa-solid fa-volume-xmark"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+    muteBtn.addEventListener('click', function(e){
+      e.stopPropagation();
+      v.muted = !v.muted;
+      if(!v.muted){ try { v.volume = 1; } catch(err){} }
+      muteBtn.innerHTML = v.muted ? '<i class="fa-solid fa-volume-xmark"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+      if(!v.muted){ Z._sparkAudioUnlocked = true; Z.State._userGestureUnlocked = true; }
+    });
+    stage.appendChild(muteBtn);
   }
 }
 
@@ -40689,6 +40696,20 @@ function onDotTap(e){
 }
 
 /* ---------- Ad end ---------- */
+
+function schedulePlatformAdEnd(){
+  var dur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
+  S.adEndTimeout = setTimeout(onAdEnd, dur);
+  var p = document.getElementById('adtv-progress');
+  var start = Date.now();
+  var iv = setInterval(function(){
+    if(!S.running){ clearInterval(iv); return; }
+    var el = Date.now() - start;
+    var pct = Math.min(100, (el / dur) * 100);
+    if(p) p.style.width = pct + '%';
+    if(pct >= 100) clearInterval(iv);
+  }, 100);
+}
 
 function schedulePlatformAdEnd(){
   var dur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
