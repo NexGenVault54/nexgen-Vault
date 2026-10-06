@@ -40570,7 +40570,8 @@ async function startNextAd(){
   if(S.running) return;
 
   var eligible = !!(S.eligibility && S.eligibility.can_earn === true);
-  console.log('[Ad TV] startNextAd called. S.ads count:', (S.ads || []).length);
+  Z.__adTVEligible = eligible;
+  Z.__adTVSAdsCount = (S.ads || []).length;
   console.log('[Ad TV] S.ads:', (S.ads || []).map(function(a){ return { id: a.id, title: a.internal_title, source: a.source, advertiser_id: a.advertiser_id }; }));
   console.log('[Ad TV] eligible:', eligible, 'myId:', (Z.State.currentUser ? Z.State.currentUser.id : null));
   try {
@@ -40666,10 +40667,17 @@ async function startNextAd(){
     schedulePlatformAdEnd();
   }
 }
-function paintStage(){
+async function startNextAd(){
+  if(S.running) return;
+
+  var eligible = !!(S.eligibility && S.eligibility.can_earn ==function paintStage(){
   var stage = document.getElementById('adtv-stage');
   if(!stage || !S.activeAd) return;
   var ad = S.activeAd;
+  Z.__adTVCurrentAdId = ad.id;
+  Z.__adTVCurrentAdTitle = ad.internal_title || ad.heading || '?';= true);
+  Z.__adTVEligible = eligible;
+  Z.__adTVSAdsCount = (S.ads || []).length;
 
   var mediaHtml = '';
   if(ad.media_type === 'video' && ad.media_url){
@@ -41236,6 +41244,70 @@ setInterval(function(){
 }, 1500);
 
 console.log('[Ad TV Keep-Alive] active');
+})();
+</script>
+
+<!-- Ad TV Debug — on-screen panel -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAdTVDebug) return; Z.__zynixAdTVDebug = true;
+
+function ensurePanel(){
+  var p = document.getElementById('adtv-debug-panel');
+  if(p) return p;
+  p = document.createElement('div');
+  p.id = 'adtv-debug-panel';
+  p.style.cssText =
+    'position:fixed;bottom:12px;left:12px;z-index:99998;background:rgba(0,0,0,.92);' +
+    'border:1px solid rgba(251,191,36,.5);border-radius:10px;padding:10px 12px;' +
+    'font-family:monospace;font-size:10px;color:#fbbf24;line-height:1.5;' +
+    'max-width:300px;pointer-events:auto;';
+  p.innerHTML = '<div style="font-weight:900;color:#fff;margin-bottom:6px;">Ad TV Debug <button id="adtv-debug-x" style="float:right;background:transparent;border:none;color:#94a3b8;cursor:pointer;">×</button></div>' +
+    '<div id="adtv-debug-body">Loading…</div>';
+  document.body.appendChild(p);
+  setTimeout(function(){
+    var x = document.getElementById('adtv-debug-x');
+    if(x) x.addEventListener('click', function(){ p.remove(); });
+  }, 50);
+  return p;
+}
+
+setInterval(function(){
+  if(Z.State.currentView !== 'public-home'){
+    var old = document.getElementById('adtv-debug-panel');
+    if(old) old.remove();
+    return;
+  }
+  var p = ensurePanel();
+  var body = document.getElementById('adtv-debug-body');
+  if(!body) return;
+
+  var s = (typeof Z.renderAdTV === 'function') ? 'ok' : 'no';
+  /* Read internal S via script closure is impossible — read DOM instead */
+  var stage = document.getElementById('adtv-stage');
+  var vid = document.getElementById('adtv-video');
+  var titleEl = stage ? stage.querySelector('.zn-ad-headline') : null;
+  var currentAd = titleEl ? titleEl.textContent : '—';
+
+  var host = document.getElementById('ad-tv-v2-root');
+  var adId = '—';
+  if(window.Z && Z.__adTVCurrentAdId) adId = Z.__adTVCurrentAdId;
+
+  var adsList = (Z.State.adminAds || []);
+  var adsLine = adsList.length + ' ads';
+
+  body.innerHTML =
+    'view: ' + Z.State.currentView + '<br>' +
+    'ads loaded: ' + adsLine + '<br>' +
+    'ad ids: ' + adsList.map(function(a){ return (a.internal_title || '?') + '/' + a.source; }).join(', ') + '<br>' +
+    'current: ' + currentAd + '<br>' +
+    'video: ' + (vid ? (vid.paused ? 'PAUSED' : 'PLAYING') : '—') + '<br>' +
+    'logged in: ' + (Z.State.currentUser ? 'yes' : 'no') + '<br>' +
+    'eligible: ' + (Z.__adTVEligible === true ? 'yes' : (Z.__adTVEligible === false ? 'no' : '?'));
+
+}, 1500);
 })();
 </script>
      
