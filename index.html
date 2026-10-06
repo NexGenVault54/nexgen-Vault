@@ -40563,10 +40563,41 @@ async function loadAdsList(){
     if(!Z.State.adminAds || !Z.State.adminAds.length){
       if(typeof Z.loadAds === 'function'){ await Z.loadAds(); }
     }
-    S.ads = (Z.State.adminAds || []).filter(function(a){ return a && a.is_active !== false; });
+var _wired = false;
+function wireAdTV(retries){
+  if(_wired) return;
+  retries = retries || 0;
+  var root = document.getElementById('ad-tv-v2-root');
+  if(!root){
+    if(retries < 20){
+      setTimeout(function(){ wireAdTV(retries + 1); }, 300);
+    }
+    return;    S.ads = (Z.State.adminAds || []).filter(function(a){ return a && a.is_active !== false; });
   } catch(e){}
+  /* Prefetch advertiser profiles so badge can show name/space instantly */
+  try {
+    var _ids = [];
+    (S.ads || []).forEach(function(a){
+      if(a && a.advertiser_id && _ids.indexOf(a.advertiser_id) === -1) _ids.push(a.advertiser_id);
+    });
+    if(_ids.length){
+      var _c = Z.sb && Z.sb();
+      if(_c){
+        var _pr = await _c.from('profiles').select('id,name,username,avatar,space_data').in('id', _ids);
+        if(!_pr.error && _pr.data){
+          var _arr = Z.State.allProfiles || [];
+          var _byId = {};
+          _arr.forEach(function(p){ _byId[p.id] = p; });
+          _pr.data.forEach(function(p){ _byId[p.id] = Object.assign({}, _byId[p.id] || {}, p); });
+          Z.State.allProfiles = Object.keys(_byId).map(function(k){ return _byId[k]; });
+        }
+      }
+    }
+  } catch(e2){}
   return S.ads;
 }
+  }
+  _wired = true;
 
 /* ---------- Session flow ---------- */
 async function loadAds(){
@@ -40699,11 +40730,14 @@ async function startNextAd(){
   var content = '<div style="position:absolute;left:0;right:0;bottom:0;padding:22px;z-index:3;pointer-events:none;">';
   if(ad.heading) content += '<div style="font-size:24px;font-weight:900;color:#fff;line-height:1.15;text-shadow:0 2px 12px rgba(0,0,0,.65);">' + esc(ad.heading) + '</div>';
   if(ad.subtitle) content += '<div style="font-size:13px;color:rgba(255,255,255,.88);margin-top:8px;line-height:1.5;text-shadow:0 1px 8px rgba(0,0,0,.6);">' + esc(ad.subtitle) + '</div>';
-  if(ad.advertiser_id && ad.advertiser_username){
-    var _av = ad.advertiser_avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(ad.advertiser_username) + '&background=111827&color=34d399');
+  if(ad.advertiser_id){
+    var _p = (Z.getProfileById ? Z.getProfileById(ad.advertiser_id) : null) || {};
+    var _spaceName = (_p.space_data && _p.space_data.name) ? _p.space_data.name : null;
+    var _dispName = _spaceName || _p.name || ad.advertiser_name || _p.username || ad.advertiser_username || 'Advertiser';
+    var _av = ad.advertiser_avatar || _p.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(_dispName) + '&background=111827&color=34d399');
     content += '<div style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:6px 12px 6px 6px;border-radius:20px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);pointer-events:auto;cursor:pointer;" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + esc(ad.advertiser_id) + '\')">';
     content += '<img src="' + esc(_av) + '" style="width:24px;height:24px;border-radius:50%;object-fit:cover;">';
-    content += '<span style="font-size:11px;color:#fff;font-weight:800;">@' + esc(ad.advertiser_username) + '</span>';
+    content += '<span style="font-size:11px;color:#fff;font-weight:800;">' + esc(_dispName) + '</span>';
     content += '</div>';
   }
   content += '</div>';

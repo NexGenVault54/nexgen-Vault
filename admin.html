@@ -1920,6 +1920,23 @@ async function loadAds(){
     if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
     var list = r.data || [];
     if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;">No ads yet. Create one to start.</div>'; return; }
+
+    /* Prefetch advertiser profiles for clickable name */
+    var _advIds = [];
+    list.forEach(function(a){
+      var _aid = a.advertiser_id || a.created_by;
+      if(_aid && _advIds.indexOf(_aid) === -1) _advIds.push(_aid);
+    });
+    if(_advIds.length){
+      try {
+        var _pr = await sb.from('profiles').select('id,name,username,avatar,space_data').in('id', _advIds);
+        if(!_pr.error && _pr.data){
+          window._admAdProfiles = window._admAdProfiles || {};
+          _pr.data.forEach(function(p){ window._admAdProfiles[p.id] = p; });
+        }
+      } catch(e){}
+    }
+
     var h = '';
     list.forEach(function(a){
       var thumb = a.media_url
@@ -1931,7 +1948,17 @@ async function loadAds(){
             '<div style="font-size:13px;font-weight:900;color:#fff;">' + esc(a.internal_title || a.heading || 'Untitled') + ' <span style="font-size:9.5px;font-weight:900;padding:2px 8px;border-radius:8px;background:' + (a.is_active?'rgba(16,185,129,.15)':'rgba(148,163,184,.15)') + ';color:' + (a.is_active?'#10b981':'#94a3b8') + ';">' + (a.is_active?'ACTIVE':'PAUSED') + '</span></div>' +
             (a.heading ? '<div style="font-size:11px;color:#cbd5e1;margin-top:3px;">' + esc(a.heading) + '</div>' : '') +
             '<div style="font-size:10px;color:#94a3b8;margin-top:6px;">' + (a.total_views||0) + ' views · ' + money(a.total_spent||0) + ' spent' + (a.monthly_budget?' · budget '+money(a.monthly_budget):'') + '</div>' +
-            '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + timeAgo(a.created_at) + ' · @' + esc(a.created_by_username||'admin') + '</div>' +
+            '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + timeAgo(a.created_at) + '</div>' +
+            (function(){
+              var _aid = a.advertiser_id || a.created_by;
+              if(!_aid) return '<div style="font-size:10px;color:#64748b;margin-top:2px;">Platform ad</div>';
+              var _p = (window._admAdProfiles || {})[_aid] || {};
+              var _spaceName = (_p.space_data && _p.space_data.name) ? _p.space_data.name : null;
+              var _disp = _spaceName || _p.name || _p.username || 'Advertiser';
+              return '<div style="font-size:10px;color:#10b981;margin-top:3px;cursor:pointer;font-weight:800;" onclick="event.stopPropagation();window.open(\'/admin.html#user-' + _aid + '\',\'_self\')" title="Advertiser">' +
+                '<i class="fa-solid fa-user"></i> ' + esc(_disp) +
+              '</div>';
+            })() +
           '</div>' +
         '</div>' +
         '<div style="display:flex;gap:6px;margin-top:10px;">' +
