@@ -3002,5 +3002,378 @@ console.log('[Admin Chunk 7C] Finance Hub ready');
 })();
 </script>
 
+<!-- ============================================================
+     Chunk 7D — ZYNIX POOLS Master Section
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin; if(!Admin) return;
+if(Admin.__chunk7D) return; Admin.__chunk7D = true;
+
+var sb = window.supabase.createClient(
+  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+);
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  if(s < 2592000) return Math.floor(s/86400) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+/* ============================================================
+   POOL META
+   ============================================================ */
+var POOLS = [
+  { key:'bounty',        label:'Bounty Pool',              icon:'fa-solid fa-gift',           color:'#10b981', desc:'40% of net profit · Weekly distribution (25% per week) · $500 cap per user per week' },
+  { key:'csf',           label:'CSF — Creator Support',    icon:'fa-solid fa-film',           color:'#a78bfa', desc:'10% of net profit · Paid to eligible Full Video creators · $4,000/month cap' },
+  { key:'peer',          label:'Peer Support Pool',        icon:'fa-solid fa-comments',       color:'#60a5fa', desc:'5% of net profit · Top-rated answerers · Discretionary monthly distribution' },
+  { key:'marketing',     label:'Marketing Budget',         icon:'fa-solid fa-bullhorn',       color:'#ec4899', desc:'10% of premium/subscription revenue · Team Building Support Fund sub-head' },
+  { key:'cfar',          label:'CFAR by ZYNIX',            icon:'fa-solid fa-eye',            color:'#fbbf24', desc:'10% of subscription revenue · Viewer rewards (Phase 2/3 · placeholder)' },
+  { key:'team_building', label:'Team Building Fund',       icon:'fa-solid fa-people-group',   color:'#f97316', desc:'Sub-head of Marketing · Ceiling 10% of brought business · Floor $1/person' }
+];
+
+function poolMeta(key){
+  return POOLS.find(function(p){ return p.key === key; }) || { key:key, label:key, icon:'fa-solid fa-circle', color:'#94a3b8', desc:'' };
+}
+
+/* ============================================================
+   MASTER LIST PAGE
+   ============================================================ */
+async function renderPoolsMaster(main){
+  main.innerHTML =
+    '<div class="adm-page-title">ZYNIX Pools</div>' +
+    '<div class="adm-page-sub">All community and platform pools. Click any pool for full detail and settings.</div>' +
+    '<div id="pools-master-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">' +
+      '<div style="text-align:center;padding:40px;color:#64748b;grid-column:1/-1;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>' +
+    '</div>';
+
+  try {
+    var r = await sb.rpc('admin_pool_balances');
+    var map = {};
+    (r.data || []).forEach(function(x){ map[x.pool_name] = Number(x.balance) || 0; });
+
+    var h = '';
+    POOLS.forEach(function(p){
+      var bal = map[p.key] || 0;
+      h += '<div data-pool-open="' + esc(p.key) + '" style="padding:16px;border-radius:14px;background:linear-gradient(135deg,' + p.color + '18,' + p.color + '08);border:1px solid ' + p.color + '55;cursor:pointer;transition:transform .15s;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">' +
+          '<div style="width:40px;height:40px;border-radius:12px;background:' + p.color + '22;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+            '<i class="' + p.icon + '" style="color:' + p.color + ';font-size:17px;"></i>' +
+          '</div>' +
+          '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;margin-top:4px;"></i>' +
+        '</div>' +
+        '<div style="font-size:14px;font-weight:900;color:#fff;margin-top:12px;">' + esc(p.label) + '</div>' +
+        '<div style="font-size:20px;font-weight:900;color:' + p.color + ';margin-top:6px;">' + money(bal) + '</div>' +
+        '<div style="font-size:10.5px;color:#94a3b8;margin-top:8px;line-height:1.55;">' + esc(p.desc) + '</div>' +
+      '</div>';
+    });
+    $('pools-master-grid').innerHTML = h;
+
+    main.querySelectorAll('[data-pool-open]').forEach(function(el){
+      el.addEventListener('click', function(){ openPoolDetail(this.getAttribute('data-pool-open')); });
+    });
+  } catch(e){
+    console.error('[pools master]', e);
+    $('pools-master-grid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:#a16262;">Failed to load.</div>';
+  }
+}
+
+/* ============================================================
+   POOL DETAIL PAGE
+   ============================================================ */
+async function openPoolDetail(poolKey){
+  var main = $('adm-main'); if(!main) return;
+  var meta = poolMeta(poolKey);
+  main.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+
+  try {
+    var r = await sb.rpc('admin_pool_detail', { p_pool: poolKey });
+    if(r.error) throw r.error;
+    var d = r.data || {};
+
+    var h = '';
+
+    /* Back */
+    h += '<button id="pools-back" style="padding:8px 14px;border-radius:9px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-weight:800;font-size:11.5px;cursor:pointer;margin-bottom:16px;">' +
+      '<i class="fa-solid fa-arrow-left"></i> Back to Pools</button>';
+
+    /* Header */
+    h += '<div style="display:flex;align-items:center;gap:14px;padding:18px;border-radius:16px;background:linear-gradient(135deg,' + meta.color + '15,' + meta.color + '05);border:1px solid ' + meta.color + '55;margin-bottom:16px;">' +
+      '<div style="width:56px;height:56px;border-radius:14px;background:' + meta.color + '22;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+        '<i class="' + meta.icon + '" style="color:' + meta.color + ';font-size:24px;"></i>' +
+      '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:19px;font-weight:900;color:#fff;">' + esc(meta.label) + '</div>' +
+        '<div style="font-size:11.5px;color:#94a3b8;margin-top:4px;line-height:1.55;">' + esc(meta.desc) + '</div>' +
+      '</div>' +
+    '</div>';
+
+    /* KPI strip */
+    h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">' +
+      '<div class="adm-kpi"><div class="lbl">Balance</div><div class="val" style="color:' + meta.color + ';">' + money(d.balance) + '</div></div>' +
+      '<div class="adm-kpi green"><div class="lbl">Total Inflow</div><div class="val" style="color:#10b981;">' + money(d.total_inflow) + '</div></div>' +
+      '<div class="adm-kpi red"><div class="lbl">Total Outflow</div><div class="val" style="color:#a16262;">' + money(d.total_outflow) + '</div></div>' +
+      '<div class="adm-kpi blue"><div class="lbl">Transactions</div><div class="val" style="color:#60a5fa;">' + (d.transaction_count || 0) + '</div></div>' +
+    '</div>';
+
+    /* Settings */
+    h += '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:16px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;">Settings</div>';
+    h += '<button id="pool-set-edit" class="adm-btn ghost" style="font-size:11px;padding:6px 12px;"><i class="fa-solid fa-pen"></i> Edit</button>';
+    h += '</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+      settingRow('Weekly %', d.weekly_distribution_pct + '%') +
+      settingRow('Weekly cap per user', d.weekly_cap_usd ? money(d.weekly_cap_usd) : 'No cap') +
+      settingRow('Min balance threshold', money(d.min_balance_threshold)) +
+      settingRow('Base', d.base_type === 'subscription_revenue' ? 'Subscription revenue' : 'Net profit') +
+    '</div>';
+    h += '<div style="margin-top:12px;">' +
+      '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;">Eligibility Rules</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.65;padding:10px;background:rgba(0,0,0,.22);border-radius:8px;">' + (d.eligibility_rules ? esc(d.eligibility_rules) : '(not set)') + '</div>' +
+    '</div>';
+    if(d.notes){
+      h += '<div style="margin-top:10px;">' +
+        '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;">Notes</div>' +
+        '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;">' + esc(d.notes) + '</div>' +
+      '</div>';
+    }
+    h += '</div>';
+
+    /* Manual transaction + history */
+    h += '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;">Transaction History</div>';
+    h += '<button id="pool-tx-add" class="adm-btn primary" style="font-size:11px;padding:6px 12px;"><i class="fa-solid fa-plus"></i> Add manual</button>';
+    h += '</div>';
+    h += '<div id="pool-tx-list"><div style="text-align:center;padding:20px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+    h += '</div>';
+
+    main.innerHTML = h;
+
+    /* Wire */
+    $('pools-back').addEventListener('click', function(){ renderPoolsMaster(main); });
+    $('pool-set-edit').addEventListener('click', function(){ openEditSettings(poolKey, d); });
+    $('pool-tx-add').addEventListener('click', function(){ openManualTx(poolKey); });
+
+    /* Load history */
+    loadTxHistory(poolKey);
+  } catch(e){
+    console.error('[pool detail]', e);
+    main.innerHTML = '<div style="padding:40px;text-align:center;color:#a16262;">Failed: ' + esc(e.message || 'unknown') + '</div>';
+  }
+}
+
+function settingRow(label, value){
+  return '<div style="padding:10px 12px;background:rgba(0,0,0,.22);border-radius:8px;">' +
+    '<div style="font-size:10px;color:#94a3b8;font-weight:800;letter-spacing:.4px;text-transform:uppercase;">' + esc(label) + '</div>' +
+    '<div style="font-size:14px;font-weight:900;color:#fff;margin-top:4px;">' + esc(value) + '</div>' +
+  '</div>';
+}
+
+async function loadTxHistory(poolKey){
+  var host = $('pool-tx-list'); if(!host) return;
+  try {
+    var r = await sb.rpc('admin_pool_history', { p_pool: poolKey, p_limit: 100 });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){
+      host.innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">No transactions yet.</div>';
+      return;
+    }
+    var h = '';
+    list.forEach(function(t){
+      var isIn = t.direction === 'in';
+      h += '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 12px;background:rgba(0,0,0,.22);border-radius:9px;margin-bottom:5px;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:12px;color:#e2e8f0;font-weight:800;">' + esc(t.reason || t.ref_type || 'tx') + '</div>' +
+          '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + timeAgo(t.created_at) + (t.ref_type ? ' · ' + esc(t.ref_type) : '') + '</div>' +
+        '</div>' +
+        '<div style="font-size:13px;font-weight:900;color:' + (isIn ? '#10b981' : '#a16262') + ';white-space:nowrap;">' + (isIn ? '+' : '−') + money(t.amount) + '</div>' +
+      '</div>';
+    });
+    host.innerHTML = h;
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;">Failed to load.</div>';
+  }
+}
+
+function openEditSettings(poolKey, d){
+  var meta = poolMeta(poolKey);
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'pool-edit-modal';
+  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '520px';
+  inner.innerHTML =
+    '<h3>Edit Settings · ' + esc(meta.label) + '</h3>' +
+    '<div class="adm-form-row">' +
+      '<label>Weekly distribution % (25 = 25% of balance per week)</label>' +
+      '<input id="ps-pct" type="number" min="0" max="100" step="1" value="' + (d.weekly_distribution_pct || 25) + '">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Weekly cap per user (USD · blank = no cap)</label>' +
+      '<input id="ps-cap" type="number" min="0" step="1" value="' + (d.weekly_cap_usd || '') + '" placeholder="e.g. 500">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Min balance threshold (skip distribution below this)</label>' +
+      '<input id="ps-thr" type="number" min="0" step="1" value="' + (d.min_balance_threshold || 0) + '">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Eligibility rules</label>' +
+      '<textarea id="ps-rules" maxlength="500" rows="4">' + esc(d.eligibility_rules || '') + '</textarea>' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Notes</label>' +
+      '<textarea id="ps-notes" maxlength="300" rows="3">' + esc(d.notes || '') + '</textarea>' +
+    '</div>' +
+    '<div class="row">' +
+      '<button class="adm-btn primary" id="ps-save" style="flex:1;">Save</button>' +
+      '<button class="adm-btn ghost" id="ps-cancel">Cancel</button>' +
+    '</div>';
+
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  $('ps-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  $('ps-save').addEventListener('click', async function(){
+    var pct = parseFloat($('ps-pct').value);
+    var capRaw = $('ps-cap').value;
+    var cap = capRaw === '' ? null : parseFloat(capRaw);
+    var thr = parseFloat($('ps-thr').value) || 0;
+    var rules = $('ps-rules').value || '';
+    var notes = $('ps-notes').value || '';
+
+    if(isNaN(pct) || pct < 0 || pct > 100){ toast('Invalid % (0-100).', true); return; }
+    if(cap !== null && (isNaN(cap) || cap < 0)){ toast('Invalid cap.', true); return; }
+
+    this.disabled = true;
+    this.textContent = 'Saving…';
+    try {
+      var r = await sb.rpc('admin_pool_settings_update', {
+        p_pool: poolKey,
+        p_weekly_pct: pct,
+        p_weekly_cap: cap,
+        p_threshold: thr,
+        p_rules: rules,
+        p_notes: notes
+      });
+      if(r.error) throw r.error;
+      toast('Settings saved.');
+      shell.remove();
+      openPoolDetail(poolKey);
+    } catch(e){
+      toast('Failed: ' + ((e && e.message) || 'unknown'), true);
+      this.disabled = false;
+      this.textContent = 'Save';
+    }
+  });
+}
+
+function openManualTx(poolKey){
+  var meta = poolMeta(poolKey);
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'pool-tx-modal';
+  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '460px';
+  inner.innerHTML =
+    '<h3>Manual Transaction · ' + esc(meta.label) + '</h3>' +
+    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">' +
+      'Use this for adjustments, corrections, or one-time funding. Logged in audit trail.' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Direction</label>' +
+      '<select id="ptx-dir"><option value="in">In (add to pool)</option><option value="out">Out (remove from pool)</option></select>' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Amount (USD)</label>' +
+      '<input id="ptx-amt" type="number" min="0.01" step="0.01" placeholder="0.00">' +
+    '</div>' +
+    '<div class="adm-form-row">' +
+      '<label>Reason</label>' +
+      '<input id="ptx-reason" type="text" maxlength="200" placeholder="e.g. Correction, one-time top-up">' +
+    '</div>' +
+    '<div class="row">' +
+      '<button class="adm-btn primary" id="ptx-save" style="flex:1;">Add</button>' +
+      '<button class="adm-btn ghost" id="ptx-cancel">Cancel</button>' +
+    '</div>';
+
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  $('ptx-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  $('ptx-save').addEventListener('click', async function(){
+    var dir = $('ptx-dir').value;
+    var amt = parseFloat($('ptx-amt').value);
+    var reason = ($('ptx-reason').value || '').trim();
+    if(!amt || amt <= 0){ toast('Valid amount required.', true); return; }
+    if(reason.length < 3){ toast('Reason required.', true); return; }
+
+    this.disabled = true;
+    this.textContent = 'Adding…';
+    try {
+      var r = await sb.rpc('admin_pool_manual_tx', {
+        p_pool: poolKey, p_direction: dir, p_amount: amt, p_reason: reason
+      });
+      if(r.error) throw r.error;
+      toast('Transaction added.');
+      shell.remove();
+      openPoolDetail(poolKey);
+    } catch(e){
+      toast('Failed: ' + ((e && e.message) || 'unknown'), true);
+      this.disabled = false;
+      this.textContent = 'Add';
+    }
+  });
+}
+
+/* ============================================================
+   ROUTE INTERCEPT — override "pools" nav item
+   ============================================================ */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-nav="pools"]');
+  if(!btn) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+
+  var Admin = window.Admin;
+  if(Admin) Admin.currentView = 'pools';
+  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-nav') === 'pools');
+  });
+
+  var main = document.getElementById('adm-main');
+  if(main) renderPoolsMaster(main);
+}, true);
+
+console.log('[Admin Chunk 7D] ZYNIX Pools master ready');
+})();
+</script>
+
 </body>
 </html>
