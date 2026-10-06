@@ -125,7 +125,8 @@ var State = {
   profile: null,
   myAds: [],
   editingAd: null,
-  mediaFile: null
+  mediaFile: null,
+  adDraft: null
 };
 
 function $(id){ return document.getElementById(id); }
@@ -316,14 +317,22 @@ async function loadAds(){
 function openAdEditor(ad){
   var isEdit = !!ad;
   State.editingAd = ad;
-  State.mediaFile = null;
+
+  var draft = (!isEdit && State.adDraft) ? State.adDraft : null;
+  var d = ad || draft || {
+    internal_title:'', heading:'', subtitle:'', cta:'',
+    media_type:'', media_url:'', monthly_budget:''
+  };
+
+  if(!isEdit && draft && draft.mediaFile){
+    State.mediaFile = draft.mediaFile;
+  } else {
+    State.mediaFile = null;
+  }
 
   var shell = document.createElement('div');
   shell.className = 'adv-modal-overlay';
   shell.id = 'adv-editor';
-  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
-
-  var d = ad || { internal_title:'', heading:'', subtitle:'', cta:'', media_type:'', media_url:'', monthly_budget:'' };
 
   var inner = document.createElement('div');
   inner.className = 'adv-modal';
@@ -336,12 +345,14 @@ function openAdEditor(ad){
 
   if(!isEdit){
     h += '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.65;margin-bottom:14px;">';
-    h += '<b style="color:#60a5fa;">Terms</b><br>';
-    h += '• Rate: $0.02 per completed 10-second view<br>';
+    h += '<b style="color:#60a5fa;">Ad Rules & Terms</b><br>';
+    h += '• Video ads: max <b style="color:#fff;">10 seconds</b><br>';
+    h += '• Image ads: displayed for <b style="color:#fff;">3 seconds</b><br>';
+    h += '• Rate: $0.02 per completed view<br>';
+    h += '• <b style="color:#fbbf24;">No external links allowed.</b> Only ZYNIX internal links (shop, circle, SPACE) are permitted.<br>';
     h += '• Budget held from your wallet at submit<br>';
-    h += '• If ad is deleted, unspent budget is refunded<br>';
-    h += '• One device = one earning viewer (anti-fraud)<br>';
-    h += '• Ad auto-pauses when budget is exhausted';
+    h += '• Delete ad → unspent budget refunded<br>';
+    h += '• One device = one earning viewer (anti-fraud)';
     h += '</div>';
   }
 
@@ -357,21 +368,19 @@ function openAdEditor(ad){
   h += '<div class="adv-form-row"><label>CTA label (optional)</label>';
   h += '<input id="adv-f-cta" maxlength="30" value="' + esc(d.cta || '') + '" placeholder="e.g. Shop now"></div>';
 
-  h += '<div class="adv-form-row"><label>Media (image or video)</label>';
+  h += '<div class="adv-form-row"><label>Media (image · 3s display · OR video · max 10s)</label>';
   h += '<input type="file" id="adv-f-file" accept="image/*,video/*" style="display:none;">';
   h += '<div style="display:flex;gap:8px;">';
   h += '<button type="button" id="adv-f-pick" class="adv-btn ghost" style="flex:1;font-size:12px;"><i class="fa-solid fa-cloud-arrow-up"></i> Choose file</button>';
-  if(d.media_url) h += '<button type="button" id="adv-f-rm" class="adv-btn danger" style="font-size:12px;"><i class="fa-solid fa-xmark"></i></button>';
   h += '</div>';
-  h += '<div id="adv-f-preview" style="margin-top:10px;height:140px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;display:flex;align-items:center;justify-content:center;background-size:cover;background-position:center;' + (d.media_url ? 'background-image:url(' + esc(d.media_url) + ');' : '') + '">' + (d.media_url ? '' : '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>') + '</div>';
+  h += '<div id="adv-f-preview" style="margin-top:10px;height:140px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;display:flex;align-items:center;justify-content:center;background-size:cover;background-position:center;"></div>';
+  h += '<div id="adv-f-note" style="font-size:10.5px;color:#94a3b8;margin-top:6px;line-height:1.5;"></div>';
   h += '</div>';
 
   if(!isEdit){
     h += '<div class="adv-form-row"><label>Budget (USD, min $1, max $5,000)</label>';
-    h += '<input id="adv-f-budget" type="number" min="1" max="5000" step="1" value="" placeholder="e.g. 50"></div>';
-    h += '<div id="adv-f-budget-info" style="padding:10px 12px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;color:#cbd5e1;line-height:1.55;margin-bottom:12px;">';
-    h += 'Budget held from your wallet. Example: <b style="color:#fff;">$50</b> = up to <b style="color:#10b981;">2,500 views</b>.';
-    h += '</div>';
+    h += '<input id="adv-f-budget" type="number" min="1" max="5000" step="1" value="' + esc(d.monthly_budget || '') + '" placeholder="e.g. 50"></div>';
+    h += '<div id="adv-f-budget-info" style="padding:10px 12px;border-radius:8px;background:rgba(0,0,0,.25);font-size:11px;color:#cbd5e1;line-height:1.55;margin-bottom:12px;"></div>';
   }
 
   h += '<div style="display:flex;gap:8px;margin-top:16px;">';
@@ -383,72 +392,144 @@ function openAdEditor(ad){
   shell.appendChild(inner);
   document.body.appendChild(shell);
 
-  /* Wire */
-  $('adv-ed-close').addEventListener('click', function(){ shell.remove(); });
-  $('adv-ed-cancel').addEventListener('click', function(){ shell.remove(); });
+  var preview = $('adv-f-preview');
+  var noteEl = $('adv-f-note');
+
+  /* Restore preview if draft/edit had media */
+  if(State.mediaFile){
+    var url0 = URL.createObjectURL(State.mediaFile);
+    var isVid0 = State.mediaFile.type && State.mediaFile.type.indexOf('video/') === 0;
+    if(isVid0){
+      preview.innerHTML = '<video src="' + url0 + '" controls muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
+      noteEl.textContent = 'Video ad · will play for up to 10 seconds on Ad TV';
+    } else {
+      preview.style.backgroundImage = 'url(' + url0 + ')';
+      noteEl.textContent = 'Image ad · will display for 3 seconds on Ad TV';
+    }
+    addRemoveBtn();
+  } else if(d.media_url){
+    if(d.media_type === 'video'){
+      preview.innerHTML = '<video src="' + esc(d.media_url) + '" controls muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
+      noteEl.textContent = 'Video ad · will play for up to 10 seconds on Ad TV';
+    } else {
+      preview.style.backgroundImage = 'url(' + esc(d.media_url) + ')';
+      noteEl.textContent = 'Image ad · will display for 3 seconds on Ad TV';
+    }
+    if(isEdit) addRemoveBtn();
+  } else {
+    preview.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
+    noteEl.textContent = '';
+  }
+
+  function addRemoveBtn(){
+    if($('adv-f-rm')) return;
+    var b = document.createElement('button');
+    b.id = 'adv-f-rm';
+    b.type = 'button';
+    b.className = 'adv-btn danger';
+    b.style.fontSize = '12px';
+    b.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+    b.addEventListener('click', function(){
+      State.mediaFile = null;
+      d.media_url = '';
+      $('adv-f-file').value = '';
+      preview.style.backgroundImage = 'none';
+      preview.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
+      noteEl.textContent = '';
+      b.remove();
+    });
+    $('adv-f-pick').parentNode.appendChild(b);
+  }
+
+  function updateBudgetInfo(){
+    if(!$('adv-f-budget')) return;
+    var v = parseFloat($('adv-f-budget').value) || 0;
+    var views = Math.floor(v / 0.02);
+    var info = $('adv-f-budget-info');
+    if(v <= 0){
+      info.innerHTML = 'Budget held from your wallet. Example: <b style="color:#fff;">$50</b> = up to <b style="color:#10b981;">2,500 views</b>.';
+    } else {
+      info.innerHTML = 'Budget: <b style="color:#fff;">' + money(v) + '</b> → up to <b style="color:#10b981;">' + views.toLocaleString() + ' views</b>';
+    }
+  }
+  updateBudgetInfo();
+
+  function saveDraftNow(){
+    if(isEdit) return;
+    State.adDraft = {
+      internal_title: ($('adv-f-title')||{}).value || '',
+      heading: ($('adv-f-heading')||{}).value || '',
+      subtitle: ($('adv-f-sub')||{}).value || '',
+      cta: ($('adv-f-cta')||{}).value || '',
+      media_type: d.media_type || '',
+      media_url: d.media_url || '',
+      monthly_budget: ($('adv-f-budget')||{}).value || '',
+      mediaFile: State.mediaFile
+    };
+  }
+
+  ['adv-f-title','adv-f-heading','adv-f-sub','adv-f-cta'].forEach(function(id){
+    var el = $(id); if(el) el.addEventListener('input', saveDraftNow);
+  });
+  var bEl = $('adv-f-budget');
+  if(bEl){ bEl.addEventListener('input', function(){ saveDraftNow(); updateBudgetInfo(); }); }
+
+  function acceptFile(f, isVid){
+    State.mediaFile = f;
+    var url = URL.createObjectURL(f);
+    if(isVid){
+      preview.style.backgroundImage = 'none';
+      preview.innerHTML = '<video src="' + url + '" controls muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
+      noteEl.textContent = 'Video ad · will play for up to 10 seconds on Ad TV';
+    } else {
+      preview.innerHTML = '';
+      preview.style.backgroundImage = 'url(' + url + ')';
+      noteEl.textContent = 'Image ad · will display for 3 seconds on Ad TV';
+    }
+    addRemoveBtn();
+    saveDraftNow();
+  }
 
   $('adv-f-pick').addEventListener('click', function(){ $('adv-f-file').click(); });
 
-  $('adv-f-file').addEventListener('change', async function(){
+  $('adv-f-file').addEventListener('change', function(){
     var f = this.files && this.files[0];
     if(!f) return;
     if(f.size > 100 * 1024 * 1024){ toast('Under 100 MB.', true); this.value = ''; return; }
-    State.mediaFile = f;
-    var prev = $('adv-f-preview');
-    var url = URL.createObjectURL(f);
+
     var isVid = f.type && f.type.indexOf('video/') === 0;
     if(isVid){
-      prev.style.backgroundImage = 'none';
-      prev.innerHTML = '<video src="' + url + '" controls muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
-    } else {
-      prev.innerHTML = '';
-      prev.style.backgroundImage = 'url(' + url + ')';
-    }
-    /* Remove remove-button if was shown */
-    var rmBtn = $('adv-f-rm');
-    if(!rmBtn){
-      var b = document.createElement('button');
-      b.id = 'adv-f-rm';
-      b.type = 'button';
-      b.className = 'adv-btn danger';
-      b.style.fontSize = '12px';
-      b.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-      b.addEventListener('click', function(){
-        State.mediaFile = null;
+      var urlProbe = URL.createObjectURL(f);
+      var probe = document.createElement('video');
+      probe.preload = 'metadata';
+      probe.onloadedmetadata = function(){
+        var dur = probe.duration || 0;
+        URL.revokeObjectURL(urlProbe);
+        if(dur > 10.5){
+          toast('Video ad max 10 seconds. Yours is ' + Math.round(dur) + 's.', true);
+          $('adv-f-file').value = '';
+          return;
+        }
+        acceptFile(f, true);
+      };
+      probe.onerror = function(){
+        URL.revokeObjectURL(urlProbe);
+        toast('Could not read video file.', true);
         $('adv-f-file').value = '';
-        var p = $('adv-f-preview');
-        p.style.backgroundImage = 'none';
-        p.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
-        b.remove();
-      });
-      $('adv-f-pick').parentNode.appendChild(b);
+      };
+      probe.src = urlProbe;
+      return;
     }
+    acceptFile(f, false);
   });
 
-  var rm = $('adv-f-rm');
-  if(rm) rm.addEventListener('click', function(){
-    State.mediaFile = null;
-    d.media_url = '';
-    $('adv-f-preview').style.backgroundImage = 'none';
-    $('adv-f-preview').innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
-    if(!isEdit) this.remove();
-  });
-
-  /* Budget live update */
-  if(!isEdit && $('adv-f-budget')){
-    $('adv-f-budget').addEventListener('input', function(){
-      var v = parseFloat(this.value) || 0;
-      var views = Math.floor(v / 0.02);
-      var info = $('adv-f-budget-info');
-      if(v <= 0){
-        info.innerHTML = 'Budget held from your wallet. Example: <b style="color:#fff;">$50</b> = up to <b style="color:#10b981;">2,500 views</b>.';
-      } else {
-        info.innerHTML = 'Budget: <b style="color:#fff;">' + money(v) + '</b> → up to <b style="color:#10b981;">' + views.toLocaleString() + ' views</b>';
-      }
-    });
+  function closeAndKeepDraft(){
+    saveDraftNow();
+    shell.remove();
   }
+  $('adv-ed-close').addEventListener('click', closeAndKeepDraft);
+  $('adv-ed-cancel').addEventListener('click', closeAndKeepDraft);
 
-  /* Save */
   $('adv-ed-save').addEventListener('click', async function(){
     var btn = this;
     var title = ($('adv-f-title').value || '').trim();
@@ -467,8 +548,6 @@ function openAdEditor(ad){
       if(!budget || budget < 1){ toast('Budget min $1.', true); return; }
       if(budget > 5000){ toast('Budget max $5,000.', true); return; }
       if(!file && !mediaUrl){ toast('Upload an image or video.', true); return; }
-    } else {
-      /* If user picked a new file — upload it */
     }
 
     btn.disabled = true;
@@ -513,6 +592,8 @@ function openAdEditor(ad){
         if(r2.error) throw r2.error;
         var d2 = r2.data || {};
         toast('Ad submitted · ' + money(d2.amount) + ' held from ' + d2.paid_from + '.');
+        State.adDraft = null;
+        State.mediaFile = null;
       }
 
       shell.remove();
@@ -522,7 +603,6 @@ function openAdEditor(ad){
       if(msg.indexOf('insufficient_funds') !== -1) toast('Not enough wallet balance.', true);
       else if(msg.indexOf('min_budget_1') !== -1) toast('Minimum budget is $1.', true);
       else if(msg.indexOf('max_budget_5000') !== -1) toast('Maximum budget is $5,000.', true);
-      else if(msg.indexOf('heading_or_media_required') !== -1) toast('Add a heading or media.', true);
       else toast('Failed: ' + msg, true);
       btn.disabled = false;
       btn.textContent = isEdit ? 'Save changes' : 'Submit ad';
