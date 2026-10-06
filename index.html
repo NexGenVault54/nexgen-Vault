@@ -2563,6 +2563,12 @@ Z.refreshSession = async function(){
     Z.State.currentUser = profile;
     Z.renderHeaderAuth();
     Z.updateHeader();
+
+    try {
+      var _ar = await c.rpc('my_admin_role');
+      if(!_ar.error && _ar.data) Z.State.myAdminRole = _ar.data;
+      else Z.State.myAdminRole = null;
+    } catch(e){ Z.State.myAdminRole = null; }
   } catch(e){}
 
   /* Reconcile any uploads that were registered but never confirmed
@@ -40553,89 +40559,36 @@ async function loadAdsList(){
     var c = Z.sb && Z.sb();
     if(c){
       var r = await c.rpc('get_active_ads_for_tv');
-      if(!r.error && Array.isArray(r.data)){
+      if(!r.error && Array.isArray(r.data) && r.data.length){
         S.ads = r.data.filter(function(a){ return a && a.is_active !== false; });
         Z.State.adminAds = S.ads;
         return S.ads;
       }
     }
-    /* Fallback if RPC fails */
+    /* Fallback: legacy table query */
     if(!Z.State.adminAds || !Z.State.adminAds.length){
       if(typeof Z.loadAds === 'function'){ await Z.loadAds(); }
     }
-var _wired = false;
-function wireAdTV(retries){
-  if(_wired) return;
-  retries = retries || 0;
-  var root = document.getElementById('ad-tv-v2-root');
-  if(!root){
-    if(retries < 20){
-      setTimeout(function(){ wireAdTV(retries + 1); }, 300);
-    }
-    return;    S.ads = (Z.State.adminAds || []).filter(function(a){ return a && a.is_active !== false; });
+    S.ads = (Z.State.adminAds || []).filter(function(a){ return a && a.is_active !== false; });
   } catch(e){}
-  /* Prefetch advertiser profiles so badge can show name/space instantly */
-  try {
-    var _ids = [];
-    (S.ads || []).forEach(function(a){
-      if(a && a.advertiser_id && _ids.indexOf(a.advertiser_id) === -1) _ids.push(a.advertiser_id);
-    });
-    if(_ids.length){
-      var _c = Z.sb && Z.sb();
-      if(_c){
-        var _pr = await _c.from('profiles').select('id,name,username,avatar,space_data').in('id', _ids);
-        if(!_pr.error && _pr.data){
-          var _arr = Z.State.allProfiles || [];
-          var _byId = {};
-          _arr.forEach(function(p){ _byId[p.id] = p; });
-          _pr.data.forEach(function(p){ _byId[p.id] = Object.assign({}, _byId[p.id] || {}, p); });
-          Z.State.allProfiles = Object.keys(_byId).map(function(k){ return _byId[k]; });
-        }
-      }
-    }
-  } catch(e2){}
   return S.ads;
 }
-  }
-  _wired = true;
 
 /* ---------- Session flow ---------- */
-async function loadAds(){
-  var host = $('adv-list');
-  host.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
 async function startNextAd(){
   if(S.running) return;
 
   var eligible = !!(S.eligibility && S.eligibility.can_earn === true);
-  Z.__adTVEligible = eligible;
-  Z.__adTVSAdsCount = (S.ads || []).length;
-  console.log('[Ad TV] S.ads:', (S.ads || []).map(function(a){ return { id: a.id, title: a.internal_title, source: a.source, advertiser_id: a.advertiser_id }; }));
-  console.log('[Ad TV] eligible:', eligible, 'myId:', (Z.State.currentUser ? Z.State.currentUser.id : null));
-  try {
-    /* Get session user id to compare with ad's advertiser_id */
-    var sess = await sb.auth.getSession();
-    var sessUid = (sess && sess.data && sess.data.session && sess.data.session.user) ? sess.data.session.user.id : null;
-    console.log('[My Ads] Session user:', sessUid);
-
-    var r = await sb.rpc('advertiser_my_ads');
-    if(r.error){
-      console.error('[My Ads] RPC error:', r.error);
-      host.innerHTML = '<div style="padding:24px;text-align:center;border-radius:12px;background:rgba(161,98,98,.1);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;font-size:12px;">' +
-        '<b>RPC error:</b> ' + esc(r.error.message) +
-        '<br><br>Session user: <code style="font-size:10px;">' + (sessUid || 'NOT LOGGED IN') + '</code>' +
-      '</div>';
-      return;
-    }
-    var list = r.data || [];
-    console.log('[My Ads] RPC returned', list.length, 'ads:', list);
-    State.myAds = list;
   var me = Z.State.currentUser;
   var myId = me ? me.id : null;
-  function isMine(a){ return a && myId && a.advertiser_id === myId; }
+  function isMine(a){
+    if(!a) return false;
+    var _o = a.owner_id || a.advertiser_id || a.created_by;
+    return _o && myId && _o === myId;
+  }
 
-  /* Two pools:
-     - earnable: paid ads from OTHER advertisers → eligible users only, with earning
-     - displayOnly: platform ads + own ads → everyone sees, no earning */
+  /* earnable — paid ads from OTHERS → eligible users only, with earning
+     displayOnly — platform ads + own ads → everyone sees, no earning */
   var earnable = S.ads.filter(function(a){
     return a && a.is_active !== false && a.source !== 'platform' && !isMine(a);
   });
@@ -40648,7 +40601,6 @@ async function startNextAd(){
 
   var chosen = null, token = null, earnableChosen = false;
 
-  /* Try earnable first — only if user is eligible */
   if(eligible && earnable.length){
     var devHash = await deviceHash();
     var tried = 0;
@@ -40674,7 +40626,6 @@ async function startNextAd(){
     }
   }
 
-  /* Fall back to display-only (platform ads + own ads) */
   if(!chosen && displayOnly.length){
     chosen = displayOnly[S.currentAdIdx % displayOnly.length];
     S.currentAdIdx = (S.currentAdIdx + 1) % displayOnly.length;
@@ -40704,17 +40655,12 @@ async function startNextAd(){
     schedulePlatformAdEnd();
   }
 }
-async function startNextAd(){
-  if(S.running) return;
 
-  var eligible = !!(S.eligibility && S.eligibility.can_earn ==function paintStage(){
+/* ---------- Stage ---------- */
+function paintStage(){
   var stage = document.getElementById('adtv-stage');
   if(!stage || !S.activeAd) return;
   var ad = S.activeAd;
-  Z.__adTVCurrentAdId = ad.id;
-  Z.__adTVCurrentAdTitle = ad.internal_title || ad.heading || '?';= true);
-  Z.__adTVEligible = eligible;
-  Z.__adTVSAdsCount = (S.ads || []).length;
 
   var mediaHtml = '';
   if(ad.media_type === 'video' && ad.media_url){
@@ -40730,14 +40676,21 @@ async function startNextAd(){
   var content = '<div style="position:absolute;left:0;right:0;bottom:0;padding:22px;z-index:3;pointer-events:none;">';
   if(ad.heading) content += '<div style="font-size:24px;font-weight:900;color:#fff;line-height:1.15;text-shadow:0 2px 12px rgba(0,0,0,.65);">' + esc(ad.heading) + '</div>';
   if(ad.subtitle) content += '<div style="font-size:13px;color:rgba(255,255,255,.88);margin-top:8px;line-height:1.5;text-shadow:0 1px 8px rgba(0,0,0,.6);">' + esc(ad.subtitle) + '</div>';
-  if(ad.advertiser_id){
-    var _p = (Z.getProfileById ? Z.getProfileById(ad.advertiser_id) : null) || {};
-    var _spaceName = (_p.space_data && _p.space_data.name) ? _p.space_data.name : null;
-    var _dispName = _spaceName || _p.name || ad.advertiser_name || _p.username || ad.advertiser_username || 'Advertiser';
-    var _av = ad.advertiser_avatar || _p.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(_dispName) + '&background=111827&color=34d399');
-    content += '<div style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:6px 12px 6px 6px;border-radius:20px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);pointer-events:auto;cursor:pointer;" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + esc(ad.advertiser_id) + '\')">';
+
+  var _ownerId = ad.owner_id || ad.advertiser_id || ad.created_by;
+  if(_ownerId){
+    var _ownerName = ad.owner_space_name || ad.owner_name || ad.owner_username || ad.advertiser_username || 'Advertiser';
+    var _av = ad.owner_avatar || ad.advertiser_avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(_ownerName) + '&background=111827&color=34d399');
+    var _hidden = ad.owner_hidden === true;
+    var _myId2 = Z.State.currentUser ? Z.State.currentUser.id : null;
+    var _isSelf = _myId2 && _myId2 === _ownerId;
+    var _isAdmin = !!Z.State.myAdminRole;
+    var _canClick = (!_hidden) || _isSelf || _isAdmin;
+    var _clickAttr = _canClick ? ' onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + esc(_ownerId) + '\')"' : '';
+    var _cursor = _canClick ? 'cursor:pointer;' : 'cursor:default;';
+    content += '<div style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:6px 12px 6px 6px;border-radius:20px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);pointer-events:auto;' + _cursor + '"' + _clickAttr + '>';
     content += '<img src="' + esc(_av) + '" style="width:24px;height:24px;border-radius:50%;object-fit:cover;">';
-    content += '<span style="font-size:11px;color:#fff;font-weight:800;">' + esc(_dispName) + '</span>';
+    content += '<span style="font-size:11px;color:#fff;font-weight:800;">' + esc(_ownerName) + '</span>';
     content += '</div>';
   }
   content += '</div>';
@@ -40747,7 +40700,7 @@ async function startNextAd(){
 
   stage.innerHTML = mediaHtml + overlay + content + dot + dotStyle;
 
-  /* Ensure video plays */
+  /* Ensure video plays + unmute button */
   var v = document.getElementById('adtv-video');
   if(v){
     if(Z._sparkAudioUnlocked || Z.State._userGestureUnlocked){
@@ -40778,7 +40731,7 @@ async function startNextAd(){
 
 /* ---------- Dot ---------- */
 function scheduleDot(){
-  var delay = 3000 + Math.floor(Math.random() * 4000); /* 3–7 sec */
+  var delay = 3000 + Math.floor(Math.random() * 4000);
   S.dotTimeout = setTimeout(showDot, delay);
 }
 
@@ -40796,7 +40749,6 @@ function showDot(){
   dot.style.display = 'block';
   S.dotShownAt = Date.now();
   dot.addEventListener('click', onDotTap);
-  /* Auto-hide after 3 sec if user doesn't tap */
   setTimeout(function(){
     if(S.dotShownAt && !S.dotTapAt){
       S.dotShownAt = 0;
@@ -40814,7 +40766,6 @@ function onDotTap(e){
 }
 
 /* ---------- Ad end ---------- */
-
 function schedulePlatformAdEnd(){
   var dur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
   S.adEndTimeout = setTimeout(onAdEnd, dur);
@@ -40828,21 +40779,6 @@ function schedulePlatformAdEnd(){
     if(pct >= 100) clearInterval(iv);
   }, 100);
 }
-
-function schedulePlatformAdEnd(){
-  var dur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
-  S.adEndTimeout = setTimeout(onAdEnd, dur);
-  var p = document.getElementById('adtv-progress');
-  var start = Date.now();
-  var iv = setInterval(function(){
-    if(!S.running){ clearInterval(iv); return; }
-    var el = Date.now() - start;
-    var pct = Math.min(100, (el / dur) * 100);
-    if(p) p.style.width = pct + '%';
-    if(pct >= 100) clearInterval(iv);
-  }, 100);
-}
-
 
 function scheduleAdEnd(){
   var _adDur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
