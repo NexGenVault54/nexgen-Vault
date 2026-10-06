@@ -40425,6 +40425,13 @@ function adTVHTML(){
   h += '<div id="adtv-info-msg" style="font-size:11.5px;color:#94a3b8;text-align:center;line-height:1.55;padding:6px 20px;"></div>';
   h += '</div>';
 
+  /* Publish an Ad — advertiser portal link */
+  h += '<div style="padding:0 16px 16px;">';
+  h += '<button onclick="window.location.href=\'/advertiser.html\'" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.06);color:#60a5fa;font-weight:900;font-size:12.5px;cursor:pointer;">';
+  h += '<i class="fa-solid fa-bullhorn"></i> Publish an Ad</button>';
+  h += '<div style="font-size:10px;color:#64748b;text-align:center;margin-top:8px;line-height:1.55;">Reach viewers · $0.02 per view · ZYNIX-only links</div>';
+  h += '</div>';
+
   h += '</div>';
   return h;
 }
@@ -40466,12 +40473,14 @@ async function loadEligibilityAndStart(){
   }
   try {
     var r = await c.rpc('ad_check_eligibility');
-    if(r.error){ setInfo('Could not check eligibility.'); return; }
-    S.eligibility = r.data;
-    paintEligibility();
-    if(r.data && r.data.can_earn === true){
-      loadAdsList().then(startNextAd);
+    if(!r.error){
+      S.eligibility = r.data;
+      paintEligibility();
+    } else {
+      S.eligibility = { can_earn: false, reason: 'unknown' };
     }
+    /* Always load ads — even if not eligible we can still show platform ads */
+    loadAdsList().then(startNextAd);
   } catch(e){
     setInfo('Could not check eligibility.');
   }
@@ -40517,29 +40526,66 @@ async function loadAdsList(){
 /* ---------- Session flow ---------- */
 async function startNextAd(){
   if(S.running) return;
-  if(!S.ads.length){
-    setInfo('No ads available right now. Check back soon.');
-    return;
+
+  var eligible = !!(S.eligibility && S.eligibility.can_earn === true);
+  var isPlatformAd = false;
+
+  /* Pick ad pool based on eligibility */
+  var pool;
+  if(eligible){
+    /* Prefer paid ads, fall back to platform */
+    pool = S.ads.filter(function(a){ return a && a.is_active !== false && a.source !== 'platform'; });
+    if(!pool.length){
+      pool = S.ads.filter(function(a){ return a && a.is_active !== false && a.source === 'platform'; });
+      isPlatformAd = true;
+    }
+  } else {
+    /* Not eligible: only platform ads, no earning */
+    pool = S.ads.filter(function(a){ return a && a.is_active !== false && a.source === 'platform'; });
+    isPlatformAd = true;
   }
-  if(!S.eligibility || !S.eligibility.can_earn){
-    setInfo('You are not eligible for ad earnings yet. Tap ? to see why.');
+
+  if(!pool.length){
+    if(!eligible){
+      setInfo('You are not eligible for ad earnings yet. Tap ? to see why.');
+    } else {
+      setInfo('No ads available right now. Check back soon.');
+    }
     return;
   }
 
   var c = Z.sb && Z.sb();
   if(!c) return;
 
-  /* Try ads in order, skip already-watched-today */
+  if(isPlatformAd){
+    /* Platform ad — display only, no earning, no RPC */
+    var ad = pool[S.currentAdIdx % pool.length];
+    S.currentAdIdx = (S.currentAdIdx + 1) % pool.length;
+    S.activeAd = ad;
+    S.sessionToken = null;
+    S.platformMode = true;
+    S.startedAt = Date.now();
+    S.dotShownAt = 0;
+    S.dotTapAt = null;
+    S.running = true;
+    paintStage();
+    paintProgress(0);
+    /* No dot for platform ad — just play */
+    schedulePlatformAdEnd();
+    return;
+  }
+
+  /* Paid ad — full flow with device hash + claim + earn */
   var tried = 0;
   var chosen = null, token = null;
   var devHash = await deviceHash();
 
-  while(tried < S.ads.length){
-    var ad = S.ads[S.currentAdIdx % S.ads.length];
-    S.currentAdIdx = (S.currentAdIdx + 1) % S.ads.length;
+  while(tried < pool.length){
+    var ad2 = pool[S.currentAdIdx % pool.length];
+    S.currentAdIdx = (S.currentAdIdx + 1) % pool.length;
     tried++;
     try {
-      var r = await c.rpc('ad_start_view', { p_ad_id: ad.id, p_device_hash: devHash });
+      var r = await c.rpc('ad_start_view', { p_ad_id: ad2.id, p_device_hash: devHash });
       if(r.error){
         if(r.data && r.data.error === 'already_watched_today'){ continue; }
         if(r.data && r.data.error === 'daily_cap_reached'){ S.eligibility.can_earn = false; paintEligibility(); setInfo('Daily cap reached. Come back tomorrow.'); return; }
@@ -40547,7 +40593,7 @@ async function startNextAd(){
         continue;
       }
       if(r.data && r.data.ok){
-        chosen = ad; token = r.data.token; break;
+        chosen = ad2; token = r.data.token; break;
       }
     } catch(e){ continue; }
   }
@@ -40559,6 +40605,7 @@ async function startNextAd(){
 
   S.activeAd = chosen;
   S.sessionToken = token;
+  S.platformMode = false;
   S.startedAt = Date.now();
   S.dotShownAt = 0;
   S.dotTapAt = null;
@@ -40642,6 +40689,22 @@ function onDotTap(e){
 }
 
 /* ---------- Ad end ---------- */
+
+function schedulePlatformAdEnd(){
+  var dur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
+  S.adEndTimeout = setTimeout(onAdEnd, dur);
+  var p = document.getElementById('adtv-progress');
+  var start = Date.now();
+  var iv = setInterval(function(){
+    if(!S.running){ clearInterval(iv); return; }
+    var el = Date.now() - start;
+    var pct = Math.min(100, (el / dur) * 100);
+    if(p) p.style.width = pct + '%';
+    if(pct >= 100) clearInterval(iv);
+  }, 100);
+}
+
+
 function scheduleAdEnd(){
   var _adDur = (S.activeAd && S.activeAd.media_type === 'image') ? 3000 : 10000;
 S.adEndTimeout = setTimeout(onAdEnd, _adDur);
@@ -40659,6 +40722,15 @@ S.adEndTimeout = setTimeout(onAdEnd, _adDur);
 
 function onAdEnd(){
   S.running = false;
+
+  /* Platform ad — no earning, no claim */
+  if(S.platformMode){
+    setInfo('Ad finished. Next ad loading…');
+    S.platformMode = false;
+    setTimeout(nextRound, 1500);
+    return;
+  }
+
   if(!S.dotTapAt){
     /* no dot tap — no earning */
     setInfo('Ad completed but dot was not tapped. No earning this time.');
