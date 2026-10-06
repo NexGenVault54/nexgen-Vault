@@ -40544,6 +40544,16 @@ function setInfo(msg){
 /* ---------- Load ads ---------- */
 async function loadAdsList(){
   try {
+    var c = Z.sb && Z.sb();
+    if(c){
+      var r = await c.rpc('get_active_ads_for_tv');
+      if(!r.error && Array.isArray(r.data)){
+        S.ads = r.data.filter(function(a){ return a && a.is_active !== false; });
+        Z.State.adminAds = S.ads;
+        return S.ads;
+      }
+    }
+    /* Fallback if RPC fails */
     if(!Z.State.adminAds || !Z.State.adminAds.length){
       if(typeof Z.loadAds === 'function'){ await Z.loadAds(); }
     }
@@ -40651,6 +40661,13 @@ function paintStage(){
   var content = '<div style="position:absolute;left:0;right:0;bottom:0;padding:22px;z-index:3;pointer-events:none;">';
   if(ad.heading) content += '<div style="font-size:24px;font-weight:900;color:#fff;line-height:1.15;text-shadow:0 2px 12px rgba(0,0,0,.65);">' + esc(ad.heading) + '</div>';
   if(ad.subtitle) content += '<div style="font-size:13px;color:rgba(255,255,255,.88);margin-top:8px;line-height:1.5;text-shadow:0 1px 8px rgba(0,0,0,.6);">' + esc(ad.subtitle) + '</div>';
+  if(ad.advertiser_id && ad.advertiser_username){
+    var _av = ad.advertiser_avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(ad.advertiser_username) + '&background=111827&color=34d399');
+    content += '<div style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:6px 12px 6px 6px;border-radius:20px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);pointer-events:auto;cursor:pointer;" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + esc(ad.advertiser_id) + '\')">';
+    content += '<img src="' + esc(_av) + '" style="width:24px;height:24px;border-radius:50%;object-fit:cover;">';
+    content += '<span style="font-size:11px;color:#fff;font-weight:800;">@' + esc(ad.advertiser_username) + '</span>';
+    content += '</div>';
+  }
   content += '</div>';
 
   var dot = '<div id="adtv-dot" style="display:none;position:absolute;width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);box-shadow:0 0 0 4px rgba(16,185,129,.35),0 0 20px rgba(16,185,129,.85);cursor:pointer;z-index:10;animation:adtvPulse 1s ease-in-out infinite;"></div>';
@@ -41163,6 +41180,38 @@ setTimeout(function(){
 }, 3000);
 
 console.log('[Ad TV + Timeline Fix] 4 fixes active');
+})();
+</script>
+
+<!-- Ad TV Keep-Alive — video never pauses on scroll -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixAdTVKeepAlive) return; Z.__zynixAdTVKeepAlive = true;
+
+/* Every 1.5s: if user is on public-home and Ad TV is "running",
+   force the video element to be playing. Defeats any accidental
+   pause from scroll/browser heuristics. */
+setInterval(function(){
+  if(Z.State.currentView !== 'public-home') return;
+  var root = document.getElementById('ad-tv-v2-root');
+  if(!root) return;
+  var v = document.getElementById('adtv-video');
+  if(!v) return;
+  if(v.ended){ try { v.currentTime = 0; } catch(e){} }
+  if(v.paused){
+    /* Only resume if page is visible */
+    if(document.visibilityState === 'visible'){
+      try {
+        var p = v.play();
+        if(p && p.catch) p.catch(function(){});
+      } catch(e){}
+    }
+  }
+}, 1500);
+
+console.log('[Ad TV Keep-Alive] active');
 })();
 </script>
      
