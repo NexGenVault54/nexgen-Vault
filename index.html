@@ -42295,6 +42295,204 @@ if(typeof _prevSp5RenderHeader === 'function'){
 console.log('[Section 21 Step 2] Bond hidden when SPACE has no name');
 })();
 </script>
+
+<!-- ============================================================
+     SECTION 21 — STEP 2b of 8
+     Hide SPACE-only chips + menu rows when !hasSpace, and use a
+     smarter completion ring (profile-only or aggregate).
+     ============================================================
+     Rule: A SPACE with no name does not exist yet. SPACE-specific
+     UI elements must not appear on such profiles.
+
+     Wrapped (not edited):
+       • Z.sp5RenderHeader   — filters header chips
+       • Z.openSpaceMoreSheet — filters ⋯ menu rows
+       • Z.profileCompletion  — profile-only vs aggregate
+
+     Add-only. Revert = delete this block. Nothing else to undo.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep2b) return;
+Z.__zynixStep2b = true;
+
+/* Shared guard: does this user have an active SPACE? */
+function _hasSpace(uid){
+  try { return typeof Z.hasSpace === 'function' && Z.hasSpace(uid); }
+  catch(e){ return false; }
+}
+
+/* ============================================================
+   PART A — Header chips filter
+   Hides these chip classes when !hasSpace:
+     • sp5-chip rate         (SPACE rating / Rate SPACE / New SPACE)
+     • sp5-chip rise         (Rising Creator)
+     • sp5-chip guardian-*   (Guardian Gold / Platinum)
+     • sp5-chip ad-impact    (Ad Impact)
+     • sp5-chip mile         (Subscriber milestone)
+     • [data-health-badge]   (Health score chip)
+   Keeps:
+     • sp5-chip (plain)      (Profession)
+     • sp5-chip acc          (Package · Completion)
+   ============================================================ */
+function filterHeaderChips(userId){
+  if(!userId) return;
+  if(_hasSpace(userId)) return;  /* SPACE exists → keep everything */
+
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+
+  var removed = 0;
+
+  head.querySelectorAll('.sp5-chip').forEach(function(c){
+    var cls = c.className || '';
+    var isSpaceChip =
+      cls.indexOf('sp5-chip rate') !== -1 ||
+      cls.indexOf('sp5-chip rise') !== -1 ||
+      cls.indexOf('sp5-chip guardian') !== -1 ||
+      cls.indexOf('sp5-chip ad-impact') !== -1 ||
+      cls.indexOf('sp5-chip mile') !== -1;
+    if(isSpaceChip){
+      try { c.remove(); removed++; } catch(e){}
+    }
+  });
+
+  /* Health badge uses a separate attribute, not chip class */
+  head.querySelectorAll('[data-health-badge]').forEach(function(b){
+    try { b.remove(); removed++; } catch(e){}
+  });
+
+  if(removed > 0){
+    console.log('[Step 2b] SPACE-only chips hidden · ' + removed + ' removed · user=' + userId);
+  }
+}
+
+var _origSp5Header = Z.sp5RenderHeader;
+if(typeof _origSp5Header === 'function'){
+  Z.sp5RenderHeader = function(userId, isOwner){
+    var r = _origSp5Header.apply(this, arguments);
+    try { filterHeaderChips(userId); } catch(e){}
+    setTimeout(function(){ try { filterHeaderChips(userId); } catch(e){} }, 300);
+    setTimeout(function(){ try { filterHeaderChips(userId); } catch(e){} }, 900);
+    return r;
+  };
+}
+
+/* ============================================================
+   PART B — ⋯ menu rows filter
+   Hides rows whose label starts with any of these (case-insensitive):
+     • about <space name>
+     • video ratings
+     • space ratings
+     • save space
+     • watch later
+     • join this space directory
+     • leave this space directory
+   ============================================================ */
+var SPACE_ONLY_PREFIXES = [
+  'about ',
+  'video ratings',
+  'space ratings',
+  'save space',
+  'watch later',
+  'join this space directory',
+  'leave this space directory'
+];
+
+function filterMoreSheet(userId){
+  if(!userId) return;
+  if(_hasSpace(userId)) return;
+
+  /* The sheet is rendered inside #sheet-container .bottom-sheet */
+  var sheet = document.querySelector('#sheet-container .bottom-sheet');
+  if(!sheet) return;
+
+  var removed = 0;
+  sheet.querySelectorAll('button').forEach(function(b){
+    var txt = (b.textContent || '').trim().toLowerCase();
+    for(var i = 0; i < SPACE_ONLY_PREFIXES.length; i++){
+      if(txt.indexOf(SPACE_ONLY_PREFIXES[i]) === 0){
+        try { b.remove(); removed++; } catch(e){}
+        return;
+      }
+    }
+  });
+
+  /* If we removed every row, keep the sheet from looking empty */
+  if(removed > 0 && sheet.querySelectorAll('button').length === 0){
+    var body = sheet.querySelector('.sheet-body');
+    if(body){
+      body.innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">No options available.</div>';
+    }
+  }
+
+  if(removed > 0){
+    console.log('[Step 2b] SPACE-only menu rows hidden · ' + removed + ' removed · user=' + userId);
+  }
+}
+
+var _origMoreSheet = Z.openSpaceMoreSheet;
+if(typeof _origMoreSheet === 'function'){
+  Z.openSpaceMoreSheet = async function(userId){
+    var r = await _origMoreSheet.apply(this, arguments);
+    setTimeout(function(){ try { filterMoreSheet(userId); } catch(e){} }, 40);
+    setTimeout(function(){ try { filterMoreSheet(userId); } catch(e){} }, 220);
+    return r;
+  };
+}
+
+/* ============================================================
+   PART C — Smarter completion ring
+     !hasSpace → profile-only completion  (5 items)
+     hasSpace  → aggregate (profile% + SPACE%) / 2
+   Profile items:  name · username · avatar · bio · profession
+   SPACE items:    name · description/about · avatar · keywords · cards
+   ============================================================ */
+var _origCompletion = Z.profileCompletion;
+Z.profileCompletion = function(p){
+  if(!p) return 0;
+
+  /* ----- Profile side (always counted) ----- */
+  var profTotal = 5, profDone = 0;
+  if(p.name)       profDone++;
+  if(p.username)   profDone++;
+  if(p.avatar)     profDone++;
+  if(p.bio)        profDone++;
+  if(p.profession) profDone++;
+  var profPct = Math.round((profDone / profTotal) * 100);
+
+  /* If no SPACE → profile-only return */
+  var userId = p.id;
+  if(!userId || !_hasSpace(userId)) return profPct;
+
+  /* ----- SPACE side ----- */
+  var sd = p.space_data || {};
+  var spaceTotal = 5, spaceDone = 0;
+
+  if(sd.name && String(sd.name).trim()) spaceDone++;
+
+  var hasDesc = (sd.description && String(sd.description).trim()) ||
+                (sd.about && String(sd.about).trim());
+  if(hasDesc) spaceDone++;
+
+  if(sd.avatar) spaceDone++;
+
+  var kw = p.space_keywords;
+  if(Array.isArray(kw) ? kw.length > 0 : (kw && String(kw).trim())) spaceDone++;
+
+  if(Array.isArray(sd.cards) && sd.cards.length > 0) spaceDone++;
+
+  var spacePct = Math.round((spaceDone / spaceTotal) * 100);
+
+  /* ----- Aggregate ----- */
+  return Math.round((profPct + spacePct) / 2);
+};
+
+console.log('[Section 21 Step 2b] SPACE-only chips & menu rows hidden · completion ring smarter');
+})();
+</script>
      
 </body>
 </html>
