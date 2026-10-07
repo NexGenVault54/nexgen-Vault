@@ -42639,6 +42639,260 @@ console.log('[Refresh Fix] installed — stale spark hash handled');
 })();
 </script>
 
+<!-- ============================================================
+     SECTION 21 — STEP 5 of 8
+     "My Profile" page — grid card layout (2 per row).
+     ============================================================
+     Replaces the old vertical profile settings layout with a
+     grid of compact cards, in the same style as the Discover
+     People full-page cards.
+
+     All existing functionality preserved — each card routes to
+     the same page or modal as before.
+
+     Add-only. Old Z.renderProfile stays in the file (dead code);
+     we override it here so Z.showView('profile') lands on the
+     new layout.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep5) return; Z.__zynixStep5 = true;
+
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+
+/* Card factory — one grid tile */
+function tile(opts){
+  var color = opts.color || '#10b981';
+  return '<button onclick="' + opts.action + '" ' +
+    'style="text-align:left;background:#111827;border:1px solid #1e293b;' +
+    'border-radius:14px;padding:14px;cursor:pointer;display:flex;' +
+    'flex-direction:column;gap:8px;min-height:96px;transition:border-color .15s;">' +
+    '<div style="width:36px;height:36px;border-radius:10px;' +
+      'background:' + color + '1a;display:flex;align-items:center;' +
+      'justify-content:center;">' +
+      '<i class="' + opts.icon + '" style="color:' + color + ';font-size:15px;"></i>' +
+    '</div>' +
+    '<div>' +
+      '<div style="font-size:12.5px;font-weight:900;color:#fff;line-height:1.2;">' + esc(opts.label) + '</div>' +
+      (opts.sub ? '<div style="font-size:10px;color:#94a3b8;margin-top:2px;line-height:1.3;">' + esc(opts.sub) + '</div>' : '') +
+    '</div>' +
+  '</button>';
+}
+
+Z.renderMyProfile = function(){
+  var me = Z.State.currentUser;
+  if(!me){
+    return Z.emptyState({
+      icon:'fa-solid fa-user-lock',
+      title:'Please log in.',
+      cta:{ label:'Login', onclick:"Z.openAuthModal('login')" }
+    });
+  }
+
+  var connCount = (Z.State.allConnections || []).filter(function(c){
+    return c.status === 'accepted' && (c.requester_id === me.id || c.recipient_id === me.id);
+  }).length;
+
+  var avatar  = Z.displayAvatar(me);
+  var name    = Z.displayName(me);
+  var handle  = '@' + (me.username || (me.email ? String(me.email).split('@')[0] : 'user'));
+  var bio     = String(me.bio || '').trim();
+  var pkg     = me.package || 'Free';
+  var pkgCap  = String(pkg).charAt(0).toUpperCase() + String(pkg).slice(1);
+  var isDark  = document.documentElement.classList.contains('dark');
+
+  var h = '<div style="display:flex;flex-direction:column;gap:16px;padding-bottom:24px;">';
+
+  /* ─── Header ─── */
+  h += '<div class="view-header" style="display:flex;align-items:center;gap:6px;margin-bottom:0;">';
+  h += '<button class="colored-back-btn" onclick="Z.goBack()" ' +
+       'style="display:inline-flex;align-items:center;gap:6px;">' +
+       '<i class="fa-solid fa-arrow-left"></i> Back</button>';
+  h += '<h2 class="view-title" style="margin:0 0 0 6px;font-size:16px;display:flex;' +
+       'align-items:center;gap:6px;">' +
+       '<i class="fa-solid fa-id-badge" style="color:#10b981;"></i> My Profile</h2>';
+  h += '</div>';
+
+  /* ─── Profile header card ─── */
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+
+  h += '<div style="display:flex;gap:14px;align-items:flex-start;">';
+  h += '<img src="' + esc(avatar) + '" ' +
+       'style="width:64px;height:64px;border-radius:50%;object-fit:cover;' +
+       'border:2px solid rgba(16,185,129,.4);flex-shrink:0;">';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div style="font-size:16px;font-weight:900;color:#fff;' +
+       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(name) + '</div>';
+  h += '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">' + esc(handle) + '</div>';
+  if(bio){
+    h += '<div style="font-size:12px;color:#cbd5e1;margin-top:8px;line-height:1.5;">' + esc(bio) + '</div>';
+  }
+  h += '<div style="font-size:10.5px;color:#64748b;margin-top:8px;font-weight:700;">' +
+       connCount + ' Connection' + (connCount === 1 ? '' : 's') + ' · ' + esc(pkgCap) + ' Package</div>';
+  h += '</div>';
+  h += '</div>';
+
+  h += '<div style="display:flex;gap:8px;margin-top:14px;">';
+  h += '<button onclick="Z.openEditProfileModal()" ' +
+       'style="flex:1;background:linear-gradient(135deg,#10b981,#3b82f6);' +
+       'border:none;color:#000;font-weight:900;padding:11px;border-radius:10px;' +
+       'font-size:12px;cursor:pointer;">' +
+       '<i class="fa-solid fa-pen"></i> Edit Profile</button>';
+  h += '<button onclick="Z.showView(\'bounty\')" ' +
+       'style="flex:1;background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.4);' +
+       'color:#fbbf24;font-weight:900;padding:11px;border-radius:10px;' +
+       'font-size:12px;cursor:pointer;">' +
+       '<i class="fa-solid fa-coins"></i> Bounty</button>';
+  h += '</div>';
+
+  h += '</div>';
+
+  /* ─── Section: Account & Settings (grid) ─── */
+  h += '<div style="font-size:10px;color:#64748b;font-weight:900;' +
+       'letter-spacing:.5px;text-transform:uppercase;padding:0 4px;">Account &amp; Settings</div>';
+
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+
+  h += tile({
+    icon:'fa-solid fa-wallet', color:'#10b981',
+    label:'Wallet', sub:'Cash & Bounty',
+    action:"Z.showView('wallet')"
+  });
+  h += tile({
+    icon:'fa-solid fa-box', color:'#3b82f6',
+    label:'Packages', sub:'Upgrade plan',
+    action:"Z.showView('packages')"
+  });
+  h += tile({
+    icon:'fa-solid fa-users-rays', color:'#8b5cf6',
+    label:'Referrals', sub:'Invite & earn',
+    action:"Z.showView('referrals')"
+  });
+  h += tile({
+    icon:'fa-solid fa-link', color:'#10b981',
+    label:'Referral Upline', sub:'Link your upline',
+    action:"Z.openBindReferral()"
+  });
+  h += tile({
+    icon:'fa-solid fa-palette', color:'#f59e0b',
+    label:'Theme', sub: isDark ? 'Dark · tap to switch' : 'Light · tap to switch',
+    action:"Z.toggleTheme();Z.showView('profile');"
+  });
+  h += tile({
+    icon:'fa-regular fa-clock', color:'#60a5fa',
+    label:'Scheduled Posts', sub:'Publishing queue',
+    action:"Z.showView('scheduled-posts')"
+  });
+  h += tile({
+    icon:'fa-solid fa-list', color:'#8b5cf6',
+    label:'Playlists', sub:'Your collections',
+    action:"Z.showView('playlists')"
+  });
+  h += tile({
+    icon:'fa-solid fa-ticket', color:'#fbbf24',
+    label:'Events', sub:'Discover & host',
+    action:"Z.showView('events')"
+  });
+  h += tile({
+    icon:'fa-solid fa-user-group', color:'#6366f1',
+    label:'Discover People', sub:'Find connections',
+    action:"Z.showView('people')"
+  });
+  h += tile({
+    icon:'fa-solid fa-book-open', color:'#a78bfa',
+    label:'Guides', sub:'How everything works',
+    action:"(function(){try{if(typeof Z.openMarketGuide==='function')Z.openMarketGuide();else Z.toast('Guides coming soon');}catch(e){Z.toast('Guides coming soon');}})();"
+  });
+
+  h += '</div>';
+
+  /* ─── Privacy section ─── */
+  h += '<div style="font-size:10px;color:#64748b;font-weight:900;' +
+       'letter-spacing:.5px;text-transform:uppercase;padding:0 4px;margin-top:4px;">Privacy</div>';
+
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;">';
+
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;' +
+       'padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">';
+  h += '<div style="flex:1;min-width:0;padding-right:10px;">';
+  h += '<div style="font-size:12.5px;font-weight:800;color:#fff;">Appear in Discover People</div>';
+  h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">Shown in search + recommendations</div>';
+  h += '</div>';
+  h += '<button id="priv-disc-toggle" onclick="Z._togglePrivacySetting(\'hide_from_discovery\')" ' +
+       'style="padding:7px 14px;border-radius:16px;border:1px solid #1e293b;' +
+       'background:#0f172a;color:#94a3b8;font-weight:900;font-size:11px;' +
+       'cursor:pointer;flex-shrink:0;">Visible</button>';
+  h += '</div>';
+
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">';
+  h += '<div style="flex:1;min-width:0;padding-right:10px;">';
+  h += '<div style="font-size:12.5px;font-weight:800;color:#fff;">Appear in SPACE directories</div>';
+  h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">Visible to bonded members of SPACEs you Bond</div>';
+  h += '</div>';
+  h += '<button id="priv-dir-toggle" onclick="Z._togglePrivacySetting(\'hide_from_member_directory\')" ' +
+       'style="padding:7px 14px;border-radius:16px;border:1px solid #1e293b;' +
+       'background:#0f172a;color:#94a3b8;font-weight:900;font-size:11px;' +
+       'cursor:pointer;flex-shrink:0;">Hidden</button>';
+  h += '</div>';
+
+  h += '</div>';
+
+  /* ─── Danger Zone (Logout) ─── */
+  h += '<button onclick="Z.logout()" ' +
+       'style="width:100%;margin-top:8px;padding:12px;border-radius:10px;' +
+       'border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.06);' +
+       'color:#c9a5a5;font-weight:900;font-size:12px;cursor:pointer;">' +
+       '<i class="fa-solid fa-power-off"></i> Log out</button>';
+
+  h += '</div>';
+
+  /* Post-render: paint privacy toggle states using existing helper */
+  setTimeout(function(){
+    try { if(typeof Z._privPaint === 'function') Z._privPaint(); } catch(e){}
+  }, 60);
+  setTimeout(function(){
+    try { if(typeof Z._privPaint === 'function') Z._privPaint(); } catch(e){}
+  }, 400);
+
+  return h;
+};
+
+/* Override the old renderProfile so Z.showView('profile') shows the new page */
+var _prevRenderProfile = Z.renderProfile;
+Z.renderProfile = function(){
+  return Z.renderMyProfile();
+};
+
+/* Wrap openAccountDropdown to rename "Settings" → "My Profile" */
+var _prevOpenDropdown = Z.openAccountDropdown;
+if(typeof _prevOpenDropdown === 'function'){
+  Z.openAccountDropdown = function(){
+    var r = _prevOpenDropdown.apply(this, arguments);
+    setTimeout(function(){
+      var dd = document.getElementById('zynix-account-dropdown');
+      if(!dd) return;
+      dd.querySelectorAll('button').forEach(function(b){
+        var t = (b.textContent || '').trim();
+        if(t === 'Settings'){
+          b.innerHTML = '<i class="fa-solid fa-id-badge" style="width:14px;text-align:center;color:#10b981;"></i> My Profile';
+        }
+      });
+    }, 40);
+    return r;
+  };
+}
+
+console.log('[Section 21 Step 5] My Profile page · grid card layout ready');
+})();
+</script>
+
 </body>
 </html>
 
