@@ -44574,6 +44574,347 @@ console.log('[Step 5g] duplicates removed · back fix · corner block · header 
 })();
 </script>
 
+<!-- ============================================================
+     STEP 5h — 3 CRITICAL FIXES ONLY
+     A. Full labels (FV → Full Video) — DOM rewrite
+     B. Refresh wrong-user fix — clear cache + await reload
+     C. Floating back button (dashboard pe hamesha)
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep5h) return; Z.__zynixStep5h = true;
+
+/* ============================================================
+   A. FULL LABELS — DOM rewrite
+   Replaces any visible "FV Access" / "FV Guide" text nodes with
+   the full version. Runs on every dashboard paint.
+   ============================================================ */
+function fixLabels(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var root = document.querySelector('.zv3-root');
+  if(!root) return;
+
+  /* Walk all text-bearing elements. Only rewrite whole matches. */
+  root.querySelectorAll('.zv3-ct, .zv3-tool-t, button, div, span').forEach(function(el){
+    /* Only handle elements whose direct text matches exactly or starts with */
+    if(el.children.length > 0) return; /* skip containers */
+    var t = (el.textContent || '').trim();
+    if(t === 'FV Access'){ el.textContent = 'Full Video Access'; }
+    else if(t === 'FV Guide'){ el.textContent = 'Full Video Guide'; }
+    else if(t === 'FV'){ el.textContent = 'Full Video'; }
+  });
+}
+
+/* ============================================================
+   B. REFRESH FIX — clear stale cache before dashboard renders
+   ============================================================
+   Root cause: on refresh, boot loads localStorage snapshot
+   (last user's cached data) and paints dashboard before
+   reloadData finishes. Fix: at dashboard render time, if a
+   snapshot was loaded and current user's data isn't fresh,
+   show loading, force reloadData, then re-render.
+   ============================================================ */
+
+/* Read session UID from localStorage (same as boot) */
+function sessionUid(){
+  try {
+    var url = Z.SUPABASE_URL || '';
+    var m = url.match(/^https:\/\/([^.]+)\.supabase\.co/);
+    if(!m) return null;
+    var key = 'sb-' + m[1] + '-auth-token';
+    var raw = localStorage.getItem(key);
+    if(!raw) return null;
+    var p = JSON.parse(raw);
+    if(!p) return null;
+    var u = null;
+    if(p.user && p.user.id) u = p.user;
+    else if(p.currentSession && p.currentSession.user) u = p.currentSession.user;
+    else if(p.session && p.session.user) u = p.session.user;
+    return u ? u.id : null;
+  } catch(e){ return null; }
+}
+
+/* Simple loading state */
+function dashLoading(msg){
+  return '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
+    'font-size:12px;font-family:system-ui,-apple-system,sans-serif;">' +
+    '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;' +
+    'font-size:22px;"></i><div style="margin-top:12px;">' +
+    (msg || 'Loading dashboard…') + '</div></div>';
+}
+
+/* Force fresh data + re-render */
+function forceFreshDashboard(){
+  var u = Z.State.currentUser;
+  if(!u || !u.id){ return; }
+
+  /* Clear cached data so no stale render sneaks in */
+  try { Z.State.allProfiles = []; } catch(e){}
+  try { Z.State.allPosts = []; } catch(e){}
+  try { Z.State.allSparks = []; } catch(e){}
+  try { Z.State.allConnections = []; } catch(e){}
+  try { Z.State.allNotifications = []; } catch(e){}
+
+  var done = false;
+  function finish(){
+    if(done) return;
+    done = true;
+    /* Re-render dashboard via showView so the router runs cleanly */
+    if(Z.State.currentView === 'owner-dashboard'){
+      var app = document.getElementById('app-container');
+      if(app){
+        try {
+          /* Use direct render, not showView, to avoid nav stack noise */
+          app.innerHTML = Z.renderView('owner-dashboard');
+        } catch(e){}
+      }
+    }
+  }
+
+  /* Await reloadData, but cap at 4s in case network is slow */
+  try {
+    if(typeof Z.reloadData === 'function'){
+      var p = Z.reloadData();
+      if(p && p.then){
+        p.then(finish).catch(finish);
+        setTimeout(finish, 4000);
+      } else {
+        setTimeout(finish, 150);
+      }
+    } else {
+      setTimeout(finish, 150);
+    }
+  } catch(e){
+    setTimeout(finish, 150);
+  }
+}
+
+/* Guard: if we're about to render dashboard but session user
+   doesn't match state, or state looks stale, refresh first. */
+var _prevRenderView = Z.renderView;
+Z.renderView = function(view, param){
+  if(view !== 'owner-dashboard'){
+    return _prevRenderView.call(this, view, param);
+  }
+
+  var u = Z.State.currentUser;
+  if(!u || !u.id){
+    /* Boot hasn't set user yet — show loading, retry */
+    setTimeout(function(){
+      if(Z.State.currentView === 'owner-dashboard'){
+        var app = document.getElementById('app-container');
+        if(app && Z.State.currentUser){
+          app.innerHTML = Z.renderView('owner-dashboard');
+        }
+      }
+    }, 600);
+    setTimeout(function(){
+      if(Z.State.currentView === 'owner-dashboard'){
+        var app = document.getElementById('app-container');
+        if(app && Z.State.currentUser){
+          app.innerHTML = Z.renderView('owner-dashboard');
+        }
+      }
+    }, 1800);
+    return dashLoading('Preparing your dashboard…');
+  }
+
+  /* Check: session vs state */
+  var sessId = sessionUid();
+  if(sessId && sessId !== u.id){
+    console.warn('[5h] session/state mismatch · session=' + sessId +
+      ' · state=' + u.id + ' · refreshing…');
+    setTimeout(forceFreshDashboard, 50);
+    return dashLoading('Verifying session…');
+  }
+
+  /* Check: does state have a profile that MATCHES current user?
+     If allProfiles is populated but has a different user id in it,
+     we're looking at stale cached data. */
+  try {
+    var profs = Z.State.allProfiles || [];
+    if(profs.length > 0){
+      var hasSelf = profs.some(function(p){ return p && p.id === u.id; });
+      if(!hasSelf){
+        /* The cached profiles array doesn't contain current user.
+           That means snapshot was for a different user. */
+        console.warn('[5h] stale profile cache — no self in allProfiles');
+        setTimeout(forceFreshDashboard, 50);
+        return dashLoading('Reloading your data…');
+      }
+    }
+  } catch(e){}
+
+  /* Clear any stale-state flags before rendering */
+  try {
+    if(Z.State._lastLoadedUserId && Z.State._lastLoadedUserId !== u.id){
+      console.warn('[5h] last-loaded-user mismatch · refreshing…');
+      setTimeout(forceFreshDashboard, 50);
+      return dashLoading('Refreshing session…');
+    }
+  } catch(e){}
+
+  var html = _prevRenderView.call(this, view, param);
+
+  setTimeout(fixLabels, 80);
+  setTimeout(fixLabels, 500);
+
+  return html;
+};
+
+/* Also: at boot, if restored view is dashboard but session user
+   doesn't match — clear cached snapshot immediately. */
+setTimeout(function(){
+  try {
+    if(Z.State.currentView !== 'owner-dashboard') return;
+    var sess = sessionUid();
+    if(!sess) return;
+    if(!Z.State.currentUser || Z.State.currentUser.id !== sess){
+      console.warn('[5h] boot: session/state mismatch at 1.5s · forcing refresh');
+      forceFreshDashboard();
+    }
+  } catch(e){}
+}, 1500);
+setTimeout(function(){
+  try {
+    if(Z.State.currentView !== 'owner-dashboard') return;
+    var sess = sessionUid();
+    if(!sess) return;
+    if(!Z.State.currentUser || Z.State.currentUser.id !== sess){
+      console.warn('[5h] boot: session/state mismatch at 3s · forcing refresh');
+      forceFreshDashboard();
+    }
+  } catch(e){}
+}, 3000);
+
+/* ============================================================
+   C. FLOATING BACK BUTTON — top-left, always on dashboard
+   ============================================================ */
+function paintBackBtn(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  if(document.getElementById('zv5h-back')) return;
+
+  var b = document.createElement('button');
+  b.id = 'zv5h-back';
+  b.type = 'button';
+  b.title = 'Back to SPACE';
+  b.setAttribute('aria-label', 'Back to SPACE');
+  b.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
+  b.style.cssText =
+    'position:fixed;top:66px;left:16px;z-index:900;' +
+    'width:38px;height:38px;border-radius:50%;' +
+    'border:1px solid rgba(16,185,129,.45);' +
+    'background:rgba(15,23,42,.94);' +
+    'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
+    'color:#10b981;cursor:pointer;font-size:15px;' +
+    'display:flex;align-items:center;justify-content:center;' +
+    'box-shadow:0 6px 20px rgba(0,0,0,.45);' +
+    'transition:transform .15s,border-color .15s,background .15s;';
+
+  b.addEventListener('mouseenter', function(){
+    this.style.transform = 'scale(1.08)';
+    this.style.borderColor = '#10b981';
+    this.style.background = 'rgba(16,185,129,.12)';
+  });
+  b.addEventListener('mouseleave', function(){
+    this.style.transform = 'scale(1)';
+    this.style.borderColor = 'rgba(16,185,129,.45)';
+    this.style.background = 'rgba(15,23,42,.94)';
+  });
+  b.addEventListener('click', function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    /* Back to OWN SPACE (not home) */
+    var u = Z.State.currentUser;
+    if(u && u.id){
+      Z.showView('public-profile', u.id);
+    } else {
+      Z.showView('home');
+    }
+  });
+
+  document.body.appendChild(b);
+}
+
+function removeBackBtn(){
+  var b = document.getElementById('zv5h-back');
+  if(b && b.parentNode) b.parentNode.removeChild(b);
+}
+
+/* Paint/remove on view changes */
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowView.apply(this, arguments);
+  if(view === 'owner-dashboard'){
+    setTimeout(paintBackBtn, 50);
+    setTimeout(paintBackBtn, 300);
+  } else {
+    removeBackBtn();
+  }
+  return r;
+};
+
+/* ============================================================
+   D. Headers swap + duplicates strip (from 5g if not applied)
+   ============================================================ */
+function stripDupToolsAndFixHelp(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var root = document.querySelector('.zv3-root');
+  if(!root) return;
+
+  /* Remove duplicate tools */
+  root.querySelectorAll('.zv3-tool').forEach(function(b){
+    var t = (b.textContent || '').trim().toLowerCase();
+    if(t.indexOf('earning hub') !== -1 || t.indexOf('member directory') !== -1){
+      try { b.remove(); } catch(e){}
+    }
+  });
+
+  /* Ensure floating [?] exists */
+  if(!document.getElementById('zv3-float-help')){
+    var hb = document.createElement('button');
+    hb.id = 'zv3-float-help';
+    hb.type = 'button';
+    hb.title = 'Dashboard guide';
+    hb.innerHTML = '?';
+    hb.style.cssText =
+      'position:fixed;top:66px;right:16px;z-index:900;' +
+      'width:38px;height:38px;border-radius:50%;' +
+      'border:1px solid rgba(59,130,246,.45);' +
+      'background:rgba(15,23,42,.94);' +
+      'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
+      'color:#60a5fa;font-size:14px;font-weight:900;cursor:pointer;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'box-shadow:0 6px 20px rgba(0,0,0,.45);transition:transform .15s;';
+    hb.addEventListener('click', function(){
+      if(typeof Z.openOwnerDashboardGuide === 'function'){
+        Z.openOwnerDashboardGuide();
+      }
+    });
+    document.body.appendChild(hb);
+  }
+}
+
+/* Remove floating [?] when leaving dashboard */
+var _prevShowView2 = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowView2.apply(this, arguments);
+  if(view !== 'owner-dashboard'){
+    var fb = document.getElementById('zv3-float-help');
+    if(fb && fb.parentNode) fb.parentNode.removeChild(fb);
+  } else {
+    setTimeout(stripDupToolsAndFixHelp, 200);
+    setTimeout(stripDupToolsAndFixHelp, 700);
+  }
+  return r;
+};
+
+console.log('[Step 5h] 3 critical fixes — labels · refresh · back button');
+})();
+</script>
+
 </body>
 </html>
 
