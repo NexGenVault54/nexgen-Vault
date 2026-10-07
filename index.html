@@ -42222,6 +42222,79 @@ Z.getSpaceDisplayName = function(profile){
 console.log('[Section 21 Step 1] SPACE/PROFILE helpers ready — Z.hasSpace · Z.getSpaceDisplayName');
 })();
 </script>
+
+<!-- ============================================================
+     SECTION 21 — STEP 2 of 8
+     Hide Bond button when the viewed SPACE has no name.
+     ============================================================
+     Rule: Bond is a SPACE-only feature. A SPACE with no name
+     (space_data.name empty) does not exist yet — visitors must
+     not see a Bond button, because there is nothing to bond to.
+
+     Name display and Connect button already work correctly.
+     This step ONLY hides Bond when !hasSpace(userId).
+
+     Add-only. Zero edits to existing functions. Runs as a
+     post-render pass on top of Z.sp5RenderHeader. Reverting
+     means deleting this block — nothing else to undo.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep2SpaceHeader) return;
+Z.__zynixStep2SpaceHeader = true;
+
+/* Post-render pass: hide Bond when SPACE has no name.
+   Bond buttons carry title="Bond" OR contain a star icon
+   (fa-solid.fa-star for bonded, fa-regular.fa-star for unbonded).
+   Connect / Ping / Share / More use different icons, so this
+   filter is safe and precise. */
+function hideBondIfNoSpace(userId, isOwner){
+  if(isOwner) return;                                 /* owner never sees Bond anyway */
+  if(!userId) return;
+  if(typeof Z.hasSpace !== 'function') return;         /* safety: Step 1 present */
+  if(Z.hasSpace(userId)) return;                       /* SPACE exists → keep Bond */
+
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+
+  var removed = 0;
+  head.querySelectorAll('button').forEach(function(b){
+    var title = (b.getAttribute('title') || '').trim().toLowerCase();
+    var hasStar = b.querySelector('.fa-star');
+    if(title === 'bond' || hasStar){
+      try { b.remove(); removed++; } catch(e){}
+    }
+  });
+  if(removed > 0){
+    console.log('[Step 2] Bond hidden for SPACE-less profile · user=' + userId);
+  }
+}
+
+/* Wrap Z.sp5RenderHeader to run our pass after the header paints.
+   Three passes (0ms / 350ms / 900ms) cover:
+     • immediate render
+     • async getBondState() resolution
+     • any late repaint */
+var _prevSp5RenderHeader = Z.sp5RenderHeader;
+if(typeof _prevSp5RenderHeader === 'function'){
+  Z.sp5RenderHeader = function(userId, isOwner){
+    var r = _prevSp5RenderHeader.apply(this, arguments);
+    try { hideBondIfNoSpace(userId, isOwner); } catch(e){}
+    setTimeout(function(){
+      try { hideBondIfNoSpace(userId, isOwner); } catch(e){}
+    }, 350);
+    setTimeout(function(){
+      try { hideBondIfNoSpace(userId, isOwner); } catch(e){}
+    }, 900);
+    return r;
+  };
+}
+
+console.log('[Section 21 Step 2] Bond hidden when SPACE has no name');
+})();
+</script>
      
 </body>
 </html>
