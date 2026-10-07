@@ -44277,6 +44277,303 @@ console.log('[Step 5e + refresh fix] surgery active');
 })();
 </script>
 
+<!-- ============================================================
+     STEP 5g — Final consolidated block
+     A. Remove duplicate tools (Earning Hub, Member Directory)
+     B. Back button — dashboard context awareness
+     C. Corner-click defensive block (stray advertiser.html)
+     D. SPACE header swap + ? icon + CTA card
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep5g) return; Z.__zynixStep5g = true;
+
+/* ============================================================
+   PART A — Remove duplicate tools from dashboard
+   ============================================================ */
+function stripDuplicates(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var root = document.querySelector('.zv3-root');
+  if(!root) return;
+
+  var removed = 0;
+  root.querySelectorAll('.zv3-tool').forEach(function(b){
+    var t = (b.textContent || '').trim().toLowerCase();
+    if(t.indexOf('earning hub') !== -1 || t.indexOf('member directory') !== -1){
+      try { b.remove(); removed++; } catch(e){}
+    }
+  });
+  if(removed > 0){
+    console.log('[5g] Removed ' + removed + ' duplicate tool(s)');
+  }
+}
+
+/* ============================================================
+   PART B — Back button: dashboard context awareness
+   ============================================================
+   When user is on a page opened FROM dashboard (analytics, wallet,
+   ratings, etc.), pressing Back should return to dashboard.
+   ============================================================ */
+function trackDashboardVisit(){
+  try {
+    if(Z.State.currentView === 'owner-dashboard'){
+      sessionStorage.setItem('zynix_dash_ctx', String(Date.now()));
+    }
+  } catch(e){}
+}
+
+/* Views that belong to dashboard family (should return to dashboard) */
+var DASH_FAMILY = {
+  'owner-dashboard': 1,
+  'analytics': 1,
+  'wallet': 1,
+  'playlists': 1,
+  'events': 1,
+  'scheduled-posts': 1,
+  'members': 1,
+  'earning-hub': 1,
+  'market-themes': 1,
+  'market-ledger': 1
+};
+
+var _prevGoBack = Z.goBack;
+Z.goBack = function(){
+  var current = Z.State.currentView;
+  var stack = (Z.State.navStack || []).slice();
+
+  /* Peek target from stack */
+  var target = null;
+  var tempStack = stack.slice();
+  while(tempStack.length){
+    var top = tempStack.pop();
+    if(top && top.view !== current){ target = top; break; }
+  }
+
+  /* If target is not found OR points to home, but current view is
+     dashboard-family and user recently visited dashboard → prefer
+     dashboard */
+  var dashStamp = 0;
+  try { dashStamp = parseInt(sessionStorage.getItem('zynix_dash_ctx') || '0', 10) || 0; } catch(e){}
+  var dashFresh = (Date.now() - dashStamp) < 15 * 60 * 1000;
+
+  var shouldPreferDashboard =
+    current !== 'owner-dashboard' &&
+    DASH_FAMILY[current] &&
+    dashFresh &&
+    (!target || target.view === 'home');
+
+  if(shouldPreferDashboard){
+    console.log('[5g] Back → preferring dashboard over home');
+    Z.showView('owner-dashboard');
+    return;
+  }
+
+  return _prevGoBack.apply(this, arguments);
+};
+
+/* ============================================================
+   PART C — Defensive corner-click block
+   ============================================================
+   Any click on dashboard that lands outside the dashboard DOM,
+   header, footer, or modals gets blocked. Prevents stray
+   navigations from leaked elements.
+   ============================================================ */
+document.addEventListener('click', function(e){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var t = e.target;
+  if(!t || !t.closest) return;
+
+  if(t.closest('.zv3-root')) return;
+  if(t.closest('.zynix-header')) return;
+  if(t.closest('.zynix-footer')) return;
+  if(t.closest('#modal-container')) return;
+  if(t.closest('#sheet-container')) return;
+  if(t.closest('#zv3-float-help')) return;
+  if(t.closest('#zynix-account-dropdown')) return;
+  if(t.closest('#toast-container')) return;
+  if(t.closest('#zynix-refresh-spinner')) return;
+
+  console.warn('[5g] Blocked stray dashboard click on:', t.tagName, t.className);
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+
+/* ============================================================
+   PART D — SPACE header swap + ? icon + CTA card
+   ============================================================ */
+
+/* --- D1. SPACE header: swap "Dashboard" ↔ "Create Space" + ? icon --- */
+function applySpaceHeaderSwap(){
+  var head = document.getElementById('sp5-head-host');
+  if(!head) return;
+  var u = Z.State.currentUser;
+  if(!u) return;
+
+  /* Only for owner */
+  var isOwner = (Z.State.spaceUserId === u.id);
+  if(!isOwner) return;
+
+  var hasSpace = (typeof Z.hasSpace === 'function') ? Z.hasSpace(u.id) : false;
+
+  /* Find the Dashboard button (opened via owner-dashboard) */
+  var dashBtn = null;
+  head.querySelectorAll('button').forEach(function(b){
+    var oc = b.getAttribute('onclick') || '';
+    if(oc.indexOf("showView('owner-dashboard')") !== -1 ||
+       oc.indexOf('showView("owner-dashboard")') !== -1){
+      dashBtn = b;
+    }
+  });
+
+  if(dashBtn){
+    var wantText = hasSpace ? 'Dashboard' : 'Create Space';
+    var wantIcon = hasSpace ? 'fa-solid fa-gauge-high' : 'fa-solid fa-plus';
+    var curText = (dashBtn.textContent || '').trim();
+    if(curText.indexOf(wantText) === -1){
+      dashBtn.innerHTML =
+        '<i class="' + wantIcon + '"></i> ' + wantText;
+      console.log('[5g] SPACE header button → ' + wantText);
+    }
+  }
+
+  /* Add ? help icon if missing */
+  if(!head.querySelector('[data-zv5g-help]')){
+    var actions = head.querySelector('.sp5-actions');
+    if(actions){
+      var help = document.createElement('button');
+      help.setAttribute('data-zv5g-help','1');
+      help.setAttribute('onclick', 'Z.openOwnerDashboardGuide()');
+      help.setAttribute('title', 'Dashboard guide');
+      help.className = 'sp5-act';
+      help.style.cssText =
+        'width:34px;height:34px;font-size:14px;font-weight:900;' +
+        'display:inline-flex;align-items:center;justify-content:center;';
+      help.innerHTML = '?';
+      actions.insertBefore(help, actions.firstChild);
+    }
+  }
+}
+
+var _prevSp5RenderHeader = Z.sp5RenderHeader;
+if(typeof _prevSp5RenderHeader === 'function'){
+  Z.sp5RenderHeader = function(){
+    var r = _prevSp5RenderHeader.apply(this, arguments);
+    setTimeout(applySpaceHeaderSwap, 50);
+    setTimeout(applySpaceHeaderSwap, 300);
+    return r;
+  };
+}
+
+/* --- D2. CTA card inside dashboard when !hasSpace --- */
+function injectCreateSpaceCTA(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var u = Z.State.currentUser;
+  if(!u) return;
+
+  var hasSpace = (typeof Z.hasSpace === 'function') ? Z.hasSpace(u.id) : false;
+  var existing = document.getElementById('zv5g-cta');
+
+  if(hasSpace){
+    if(existing) existing.remove();
+    return;
+  }
+  if(existing) return; /* already painted */
+
+  var root = document.querySelector('.zv3-root');
+  if(!root) return;
+
+  var cta = document.createElement('div');
+  cta.id = 'zv5g-cta';
+  cta.style.cssText =
+    'padding:18px;border-radius:16px;' +
+    'background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));' +
+    'border:1px solid rgba(16,185,129,.4);' +
+    'display:flex;flex-direction:column;gap:10px;';
+
+  cta.innerHTML =
+    '<div style="display:flex;align-items:center;gap:12px;">' +
+      '<div style="width:42px;height:42px;border-radius:12px;' +
+        'background:linear-gradient(135deg,#10b981,#3b82f6);' +
+        'display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+        '<i class="fa-solid fa-bolt" style="color:#000;font-size:18px;"></i>' +
+      '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:15px;font-weight:900;color:#fff;">' +
+          'Create your SPACE' +
+        '</div>' +
+        '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;line-height:1.4;">' +
+          'Unlock Sparks, Full Videos, and Bonds' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.65;">' +
+      'Earn from CSF — <b style="color:#10b981;">$0.30 per Bond</b> per month. ' +
+      'Subscribers pay you for exclusive content, and you keep full control.' +
+    '</div>' +
+    '<button onclick="event.stopPropagation();if(typeof Z.showCSFCreatorGuide===\'function\')Z.showCSFCreatorGuide();" ' +
+      'style="align-self:flex-start;background:transparent;border:none;' +
+      'color:#60a5fa;font-weight:900;font-size:11.5px;cursor:pointer;' +
+      'text-decoration:underline;padding:0;text-underline-offset:2px;">' +
+      'Read CSF guide →' +
+    '</button>' +
+    '<button onclick="event.stopPropagation();' +
+      'if(typeof Z.openSpaceEditor===\'function\')Z.openSpaceEditor();" ' +
+      'style="width:100%;padding:13px;border-radius:11px;border:none;' +
+      'background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;' +
+      'font-weight:900;font-size:13px;cursor:pointer;' +
+      'display:flex;align-items:center;justify-content:center;gap:8px;">' +
+      '<i class="fa-solid fa-arrow-right"></i> Open SPACE Editor' +
+    '</button>';
+
+  root.insertBefore(cta, root.firstChild);
+}
+
+/* ============================================================
+   PART E — Hook everything on dashboard render + showView
+   ============================================================ */
+var _prevRenderView = Z.renderView;
+Z.renderView = function(view, param){
+  var r = _prevRenderView.call(this, view, param);
+  if(view === 'owner-dashboard'){
+    setTimeout(stripDuplicates,   100);
+    setTimeout(injectCreateSpaceCTA, 150);
+    setTimeout(stripDuplicates,   500);
+    setTimeout(injectCreateSpaceCTA, 600);
+  }
+  return r;
+};
+
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowView.apply(this, arguments);
+  if(view === 'owner-dashboard'){
+    trackDashboardVisit();
+    setTimeout(stripDuplicates,   150);
+    setTimeout(injectCreateSpaceCTA, 200);
+    setTimeout(stripDuplicates,   700);
+    setTimeout(injectCreateSpaceCTA, 800);
+  }
+  /* Apply header swap when SPACE page shows */
+  if(view === 'public-profile'){
+    setTimeout(applySpaceHeaderSwap, 150);
+    setTimeout(applySpaceHeaderSwap, 500);
+  }
+  return r;
+};
+
+/* Track dashboard visits */
+var _prevRenderView2 = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'owner-dashboard') trackDashboardVisit();
+  return _prevRenderView2.apply(this, arguments);
+};
+
+console.log('[Step 5g] duplicates removed · back fix · corner block · header swap · CTA');
+})();
+</script>
+
 </body>
 </html>
 
