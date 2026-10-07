@@ -44003,6 +44003,280 @@ console.log('[Dashboard v3.2] final · approved + innovations · restructured');
 })();
 </script>
 
+<!-- ============================================================
+     STEP 5e — Dashboard surgery + Refresh fix (definitive)
+     ============================================================
+     Surgical post-render pass on v3.2 dashboard:
+       • Remove header row (avatar + name + tier + ?)
+       • Remove Cash + Bounty tiles (already in header pill)
+       • Remove Contribution Score module
+       • Remove Wallet card from Earnings (redundant)
+       • Rewire Ad Budget tile → Ad Budget guide
+       • Rewire Bonds tile → CSF guide
+       • Add floating [?] for dashboard guide
+
+     Refresh session guard:
+       • If localStorage auth token doesn't match current user,
+         show loading, refresh session, then re-render.
+
+     Everything else (Quick Actions, FV, SPACE Identity, Analytics,
+     CFAR, CSF, Ratings, Tools, Legal) untouched.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep5e) return; Z.__zynixStep5e = true;
+
+/* ============================================================
+   PART 1 — Refresh / session-mismatch guard
+   ============================================================ */
+function _sessionUid(){
+  try {
+    if(!window.localStorage) return null;
+    var url = Z.SUPABASE_URL || '';
+    var m = url.match(/^https:\/\/([^.]+)\.supabase\.co/);
+    if(!m) return null;
+    var key = 'sb-' + m[1] + '-auth-token';
+    var raw = localStorage.getItem(key);
+    if(!raw) return null;
+    var p = JSON.parse(raw);
+    if(!p) return null;
+    var u = null;
+    if(p.user && p.user.id) u = p.user;
+    else if(p.currentSession && p.currentSession.user) u = p.currentSession.user;
+    else if(p.session && p.session.user) u = p.session.user;
+    return u ? u.id : null;
+  } catch(e){ return null; }
+}
+function _dashLoading(msg){
+  return '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
+    'font-size:12px;font-family:system-ui,-apple-system,sans-serif;">' +
+    '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;' +
+    'font-size:22px;"></i><div style="margin-top:12px;">' + msg + '</div></div>';
+}
+function _rerenderDash(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var app = document.getElementById('app-container');
+  if(!app) return;
+  app.innerHTML = Z.renderView('owner-dashboard');
+}
+
+var _prevRenderView = Z.renderView;
+Z.renderView = function(view, param){
+  if(view !== 'owner-dashboard'){
+    return _prevRenderView.call(this, view, param);
+  }
+
+  var u = Z.State.currentUser;
+  if(!u || !u.id){
+    setTimeout(_rerenderDash, 500);
+    setTimeout(_rerenderDash, 1500);
+    return _dashLoading('Preparing your dashboard…');
+  }
+
+  var sessUid = _sessionUid();
+  if(sessUid && sessUid !== u.id){
+    console.warn('[5e guard] session/user mismatch · session=' + sessUid +
+      ' · state=' + u.id);
+    try { Z.State.allProfiles = []; } catch(e){}
+    try { Z.State.allPosts = []; } catch(e){}
+    try { Z.State.allSparks = []; } catch(e){}
+    try { Z.State.allConnections = []; } catch(e){}
+    try { Z.State.allNotifications = []; } catch(e){}
+
+    setTimeout(function(){
+      try {
+        if(typeof Z.refreshSession === 'function'){
+          var p = Z.refreshSession();
+          if(p && p.then){
+            p.then(function(){ setTimeout(_rerenderDash, 150); })
+             .catch(function(){ setTimeout(_rerenderDash, 400); });
+          } else {
+            setTimeout(_rerenderDash, 400);
+          }
+        } else {
+          setTimeout(_rerenderDash, 400);
+        }
+      } catch(e){ setTimeout(_rerenderDash, 400); }
+    }, 100);
+
+    setTimeout(_rerenderDash, 1200);
+    setTimeout(_rerenderDash, 2500);
+    return _dashLoading('Verifying session…');
+  }
+
+  var html = _prevRenderView.call(this, view, param);
+
+  /* Schedule the surgery post-render */
+  if(view === 'owner-dashboard'){
+    setTimeout(surgeryDashV5e, 80);
+    setTimeout(surgeryDashV5e, 400);
+    setTimeout(surgeryDashV5e, 900);
+  }
+  return html;
+};
+
+/* ============================================================
+   PART 2 — Dashboard surgery
+   ============================================================ */
+function surgeryDashV5e(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var root = document.querySelector('.zv3-root');
+  if(!root) return;
+
+  /* 1. Remove header row (back + avatar + name + tier + ?) */
+  var hdr = root.querySelector('.zv3-hdr');
+  if(hdr && hdr.parentNode) hdr.parentNode.removeChild(hdr);
+
+  /* 2. Remove Cash tile */
+  var cash = root.querySelector('.zv3-mt.cash');
+  if(cash && cash.parentNode) cash.parentNode.removeChild(cash);
+
+  /* 3. Remove Bounty tile */
+  var bounty = root.querySelector('.zv3-mt.bounty');
+  if(bounty && bounty.parentNode) bounty.parentNode.removeChild(bounty);
+
+  /* 4. Rewire Ad Budget tile → Ad Budget guide */
+  var ad = root.querySelector('.zv3-mt.ad');
+  if(ad){
+    ad.setAttribute('onclick', "Z.openAdBudgetGuide()");
+    ad.setAttribute('title', 'Ad Budget guide');
+  }
+
+  /* 5. Rewire Bonds tile → CSF guide */
+  var bonds = root.querySelector('.zv3-mt.subs');
+  if(bonds){
+    bonds.setAttribute('onclick', "Z.showCSFCreatorGuide()");
+    bonds.setAttribute('title', 'CSF guide');
+  }
+
+  /* 6. Remove Contribution Score module */
+  var sc = root.querySelector('.zv3-sc');
+  if(sc && sc.parentNode) sc.parentNode.removeChild(sc);
+
+  /* 7. Remove Wallet card from Earnings
+        (identify by onclick calling Z.showView('wallet')) */
+  root.querySelectorAll('.zv3-card').forEach(function(c){
+    var oc = c.getAttribute('onclick') || '';
+    if(oc.indexOf("showView('wallet')") !== -1 ||
+       oc.indexOf('showView("wallet")') !== -1){
+      if(c.parentNode) c.parentNode.removeChild(c);
+    }
+  });
+
+  /* 8. Floating [?] button (header is gone) */
+  if(!document.getElementById('zv3-float-help')){
+    var fb = document.createElement('button');
+    fb.id = 'zv3-float-help';
+    fb.setAttribute('onclick', 'Z.openOwnerDashboardGuide()');
+    fb.title = 'Dashboard guide';
+    fb.innerHTML = '?';
+    fb.style.cssText =
+      'position:fixed;top:66px;right:16px;z-index:900;' +
+      'width:36px;height:36px;border-radius:50%;' +
+      'border:1px solid rgba(59,130,246,.4);' +
+      'background:rgba(15,23,42,.92);' +
+      'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
+      'color:#60a5fa;font-size:14px;font-weight:900;cursor:pointer;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'box-shadow:0 4px 14px rgba(0,0,0,.35);' +
+      'transition:transform .15s,border-color .15s;';
+    fb.addEventListener('mouseenter', function(){
+      this.style.transform = 'scale(1.08)';
+      this.style.borderColor = '#3b82f6';
+    });
+    fb.addEventListener('mouseleave', function(){
+      this.style.transform = 'scale(1)';
+      this.style.borderColor = 'rgba(59,130,246,.4)';
+    });
+    document.body.appendChild(fb);
+  }
+}
+
+/* Hide the floating [?] when leaving dashboard */
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowView.apply(this, arguments);
+  if(view !== 'owner-dashboard'){
+    var fb = document.getElementById('zv3-float-help');
+    if(fb && fb.parentNode) fb.parentNode.removeChild(fb);
+  }
+  return r;
+};
+
+/* ============================================================
+   PART 3 — Ad Budget guide modal (new)
+   ============================================================ */
+Z.openAdBudgetGuide = function(){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);' +
+    'align-items:flex-end;padding:0;z-index:10002;" ' +
+    'onclick="if(event.target===this)Z.closeSheet()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" ' +
+       'style="max-height:88vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header" style="display:flex;' +
+       'justify-content:space-between;align-items:center;">';
+  h += '<h3 style="font-size:14px;font-weight:900;">Ad Budget · Guide</h3>';
+  h += '<button onclick="Z.closeSheet()" style="background:transparent;' +
+       'border:none;color:#94a3b8;font-size:20px;cursor:pointer;">' +
+       '<i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+
+  function sec(ic, c, t, b){
+    return '<div style="padding:11px 0;' +
+      'border-bottom:1px solid rgba(255,255,255,.05);">' +
+      '<div style="font-size:12.5px;font-weight:900;color:' + c +
+      ';margin-bottom:6px;display:flex;align-items:center;gap:7px;">' +
+      '<i class="' + ic + '"></i>' + t + '</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">' +
+      b + '</div></div>';
+  }
+
+  h += sec('fa-solid fa-bullhorn','#fbbf24','What is the Ad Budget?',
+    'A dedicated pool of money reserved for promoting your SPACE on Ad TV. ' +
+    'ZYNIX funds it automatically when subscribers Bond to your channel.');
+
+  h += sec('fa-solid fa-coins','#10b981','Where it comes from',
+    'For every active subscriber (Bond), ZYNIX credits <b>$0.20</b> into ' +
+    'this Ad Budget. It is not deducted from your Cash or Bounty — it is ' +
+    'a separate gift on top of what you already earn.');
+
+  h += sec('fa-solid fa-lock','#60a5fa','Ring-fenced',
+    'This money cannot be withdrawn. It cannot be converted to Cash. ' +
+    'It can only be spent on <b>AI Ads</b> and <b>Ad TV</b> promotion.');
+
+  h += sec('fa-solid fa-tv','#a78bfa','How it is spent',
+    '· Hire an AI Ad Maker from the Digital Market<br>' +
+    '· Run your SPACE on Ad TV<br>' +
+    '· $0.02 per verified view goes to the viewer<br>' +
+    '· Fully audited — you see every transaction');
+
+  h += sec('fa-solid fa-rocket','#10b981','Why it exists',
+    'ZYNIX wants every SPACE to be able to advertise itself — even ' +
+    'without spending Cash. Your Bonds turn into real promotion.');
+
+  h += '<button onclick="Z.closeSheet();setTimeout(function(){' +
+       'Z.showView(\'galleria-cat\',\'digital-market\');},200)" ' +
+       'style="width:100%;margin-top:16px;padding:13px;border-radius:10px;' +
+       'border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);' +
+       'color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+       '<i class="fa-solid fa-store"></i> Visit Digital Market</button>';
+
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;' +
+       'padding:12px;border-radius:10px;border:1px solid #1e293b;' +
+       'background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;' +
+       'cursor:pointer;">Close</button>';
+
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+console.log('[Step 5e + refresh fix] surgery active');
+})();
+</script>
+
 </body>
 </html>
 
