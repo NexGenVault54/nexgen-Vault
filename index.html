@@ -40611,10 +40611,13 @@ async function startNextAd(){
 
   if(eligible && earnable.length){
     var devHash = await deviceHash();
+    /* Order: previously-active ad goes LAST, others first — forces rotation */
+    var _prevId = S.activeAd ? S.activeAd.id : null;
+    var _order = earnable.filter(function(a){ return a.id !== _prevId; })
+                        .concat(earnable.filter(function(a){ return a.id === _prevId; }));
     var tried = 0;
-    while(tried < earnable.length){
-      var ad = earnable[S.currentAdIdx % earnable.length];
-      S.currentAdIdx = (S.currentAdIdx + 1) % earnable.length;
+    while(tried < _order.length){
+      var ad = _order[tried];
       tried++;
       try {
         var r = await c.rpc('ad_start_view', { p_ad_id: ad.id, p_device_hash: devHash });
@@ -40635,8 +40638,11 @@ async function startNextAd(){
   }
 
   if(!chosen && displayOnly.length){
-    chosen = displayOnly[S.currentAdIdx % displayOnly.length];
-    S.currentAdIdx = (S.currentAdIdx + 1) % displayOnly.length;
+    /* Prefer ads that are NOT currently active — forces rotation */
+    var _prevId2 = S.activeAd ? S.activeAd.id : null;
+    var _candidates = displayOnly.filter(function(a){ return a.id !== _prevId2; });
+    if(!_candidates.length) _candidates = displayOnly;
+    chosen = _candidates[Math.floor(Math.random() * _candidates.length)];
     earnableChosen = false;
   }
 
@@ -40893,6 +40899,8 @@ async function onClaim(){
 
 function nextRound(){
   if(Z.State.currentView !== 'public-home') return;
+  S.running = false;
+  S.platformMode = false;
   var stage = document.getElementById('adtv-stage-inner');
   if(stage){
     stage.innerHTML = '<div class="zn-ad-play"><i class="fa-solid fa-play"></i></div><div class="zn-ad-headline">Loading next…</div>';
