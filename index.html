@@ -44915,6 +44915,487 @@ console.log('[Step 5h] 3 critical fixes — labels · refresh · back button');
 })();
 </script>
 
+<!-- ============================================================
+     STEP 5i — Clean final dashboard
+     Correct order · fresh-data fetch · working back button
+     Overrides all previous dashboard overrides (5e-5h).
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixStep5i) return; Z.__zynixStep5i = true;
+
+/* ---------- helpers ---------- */
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
+function fmtMoney(n, dp){ return '$' + (Number(n)||0).toFixed(dp == null ? 2 : dp); }
+function fmtNum(n){
+  var v = Number(n) || 0;
+  if(v >= 1000000) return (v/1000000).toFixed(1) + 'M';
+  if(v >= 1000)    return (v/1000).toFixed(1) + 'K';
+  return String(v);
+}
+function safeAvatar(u){
+  if(typeof Z.displayAvatar === 'function'){ try { return Z.displayAvatar(u); } catch(e){} }
+  var n = (u && (u.name || u.username)) || 'You';
+  return 'https://ui-avatars.com/api/?name=' + encodeURIComponent(n) +
+    '&background=111827&color=34d399';
+}
+function tierLabel(pkg){
+  var m = { business:'Business', elite:'Elite', pro:'Pro', member:'Member',
+            contributor:'Contributor', free:'Free' };
+  return m[String(pkg || 'free').toLowerCase()] || 'Free';
+}
+function sessionUid(){
+  try {
+    var url = Z.SUPABASE_URL || '';
+    var m = url.match(/^https:\/\/([^.]+)\.supabase\.co/);
+    if(!m) return null;
+    var key = 'sb-' + m[1] + '-auth-token';
+    var raw = localStorage.getItem(key);
+    if(!raw) return null;
+    var p = JSON.parse(raw);
+    if(!p) return null;
+    var u = null;
+    if(p.user && p.user.id) u = p.user;
+    else if(p.currentSession && p.currentSession.user) u = p.currentSession.user;
+    else if(p.session && p.session.user) u = p.session.user;
+    return u ? u.id : null;
+  } catch(e){ return null; }
+}
+
+/* ---------- paint dashboard (async) ---------- */
+async function paintDashboard(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var app = document.getElementById('app-container');
+  if(!app) return;
+
+  var u = Z.State.currentUser;
+  if(!u || !u.id){
+    try { await Z.refreshSession(); } catch(e){}
+    u = Z.State.currentUser;
+  }
+  if(!u || !u.id){
+    app.innerHTML =
+      '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
+      'font-size:12px;">Please log in.</div>';
+    return;
+  }
+
+  /* Session guard — refresh if state doesn't match localStorage */
+  var sess = sessionUid();
+  if(sess && sess !== u.id){
+    console.warn('[5i] session mismatch · refreshing · sess=' + sess +
+      ' state=' + u.id);
+    try { await Z.refreshSession(); } catch(e){}
+    try { await Z.reloadData(); } catch(e){}
+    u = Z.State.currentUser;
+    if(!u || !u.id){ return; }
+  }
+
+  /* Fetch FRESH profile from DB */
+  var profile = u;
+  var c = db();
+  if(c){
+    try {
+      var r = await c.from('profiles').select('*').eq('id', u.id).maybeSingle();
+      if(r && r.data){ profile = r.data; }
+    } catch(e){}
+  }
+
+  /* Fetch bond count */
+  var bondCount = 0;
+  if(c){
+    try {
+      var br = await c.rpc('space_bond_count', { p_creator_id: u.id });
+      if(!br.error && br.data != null) bondCount = Number(br.data) || 0;
+    } catch(e){}
+    if(!bondCount){
+      try {
+        var r2 = await c.from('profiles').select('subscriber_count')
+          .eq('id', u.id).maybeSingle();
+        if(!r2.error && r2.data) bondCount = Number(r2.data.subscriber_count) || 0;
+      } catch(e){}
+    }
+  }
+
+  /* Re-check view hasn't changed during async work */
+  if(Z.State.currentView !== 'owner-dashboard') return;
+
+  app.innerHTML = renderAll(profile, bondCount);
+
+  /* Wire */
+  setTimeout(function(){ try { loadAnalyticsMini(); } catch(e){} }, 60);
+  setTimeout(function(){ try { loadCfarMini(); }      catch(e){} }, 90);
+  setTimeout(function(){ try { loadCsfMini(); }       catch(e){} }, 120);
+  setTimeout(function(){ try { loadFvStatus(); }      catch(e){} }, 150);
+}
+
+/* ---------- render (single clean function) ---------- */
+function renderAll(u, bondCount){
+  var sd          = u.space_data || {};
+  var spaceAvatar = sd.avatar || u.avatar || safeAvatar(u);
+  var spaceName   = (sd.name || '').trim() || u.name || 'My SPACE';
+  var tier        = tierLabel(u.package);
+  var adBudget    = Number(u.ad_budget || 0);
+
+  var h = '<div class="zv3-root">';
+
+  /* ========== 1. SPACE IDENTITY (top, with avatar + back + ?) ========== */
+  h += '<div class="zv3-fold" id="zv3-space-fold">';
+  h += '<div class="zv3-fold-hdr" onclick="Z.zv3ToggleSpaceFold()">';
+  /* Back button INSIDE root so guard allows it */
+  h += '<button type="button" class="zv3-fold-hdr-back" ' +
+       'title="Back to SPACE" ' +
+       'onclick="event.stopPropagation();Z.zv5iBackToSpace()">' +
+       '<i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<img class="zv3-fold-av" src="' + esc(spaceAvatar) + '" alt="">';
+  h += '<div class="zv3-fold-t">';
+  h += '<div class="zv3-fold-ttl">SPACE Identity</div>';
+  h += '<div class="zv3-fold-sub">' + esc(spaceName) + ' · ' + esc(tier) +
+       '</div>';
+  h += '</div>';
+  h += '<button type="button" class="zv3-fold-hdr-back" ' +
+       'title="Dashboard guide" ' +
+       'onclick="event.stopPropagation();' +
+       'if(typeof Z.openOwnerDashboardGuide===\'function\')' +
+       'Z.openOwnerDashboardGuide();">?</button>';
+  h += '<i class="fa-solid fa-chevron-right zv3-fold-ch"></i>';
+  h += '</div>';
+  h += '<div class="zv3-fold-body">';
+  h += '<div class="zv3-frow" onclick="Z.openSpaceEditor()">' +
+       '<div class="zv3-frow-ic" style="background:rgba(16,185,129,.14);' +
+       'color:#10b981;"><i class="fa-solid fa-gear"></i></div>' +
+       '<div class="zv3-frow-txt"><div class="zv3-frow-t">Settings</div>' +
+       '<div class="zv3-frow-s">Name · description · keywords</div></div>' +
+       '<i class="fa-solid fa-chevron-right zv3-frow-ar"></i></div>';
+  h += '<div class="zv3-frow" onclick="Z.openAvatarPicker()">' +
+       '<div class="zv3-frow-ic" style="background:rgba(59,130,246,.14);' +
+       'color:#60a5fa;"><i class="fa-solid fa-image-portrait"></i></div>' +
+       '<div class="zv3-frow-txt"><div class="zv3-frow-t">Avatar</div>' +
+       '<div class="zv3-frow-s">Change · premium market</div></div>' +
+       '<i class="fa-solid fa-chevron-right zv3-frow-ar"></i></div>';
+  h += '<div class="zv3-frow" onclick="Z.showView(\'market-themes\')">' +
+       '<div class="zv3-frow-ic" style="background:rgba(139,92,246,.14);' +
+       'color:#a78bfa;"><i class="fa-solid fa-palette"></i></div>' +
+       '<div class="zv3-frow-txt"><div class="zv3-frow-t">Theme</div>' +
+       '<div class="zv3-frow-s">Active · browse market</div></div>' +
+       '<i class="fa-solid fa-chevron-right zv3-frow-ar"></i></div>';
+  h += '</div></div>';
+
+  /* ========== 2. FULL VIDEO ACCESS + FULL VIDEO GUIDE ========== */
+  h += '<div class="zv3-row">';
+  h += '<button class="zv3-card b" onclick="Z.zv3FvAccessTap()">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-video"></i></div>';
+  h += '<div class="zv3-ct">Full Video Access</div>';
+  h += '<div class="zv3-cs" id="zv3-fv-status">Checking…</div>';
+  h += '</button>';
+  h += '<button class="zv3-card g" onclick="Z.openFvGuideSheet()">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-book-open"></i></div>';
+  h += '<div class="zv3-ct">Full Video Guide</div>';
+  h += '<div class="zv3-cs">Creator · CSF<br>CFAR C · CFAR V</div>';
+  h += '</button>';
+  h += '</div>';
+
+  /* ========== 3. AD BUDGET + BONDS ========== */
+  h += '<div class="zv3-money">';
+  h += '<button class="zv3-mt ad" onclick="Z.openAdBudgetGuide()" ' +
+       'title="Ad Budget guide">';
+  h += '<div class="zv3-mi"><i class="fa-solid fa-bullhorn"></i></div>';
+  h += '<div class="zv3-ml">Ad Budget</div>';
+  h += '<div class="zv3-mv" id="zv3-ad">' + fmtMoney(adBudget) + '</div>';
+  h += '<div class="zv3-ms">AI Ads · ring-fenced</div>';
+  h += '</button>';
+  h += '<button class="zv3-mt subs" onclick="Z.showCSFCreatorGuide()" ' +
+       'title="CSF guide">';
+  h += '<div class="zv3-mi"><i class="fa-solid fa-heart"></i></div>';
+  h += '<div class="zv3-ml">Bonds</div>';
+  h += '<div class="zv3-mv" id="zv3-subs">' + fmtNum(bondCount) + '</div>';
+  h += '<div class="zv3-ms">+$0.30/sub/month</div>';
+  h += '</button>';
+  h += '</div>';
+
+  /* ========== 4. QUICK ACTIONS ========== */
+  h += '<div class="zv3-qa">';
+  h += '<button class="zv3-qab g" onclick="Z.openCreateSparkModal()">' +
+       '<i class="fa-solid fa-bolt"></i><span>Spark</span></button>';
+  h += '<button class="zv3-qab b" onclick="Z.openCreateFullVideoModal()">' +
+       '<i class="fa-solid fa-film"></i><span>Full Video</span></button>';
+  h += '<button class="zv3-qab p" onclick="Z.showView(\'scheduled-posts\')">' +
+       '<i class="fa-regular fa-clock"></i><span>Schedule</span></button>';
+  h += '<button class="zv3-qab y" onclick="Z.openCreateStatusModal()">' +
+       '<i class="fa-solid fa-circle-notch"></i><span>Status</span></button>';
+  h += '</div>';
+
+  /* ========== 5. EARNINGS ========== */
+  h += '<div class="zv3-sec">' +
+       '<i class="fa-solid fa-coins" style="color:#fbbf24;"></i>' +
+       '<span>Earnings</span><div class="ln"></div></div>';
+  h += '<div class="zv3-row">';
+  h += '<button class="zv3-card b" onclick="Z.showView(\'analytics\')">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-chart-line"></i></div>';
+  h += '<div class="zv3-ct">Analytics</div>';
+  h += '<div class="zv3-cs" id="dash-analytics-mini">Loading…</div>';
+  h += '</button>';
+  h += '<button class="zv3-card p" onclick="Z.showCFARGuide(\'creator\')">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-fire"></i></div>';
+  h += '<div class="zv3-ct">CFAR Pools</div>';
+  h += '<div class="zv3-cs" id="dash-cfar-list">Loading…</div>';
+  h += '</button>';
+  h += '<div class="zv3-card y" onclick="Z.showCSFCreatorGuide()" ' +
+       'style="cursor:pointer;">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-hand-holding-dollar"></i></div>';
+  h += '<div class="zv3-ct">CSF Status</div>';
+  h += '<div class="zv3-cs" id="dash-csf-status">Loading…</div>';
+  h += '</div>';
+  h += '</div>';
+
+  /* ========== 6. RATINGS ========== */
+  h += '<div class="zv3-sec">' +
+       '<i class="fa-solid fa-star" style="color:#fbbf24;"></i>' +
+       '<span>Ratings</span><div class="ln"></div></div>';
+  h += '<div class="zv3-row">';
+  h += '<button class="zv3-card y" ' +
+       'onclick="Z.openSpaceSpaceRatingSummary(\'' + esc(u.id) + '\')">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-star-half-stroke"></i></div>';
+  h += '<div class="zv3-ct">SPACE Rating</div>';
+  h += '<div class="zv3-cs">Private · your channel score</div>';
+  h += '</button>';
+  h += '<button class="zv3-card y" ' +
+       'onclick="Z.openSpaceRatingSummary(\'' + esc(u.id) + '\')">';
+  h += '<div class="zv3-ci"><i class="fa-solid fa-star"></i></div>';
+  h += '<div class="zv3-ct">Video Rating</div>';
+  h += '<div class="zv3-cs">Private · aggregate across videos</div>';
+  h += '</button>';
+  h += '</div>';
+
+  /* ========== 7. TOOLS ========== */
+  h += '<div class="zv3-sec">' +
+       '<i class="fa-solid fa-toolbox" style="color:#a78bfa;"></i>' +
+       '<span>Tools</span><div class="ln"></div></div>';
+
+  var tools = [
+    { ic:'fa-solid fa-list',        c:'#a78bfa', l:'Playlists',
+      fn:"Z.showView('playlists')" },
+    { ic:'fa-solid fa-ticket',      c:'#fbbf24', l:'Events',
+      fn:"Z.showView('events')" },
+    { ic:'fa-regular fa-clock',     c:'#60a5fa', l:'Scheduled',
+      fn:"Z.showView('scheduled-posts')" },
+    { ic:'fa-solid fa-heart-pulse', c:'#10b981', l:'Pool Health',
+      fn:"Z.openPoolHealthMeter()" },
+    { ic:'fa-solid fa-users',       c:'#3b82f6', l:'Members',
+      fn:"Z.showView('members')" },
+    { ic:'fa-solid fa-ban',         c:'#a16262', l:'Blocked',
+      fn:"Z.openBlockedUsers()" },
+    { ic:'fa-solid fa-download',    c:'#94a3b8', l:'Export Data',
+      fn:"Z.exportMyData()" },
+    { ic:'fa-solid fa-pen-to-square',c:'#10b981',l:'SPACE Edit',
+      fn:"Z.openSpaceEditor()" }
+  ];
+  h += '<div class="zv3-tools">';
+  tools.forEach(function(t){
+    h += '<button class="zv3-tool" onclick="' + t.fn + '">';
+    h += '<div class="zv3-tool-ic" style="background:' + t.c +
+         '22;color:' + t.c + ';"><i class="' + t.ic + '"></i></div>';
+    h += '<span class="zv3-tool-t">' + esc(t.l) + '</span>';
+    h += '</button>';
+  });
+  h += '</div>';
+
+  /* ========== 8. LEGAL ========== */
+  h += '<div class="zv3-sec">' +
+       '<i class="fa-solid fa-scale-balanced" style="color:#10b981;"></i>' +
+       '<span>Legal</span><div class="ln"></div></div>';
+  h += '<button class="zv3-legal" onclick="Z.openLegalHub()">';
+  h += '<span class="zv3-legal-l">' +
+       '<i class="fa-solid fa-scale-balanced"></i> Legal &amp; Policies</span>';
+  h += '<i class="fa-solid fa-chevron-right zv3-legal-ar"></i>';
+  h += '</button>';
+
+  h += '</div>';
+  return h;
+}
+
+/* ---------- back-to-space action ---------- */
+Z.zv5iBackToSpace = function(){
+  var u = Z.State.currentUser;
+  if(u && u.id){
+    Z.showView('public-profile', u.id);
+  } else {
+    Z.showView('home');
+  }
+};
+
+/* ---------- async loaders ---------- */
+async function loadFvStatus(){
+  var el = document.getElementById('zv3-fv-status');
+  if(!el) return;
+  var u = Z.State.currentUser; if(!u) return;
+  var app = null;
+  try {
+    if(typeof Z._fetchFullVideoApp === 'function'){
+      app = await Z._fetchFullVideoApp(u.id);
+    } else {
+      var c = db();
+      if(c){
+        var r = await c.from('full_video_applications')
+          .select('status').eq('user_id', u.id).maybeSingle();
+        app = r.data || null;
+      }
+    }
+  } catch(e){}
+  var st = (app && app.status) || 'none';
+  Z._zv3FvStatus = st;
+  var map = {
+    none:     { t:'Not applied · tap to apply', c:'#94a3b8' },
+    pending:  { t:'Pending review',             c:'#a18554' },
+    approved: { t:'✓ Approved',                 c:'#10b981' },
+    rejected: { t:'Rejected · tap to reapply',  c:'#a16262' }
+  };
+  var m = map[st] || map.none;
+  el.textContent = m.t;
+  el.style.color = m.c;
+  el.style.fontWeight = '900';
+}
+
+async function loadAnalyticsMini(){
+  var host = document.getElementById('dash-analytics-mini');
+  if(!host) return;
+  var u = Z.State.currentUser, c = db(); if(!u || !c) return;
+  try {
+    var pR = await c.from('posts').select('views,shares,reactions')
+      .eq('author_id', u.id);
+    var sR = await c.from('sparks').select('views,shares')
+      .eq('author_id', u.id);
+    var posts = pR.data || [], sparks = sR.data || [];
+    var all = posts.concat(sparks);
+    var views = 0, shares = 0;
+    all.forEach(function(x){
+      views  += Number(x.views)  || 0;
+      shares += Number(x.shares) || 0;
+    });
+    host.innerHTML =
+      '<div style="display:flex;justify-content:space-between;gap:4px;">' +
+      '<span>Views</span><b style="color:#60a5fa;">' + fmtNum(views) +
+      '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:4px;' +
+      'margin-top:3px;"><span>Shares</span>' +
+      '<b style="color:#60a5fa;">' + fmtNum(shares) + '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:4px;' +
+      'margin-top:3px;"><span>Content</span>' +
+      '<b style="color:#60a5fa;">' + fmtNum(all.length) + '</b></div>';
+  } catch(e){ host.textContent = 'Tap to view'; }
+}
+
+async function loadCfarMini(){
+  var host = document.getElementById('dash-cfar-list');
+  if(!host) return;
+  var u = Z.State.currentUser, c = db(); if(!u || !c) return;
+  try {
+    var r = await c.from('sparks')
+      .select('cfar_view_budget,cfar_budget_spent')
+      .eq('author_id', u.id)
+      .not('cfar_rate_per_minute', 'is', null)
+      .gt('cfar_rate_per_minute', 0);
+    var items = (r.data || []).filter(function(v){
+      return (Number(v.cfar_view_budget) || 0) > 0;
+    });
+    if(!items.length){ host.innerHTML = 'No active pools'; return; }
+    var cap = 0, spent = 0;
+    items.forEach(function(v){
+      cap   += Number(v.cfar_view_budget)  || 0;
+      spent += Number(v.cfar_budget_spent) || 0;
+    });
+    var rem = Math.max(0, cap - spent);
+    var pct = cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 0;
+    host.innerHTML =
+      '<div style="display:flex;justify-content:space-between;gap:4px;">' +
+      '<span>' + items.length + ' pool' + (items.length === 1 ? '' : 's') +
+      '</span><b style="color:#a78bfa;">$' + rem.toFixed(2) + '</b></div>' +
+      '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.4);' +
+      'overflow:hidden;margin-top:5px;">' +
+      '<div style="height:100%;width:' + pct + '%;' +
+      'background:linear-gradient(90deg,#10b981,#3b82f6);"></div></div>' +
+      '<div style="font-size:9.5px;color:#64748b;margin-top:4px;">' +
+      pct + '% used of $' + cap.toFixed(0) + '</div>';
+  } catch(e){ host.textContent = 'Tap to view'; }
+}
+
+async function loadCsfMini(){
+  var host = document.getElementById('dash-csf-status');
+  if(!host) return;
+  var u = Z.State.currentUser, c = db(); if(!u || !c) return;
+  try {
+    var r = await c.from('csf_eligibility').select('*')
+      .eq('creator_id', u.id).maybeSingle();
+    var d = r.data || {};
+    var subs   = Number(d.subscribers) || 0;
+    var rating = Number(d.aggregate_rating) || 0;
+    var longV  = Number(d.long_videos) || 0;
+    var sparks = Number(d.sparks_this_month) || 0;
+    var isBiz  = String(u.package || '').toLowerCase() === 'business';
+    var age    = u.created_at
+      ? Math.floor((Date.now() - new Date(u.created_at).getTime()) / 86400000)
+      : 90;
+    var clean  = (u.abuse_flags || 0) === 0;
+    var gates = [isBiz, subs >= 500, rating >= 7, longV >= 5,
+                 sparks >= 60, age >= 90, clean];
+    var passed = gates.filter(function(x){ return x; }).length;
+    var total = gates.length;
+    var pct = Math.round((passed / total) * 100);
+    var col = passed === total ? '#10b981'
+            : passed >= 4     ? '#a18554'
+            : '#a16262';
+    host.innerHTML =
+      '<div style="display:flex;justify-content:space-between;gap:4px;">' +
+      '<span>Gates passed</span>' +
+      '<b style="color:' + col + ';">' + passed + '/' + total + '</b></div>' +
+      '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.4);' +
+      'overflow:hidden;margin-top:5px;">' +
+      '<div style="height:100%;width:' + pct + '%;background:' + col +
+      ';"></div></div>' +
+      '<div style="font-size:9.5px;color:#64748b;margin-top:4px;">' +
+      (passed === total ? 'Eligible · payouts active' :
+       (total - passed) + ' gate' + ((total - passed) === 1 ? '' : 's') +
+       ' to unlock') + '</div>';
+  } catch(e){ host.textContent = 'Tap to view'; }
+}
+
+/* ---------- override renderView ---------- */
+var _prevRenderView = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'owner-dashboard'){
+    setTimeout(paintDashboard, 30);
+    return '<div class="zv3-root">' +
+      '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
+      'font-size:12px;font-family:system-ui,sans-serif;">' +
+      '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;' +
+      'font-size:22px;"></i>' +
+      '<div style="margin-top:12px;">Loading dashboard…</div></div></div>';
+  }
+  return _prevRenderView.call(this, view, param);
+};
+
+/* Refire on every dashboard visit */
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowView.apply(this, arguments);
+  if(view === 'owner-dashboard'){
+    setTimeout(paintDashboard, 60);
+  }
+  return r;
+};
+
+console.log('[Step 5i] clean dashboard — correct order · fresh data · working back');
+})();
+</script>
+
 </body>
 </html>
 
