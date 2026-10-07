@@ -42565,7 +42565,80 @@ if(typeof _prevSp5Content === 'function'){
 console.log('[Section 21 Step 3] SPACE-extras hidden when !hasSpace');
 })();
 </script>
-     
+
+<!-- ============================================================
+     CRITICAL FIX — Refresh landing on Spark feed
+     ============================================================
+     Symptom: refreshing any page lands on the spark viewer.
+     Cause:   URL hash (#spark-XXX) persists from earlier in-app
+              navigation. applyHashD() reopens spark on reload.
+     Fix:     Strip hash when leaving spark via in-app navigation.
+              Fresh deep-links (paste URL / share link) still work.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixRefreshFix) return; Z.__zynixRefreshFix = true;
+
+function _stripHash(){
+  try {
+    var h = String(window.location.hash || '');
+    if(h.indexOf('#spark-') === 0 ||
+       h.indexOf('#video-') === 0 ||
+       h.indexOf('#space-') === 0){
+      var clean = window.location.pathname + window.location.search;
+      history.replaceState(null, '', clean);
+    }
+  } catch(e){}
+}
+
+/* 1) Clear hash the moment we leave spark view */
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  var prev = Z.State.currentView;
+  var r = _prevShowView.apply(this, arguments);
+  if(prev === 'spark' && view !== 'spark'){
+    _stripHash();
+  }
+  /* Also strip any lingering spark hash when landing on a
+     non-deep-link view (safety belt) */
+  if(view !== 'spark' && view !== 'post-page' && view !== 'public-profile'){
+    setTimeout(_stripHash, 0);
+    setTimeout(_stripHash, 250);
+  }
+  return r;
+};
+
+/* 2) On boot: if restored view is not spark but hash says spark,
+   treat the hash as stale and strip it */
+setTimeout(function(){
+  try {
+    var h = String(window.location.hash || '');
+    if(h.indexOf('#spark-') !== 0) return;
+    var last = localStorage.getItem('zynix_last_view') || '';
+    var cur = Z.State.currentView || '';
+    /* Prefer whatever the user was actually on */
+    if((last && last !== 'spark') || (cur && cur !== 'spark')){
+      _stripHash();
+      console.log('[Refresh Fix] stripped stale #spark hash · last=' + last + ' · current=' + cur);
+    }
+  } catch(e){}
+}, 1500);
+
+/* 3) Diagnostic log — helps confirm behavior */
+setTimeout(function(){
+  try {
+    console.log('[Refresh Fix] boot state · hash=' + (window.location.hash || '(none)') +
+                ' · lastView=' + (localStorage.getItem('zynix_last_view') || '(none)') +
+                ' · current=' + (Z.State.currentView || '(none)'));
+  } catch(e){}
+}, 2200);
+
+console.log('[Refresh Fix] installed — stale spark hash handled');
+})();
+</script>
+
 </body>
 </html>
 
