@@ -44003,930 +44003,47 @@ console.log('[Dashboard v3.2] final · approved + innovations · restructured');
 })();
 </script>
 
+
 <!-- ============================================================
-     STEP 5e — Dashboard surgery + Refresh fix (definitive)
-     ============================================================
-     Surgical post-render pass on v3.2 dashboard:
-       • Remove header row (avatar + name + tier + ?)
-       • Remove Cash + Bounty tiles (already in header pill)
-       • Remove Contribution Score module
-       • Remove Wallet card from Earnings (redundant)
-       • Rewire Ad Budget tile → Ad Budget guide
-       • Rewire Bonds tile → CSF guide
-       • Add floating [?] for dashboard guide
-
-     Refresh session guard:
-       • If localStorage auth token doesn't match current user,
-         show loading, refresh session, then re-render.
-
-     Everything else (Quick Actions, FV, SPACE Identity, Analytics,
-     CFAR, CSF, Ratings, Tools, Legal) untouched.
+     DASHBOARD FINAL v4 — Complete consolidated build
+     Replaces all previous dashboard overrides (5e/5f/5g/5h/5i/5j).
+     Delete those blocks before pasting this one.
      ============================================================ -->
+<style id="zynix-dash-v4-css">
+/* ---------- Fold header buttons (were missing) ---------- */
+.zv3-fold-hdr-back{
+  width:32px;height:32px;border-radius:9px;
+  border:1px solid rgba(16,185,129,.35);
+  background:rgba(16,185,129,.08);
+  color:#10b981;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;flex-shrink:0;transition:all .15s;padding:0;
+}
+.zv3-fold-hdr-back:hover{background:rgba(16,185,129,.16);border-color:#10b981;}
+.zv3-fold-hdr-back.zv3-cross{
+  border-color:rgba(161,98,98,.45);
+  background:rgba(161,98,98,.08);
+  color:#fca5a5;
+}
+.zv3-fold-hdr-back.zv3-cross:hover{
+  background:rgba(161,98,98,.18);
+  border-color:#a16262;
+}
+.zv3-fold-av{
+  width:38px;height:38px;border-radius:10px;object-fit:cover;
+  border:2px solid rgba(16,185,129,.5);flex-shrink:0;
+}
+/* ---------- Stray float buttons — extra defense ---------- */
+#zv3-float-help,#zv5h-back,#zv5g-cta-dummy{display:none !important;}
+</style>
+
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixStep5e) return; Z.__zynixStep5e = true;
+if(Z.__zynixDashV4) return; Z.__zynixDashV4 = true;
 
-/* ============================================================
-   PART 1 — Refresh / session-mismatch guard
-   ============================================================ */
-function _sessionUid(){
-  try {
-    if(!window.localStorage) return null;
-    var url = Z.SUPABASE_URL || '';
-    var m = url.match(/^https:\/\/([^.]+)\.supabase\.co/);
-    if(!m) return null;
-    var key = 'sb-' + m[1] + '-auth-token';
-    var raw = localStorage.getItem(key);
-    if(!raw) return null;
-    var p = JSON.parse(raw);
-    if(!p) return null;
-    var u = null;
-    if(p.user && p.user.id) u = p.user;
-    else if(p.currentSession && p.currentSession.user) u = p.currentSession.user;
-    else if(p.session && p.session.user) u = p.session.user;
-    return u ? u.id : null;
-  } catch(e){ return null; }
-}
-function _dashLoading(msg){
-  return '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
-    'font-size:12px;font-family:system-ui,-apple-system,sans-serif;">' +
-    '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;' +
-    'font-size:22px;"></i><div style="margin-top:12px;">' + msg + '</div></div>';
-}
-function _rerenderDash(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var app = document.getElementById('app-container');
-  if(!app) return;
-  app.innerHTML = Z.renderView('owner-dashboard');
-}
-
-var _prevRenderView = Z.renderView;
-Z.renderView = function(view, param){
-  if(view !== 'owner-dashboard'){
-    return _prevRenderView.call(this, view, param);
-  }
-
-  var u = Z.State.currentUser;
-  if(!u || !u.id){
-    setTimeout(_rerenderDash, 500);
-    setTimeout(_rerenderDash, 1500);
-    return _dashLoading('Preparing your dashboard…');
-  }
-
-  var sessUid = _sessionUid();
-  if(sessUid && sessUid !== u.id){
-    console.warn('[5e guard] session/user mismatch · session=' + sessUid +
-      ' · state=' + u.id);
-    try { Z.State.allProfiles = []; } catch(e){}
-    try { Z.State.allPosts = []; } catch(e){}
-    try { Z.State.allSparks = []; } catch(e){}
-    try { Z.State.allConnections = []; } catch(e){}
-    try { Z.State.allNotifications = []; } catch(e){}
-
-    setTimeout(function(){
-      try {
-        if(typeof Z.refreshSession === 'function'){
-          var p = Z.refreshSession();
-          if(p && p.then){
-            p.then(function(){ setTimeout(_rerenderDash, 150); })
-             .catch(function(){ setTimeout(_rerenderDash, 400); });
-          } else {
-            setTimeout(_rerenderDash, 400);
-          }
-        } else {
-          setTimeout(_rerenderDash, 400);
-        }
-      } catch(e){ setTimeout(_rerenderDash, 400); }
-    }, 100);
-
-    setTimeout(_rerenderDash, 1200);
-    setTimeout(_rerenderDash, 2500);
-    return _dashLoading('Verifying session…');
-  }
-
-  var html = _prevRenderView.call(this, view, param);
-
-  /* Schedule the surgery post-render */
-  if(view === 'owner-dashboard'){
-    setTimeout(surgeryDashV5e, 80);
-    setTimeout(surgeryDashV5e, 400);
-    setTimeout(surgeryDashV5e, 900);
-  }
-  return html;
-};
-
-/* ============================================================
-   PART 2 — Dashboard surgery
-   ============================================================ */
-function surgeryDashV5e(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var root = document.querySelector('.zv3-root');
-  if(!root) return;
-
-  /* 1. Remove header row (back + avatar + name + tier + ?) */
-  var hdr = root.querySelector('.zv3-hdr');
-  if(hdr && hdr.parentNode) hdr.parentNode.removeChild(hdr);
-
-  /* 2. Remove Cash tile */
-  var cash = root.querySelector('.zv3-mt.cash');
-  if(cash && cash.parentNode) cash.parentNode.removeChild(cash);
-
-  /* 3. Remove Bounty tile */
-  var bounty = root.querySelector('.zv3-mt.bounty');
-  if(bounty && bounty.parentNode) bounty.parentNode.removeChild(bounty);
-
-  /* 4. Rewire Ad Budget tile → Ad Budget guide */
-  var ad = root.querySelector('.zv3-mt.ad');
-  if(ad){
-    ad.setAttribute('onclick', "Z.openAdBudgetGuide()");
-    ad.setAttribute('title', 'Ad Budget guide');
-  }
-
-  /* 5. Rewire Bonds tile → CSF guide */
-  var bonds = root.querySelector('.zv3-mt.subs');
-  if(bonds){
-    bonds.setAttribute('onclick', "Z.showCSFCreatorGuide()");
-    bonds.setAttribute('title', 'CSF guide');
-  }
-
-  /* 6. Remove Contribution Score module */
-  var sc = root.querySelector('.zv3-sc');
-  if(sc && sc.parentNode) sc.parentNode.removeChild(sc);
-
-  /* 7. Remove Wallet card from Earnings
-        (identify by onclick calling Z.showView('wallet')) */
-  root.querySelectorAll('.zv3-card').forEach(function(c){
-    var oc = c.getAttribute('onclick') || '';
-    if(oc.indexOf("showView('wallet')") !== -1 ||
-       oc.indexOf('showView("wallet")') !== -1){
-      if(c.parentNode) c.parentNode.removeChild(c);
-    }
-  });
-
-  /* 8. Floating [?] button (header is gone) */
-  if(!document.getElementById('zv3-float-help')){
-    var fb = document.createElement('button');
-    fb.id = 'zv3-float-help';
-    fb.setAttribute('onclick', 'Z.openOwnerDashboardGuide()');
-    fb.title = 'Dashboard guide';
-    fb.innerHTML = '?';
-    fb.style.cssText =
-      'position:fixed;top:66px;right:16px;z-index:900;' +
-      'width:36px;height:36px;border-radius:50%;' +
-      'border:1px solid rgba(59,130,246,.4);' +
-      'background:rgba(15,23,42,.92);' +
-      'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
-      'color:#60a5fa;font-size:14px;font-weight:900;cursor:pointer;' +
-      'display:flex;align-items:center;justify-content:center;' +
-      'box-shadow:0 4px 14px rgba(0,0,0,.35);' +
-      'transition:transform .15s,border-color .15s;';
-    fb.addEventListener('mouseenter', function(){
-      this.style.transform = 'scale(1.08)';
-      this.style.borderColor = '#3b82f6';
-    });
-    fb.addEventListener('mouseleave', function(){
-      this.style.transform = 'scale(1)';
-      this.style.borderColor = 'rgba(59,130,246,.4)';
-    });
-    document.body.appendChild(fb);
-  }
-}
-
-/* Hide the floating [?] when leaving dashboard */
-var _prevShowView = Z.showView;
-Z.showView = function(view, param){
-  var r = _prevShowView.apply(this, arguments);
-  if(view !== 'owner-dashboard'){
-    var fb = document.getElementById('zv3-float-help');
-    if(fb && fb.parentNode) fb.parentNode.removeChild(fb);
-  }
-  return r;
-};
-
-/* ============================================================
-   PART 3 — Ad Budget guide modal (new)
-   ============================================================ */
-Z.openAdBudgetGuide = function(){
-  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);' +
-    'align-items:flex-end;padding:0;z-index:10002;" ' +
-    'onclick="if(event.target===this)Z.closeSheet()">';
-  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" ' +
-       'style="max-height:88vh;">';
-  h += '<div class="sheet-handle"></div>';
-  h += '<div class="sheet-header" style="display:flex;' +
-       'justify-content:space-between;align-items:center;">';
-  h += '<h3 style="font-size:14px;font-weight:900;">Ad Budget · Guide</h3>';
-  h += '<button onclick="Z.closeSheet()" style="background:transparent;' +
-       'border:none;color:#94a3b8;font-size:20px;cursor:pointer;">' +
-       '<i class="fa-solid fa-xmark"></i></button>';
-  h += '</div>';
-  h += '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
-
-  function sec(ic, c, t, b){
-    return '<div style="padding:11px 0;' +
-      'border-bottom:1px solid rgba(255,255,255,.05);">' +
-      '<div style="font-size:12.5px;font-weight:900;color:' + c +
-      ';margin-bottom:6px;display:flex;align-items:center;gap:7px;">' +
-      '<i class="' + ic + '"></i>' + t + '</div>' +
-      '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">' +
-      b + '</div></div>';
-  }
-
-  h += sec('fa-solid fa-bullhorn','#fbbf24','What is the Ad Budget?',
-    'A dedicated pool of money reserved for promoting your SPACE on Ad TV. ' +
-    'ZYNIX funds it automatically when subscribers Bond to your channel.');
-
-  h += sec('fa-solid fa-coins','#10b981','Where it comes from',
-    'For every active subscriber (Bond), ZYNIX credits <b>$0.20</b> into ' +
-    'this Ad Budget. It is not deducted from your Cash or Bounty — it is ' +
-    'a separate gift on top of what you already earn.');
-
-  h += sec('fa-solid fa-lock','#60a5fa','Ring-fenced',
-    'This money cannot be withdrawn. It cannot be converted to Cash. ' +
-    'It can only be spent on <b>AI Ads</b> and <b>Ad TV</b> promotion.');
-
-  h += sec('fa-solid fa-tv','#a78bfa','How it is spent',
-    '· Hire an AI Ad Maker from the Digital Market<br>' +
-    '· Run your SPACE on Ad TV<br>' +
-    '· $0.02 per verified view goes to the viewer<br>' +
-    '· Fully audited — you see every transaction');
-
-  h += sec('fa-solid fa-rocket','#10b981','Why it exists',
-    'ZYNIX wants every SPACE to be able to advertise itself — even ' +
-    'without spending Cash. Your Bonds turn into real promotion.');
-
-  h += '<button onclick="Z.closeSheet();setTimeout(function(){' +
-       'Z.showView(\'galleria-cat\',\'digital-market\');},200)" ' +
-       'style="width:100%;margin-top:16px;padding:13px;border-radius:10px;' +
-       'border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);' +
-       'color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
-       '<i class="fa-solid fa-store"></i> Visit Digital Market</button>';
-
-  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;' +
-       'padding:12px;border-radius:10px;border:1px solid #1e293b;' +
-       'background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;' +
-       'cursor:pointer;">Close</button>';
-
-  h += '</div></div></div>';
-  Z.openSheet(h);
-};
-
-console.log('[Step 5e + refresh fix] surgery active');
-})();
-</script>
-
-<!-- ============================================================
-     STEP 5g — Final consolidated block
-     A. Remove duplicate tools (Earning Hub, Member Directory)
-     B. Back button — dashboard context awareness
-     C. Corner-click defensive block (stray advertiser.html)
-     D. SPACE header swap + ? icon + CTA card
-     ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__zynixStep5g) return; Z.__zynixStep5g = true;
-
-/* ============================================================
-   PART A — Remove duplicate tools from dashboard
-   ============================================================ */
-function stripDuplicates(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var root = document.querySelector('.zv3-root');
-  if(!root) return;
-
-  var removed = 0;
-  root.querySelectorAll('.zv3-tool').forEach(function(b){
-    var t = (b.textContent || '').trim().toLowerCase();
-    if(t.indexOf('earning hub') !== -1 || t.indexOf('member directory') !== -1){
-      try { b.remove(); removed++; } catch(e){}
-    }
-  });
-  if(removed > 0){
-    console.log('[5g] Removed ' + removed + ' duplicate tool(s)');
-  }
-}
-
-/* ============================================================
-   PART B — Back button: dashboard context awareness
-   ============================================================
-   When user is on a page opened FROM dashboard (analytics, wallet,
-   ratings, etc.), pressing Back should return to dashboard.
-   ============================================================ */
-function trackDashboardVisit(){
-  try {
-    if(Z.State.currentView === 'owner-dashboard'){
-      sessionStorage.setItem('zynix_dash_ctx', String(Date.now()));
-    }
-  } catch(e){}
-}
-
-/* Views that belong to dashboard family (should return to dashboard) */
-var DASH_FAMILY = {
-  'owner-dashboard': 1,
-  'analytics': 1,
-  'wallet': 1,
-  'playlists': 1,
-  'events': 1,
-  'scheduled-posts': 1,
-  'members': 1,
-  'earning-hub': 1,
-  'market-themes': 1,
-  'market-ledger': 1
-};
-
-var _prevGoBack = Z.goBack;
-Z.goBack = function(){
-  var current = Z.State.currentView;
-  var stack = (Z.State.navStack || []).slice();
-
-  /* Peek target from stack */
-  var target = null;
-  var tempStack = stack.slice();
-  while(tempStack.length){
-    var top = tempStack.pop();
-    if(top && top.view !== current){ target = top; break; }
-  }
-
-  /* If target is not found OR points to home, but current view is
-     dashboard-family and user recently visited dashboard → prefer
-     dashboard */
-  var dashStamp = 0;
-  try { dashStamp = parseInt(sessionStorage.getItem('zynix_dash_ctx') || '0', 10) || 0; } catch(e){}
-  var dashFresh = (Date.now() - dashStamp) < 15 * 60 * 1000;
-
-  var shouldPreferDashboard =
-    current !== 'owner-dashboard' &&
-    DASH_FAMILY[current] &&
-    dashFresh &&
-    (!target || target.view === 'home');
-
-  if(shouldPreferDashboard){
-    console.log('[5g] Back → preferring dashboard over home');
-    Z.showView('owner-dashboard');
-    return;
-  }
-
-  return _prevGoBack.apply(this, arguments);
-};
-
-/* ============================================================
-   PART C — Defensive corner-click block
-   ============================================================
-   Any click on dashboard that lands outside the dashboard DOM,
-   header, footer, or modals gets blocked. Prevents stray
-   navigations from leaked elements.
-   ============================================================ */
-document.addEventListener('click', function(e){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var t = e.target;
-  if(!t || !t.closest) return;
-
-  if(t.closest('.zv3-root')) return;
-  if(t.closest('.zynix-header')) return;
-  if(t.closest('.zynix-footer')) return;
-  if(t.closest('#modal-container')) return;
-  if(t.closest('#sheet-container')) return;
-  if(t.closest('#zv3-float-help')) return;
-  if(t.closest('#zynix-account-dropdown')) return;
-  if(t.closest('#toast-container')) return;
-  if(t.closest('#zynix-refresh-spinner')) return;
-
-  console.warn('[5g] Blocked stray dashboard click on:', t.tagName, t.className);
-  e.stopPropagation();
-  e.preventDefault();
-}, true);
-
-/* ============================================================
-   PART D — SPACE header swap + ? icon + CTA card
-   ============================================================ */
-
-/* --- D1. SPACE header: swap "Dashboard" ↔ "Create Space" + ? icon --- */
-function applySpaceHeaderSwap(){
-  var head = document.getElementById('sp5-head-host');
-  if(!head) return;
-  var u = Z.State.currentUser;
-  if(!u) return;
-
-  /* Only for owner */
-  var isOwner = (Z.State.spaceUserId === u.id);
-  if(!isOwner) return;
-
-  var hasSpace = (typeof Z.hasSpace === 'function') ? Z.hasSpace(u.id) : false;
-
-  /* Find the Dashboard button (opened via owner-dashboard) */
-  var dashBtn = null;
-  head.querySelectorAll('button').forEach(function(b){
-    var oc = b.getAttribute('onclick') || '';
-    if(oc.indexOf("showView('owner-dashboard')") !== -1 ||
-       oc.indexOf('showView("owner-dashboard")') !== -1){
-      dashBtn = b;
-    }
-  });
-
-  if(dashBtn){
-    var wantText = hasSpace ? 'Dashboard' : 'Create Space';
-    var wantIcon = hasSpace ? 'fa-solid fa-gauge-high' : 'fa-solid fa-plus';
-    var curText = (dashBtn.textContent || '').trim();
-    if(curText.indexOf(wantText) === -1){
-      dashBtn.innerHTML =
-        '<i class="' + wantIcon + '"></i> ' + wantText;
-      console.log('[5g] SPACE header button → ' + wantText);
-    }
-  }
-
-  /* Add ? help icon if missing */
-  if(!head.querySelector('[data-zv5g-help]')){
-    var actions = head.querySelector('.sp5-actions');
-    if(actions){
-      var help = document.createElement('button');
-      help.setAttribute('data-zv5g-help','1');
-      help.setAttribute('onclick', 'Z.openOwnerDashboardGuide()');
-      help.setAttribute('title', 'Dashboard guide');
-      help.className = 'sp5-act';
-      help.style.cssText =
-        'width:34px;height:34px;font-size:14px;font-weight:900;' +
-        'display:inline-flex;align-items:center;justify-content:center;';
-      help.innerHTML = '?';
-      actions.insertBefore(help, actions.firstChild);
-    }
-  }
-}
-
-var _prevSp5RenderHeader = Z.sp5RenderHeader;
-if(typeof _prevSp5RenderHeader === 'function'){
-  Z.sp5RenderHeader = function(){
-    var r = _prevSp5RenderHeader.apply(this, arguments);
-    setTimeout(applySpaceHeaderSwap, 50);
-    setTimeout(applySpaceHeaderSwap, 300);
-    return r;
-  };
-}
-
-/* --- D2. CTA card inside dashboard when !hasSpace --- */
-function injectCreateSpaceCTA(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var u = Z.State.currentUser;
-  if(!u) return;
-
-  var hasSpace = (typeof Z.hasSpace === 'function') ? Z.hasSpace(u.id) : false;
-  var existing = document.getElementById('zv5g-cta');
-
-  if(hasSpace){
-    if(existing) existing.remove();
-    return;
-  }
-  if(existing) return; /* already painted */
-
-  var root = document.querySelector('.zv3-root');
-  if(!root) return;
-
-  var cta = document.createElement('div');
-  cta.id = 'zv5g-cta';
-  cta.style.cssText =
-    'padding:18px;border-radius:16px;' +
-    'background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));' +
-    'border:1px solid rgba(16,185,129,.4);' +
-    'display:flex;flex-direction:column;gap:10px;';
-
-  cta.innerHTML =
-    '<div style="display:flex;align-items:center;gap:12px;">' +
-      '<div style="width:42px;height:42px;border-radius:12px;' +
-        'background:linear-gradient(135deg,#10b981,#3b82f6);' +
-        'display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-        '<i class="fa-solid fa-bolt" style="color:#000;font-size:18px;"></i>' +
-      '</div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:15px;font-weight:900;color:#fff;">' +
-          'Create your SPACE' +
-        '</div>' +
-        '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;line-height:1.4;">' +
-          'Unlock Sparks, Full Videos, and Bonds' +
-        '</div>' +
-      '</div>' +
-    '</div>' +
-    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.65;">' +
-      'Earn from CSF — <b style="color:#10b981;">$0.30 per Bond</b> per month. ' +
-      'Subscribers pay you for exclusive content, and you keep full control.' +
-    '</div>' +
-    '<button onclick="event.stopPropagation();if(typeof Z.showCSFCreatorGuide===\'function\')Z.showCSFCreatorGuide();" ' +
-      'style="align-self:flex-start;background:transparent;border:none;' +
-      'color:#60a5fa;font-weight:900;font-size:11.5px;cursor:pointer;' +
-      'text-decoration:underline;padding:0;text-underline-offset:2px;">' +
-      'Read CSF guide →' +
-    '</button>' +
-    '<button onclick="event.stopPropagation();' +
-      'if(typeof Z.openSpaceEditor===\'function\')Z.openSpaceEditor();" ' +
-      'style="width:100%;padding:13px;border-radius:11px;border:none;' +
-      'background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;' +
-      'font-weight:900;font-size:13px;cursor:pointer;' +
-      'display:flex;align-items:center;justify-content:center;gap:8px;">' +
-      '<i class="fa-solid fa-arrow-right"></i> Open SPACE Editor' +
-    '</button>';
-
-  root.insertBefore(cta, root.firstChild);
-}
-
-/* ============================================================
-   PART E — Hook everything on dashboard render + showView
-   ============================================================ */
-var _prevRenderView = Z.renderView;
-Z.renderView = function(view, param){
-  var r = _prevRenderView.call(this, view, param);
-  if(view === 'owner-dashboard'){
-    setTimeout(stripDuplicates,   100);
-    setTimeout(injectCreateSpaceCTA, 150);
-    setTimeout(stripDuplicates,   500);
-    setTimeout(injectCreateSpaceCTA, 600);
-  }
-  return r;
-};
-
-var _prevShowView = Z.showView;
-Z.showView = function(view, param){
-  var r = _prevShowView.apply(this, arguments);
-  if(view === 'owner-dashboard'){
-    trackDashboardVisit();
-    setTimeout(stripDuplicates,   150);
-    setTimeout(injectCreateSpaceCTA, 200);
-    setTimeout(stripDuplicates,   700);
-    setTimeout(injectCreateSpaceCTA, 800);
-  }
-  /* Apply header swap when SPACE page shows */
-  if(view === 'public-profile'){
-    setTimeout(applySpaceHeaderSwap, 150);
-    setTimeout(applySpaceHeaderSwap, 500);
-  }
-  return r;
-};
-
-/* Track dashboard visits */
-var _prevRenderView2 = Z.renderView;
-Z.renderView = function(view, param){
-  if(view === 'owner-dashboard') trackDashboardVisit();
-  return _prevRenderView2.apply(this, arguments);
-};
-
-console.log('[Step 5g] duplicates removed · back fix · corner block · header swap · CTA');
-})();
-</script>
-
-<!-- ============================================================
-     STEP 5h — 3 CRITICAL FIXES ONLY
-     A. Full labels (FV → Full Video) — DOM rewrite
-     B. Refresh wrong-user fix — clear cache + await reload
-     C. Floating back button (dashboard pe hamesha)
-     ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__zynixStep5h) return; Z.__zynixStep5h = true;
-
-/* ============================================================
-   A. FULL LABELS — DOM rewrite
-   Replaces any visible "FV Access" / "FV Guide" text nodes with
-   the full version. Runs on every dashboard paint.
-   ============================================================ */
-function fixLabels(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var root = document.querySelector('.zv3-root');
-  if(!root) return;
-
-  /* Walk all text-bearing elements. Only rewrite whole matches. */
-  root.querySelectorAll('.zv3-ct, .zv3-tool-t, button, div, span').forEach(function(el){
-    /* Only handle elements whose direct text matches exactly or starts with */
-    if(el.children.length > 0) return; /* skip containers */
-    var t = (el.textContent || '').trim();
-    if(t === 'FV Access'){ el.textContent = 'Full Video Access'; }
-    else if(t === 'FV Guide'){ el.textContent = 'Full Video Guide'; }
-    else if(t === 'FV'){ el.textContent = 'Full Video'; }
-  });
-}
-
-/* ============================================================
-   B. REFRESH FIX — clear stale cache before dashboard renders
-   ============================================================
-   Root cause: on refresh, boot loads localStorage snapshot
-   (last user's cached data) and paints dashboard before
-   reloadData finishes. Fix: at dashboard render time, if a
-   snapshot was loaded and current user's data isn't fresh,
-   show loading, force reloadData, then re-render.
-   ============================================================ */
-
-/* Read session UID from localStorage (same as boot) */
-function sessionUid(){
-  try {
-    var url = Z.SUPABASE_URL || '';
-    var m = url.match(/^https:\/\/([^.]+)\.supabase\.co/);
-    if(!m) return null;
-    var key = 'sb-' + m[1] + '-auth-token';
-    var raw = localStorage.getItem(key);
-    if(!raw) return null;
-    var p = JSON.parse(raw);
-    if(!p) return null;
-    var u = null;
-    if(p.user && p.user.id) u = p.user;
-    else if(p.currentSession && p.currentSession.user) u = p.currentSession.user;
-    else if(p.session && p.session.user) u = p.session.user;
-    return u ? u.id : null;
-  } catch(e){ return null; }
-}
-
-/* Simple loading state */
-function dashLoading(msg){
-  return '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
-    'font-size:12px;font-family:system-ui,-apple-system,sans-serif;">' +
-    '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;' +
-    'font-size:22px;"></i><div style="margin-top:12px;">' +
-    (msg || 'Loading dashboard…') + '</div></div>';
-}
-
-/* Force fresh data + re-render */
-function forceFreshDashboard(){
-  var u = Z.State.currentUser;
-  if(!u || !u.id){ return; }
-
-  /* Clear cached data so no stale render sneaks in */
-  try { Z.State.allProfiles = []; } catch(e){}
-  try { Z.State.allPosts = []; } catch(e){}
-  try { Z.State.allSparks = []; } catch(e){}
-  try { Z.State.allConnections = []; } catch(e){}
-  try { Z.State.allNotifications = []; } catch(e){}
-
-  var done = false;
-  function finish(){
-    if(done) return;
-    done = true;
-    /* Re-render dashboard via showView so the router runs cleanly */
-    if(Z.State.currentView === 'owner-dashboard'){
-      var app = document.getElementById('app-container');
-      if(app){
-        try {
-          /* Use direct render, not showView, to avoid nav stack noise */
-          app.innerHTML = Z.renderView('owner-dashboard');
-        } catch(e){}
-      }
-    }
-  }
-
-  /* Await reloadData, but cap at 4s in case network is slow */
-  try {
-    if(typeof Z.reloadData === 'function'){
-      var p = Z.reloadData();
-      if(p && p.then){
-        p.then(finish).catch(finish);
-        setTimeout(finish, 4000);
-      } else {
-        setTimeout(finish, 150);
-      }
-    } else {
-      setTimeout(finish, 150);
-    }
-  } catch(e){
-    setTimeout(finish, 150);
-  }
-}
-
-/* Guard: if we're about to render dashboard but session user
-   doesn't match state, or state looks stale, refresh first. */
-var _prevRenderView = Z.renderView;
-Z.renderView = function(view, param){
-  if(view !== 'owner-dashboard'){
-    return _prevRenderView.call(this, view, param);
-  }
-
-  var u = Z.State.currentUser;
-  if(!u || !u.id){
-    /* Boot hasn't set user yet — show loading, retry */
-    setTimeout(function(){
-      if(Z.State.currentView === 'owner-dashboard'){
-        var app = document.getElementById('app-container');
-        if(app && Z.State.currentUser){
-          app.innerHTML = Z.renderView('owner-dashboard');
-        }
-      }
-    }, 600);
-    setTimeout(function(){
-      if(Z.State.currentView === 'owner-dashboard'){
-        var app = document.getElementById('app-container');
-        if(app && Z.State.currentUser){
-          app.innerHTML = Z.renderView('owner-dashboard');
-        }
-      }
-    }, 1800);
-    return dashLoading('Preparing your dashboard…');
-  }
-
-  /* Check: session vs state */
-  var sessId = sessionUid();
-  if(sessId && sessId !== u.id){
-    console.warn('[5h] session/state mismatch · session=' + sessId +
-      ' · state=' + u.id + ' · refreshing…');
-    setTimeout(forceFreshDashboard, 50);
-    return dashLoading('Verifying session…');
-  }
-
-  /* Check: does state have a profile that MATCHES current user?
-     If allProfiles is populated but has a different user id in it,
-     we're looking at stale cached data. */
-  try {
-    var profs = Z.State.allProfiles || [];
-    if(profs.length > 0){
-      var hasSelf = profs.some(function(p){ return p && p.id === u.id; });
-      if(!hasSelf){
-        /* The cached profiles array doesn't contain current user.
-           That means snapshot was for a different user. */
-        console.warn('[5h] stale profile cache — no self in allProfiles');
-        setTimeout(forceFreshDashboard, 50);
-        return dashLoading('Reloading your data…');
-      }
-    }
-  } catch(e){}
-
-  /* Clear any stale-state flags before rendering */
-  try {
-    if(Z.State._lastLoadedUserId && Z.State._lastLoadedUserId !== u.id){
-      console.warn('[5h] last-loaded-user mismatch · refreshing…');
-      setTimeout(forceFreshDashboard, 50);
-      return dashLoading('Refreshing session…');
-    }
-  } catch(e){}
-
-  var html = _prevRenderView.call(this, view, param);
-
-  setTimeout(fixLabels, 80);
-  setTimeout(fixLabels, 500);
-
-  return html;
-};
-
-/* Also: at boot, if restored view is dashboard but session user
-   doesn't match — clear cached snapshot immediately. */
-setTimeout(function(){
-  try {
-    if(Z.State.currentView !== 'owner-dashboard') return;
-    var sess = sessionUid();
-    if(!sess) return;
-    if(!Z.State.currentUser || Z.State.currentUser.id !== sess){
-      console.warn('[5h] boot: session/state mismatch at 1.5s · forcing refresh');
-      forceFreshDashboard();
-    }
-  } catch(e){}
-}, 1500);
-setTimeout(function(){
-  try {
-    if(Z.State.currentView !== 'owner-dashboard') return;
-    var sess = sessionUid();
-    if(!sess) return;
-    if(!Z.State.currentUser || Z.State.currentUser.id !== sess){
-      console.warn('[5h] boot: session/state mismatch at 3s · forcing refresh');
-      forceFreshDashboard();
-    }
-  } catch(e){}
-}, 3000);
-
-/* ============================================================
-   C. FLOATING BACK BUTTON — top-left, always on dashboard
-   ============================================================ */
-function paintBackBtn(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  if(document.getElementById('zv5h-back')) return;
-
-  var b = document.createElement('button');
-  b.id = 'zv5h-back';
-  b.type = 'button';
-  b.title = 'Back to SPACE';
-  b.setAttribute('aria-label', 'Back to SPACE');
-  b.innerHTML = '<i class="fa-solid fa-arrow-left"></i>';
-  b.style.cssText =
-    'position:fixed;top:66px;left:16px;z-index:900;' +
-    'width:38px;height:38px;border-radius:50%;' +
-    'border:1px solid rgba(16,185,129,.45);' +
-    'background:rgba(15,23,42,.94);' +
-    'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
-    'color:#10b981;cursor:pointer;font-size:15px;' +
-    'display:flex;align-items:center;justify-content:center;' +
-    'box-shadow:0 6px 20px rgba(0,0,0,.45);' +
-    'transition:transform .15s,border-color .15s,background .15s;';
-
-  b.addEventListener('mouseenter', function(){
-    this.style.transform = 'scale(1.08)';
-    this.style.borderColor = '#10b981';
-    this.style.background = 'rgba(16,185,129,.12)';
-  });
-  b.addEventListener('mouseleave', function(){
-    this.style.transform = 'scale(1)';
-    this.style.borderColor = 'rgba(16,185,129,.45)';
-    this.style.background = 'rgba(15,23,42,.94)';
-  });
-  b.addEventListener('click', function(e){
-    e.preventDefault();
-    e.stopPropagation();
-    /* Back to OWN SPACE (not home) */
-    var u = Z.State.currentUser;
-    if(u && u.id){
-      Z.showView('public-profile', u.id);
-    } else {
-      Z.showView('home');
-    }
-  });
-
-  document.body.appendChild(b);
-}
-
-function removeBackBtn(){
-  var b = document.getElementById('zv5h-back');
-  if(b && b.parentNode) b.parentNode.removeChild(b);
-}
-
-/* Paint/remove on view changes */
-var _prevShowView = Z.showView;
-Z.showView = function(view, param){
-  var r = _prevShowView.apply(this, arguments);
-  if(view === 'owner-dashboard'){
-    setTimeout(paintBackBtn, 50);
-    setTimeout(paintBackBtn, 300);
-  } else {
-    removeBackBtn();
-  }
-  return r;
-};
-
-/* ============================================================
-   D. Headers swap + duplicates strip (from 5g if not applied)
-   ============================================================ */
-function stripDupToolsAndFixHelp(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var root = document.querySelector('.zv3-root');
-  if(!root) return;
-
-  /* Remove duplicate tools */
-  root.querySelectorAll('.zv3-tool').forEach(function(b){
-    var t = (b.textContent || '').trim().toLowerCase();
-    if(t.indexOf('earning hub') !== -1 || t.indexOf('member directory') !== -1){
-      try { b.remove(); } catch(e){}
-    }
-  });
-
-  /* Ensure floating [?] exists */
-  if(!document.getElementById('zv3-float-help')){
-    var hb = document.createElement('button');
-    hb.id = 'zv3-float-help';
-    hb.type = 'button';
-    hb.title = 'Dashboard guide';
-    hb.innerHTML = '?';
-    hb.style.cssText =
-      'position:fixed;top:66px;right:16px;z-index:900;' +
-      'width:38px;height:38px;border-radius:50%;' +
-      'border:1px solid rgba(59,130,246,.45);' +
-      'background:rgba(15,23,42,.94);' +
-      'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
-      'color:#60a5fa;font-size:14px;font-weight:900;cursor:pointer;' +
-      'display:flex;align-items:center;justify-content:center;' +
-      'box-shadow:0 6px 20px rgba(0,0,0,.45);transition:transform .15s;';
-    hb.addEventListener('click', function(){
-      if(typeof Z.openOwnerDashboardGuide === 'function'){
-        Z.openOwnerDashboardGuide();
-      }
-    });
-    document.body.appendChild(hb);
-  }
-}
-
-/* Remove floating [?] when leaving dashboard */
-var _prevShowView2 = Z.showView;
-Z.showView = function(view, param){
-  var r = _prevShowView2.apply(this, arguments);
-  if(view !== 'owner-dashboard'){
-    var fb = document.getElementById('zv3-float-help');
-    if(fb && fb.parentNode) fb.parentNode.removeChild(fb);
-  } else {
-    setTimeout(stripDupToolsAndFixHelp, 200);
-    setTimeout(stripDupToolsAndFixHelp, 700);
-  }
-  return r;
-};
-
-console.log('[Step 5h] 3 critical fixes — labels · refresh · back button');
-})();
-</script>
-
-<!-- ============================================================
-     STEP 5i — Clean final dashboard
-     Correct order · fresh-data fetch · working back button
-     Overrides all previous dashboard overrides (5e-5h).
-     ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Z = window.Z; if(!Z) return;
-if(Z.__zynixStep5i) return; Z.__zynixStep5i = true;
-
-/* ---------- helpers ---------- */
+/* ================= HELPERS ================= */
 function esc(s){
   if(s == null) return '';
   return String(s).replace(/[&<>"']/g, function(c){
@@ -44970,7 +44087,33 @@ function sessionUid(){
   } catch(e){ return null; }
 }
 
-/* ---------- paint dashboard (async) ---------- */
+/* ================= SESSION GUARD ================= */
+/* Read fresh space_data async */
+async function fetchFreshProfile(uid){
+  var c = db();
+  if(!c || !uid) return null;
+  try {
+    var r = await c.from('profiles').select('*').eq('id', uid).maybeSingle();
+    return (r && r.data) ? r.data : null;
+  } catch(e){ return null; }
+}
+
+async function fetchBondCount(uid){
+  var c = db();
+  if(!c || !uid) return 0;
+  try {
+    var r = await c.rpc('space_bond_count', { p_creator_id: uid });
+    if(!r.error && r.data != null) return Number(r.data) || 0;
+  } catch(e){}
+  try {
+    var r2 = await c.from('profiles').select('subscriber_count')
+      .eq('id', uid).maybeSingle();
+    if(!r2.error && r2.data) return Number(r2.data.subscriber_count) || 0;
+  } catch(e){}
+  return 0;
+}
+
+/* ================= PAINT ================= */
 async function paintDashboard(){
   if(Z.State.currentView !== 'owner-dashboard') return;
   var app = document.getElementById('app-container');
@@ -44982,62 +44125,32 @@ async function paintDashboard(){
     u = Z.State.currentUser;
   }
   if(!u || !u.id){
-    app.innerHTML =
-      '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
-      'font-size:12px;">Please log in.</div>';
+    app.innerHTML = '<div style="padding:60px 20px;text-align:center;' +
+      'color:#94a3b8;font-size:12px;">Please log in.</div>';
     return;
   }
 
-  /* Session guard — refresh if state doesn't match localStorage */
   var sess = sessionUid();
   if(sess && sess !== u.id){
-    console.warn('[5i] session mismatch · refreshing · sess=' + sess +
-      ' state=' + u.id);
     try { await Z.refreshSession(); } catch(e){}
     try { await Z.reloadData(); } catch(e){}
     u = Z.State.currentUser;
-    if(!u || !u.id){ return; }
+    if(!u || !u.id) return;
   }
 
-  /* Fetch FRESH profile from DB */
-  var profile = u;
-  var c = db();
-  if(c){
-    try {
-      var r = await c.from('profiles').select('*').eq('id', u.id).maybeSingle();
-      if(r && r.data){ profile = r.data; }
-    } catch(e){}
-  }
+  var profile = await fetchFreshProfile(u.id) || u;
+  var bondCount = await fetchBondCount(u.id);
 
-  /* Fetch bond count */
-  var bondCount = 0;
-  if(c){
-    try {
-      var br = await c.rpc('space_bond_count', { p_creator_id: u.id });
-      if(!br.error && br.data != null) bondCount = Number(br.data) || 0;
-    } catch(e){}
-    if(!bondCount){
-      try {
-        var r2 = await c.from('profiles').select('subscriber_count')
-          .eq('id', u.id).maybeSingle();
-        if(!r2.error && r2.data) bondCount = Number(r2.data.subscriber_count) || 0;
-      } catch(e){}
-    }
-  }
-
-  /* Re-check view hasn't changed during async work */
   if(Z.State.currentView !== 'owner-dashboard') return;
-
   app.innerHTML = renderAll(profile, bondCount);
 
-  /* Wire */
   setTimeout(function(){ try { loadAnalyticsMini(); } catch(e){} }, 60);
   setTimeout(function(){ try { loadCfarMini(); }      catch(e){} }, 90);
   setTimeout(function(){ try { loadCsfMini(); }       catch(e){} }, 120);
   setTimeout(function(){ try { loadFvStatus(); }      catch(e){} }, 150);
 }
 
-/* ---------- render (single clean function) ---------- */
+/* ================= RENDER ================= */
 function renderAll(u, bondCount){
   var sd          = u.space_data || {};
   var spaceAvatar = sd.avatar || u.avatar || safeAvatar(u);
@@ -45047,81 +44160,71 @@ function renderAll(u, bondCount){
 
   var h = '<div class="zv3-root">';
 
-  /* ========== 1. SPACE IDENTITY (top, with avatar + back + ?) ========== */
+  /* ---- SPACE Identity (top, back-left, cross-right, avatar small) ---- */
   h += '<div class="zv3-fold" id="zv3-space-fold">';
   h += '<div class="zv3-fold-hdr" onclick="Z.zv3ToggleSpaceFold()">';
-  /* Back button INSIDE root so guard allows it */
-  h += '<button type="button" class="zv3-fold-hdr-back" ' +
-       'title="Back to SPACE" ' +
-       'onclick="event.stopPropagation();Z.zv5iBackToSpace()">' +
+  h += '<button type="button" class="zv3-fold-hdr-back" title="Back to SPACE" ' +
+       'onclick="event.stopPropagation();Z.zv4BackToSpace()">' +
        '<i class="fa-solid fa-arrow-left"></i></button>';
   h += '<img class="zv3-fold-av" src="' + esc(spaceAvatar) + '" alt="">';
   h += '<div class="zv3-fold-t">';
   h += '<div class="zv3-fold-ttl">SPACE Identity</div>';
-  h += '<div class="zv3-fold-sub">' + esc(spaceName) + ' · ' + esc(tier) +
-       '</div>';
+  h += '<div class="zv3-fold-sub">' + esc(spaceName) + ' · ' + esc(tier) + '</div>';
   h += '</div>';
-  h += '<button type="button" class="zv3-fold-hdr-back" ' +
-       'title="Dashboard guide" ' +
-       'onclick="event.stopPropagation();' +
-       'if(typeof Z.openOwnerDashboardGuide===\'function\')' +
-       'Z.openOwnerDashboardGuide();">?</button>';
+  h += '<button type="button" class="zv3-fold-hdr-back zv3-cross" ' +
+       'title="Close dashboard" ' +
+       'onclick="event.stopPropagation();Z.zv4BackToSpace()">' +
+       '<i class="fa-solid fa-xmark"></i></button>';
   h += '<i class="fa-solid fa-chevron-right zv3-fold-ch"></i>';
   h += '</div>';
   h += '<div class="zv3-fold-body">';
   h += '<div class="zv3-frow" onclick="Z.openSpaceEditor()">' +
-       '<div class="zv3-frow-ic" style="background:rgba(16,185,129,.14);' +
-       'color:#10b981;"><i class="fa-solid fa-gear"></i></div>' +
+       '<div class="zv3-frow-ic" style="background:rgba(16,185,129,.14);color:#10b981;">' +
+       '<i class="fa-solid fa-gear"></i></div>' +
        '<div class="zv3-frow-txt"><div class="zv3-frow-t">Settings</div>' +
        '<div class="zv3-frow-s">Name · description · keywords</div></div>' +
        '<i class="fa-solid fa-chevron-right zv3-frow-ar"></i></div>';
   h += '<div class="zv3-frow" onclick="Z.openAvatarPicker()">' +
-       '<div class="zv3-frow-ic" style="background:rgba(59,130,246,.14);' +
-       'color:#60a5fa;"><i class="fa-solid fa-image-portrait"></i></div>' +
+       '<div class="zv3-frow-ic" style="background:rgba(59,130,246,.14);color:#60a5fa;">' +
+       '<i class="fa-solid fa-image-portrait"></i></div>' +
        '<div class="zv3-frow-txt"><div class="zv3-frow-t">Avatar</div>' +
        '<div class="zv3-frow-s">Change · premium market</div></div>' +
        '<i class="fa-solid fa-chevron-right zv3-frow-ar"></i></div>';
   h += '<div class="zv3-frow" onclick="Z.showView(\'market-themes\')">' +
-       '<div class="zv3-frow-ic" style="background:rgba(139,92,246,.14);' +
-       'color:#a78bfa;"><i class="fa-solid fa-palette"></i></div>' +
+       '<div class="zv3-frow-ic" style="background:rgba(139,92,246,.14);color:#a78bfa;">' +
+       '<i class="fa-solid fa-palette"></i></div>' +
        '<div class="zv3-frow-txt"><div class="zv3-frow-t">Theme</div>' +
        '<div class="zv3-frow-s">Active · browse market</div></div>' +
        '<i class="fa-solid fa-chevron-right zv3-frow-ar"></i></div>';
   h += '</div></div>';
 
-  /* ========== 2. FULL VIDEO ACCESS + FULL VIDEO GUIDE ========== */
+  /* ---- Full Video Access + Guide ---- */
   h += '<div class="zv3-row">';
-  h += '<button class="zv3-card b" onclick="Z.zv3FvAccessTap()">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-video"></i></div>';
-  h += '<div class="zv3-ct">Full Video Access</div>';
-  h += '<div class="zv3-cs" id="zv3-fv-status">Checking…</div>';
-  h += '</button>';
-  h += '<button class="zv3-card g" onclick="Z.openFvGuideSheet()">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-book-open"></i></div>';
-  h += '<div class="zv3-ct">Full Video Guide</div>';
-  h += '<div class="zv3-cs">Creator · CSF<br>CFAR C · CFAR V</div>';
-  h += '</button>';
+  h += '<button class="zv3-card b" onclick="Z.zv3FvAccessTap()">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-video"></i></div>' +
+       '<div class="zv3-ct">Full Video Access</div>' +
+       '<div class="zv3-cs" id="zv3-fv-status">Checking…</div></button>';
+  h += '<button class="zv3-card g" onclick="Z.openFvGuideSheet()">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-book-open"></i></div>' +
+       '<div class="zv3-ct">Full Video Guide</div>' +
+       '<div class="zv3-cs">Creator · CSF<br>CFAR C · CFAR V</div></button>';
   h += '</div>';
 
-  /* ========== 3. AD BUDGET + BONDS ========== */
+  /* ---- Ad Budget + Bonds ---- */
   h += '<div class="zv3-money">';
-  h += '<button class="zv3-mt ad" onclick="Z.openAdBudgetGuide()" ' +
-       'title="Ad Budget guide">';
-  h += '<div class="zv3-mi"><i class="fa-solid fa-bullhorn"></i></div>';
-  h += '<div class="zv3-ml">Ad Budget</div>';
-  h += '<div class="zv3-mv" id="zv3-ad">' + fmtMoney(adBudget) + '</div>';
-  h += '<div class="zv3-ms">AI Ads · ring-fenced</div>';
-  h += '</button>';
-  h += '<button class="zv3-mt subs" onclick="Z.showCSFCreatorGuide()" ' +
-       'title="CSF guide">';
-  h += '<div class="zv3-mi"><i class="fa-solid fa-heart"></i></div>';
-  h += '<div class="zv3-ml">Bonds</div>';
-  h += '<div class="zv3-mv" id="zv3-subs">' + fmtNum(bondCount) + '</div>';
-  h += '<div class="zv3-ms">+$0.30/sub/month</div>';
-  h += '</button>';
+  h += '<button class="zv3-mt ad" onclick="Z.openAdBudgetGuide()" title="Ad Budget guide">' +
+       '<div class="zv3-mi"><i class="fa-solid fa-bullhorn"></i></div>' +
+       '<div class="zv3-ml">Ad Budget</div>' +
+       '<div class="zv3-mv" id="zv3-ad">' + fmtMoney(adBudget) + '</div>' +
+       '<div class="zv3-ms">AI Ads · ring-fenced</div></button>';
+  h += '<button class="zv3-mt subs" onclick="Z.showCSFCreatorGuide()" title="CSF guide">' +
+       '<div class="zv3-mi"><i class="fa-solid fa-heart"></i></div>' +
+       '<div class="zv3-ml">Bonds</div>' +
+       '<div class="zv3-mv" id="zv3-subs">' + fmtNum(bondCount) + '</div>' +
+       '<div class="zv3-ms">+$0.30/sub/month</div></button>';
   h += '</div>';
 
-  /* ========== 4. QUICK ACTIONS ========== */
+  /* ---- Quick Actions ---- */
   h += '<div class="zv3-qa">';
   h += '<button class="zv3-qab g" onclick="Z.openCreateSparkModal()">' +
        '<i class="fa-solid fa-bolt"></i><span>Spark</span></button>';
@@ -45133,119 +44236,97 @@ function renderAll(u, bondCount){
        '<i class="fa-solid fa-circle-notch"></i><span>Status</span></button>';
   h += '</div>';
 
-  /* ========== 5. EARNINGS ========== */
-  h += '<div class="zv3-sec">' +
-       '<i class="fa-solid fa-coins" style="color:#fbbf24;"></i>' +
-       '<span>Earnings</span><div class="ln"></div></div>';
+  /* ---- Earnings ---- */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-coins" style="color:#fbbf24;">' +
+       '</i><span>Earnings</span><div class="ln"></div></div>';
   h += '<div class="zv3-row">';
-  h += '<button class="zv3-card b" onclick="Z.showView(\'analytics\')">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-chart-line"></i></div>';
-  h += '<div class="zv3-ct">Analytics</div>';
-  h += '<div class="zv3-cs" id="dash-analytics-mini">Loading…</div>';
-  h += '</button>';
-  h += '<button class="zv3-card p" onclick="Z.showCFARGuide(\'creator\')">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-fire"></i></div>';
-  h += '<div class="zv3-ct">CFAR Pools</div>';
-  h += '<div class="zv3-cs" id="dash-cfar-list">Loading…</div>';
-  h += '</button>';
-  h += '<div class="zv3-card y" onclick="Z.showCSFCreatorGuide()" ' +
-       'style="cursor:pointer;">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-hand-holding-dollar"></i></div>';
-  h += '<div class="zv3-ct">CSF Status</div>';
-  h += '<div class="zv3-cs" id="dash-csf-status">Loading…</div>';
-  h += '</div>';
+  h += '<button class="zv3-card b" onclick="Z.showView(\'analytics\')">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-chart-line"></i></div>' +
+       '<div class="zv3-ct">Analytics</div>' +
+       '<div class="zv3-cs" id="dash-analytics-mini">Loading…</div></button>';
+  h += '<button class="zv3-card p" onclick="Z.showCFARGuide(\'creator\')">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-fire"></i></div>' +
+       '<div class="zv3-ct">CFAR Pools</div>' +
+       '<div class="zv3-cs" id="dash-cfar-list">Loading…</div></button>';
+  h += '<div class="zv3-card y" onclick="Z.showCSFCreatorGuide()" style="cursor:pointer;">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-hand-holding-dollar"></i></div>' +
+       '<div class="zv3-ct">CSF Status</div>' +
+       '<div class="zv3-cs" id="dash-csf-status">Loading…</div></div>';
   h += '</div>';
 
-  /* ========== 6. RATINGS ========== */
-  h += '<div class="zv3-sec">' +
-       '<i class="fa-solid fa-star" style="color:#fbbf24;"></i>' +
-       '<span>Ratings</span><div class="ln"></div></div>';
+  /* ---- Ratings ---- */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-star" style="color:#fbbf24;">' +
+       '</i><span>Ratings</span><div class="ln"></div></div>';
   h += '<div class="zv3-row">';
-  h += '<button class="zv3-card y" ' +
-       'onclick="Z.openSpaceSpaceRatingSummary(\'' + esc(u.id) + '\')">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-star-half-stroke"></i></div>';
-  h += '<div class="zv3-ct">SPACE Rating</div>';
-  h += '<div class="zv3-cs">Private · your channel score</div>';
-  h += '</button>';
-  h += '<button class="zv3-card y" ' +
-       'onclick="Z.openSpaceRatingSummary(\'' + esc(u.id) + '\')">';
-  h += '<div class="zv3-ci"><i class="fa-solid fa-star"></i></div>';
-  h += '<div class="zv3-ct">Video Rating</div>';
-  h += '<div class="zv3-cs">Private · aggregate across videos</div>';
-  h += '</button>';
+  h += '<button class="zv3-card y" onclick="Z.openSpaceSpaceRatingSummary(\'' + esc(u.id) + '\')">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-star-half-stroke"></i></div>' +
+       '<div class="zv3-ct">SPACE Rating</div>' +
+       '<div class="zv3-cs">Private · your channel score</div></button>';
+  h += '<button class="zv3-card y" onclick="Z.openSpaceRatingSummary(\'' + esc(u.id) + '\')">' +
+       '<div class="zv3-ci"><i class="fa-solid fa-star"></i></div>' +
+       '<div class="zv3-ct">Video Rating</div>' +
+       '<div class="zv3-cs">Private · aggregate across videos</div></button>';
   h += '</div>';
 
-  /* ========== 7. TOOLS ========== */
-  h += '<div class="zv3-sec">' +
-       '<i class="fa-solid fa-toolbox" style="color:#a78bfa;"></i>' +
-       '<span>Tools</span><div class="ln"></div></div>';
-
+  /* ---- Tools ---- */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-toolbox" style="color:#a78bfa;">' +
+       '</i><span>Tools</span><div class="ln"></div></div>';
   var tools = [
-    { ic:'fa-solid fa-list',        c:'#a78bfa', l:'Playlists',
-      fn:"Z.showView('playlists')" },
-    { ic:'fa-solid fa-ticket',      c:'#fbbf24', l:'Events',
-      fn:"Z.showView('events')" },
-    { ic:'fa-regular fa-clock',     c:'#60a5fa', l:'Scheduled',
-      fn:"Z.showView('scheduled-posts')" },
-    { ic:'fa-solid fa-heart-pulse', c:'#10b981', l:'Pool Health',
-      fn:"Z.openPoolHealthMeter()" },
-    { ic:'fa-solid fa-users',       c:'#3b82f6', l:'Members',
-      fn:"Z.showView('members')" },
-    { ic:'fa-solid fa-ban',         c:'#a16262', l:'Blocked',
-      fn:"Z.openBlockedUsers()" },
-    { ic:'fa-solid fa-download',    c:'#94a3b8', l:'Export Data',
-      fn:"Z.exportMyData()" },
-    { ic:'fa-solid fa-pen-to-square',c:'#10b981',l:'SPACE Edit',
-      fn:"Z.openSpaceEditor()" }
+    { ic:'fa-solid fa-list',        c:'#a78bfa', l:'Playlists',   fn:"Z.showView('playlists')" },
+    { ic:'fa-solid fa-ticket',      c:'#fbbf24', l:'Events',      fn:"Z.showView('events')" },
+    { ic:'fa-regular fa-clock',     c:'#60a5fa', l:'Scheduled',   fn:"Z.showView('scheduled-posts')" },
+    { ic:'fa-solid fa-heart-pulse', c:'#10b981', l:'Pool Health', fn:"Z.openPoolHealthMeter()" },
+    { ic:'fa-solid fa-users',       c:'#3b82f6', l:'Members',     fn:"Z.showView('members')" },
+    { ic:'fa-solid fa-ban',         c:'#a16262', l:'Blocked',     fn:"Z.openBlockedUsers()" },
+    { ic:'fa-solid fa-download',    c:'#94a3b8', l:'Export Data', fn:"Z.exportMyData()" },
+    { ic:'fa-solid fa-pen-to-square',c:'#10b981',l:'SPACE Edit',  fn:"Z.openSpaceEditor()" }
   ];
   h += '<div class="zv3-tools">';
   tools.forEach(function(t){
-    h += '<button class="zv3-tool" onclick="' + t.fn + '">';
-    h += '<div class="zv3-tool-ic" style="background:' + t.c +
-         '22;color:' + t.c + ';"><i class="' + t.ic + '"></i></div>';
-    h += '<span class="zv3-tool-t">' + esc(t.l) + '</span>';
-    h += '</button>';
+    h += '<button class="zv3-tool" onclick="' + t.fn + '">' +
+         '<div class="zv3-tool-ic" style="background:' + t.c + '22;color:' + t.c + ';">' +
+         '<i class="' + t.ic + '"></i></div>' +
+         '<span class="zv3-tool-t">' + esc(t.l) + '</span></button>';
   });
   h += '</div>';
 
-  /* ========== 8. LEGAL ========== */
-  h += '<div class="zv3-sec">' +
-       '<i class="fa-solid fa-scale-balanced" style="color:#10b981;"></i>' +
-       '<span>Legal</span><div class="ln"></div></div>';
-  h += '<button class="zv3-legal" onclick="Z.openLegalHub()">';
-  h += '<span class="zv3-legal-l">' +
-       '<i class="fa-solid fa-scale-balanced"></i> Legal &amp; Policies</span>';
-  h += '<i class="fa-solid fa-chevron-right zv3-legal-ar"></i>';
-  h += '</button>';
+  /* ---- Legal ---- */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-scale-balanced" style="color:#10b981;">' +
+       '</i><span>Legal</span><div class="ln"></div></div>';
+  h += '<button class="zv3-legal" onclick="Z.openLegalHub()">' +
+       '<span class="zv3-legal-l"><i class="fa-solid fa-scale-balanced"></i> ' +
+       'Legal &amp; Policies</span>' +
+       '<i class="fa-solid fa-chevron-right zv3-legal-ar"></i></button>';
 
   h += '</div>';
   return h;
 }
 
-/* ---------- back-to-space action ---------- */
-Z.zv5iBackToSpace = function(){
+/* ================= BACK ACTION ================= */
+Z.zv4BackToSpace = function(){
   var u = Z.State.currentUser;
-  if(u && u.id){
-    Z.showView('public-profile', u.id);
-  } else {
-    Z.showView('home');
-  }
+  if(u && u.id){ Z.showView('public-profile', u.id); }
+  else { Z.showView('home'); }
 };
 
-/* ---------- async loaders ---------- */
+/* ================= FOLD TOGGLE ================= */
+Z.zv3ToggleSpaceFold = function(){
+  var el = document.getElementById('zv3-space-fold');
+  if(el) el.classList.toggle('open');
+};
+
+/* ================= ASYNC LOADERS ================= */
 async function loadFvStatus(){
-  var el = document.getElementById('zv3-fv-status');
-  if(!el) return;
+  var el = document.getElementById('zv3-fv-status'); if(!el) return;
   var u = Z.State.currentUser; if(!u) return;
   var app = null;
   try {
-    if(typeof Z._fetchFullVideoApp === 'function'){
-      app = await Z._fetchFullVideoApp(u.id);
-    } else {
+    if(typeof Z._fetchFullVideoApp === 'function'){ app = await Z._fetchFullVideoApp(u.id); }
+    else {
       var c = db();
       if(c){
-        var r = await c.from('full_video_applications')
-          .select('status').eq('user_id', u.id).maybeSingle();
+        var r = await c.from('full_video_applications').select('status')
+          .eq('user_id', u.id).maybeSingle();
         app = r.data || null;
       }
     }
@@ -45259,140 +44340,360 @@ async function loadFvStatus(){
     rejected: { t:'Rejected · tap to reapply',  c:'#a16262' }
   };
   var m = map[st] || map.none;
-  el.textContent = m.t;
-  el.style.color = m.c;
-  el.style.fontWeight = '900';
+  el.textContent = m.t; el.style.color = m.c; el.style.fontWeight = '900';
 }
+Z.zv3FvAccessTap = function(){
+  var u = Z.State.currentUser; if(!u) return;
+  var st = Z._zv3FvStatus || 'none';
+  if(st === 'pending'){ Z.toast('Application under review.'); return; }
+  if(st === 'approved'){ Z.toast('You are an FV Creator.'); return; }
+  if(typeof Z.openFullVideoApplication === 'function'){ Z.openFullVideoApplication(); }
+};
 
 async function loadAnalyticsMini(){
-  var host = document.getElementById('dash-analytics-mini');
-  if(!host) return;
+  var host = document.getElementById('dash-analytics-mini'); if(!host) return;
   var u = Z.State.currentUser, c = db(); if(!u || !c) return;
   try {
-    var pR = await c.from('posts').select('views,shares,reactions')
-      .eq('author_id', u.id);
-    var sR = await c.from('sparks').select('views,shares')
-      .eq('author_id', u.id);
+    var pR = await c.from('posts').select('views,shares,reactions').eq('author_id', u.id);
+    var sR = await c.from('sparks').select('views,shares').eq('author_id', u.id);
     var posts = pR.data || [], sparks = sR.data || [];
     var all = posts.concat(sparks);
-    var views = 0, shares = 0;
-    all.forEach(function(x){
-      views  += Number(x.views)  || 0;
-      shares += Number(x.shares) || 0;
+    var views = 0, shares = 0, react = 0;
+    all.forEach(function(x){ views += Number(x.views)||0; shares += Number(x.shares)||0; });
+    posts.forEach(function(p){
+      if(p.reactions && typeof p.reactions === 'object'){
+        Object.keys(p.reactions).forEach(function(k){ react += Number(p.reactions[k])||0; });
+      }
     });
     host.innerHTML =
       '<div style="display:flex;justify-content:space-between;gap:4px;">' +
-      '<span>Views</span><b style="color:#60a5fa;">' + fmtNum(views) +
-      '</b></div>' +
-      '<div style="display:flex;justify-content:space-between;gap:4px;' +
-      'margin-top:3px;"><span>Shares</span>' +
-      '<b style="color:#60a5fa;">' + fmtNum(shares) + '</b></div>' +
-      '<div style="display:flex;justify-content:space-between;gap:4px;' +
-      'margin-top:3px;"><span>Content</span>' +
-      '<b style="color:#60a5fa;">' + fmtNum(all.length) + '</b></div>';
+        '<span>Views</span><b style="color:#60a5fa;">' + fmtNum(views) + '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:4px;margin-top:3px;">' +
+        '<span>Shares</span><b style="color:#60a5fa;">' + fmtNum(shares) + '</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:4px;margin-top:3px;">' +
+        '<span>Reactions</span><b style="color:#60a5fa;">' + fmtNum(react) + '</b></div>';
   } catch(e){ host.textContent = 'Tap to view'; }
 }
 
 async function loadCfarMini(){
-  var host = document.getElementById('dash-cfar-list');
-  if(!host) return;
+  var host = document.getElementById('dash-cfar-list'); if(!host) return;
   var u = Z.State.currentUser, c = db(); if(!u || !c) return;
   try {
-    var r = await c.from('sparks')
-      .select('cfar_view_budget,cfar_budget_spent')
-      .eq('author_id', u.id)
-      .not('cfar_rate_per_minute', 'is', null)
-      .gt('cfar_rate_per_minute', 0);
-    var items = (r.data || []).filter(function(v){
-      return (Number(v.cfar_view_budget) || 0) > 0;
-    });
+    var r = await c.from('sparks').select('cfar_view_budget,cfar_budget_spent')
+      .eq('author_id', u.id).not('cfar_rate_per_minute','is',null).gt('cfar_rate_per_minute', 0);
+    var items = (r.data || []).filter(function(v){ return (Number(v.cfar_view_budget)||0) > 0; });
     if(!items.length){ host.innerHTML = 'No active pools'; return; }
     var cap = 0, spent = 0;
-    items.forEach(function(v){
-      cap   += Number(v.cfar_view_budget)  || 0;
-      spent += Number(v.cfar_budget_spent) || 0;
-    });
+    items.forEach(function(v){ cap += Number(v.cfar_view_budget)||0; spent += Number(v.cfar_budget_spent)||0; });
     var rem = Math.max(0, cap - spent);
-    var pct = cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 0;
+    var pct = cap > 0 ? Math.min(100, Math.round((spent/cap)*100)) : 0;
     host.innerHTML =
       '<div style="display:flex;justify-content:space-between;gap:4px;">' +
-      '<span>' + items.length + ' pool' + (items.length === 1 ? '' : 's') +
-      '</span><b style="color:#a78bfa;">$' + rem.toFixed(2) + '</b></div>' +
-      '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.4);' +
-      'overflow:hidden;margin-top:5px;">' +
-      '<div style="height:100%;width:' + pct + '%;' +
-      'background:linear-gradient(90deg,#10b981,#3b82f6);"></div></div>' +
+        '<span>' + items.length + ' pool' + (items.length===1?'':'s') + '</span>' +
+        '<b style="color:#a78bfa;">$' + rem.toFixed(2) + '</b></div>' +
+      '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.4);overflow:hidden;margin-top:5px;">' +
+        '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#10b981,#3b82f6);"></div></div>' +
       '<div style="font-size:9.5px;color:#64748b;margin-top:4px;">' +
-      pct + '% used of $' + cap.toFixed(0) + '</div>';
+        pct + '% used of $' + cap.toFixed(0) + '</div>';
   } catch(e){ host.textContent = 'Tap to view'; }
 }
 
 async function loadCsfMini(){
-  var host = document.getElementById('dash-csf-status');
-  if(!host) return;
+  var host = document.getElementById('dash-csf-status'); if(!host) return;
   var u = Z.State.currentUser, c = db(); if(!u || !c) return;
   try {
-    var r = await c.from('csf_eligibility').select('*')
-      .eq('creator_id', u.id).maybeSingle();
+    var r = await c.from('csf_eligibility').select('*').eq('creator_id', u.id).maybeSingle();
     var d = r.data || {};
     var subs   = Number(d.subscribers) || 0;
     var rating = Number(d.aggregate_rating) || 0;
     var longV  = Number(d.long_videos) || 0;
     var sparks = Number(d.sparks_this_month) || 0;
     var isBiz  = String(u.package || '').toLowerCase() === 'business';
-    var age    = u.created_at
-      ? Math.floor((Date.now() - new Date(u.created_at).getTime()) / 86400000)
-      : 90;
+    var age    = u.created_at ? Math.floor((Date.now() - new Date(u.created_at).getTime())/86400000) : 90;
     var clean  = (u.abuse_flags || 0) === 0;
-    var gates = [isBiz, subs >= 500, rating >= 7, longV >= 5,
-                 sparks >= 60, age >= 90, clean];
+    var gates = [isBiz, subs>=500, rating>=7, longV>=5, sparks>=60, age>=90, clean];
     var passed = gates.filter(function(x){ return x; }).length;
     var total = gates.length;
-    var pct = Math.round((passed / total) * 100);
-    var col = passed === total ? '#10b981'
-            : passed >= 4     ? '#a18554'
-            : '#a16262';
+    var pct = Math.round((passed/total)*100);
+    var col = passed === total ? '#10b981' : passed >= 4 ? '#a18554' : '#a16262';
     host.innerHTML =
       '<div style="display:flex;justify-content:space-between;gap:4px;">' +
-      '<span>Gates passed</span>' +
-      '<b style="color:' + col + ';">' + passed + '/' + total + '</b></div>' +
-      '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.4);' +
-      'overflow:hidden;margin-top:5px;">' +
-      '<div style="height:100%;width:' + pct + '%;background:' + col +
-      ';"></div></div>' +
+        '<span>Gates passed</span><b style="color:' + col + ';">' + passed + '/' + total + '</b></div>' +
+      '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.4);overflow:hidden;margin-top:5px;">' +
+        '<div style="height:100%;width:' + pct + '%;background:' + col + ';"></div></div>' +
       '<div style="font-size:9.5px;color:#64748b;margin-top:4px;">' +
-      (passed === total ? 'Eligible · payouts active' :
-       (total - passed) + ' gate' + ((total - passed) === 1 ? '' : 's') +
-       ' to unlock') + '</div>';
+        (passed === total ? 'Eligible · payouts active' :
+         (total - passed) + ' gate' + ((total - passed)===1?'':'s') + ' to unlock') + '</div>';
   } catch(e){ host.textContent = 'Tap to view'; }
 }
 
-/* ---------- override renderView ---------- */
+/* ================= FV GUIDE SHEET ================= */
+Z.openFvGuideSheet = function(){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.82);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">' +
+    '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;">' +
+      '<div class="sheet-handle"></div>' +
+      '<div class="sheet-header" style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<h3 style="font-size:14px;font-weight:900;">Full Video Guide</h3>' +
+        '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+      '<div class="sheet-body" style="padding:14px;">';
+  var items = [
+    { ic:'fa-solid fa-film', c:'#10b981', t:'Full Video Creator Guide', d:'Everything about CSF, tiers, gates, and payment',
+      fn:"Z.closeSheet();setTimeout(function(){Z.openFullVideoCreatorGuide();},200)" },
+    { ic:'fa-solid fa-hand-holding-dollar', c:'#10b981', t:'CSF Creator Guide', d:'The Creator Support Fund in detail',
+      fn:"Z.closeSheet();setTimeout(function(){Z.showCSFCreatorGuide();},200)" },
+    { ic:'fa-solid fa-fire', c:'#60a5fa', t:'CFAR Creator Guide', d:'Fund your viewers directly',
+      fn:"Z.closeSheet();setTimeout(function(){Z.showCFARGuide('creator');},200)" },
+    { ic:'fa-solid fa-eye', c:'#60a5fa', t:'CFAR Viewer Guide', d:'Earn by watching',
+      fn:"Z.closeSheet();setTimeout(function(){Z.showCFARGuide('viewer');},200)" }
+  ];
+  items.forEach(function(it){
+    h += '<button onclick="' + it.fn + '" style="width:100%;padding:12px 14px;border-radius:12px;border:1px solid #1e293b;background:#0f172a;margin-bottom:8px;cursor:pointer;display:flex;gap:12px;align-items:center;text-align:left;">' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:' + it.c + '1a;color:' + it.c + ';display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">' +
+      '<i class="' + it.ic + '"></i></div>' +
+      '<div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:900;color:#fff;">' + esc(it.t) + '</div>' +
+      '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">' + esc(it.d) + '</div></div>' +
+      '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i></button>';
+  });
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ================= AD BUDGET GUIDE ================= */
+Z.openAdBudgetGuide = function(){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">' +
+    '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">' +
+      '<div class="sheet-handle"></div>' +
+      '<div class="sheet-header" style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<h3 style="font-size:14px;font-weight:900;">Ad Budget · Guide</h3>' +
+        '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+      '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+  function sec(ic, c, t, b){
+    return '<div style="padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05);">' +
+      '<div style="font-size:12.5px;font-weight:900;color:' + c + ';margin-bottom:6px;display:flex;align-items:center;gap:7px;">' +
+      '<i class="' + ic + '"></i>' + t + '</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">' + b + '</div></div>';
+  }
+  h += sec('fa-solid fa-bullhorn','#fbbf24','What is the Ad Budget?',
+    'A dedicated pool of money reserved for promoting your SPACE on Ad TV. ZYNIX funds it automatically when subscribers Bond to your channel.');
+  h += sec('fa-solid fa-coins','#10b981','Where it comes from',
+    'For every active subscriber (Bond), ZYNIX credits <b>$0.20</b> into this Ad Budget. It is not deducted from your Cash or Bounty — it is a separate gift on top of what you already earn.');
+  h += sec('fa-solid fa-lock','#60a5fa','Ring-fenced',
+    'This money cannot be withdrawn. It cannot be converted to Cash. It can only be spent on <b>AI Ads</b> and <b>Ad TV</b> promotion.');
+  h += sec('fa-solid fa-tv','#a78bfa','How it is spent',
+    '· Hire an AI Ad Maker from the Digital Market<br>· Run your SPACE on Ad TV<br>· $0.02 per verified view goes to the viewer<br>· Fully audited — you see every transaction');
+  h += sec('fa-solid fa-rocket','#10b981','Why it exists',
+    'ZYNIX wants every SPACE to be able to advertise itself — even without spending Cash. Your Bonds turn into real promotion.');
+  h += '<button onclick="Z.closeSheet();setTimeout(function(){Z.showView(\'galleria-cat\',\'digital-market\');},200)" style="width:100%;margin-top:16px;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+    '<i class="fa-solid fa-store"></i> Visit Digital Market</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Close</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ================= DASHBOARD GUIDE (? in SPACE header) ================= */
+Z.openOwnerDashboardGuide = function(){
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.85);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)Z.closeSheet()">' +
+    '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:88vh;">' +
+      '<div class="sheet-handle"></div>' +
+      '<div class="sheet-header" style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<h3 style="font-size:14px;font-weight:900;">SPACE Dashboard · Guide</h3>' +
+        '<button onclick="Z.closeSheet()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+      '<div class="sheet-body" style="padding:16px;overflow-y:auto;">';
+  function sec(ic, c, t, b){
+    return '<div style="padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05);">' +
+      '<div style="font-size:12.5px;font-weight:900;color:' + c + ';margin-bottom:6px;display:flex;align-items:center;gap:7px;">' +
+      '<i class="' + ic + '"></i>' + t + '</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;">' + b + '</div></div>';
+  }
+  h += sec('fa-solid fa-gauge-high','#10b981','What is the SPACE Dashboard?',
+    'Your command center. Every wallet, every earning path, every gate — one page.');
+  h += sec('fa-solid fa-user','#60a5fa','SPACE vs My Profile',
+    'Your <b>My Profile</b> is your personal identity. Your <b>SPACE</b> is your channel — where Bonds happen and Full Videos live.');
+  h += sec('fa-solid fa-wallet','#fbbf24','The Four Wallets',
+    '· <b>Cash</b> — withdrawable earnings<br>· <b>Bounty</b> — weekly pool payouts<br>· <b>Ad Budget</b> — ring-fenced $0.20/subscriber for AI Ads<br>· <b>Bonds</b> — subscriber count · $0.30 each/month');
+  h += sec('fa-solid fa-film','#60a5fa','Full Video Access',
+    'Apply once. Approved creators earn $0.30 per active subscriber every month.');
+  h += sec('fa-solid fa-hand-holding-dollar','#10b981','CSF Eligibility',
+    'Seven gates must pass in a calendar month to receive CSF payout. Miss one → pause that month. Fix → resume.');
+  h += sec('fa-solid fa-fire','#60a5fa','CFAR Live Pools',
+    'You fund these from your Cash wallet. Every watched minute pays the viewer.');
+  h += sec('fa-solid fa-star','#fbbf24','Ratings',
+    'Two private ratings — one for your SPACE as a channel, one aggregated across all your Full Videos.');
+  h += '<button onclick="Z.closeSheet();setTimeout(function(){Z.showView(\'guides-hub\');},200)" style="width:100%;margin-top:16px;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;">' +
+    '<i class="fa-solid fa-book-open"></i> Read all platform guides</button>';
+  h += '<button onclick="Z.closeSheet()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Close</button>';
+  h += '</div></div></div>';
+  Z.openSheet(h);
+};
+
+/* ================= CORNER-CLICK GUARD (from 5g) ================= */
+document.addEventListener('click', function(e){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var t = e.target;
+  if(!t || !t.closest) return;
+  if(t.closest('.zv3-root')) return;
+  if(t.closest('.zynix-header')) return;
+  if(t.closest('.zynix-footer')) return;
+  if(t.closest('#modal-container')) return;
+  if(t.closest('#sheet-container')) return;
+  if(t.closest('#zynix-account-dropdown')) return;
+  if(t.closest('#toast-container')) return;
+  if(t.closest('#zynix-refresh-spinner')) return;
+  console.warn('[dash-v4] Blocked stray click on:', t.tagName);
+  e.stopPropagation(); e.preventDefault();
+}, true);
+
+/* ================= BACK BUTTON CONTEXT (from 5g) ================= */
+var DASH_FAMILY = {
+  'owner-dashboard':1,'analytics':1,'wallet':1,'playlists':1,'events':1,
+  'scheduled-posts':1,'members':1,'earning-hub':1,'market-themes':1,'market-ledger':1
+};
+var _prevGoBack = Z.goBack;
+Z.goBack = function(){
+  var current = Z.State.currentView;
+  var target = null;
+  var temp = (Z.State.navStack || []).slice();
+  while(temp.length){
+    var top = temp.pop();
+    if(top && top.view !== current){ target = top; break; }
+  }
+  var dashFresh = false;
+  try {
+    var ts = parseInt(sessionStorage.getItem('zynix_dash_ctx') || '0', 10) || 0;
+    dashFresh = (Date.now() - ts) < 15*60*1000;
+  } catch(e){}
+  if(current !== 'owner-dashboard' && DASH_FAMILY[current] && dashFresh &&
+     (!target || target.view === 'home')){
+    Z.showView('owner-dashboard'); return;
+  }
+  return _prevGoBack.apply(this, arguments);
+};
+function trackDashVisit(){
+  try {
+    if(Z.State.currentView === 'owner-dashboard'){
+      sessionStorage.setItem('zynix_dash_ctx', String(Date.now()));
+    }
+  } catch(e){}
+}
+
+/* ================= SPACE HEADER SWAP (from 5g) ================= */
+function applySpaceHeaderSwap(){
+  var head = document.getElementById('sp5-head-host'); if(!head) return;
+  var u = Z.State.currentUser; if(!u) return;
+  if(Z.State.spaceUserId !== u.id) return;
+  var hasSpace = (typeof Z.hasSpace === 'function') ? Z.hasSpace(u.id) : false;
+  var dashBtn = null;
+  head.querySelectorAll('button').forEach(function(b){
+    var oc = b.getAttribute('onclick') || '';
+    if(oc.indexOf("showView('owner-dashboard')") !== -1) dashBtn = b;
+  });
+  if(dashBtn){
+    var wantText = hasSpace ? 'Dashboard' : 'Create Space';
+    var wantIcon = hasSpace ? 'fa-solid fa-gauge-high' : 'fa-solid fa-plus';
+    if((dashBtn.textContent||'').indexOf(wantText) === -1){
+      dashBtn.innerHTML = '<i class="' + wantIcon + '"></i> ' + wantText;
+    }
+  }
+  if(!head.querySelector('[data-zv5g-help]')){
+    var actions = head.querySelector('.sp5-actions');
+    if(actions){
+      var help = document.createElement('button');
+      help.setAttribute('data-zv5g-help','1');
+      help.setAttribute('onclick', 'Z.openOwnerDashboardGuide()');
+      help.setAttribute('title', 'Dashboard guide');
+      help.className = 'sp5-act';
+      help.style.cssText = 'width:34px;height:34px;font-size:14px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;';
+      help.innerHTML = '?';
+      actions.insertBefore(help, actions.firstChild);
+    }
+  }
+}
+var _prevSp5Header = Z.sp5RenderHeader;
+if(typeof _prevSp5Header === 'function'){
+  Z.sp5RenderHeader = function(){
+    var r = _prevSp5Header.apply(this, arguments);
+    setTimeout(applySpaceHeaderSwap, 50);
+    setTimeout(applySpaceHeaderSwap, 300);
+    return r;
+  };
+}
+
+/* ================= CTA CARD (async hasSpace check) ================= */
+async function hasSpaceAsync(uid){
+  if(!uid) return false;
+  var c = db();
+  if(c){
+    try {
+      var r = await c.from('profiles').select('space_data').eq('id', uid).maybeSingle();
+      if(r && r.data){
+        var sd = r.data.space_data || {};
+        return String(sd.name || '').trim().length >= 1;
+      }
+    } catch(e){}
+  }
+  try { return (typeof Z.hasSpace === 'function') ? Z.hasSpace(uid) : false; } catch(e){ return false; }
+}
+
+async function injectCTA(){
+  if(Z.State.currentView !== 'owner-dashboard') return;
+  var u = Z.State.currentUser; if(!u) return;
+  var existing = document.getElementById('zv5g-cta');
+  var ok = await hasSpaceAsync(u.id);
+  if(ok){ if(existing) existing.remove(); return; }
+  if(existing) return;
+  var root = document.querySelector('.zv3-root'); if(!root) return;
+  var cta = document.createElement('div');
+  cta.id = 'zv5g-cta';
+  cta.style.cssText = 'padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.4);display:flex;flex-direction:column;gap:10px;';
+  cta.innerHTML =
+    '<div style="display:flex;align-items:center;gap:12px;">' +
+      '<div style="width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+        '<i class="fa-solid fa-bolt" style="color:#000;font-size:18px;"></i></div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:15px;font-weight:900;color:#fff;">Create your SPACE</div>' +
+        '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px;line-height:1.4;">Unlock Sparks, Full Videos, and Bonds</div></div></div>' +
+    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.65;">' +
+      'Earn from CSF — <b style="color:#10b981;">$0.30 per Bond</b> per month. Subscribers pay you for exclusive content, and you keep full control.</div>' +
+    '<button onclick="event.stopPropagation();if(typeof Z.showCSFCreatorGuide===\'function\')Z.showCSFCreatorGuide();" style="align-self:flex-start;background:transparent;border:none;color:#60a5fa;font-weight:900;font-size:11.5px;cursor:pointer;text-decoration:underline;padding:0;text-underline-offset:2px;">Read CSF guide →</button>' +
+    '<button onclick="event.stopPropagation();if(typeof Z.openSpaceEditor===\'function\')Z.openSpaceEditor();" style="width:100%;padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">' +
+      '<i class="fa-solid fa-arrow-right"></i> Open SPACE Editor</button>';
+  root.insertBefore(cta, root.firstChild);
+}
+
+/* ================= ROUTER ================= */
 var _prevRenderView = Z.renderView;
 Z.renderView = function(view, param){
   if(view === 'owner-dashboard'){
+    trackDashVisit();
     setTimeout(paintDashboard, 30);
     return '<div class="zv3-root">' +
-      '<div style="padding:60px 20px;text-align:center;color:#94a3b8;' +
-      'font-size:12px;font-family:system-ui,sans-serif;">' +
-      '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;' +
-      'font-size:22px;"></i>' +
+      '<div style="padding:60px 20px;text-align:center;color:#94a3b8;font-size:12px;">' +
+      '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:22px;"></i>' +
       '<div style="margin-top:12px;">Loading dashboard…</div></div></div>';
   }
   return _prevRenderView.call(this, view, param);
 };
 
-/* Refire on every dashboard visit */
 var _prevShowView = Z.showView;
 Z.showView = function(view, param){
   var r = _prevShowView.apply(this, arguments);
   if(view === 'owner-dashboard'){
+    trackDashVisit();
     setTimeout(paintDashboard, 60);
+    setTimeout(injectCTA, 200);
+    setTimeout(injectCTA, 800);
+  }
+  if(view === 'public-profile'){
+    setTimeout(applySpaceHeaderSwap, 150);
+    setTimeout(applySpaceHeaderSwap, 500);
   }
   return r;
 };
 
-console.log('[Step 5i] clean dashboard — correct order · fresh data · working back');
+console.log('[Dashboard v4] final consolidated — all features preserved');
 })();
 </script>
 
