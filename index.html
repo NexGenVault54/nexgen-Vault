@@ -44700,40 +44700,25 @@ console.log('[Dashboard v4] final consolidated — all features preserved');
 </script>
 
 <!-- ============================================================
-     DASHBOARD v4.1 — TARGETED PATCH (add-only)
-     A. Topbar: back + book + X at top of dashboard
-     B. Analytics: reactions from wallet_transactions
-     C. CFAR: client-side author_id filter + honest empty
-     Debug: Z.dashDebugCfar()
-     Nothing in v4 modified. Safe revert = delete this block.
+     DASHBOARD v4.2 — Observer-based patch (race-free)
+     Replaces v4.1. Safe to delete = v4 back to normal.
      ============================================================ -->
-<style id="zynix-dash-v41-css">
-/* ---------- Topbar row (matches SPACE Identity fold width) ---------- */
+<style id="zynix-dash-v42-css">
 .zv4-topbar{
   display:flex;justify-content:space-between;align-items:center;
-  padding:14px;border-radius:14px;
-  background:#131c30;border:1px solid #1e293b;
-  gap:10px;min-height:66px;
+  padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;
+  gap:10px;min-height:64px;
 }
 .zv4-tb-back,.zv4-tb-book,.zv4-tb-x{
-  width:36px;height:36px;border-radius:10px;
-  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  width:36px;height:36px;border-radius:10px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
   font-size:14px;padding:0;flex-shrink:0;transition:all .15s;border:none;
 }
-.zv4-tb-back{
-  border:1px solid rgba(16,185,129,.35);
-  background:rgba(16,185,129,.10);color:#10b981;
-}
+.zv4-tb-back{border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.10);color:#10b981;}
 .zv4-tb-back:hover{background:rgba(16,185,129,.18);border-color:#10b981;}
-.zv4-tb-book{
-  border:1px solid rgba(59,130,246,.4);
-  background:rgba(59,130,246,.08);color:#3b82f6;font-size:15px;
-}
+.zv4-tb-book{border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#3b82f6;font-size:15px;}
 .zv4-tb-book:hover{background:rgba(59,130,246,.18);border-color:#3b82f6;}
-.zv4-tb-x{
-  border:1px solid rgba(161,98,98,.45);
-  background:rgba(161,98,98,.08);color:#fca5a5;font-size:15px;
-}
+.zv4-tb-x{border:1px solid rgba(161,98,98,.45);background:rgba(161,98,98,.08);color:#fca5a5;font-size:15px;}
 .zv4-tb-x:hover{background:rgba(161,98,98,.18);border-color:#a16262;}
 </style>
 
@@ -44741,7 +44726,7 @@ console.log('[Dashboard v4] final consolidated — all features preserved');
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixDashV41) return; Z.__zynixDashV41 = true;
+if(Z.__zynixDashV42) return; Z.__zynixDashV42 = true;
 
 function db(){ try { return Z.sb ? Z.sb() : null; } catch(e){ return null; } }
 function fmtNum(n){
@@ -44750,40 +44735,11 @@ function fmtNum(n){
   if(v >= 1000)    return (v/1000).toFixed(1) + 'K';
   return String(v);
 }
-function getSessionUid(){
-  try {
-    var url = Z.SUPABASE_URL || '';
-    var m = url.match(/^https:\/\/([^.]+)\.supabase\.co/);
-    if(!m) return null;
-    var key = 'sb-' + m[1] + '-auth-token';
-    var raw = localStorage.getItem(key);
-    if(!raw) return null;
-    var p = JSON.parse(raw);
-    if(!p) return null;
-    var u = p.user || (p.currentSession && p.currentSession.user) || (p.session && p.session.user);
-    return u ? u.id : null;
-  } catch(e){ return null; }
-}
 
 /* ============================================================
-   A — TOPBAR PATCH
-   Removes back+X from fold header, inserts 3-button topbar above.
+   A — BUILD TOPBAR (once per .zv3-root)
    ============================================================ */
-function applyTopbarPatch(){
-  if(Z.State.currentView !== 'owner-dashboard') return;
-  var root = document.querySelector('.zv3-root');
-  if(!root) return;
-  if(root.querySelector('.zv4-topbar')) return;
-
-  /* 1. Remove old back/X buttons from the fold header */
-  var foldHdr = root.querySelector('.zv3-fold-hdr');
-  if(foldHdr){
-    foldHdr.querySelectorAll('.zv3-fold-hdr-back').forEach(function(b){
-      try { b.remove(); } catch(e){}
-    });
-  }
-
-  /* 2. Build new topbar */
+function buildTopbar(){
   var bar = document.createElement('div');
   bar.className = 'zv4-topbar';
   bar.innerHTML =
@@ -44793,38 +44749,120 @@ function applyTopbarPatch(){
     '<button type="button" class="zv4-tb-book" title="Dashboard guide" ' +
       'onclick="Z.openOwnerDashboardGuide()">' +
       '<i class="fa-solid fa-book-open"></i></button>' +
-    '<button type="button" class="zv4-tb-x" title="Close" ' +
+    '<button type="button" class="zv4-tb-x" title="Close dashboard" ' +
       'onclick="Z.zv4BackToSpace()">' +
       '<i class="fa-solid fa-xmark"></i></button>';
-
-  /* 3. Insert as first child of .zv3-root */
-  root.insertBefore(bar, root.firstChild);
+  return bar;
 }
 
 /* ============================================================
-   A2 — Remove ? button from SPACE page header
+   OBSERVER #1 — app-container
+   Synchronously keeps topbar first + removes old fold-hdr buttons
+   + kills [data-zv5g-help] the instant v5g adds it.
+   Fires on every DOM change. Zero race. Zero flash.
    ============================================================ */
-function removeSpaceHeaderHelp(){
-  if(Z.State.currentView !== 'public-profile') return;
-  var head = document.getElementById('sp5-head-host');
-  if(!head) return;
-  head.querySelectorAll('[data-zv5g-help]').forEach(function(b){
-    try { b.remove(); } catch(e){}
+var _observer = null;
+var _killedCount = { topbar: 0, foldBtns: 0, help: 0 };
+
+function cleanDashboard(root){
+  if(!root) return;
+
+  /* Ensure topbar exists and is first child */
+  var bar = root.querySelector('.zv4-topbar');
+  if(!bar){
+    bar = buildTopbar();
+    root.insertBefore(bar, root.firstChild);
+    _killedCount.topbar++;
+  } else if(root.firstChild !== bar){
+    root.insertBefore(bar, root.firstChild);
+  }
+
+  /* Remove old fold header back/X buttons */
+  root.querySelectorAll('.zv3-fold-hdr-back').forEach(function(b){
+    b.remove();
+    _killedCount.foldBtns++;
   });
 }
 
+function scanAll(){
+  var app = document.getElementById('app-container');
+  if(!app) return;
+
+  /* Dashboard topbar + fold cleanup */
+  if(Z.State.currentView === 'owner-dashboard'){
+    var root = app.querySelector('.zv3-root');
+    if(root) cleanDashboard(root);
+  }
+
+  /* SPACE header ? button — kill on sight, no flash */
+  app.querySelectorAll('[data-zv5g-help]').forEach(function(b){
+    b.remove();
+    _killedCount.help++;
+  });
+}
+
+function attachObservers(){
+  var app = document.getElementById('app-container');
+  if(!app) return;
+  if(_observer) return;
+
+  _observer = new MutationObserver(function(muts){
+    /* Only react when children added or structural changes */
+    var needScan = false;
+    for(var i = 0; i < muts.length; i++){
+      var m = muts[i];
+      if(m.type === 'childList' && (m.addedNodes.length || m.removedNodes.length)){
+        needScan = true; break;
+      }
+    }
+    if(needScan) scanAll();
+  });
+  _observer.observe(app, { childList: true, subtree: true });
+
+  /* Initial scan for whatever is already on the page */
+  scanAll();
+}
+
+/* Hook showView to trigger a scan on every navigation */
+var _prevShowView = Z.showView;
+Z.showView = function(view, param){
+  var r = _prevShowView.apply(this, arguments);
+  /* Microtask scan — catches DOM built inside the same tick */
+  Promise.resolve().then(scanAll);
+  setTimeout(scanAll, 50);
+  setTimeout(scanAll, 300);
+  setTimeout(scanAll, 800);
+  setTimeout(scanAll, 1500);
+
+  if(view === 'owner-dashboard'){
+    var u = Z.State.currentUser;
+    var uid = u ? u.id : null;
+    if(uid){
+      setTimeout(function(){ paintAnalyticsFixed(uid); }, 500);
+      setTimeout(function(){ paintAnalyticsFixed(uid); }, 1200);
+      setTimeout(function(){ paintCfarFixed(uid); },      600);
+      setTimeout(function(){ paintCfarFixed(uid); },      1300);
+    }
+  }
+  return r;
+};
+
+/* Attach once DOM is ready */
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', attachObservers);
+} else {
+  attachObservers();
+}
+
 /* ============================================================
-   B — ANALYTICS LOADER OVERRIDE
-   Reactions count from wallet_transactions (same as Analytics page).
+   B — ANALYTICS LOADER (reactions from wallet_transactions)
    ============================================================ */
 async function paintAnalyticsFixed(uid){
   var host = document.getElementById('dash-analytics-mini');
   if(!host) return;
   var c = db();
   if(!c || !uid) return;
-
   try {
-    /* Views + shares from posts + sparks (author-scoped) */
     var pR = await c.from('posts').select('views,shares').eq('author_id', uid);
     var sR = await c.from('sparks').select('views,shares').eq('author_id', uid);
     var all = (pR.data || []).concat(sR.data || []);
@@ -44834,7 +44872,6 @@ async function paintAnalyticsFixed(uid){
       shares += Number(x.shares) || 0;
     });
 
-    /* Reactions from wallet_transactions — the money-trail source */
     var rxR = await c.from('wallet_transactions')
       .select('type').eq('user_id', uid).like('type', 'REACTION_%');
     var reactions = (rxR.data || []).length;
@@ -44846,30 +44883,23 @@ async function paintAnalyticsFixed(uid){
         '<span>Shares</span><b style="color:#60a5fa;">' + fmtNum(shares) + '</b></div>' +
       '<div style="display:flex;justify-content:space-between;gap:4px;margin-top:3px;">' +
         '<span>Reactions</span><b style="color:#60a5fa;">' + fmtNum(reactions) + '</b></div>';
-  } catch(e){
-    console.warn('[v4.1 analytics]', e);
-  }
+  } catch(e){ console.warn('[v4.2 analytics]', e); }
 }
 
 /* ============================================================
-   C — CFAR LOADER OVERRIDE
-   Filter client-side to author_id === uid.
-   Honest empty state if 0 pools.
+   C — CFAR LOADER (client-side author filter, honest empty)
    ============================================================ */
 async function paintCfarFixed(uid){
   var host = document.getElementById('dash-cfar-list');
   if(!host) return;
   var c = db();
   if(!c || !uid) return;
-
   try {
-    /* Query WITHOUT author filter, then filter client-side.
-       This is safe even if RLS is off — the row must match uid. */
     var r = await c.from('sparks')
       .select('author_id,cfar_rate_per_minute,cfar_view_budget,cfar_budget_spent')
       .not('cfar_rate_per_minute', 'is', null)
       .gt('cfar_rate_per_minute', 0);
-    if(r.error){ console.warn('[v4.1 cfar]', r.error); return; }
+    if(r.error){ console.warn('[v4.2 cfar]', r.error); return; }
 
     var mine = (r.data || []).filter(function(v){
       return v.author_id === uid && (Number(v.cfar_view_budget) || 0) > 0;
@@ -44900,104 +44930,34 @@ async function paintCfarFixed(uid){
         '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#10b981,#3b82f6);"></div></div>' +
       '<div style="font-size:9.5px;color:#64748b;margin-top:4px;">' +
         pct + '% used of $' + cap.toFixed(0) + '</div>';
-  } catch(e){
-    console.warn('[v4.1 cfar]', e);
-  }
+  } catch(e){ console.warn('[v4.2 cfar]', e); }
 }
 
 /* ============================================================
-   DEBUG — Z.dashDebugCfar()
+   DEBUG — Z.dashDebugCfar() + Z.dashStats()
    ============================================================ */
 Z.dashDebugCfar = async function(){
   var u = Z.State.currentUser;
   var c = db();
-  if(!u || !c){
-    console.warn('[CFAR debug] Not logged in or DB unreachable');
-    return null;
-  }
-  console.log('=== CFAR DEBUG ===');
-  console.log('Z.State.currentUser.id:', u.id);
-  var jwtUid = getSessionUid();
-  console.log('JWT session user.id:', jwtUid);
-  console.log('MATCH:', u.id === jwtUid ? 'YES ✓' : 'NO ✗ MISMATCH — needs refresh');
-
+  if(!u || !c){ console.warn('Not logged in'); return null; }
   var r = await c.from('sparks')
-    .select('id,author_id,cfar_rate_per_minute,cfar_view_budget,cfar_budget_spent,type')
-    .not('cfar_rate_per_minute', 'is', null)
-    .gt('cfar_rate_per_minute', 0)
-    .limit(100);
-  if(r.error){
-    console.error('[CFAR debug] Query error:', r.error);
-    return null;
-  }
+    .select('id,title,author_id,cfar_rate_per_minute,cfar_view_budget,cfar_budget_spent,created_at')
+    .not('cfar_rate_per_minute','is',null).gt('cfar_rate_per_minute',0);
   var data = r.data || [];
-  var mineRows = data.filter(function(x){ return x.author_id === u.id; });
-  var authorSet = Array.from(new Set(data.map(function(x){ return x.author_id; })));
-  console.log('Total rows returned by query:', data.length);
-  console.log('Rows matching MY uid:', mineRows.length);
-  console.log('Other author_ids in result:', authorSet);
-  console.log('My rows:', mineRows);
-  console.log('=== END DEBUG ===');
-  return {
-    myUid: u.id,
-    jwtUid: jwtUid,
-    match: u.id === jwtUid,
-    totalRows: data.length,
-    myRows: mineRows.length,
-    otherAuthors: authorSet,
-    data: data
-  };
+  var mine = data.filter(function(x){ return x.author_id === u.id; });
+  console.log('My uid:', u.id);
+  console.log('My CFAR sparks:', mine.length);
+  console.log('All matching sparks in DB:', data.length);
+  console.table(mine);
+  return { myUid: u.id, myRows: mine.length, total: data.length, data: mine };
 };
 
-/* ============================================================
-   HOOK — re-apply on every dashboard visit + post-paint
-   ============================================================ */
-var _prevShowViewPatch = Z.showView;
-Z.showView = function(view, param){
-  var r = _prevShowViewPatch.apply(this, arguments);
-
-  if(view === 'owner-dashboard'){
-    var u = Z.State.currentUser;
-    var uid = u ? u.id : null;
-
-    /* Topbar + loaders fire AFTER v4's own loaders */
-    setTimeout(applyTopbarPatch, 200);
-    setTimeout(applyTopbarPatch, 500);
-    setTimeout(applyTopbarPatch, 900);
-
-    if(uid){
-      /* Analytics after v4's loader (v4 uses 300ms) */
-      setTimeout(function(){ paintAnalyticsFixed(uid); }, 500);
-      setTimeout(function(){ paintAnalyticsFixed(uid); }, 1100);
-
-      /* CFAR after v4's loader (v4 uses 350ms) */
-      setTimeout(function(){ paintCfarFixed(uid); }, 600);
-      setTimeout(function(){ paintCfarFixed(uid); }, 1200);
-    }
-  }
-
-  if(view === 'public-profile'){
-    setTimeout(removeSpaceHeaderHelp, 700);
-    setTimeout(removeSpaceHeaderHelp, 1400);
-  }
-
-  return r;
+Z.dashStats = function(){
+  console.log('Patch stats:', _killedCount);
+  return _killedCount;
 };
 
-/* Also patch on initial load if user was already on dashboard */
-setTimeout(function(){
-  if(Z.State.currentView === 'owner-dashboard'){
-    var u = Z.State.currentUser;
-    var uid = u ? u.id : null;
-    applyTopbarPatch();
-    if(uid){
-      paintAnalyticsFixed(uid);
-      paintCfarFixed(uid);
-    }
-  }
-}, 2000);
-
-console.log('[Dashboard v4.1] topbar · analytics-fix · cfar-fix · debug helper ready');
+console.log('[Dashboard v4.2] observer-based patch ready');
 })();
 </script>
 
