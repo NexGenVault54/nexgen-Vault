@@ -16211,18 +16211,32 @@ Z._cdSave = async function(){
   _draft.link_label = linkLabel;
 
   var u = me();
-  var arr = _getCardsFromProfile(u);
-  /* Remove synthetic defaults if this is first real save */
-  arr = arr.filter(function(c){ return !c.id || String(c.id).indexOf('_d_') !== 0; });
+  if(!u){ toast('Not logged in.', 'error'); return; }
+
+  var sd = u.space_data || {};
+  var arr = Array.isArray(sd.cards) ? sd.cards.slice() : [];
+
+  /* First real save → materialize ALL defaults into real saved cards.
+     This ensures the other 4 default cards do NOT disappear. */
+  if(arr.length === 0){
+    arr = (typeof _defaultCards === 'function') ? _defaultCards(u).slice() : [];
+  }
+
+  /* Find target by id first (works after materialization), fallback to index */
+  var targetIdx = arr.findIndex(function(c){ return c.id === _draft.id; });
+  if(targetIdx === -1 && _draftIdx >= 0 && _draftIdx < arr.length){
+    targetIdx = _draftIdx;
+  }
+
   if(_draftIdx === -1){
     if(arr.length >= 10){ toast('Max 10 cards.', 'error'); return; }
     _draft.created_at = _draft.created_at || Date.now();
     arr.push(_draft);
+  } else if(targetIdx !== -1){
+    arr[targetIdx] = Object.assign({}, arr[targetIdx], _draft);
   } else {
-    /* Map draftIdx onto filtered array (careful if defaults were stripped) */
-    var targetIdx = arr.findIndex(function(c){ return c.id === _draft.id; });
-    if(targetIdx === -1){ arr.push(_draft); }
-    else { arr[targetIdx] = Object.assign({}, arr[targetIdx], _draft); }
+    toast('Card not found.', 'error');
+    return;
   }
 
   try {
@@ -16240,9 +16254,18 @@ Z._cdDelete = async function(idx){
   if(!_draft) return;
   if(!confirm('Delete this card?')) return;
   var u = me();
-  var arr = _getCardsFromProfile(u).filter(function(c){
-    return c.id !== _draft.id && (!c.id || String(c.id).indexOf('_d_') !== 0);
-  });
+  if(!u){ toast('Not logged in.', 'error'); return; }
+
+  var sd = u.space_data || {};
+  var arr = Array.isArray(sd.cards) ? sd.cards.slice() : [];
+
+  /* Materialize defaults first, so deleting one doesn't wipe the others */
+  if(arr.length === 0){
+    arr = (typeof _defaultCards === 'function') ? _defaultCards(u).slice() : [];
+  }
+
+  arr = arr.filter(function(c){ return c.id !== _draft.id; });
+
   try {
     await _persistCards(arr);
     _draft = null; _draftIdx = -1;
