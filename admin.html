@@ -5362,7 +5362,335 @@ console.log('[Admin Chunk 9] Quality & Rewards · FV Applications ready');
 })();
 </script>
 
+<!-- ============================================================
+     Admin Chunk 10 — Bounty detail with 2 tabs
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin; if(!Admin) return;
+if(Admin.__chunk10Bounty) return; Admin.__chunk10Bounty = true;
 
+var sb = window.supabase.createClient(
+  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+);
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+function timeAgo(ts){ if(!ts) return ''; var s=Math.floor((Date.now()-new Date(ts).getTime())/1000); if(s<60)return s+'s ago'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; if(s<2592000)return Math.floor(s/86400)+'d ago'; return new Date(ts).toLocaleDateString(); }
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+var bdState = { days: 180, search: '', expanded: {}, loaded: false };
+
+/* Intercept bounty pool card click */
+document.addEventListener('click', function(e){
+  var el = e.target.closest('[data-pool-open="bounty"]');
+  if(!el) return;
+  var main = document.getElementById('adm-main');
+  if(!main || !main.contains(el)) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  renderBountyDetailTabs();
+}, true);
+
+async function renderBountyDetailTabs(){
+  var main = $('adm-main'); if(!main) return;
+  main.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+
+  try {
+    var r = await sb.rpc('admin_pool_detail', { p_pool: 'bounty' });
+    if(r.error) throw r.error;
+    var d = r.data || {};
+
+    var h = '';
+
+    h += '<button id="bd-back" class="adm-btn ghost" style="font-size:11.5px;padding:8px 12px;margin-bottom:16px;"><i class="fa-solid fa-arrow-left"></i> Back to Pools</button>';
+
+    /* Header */
+    h += '<div style="display:flex;align-items:center;gap:14px;padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(16,185,129,.03));border:1px solid rgba(16,185,129,.5);margin-bottom:16px;">';
+    h += '<div style="width:56px;height:56px;border-radius:14px;background:rgba(16,185,129,.22);display:flex;align-items:center;justify-content:center;flex-shrink:0;">';
+    h += '<i class="fa-solid fa-gift" style="color:#10b981;font-size:24px;"></i></div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:19px;font-weight:900;color:#fff;">Bounty Pool</div>';
+    h += '<div style="font-size:11.5px;color:#94a3b8;margin-top:4px;line-height:1.55;">40% of net profit · Weekly distribution 25% · $500 cap per user per week</div>';
+    h += '</div></div>';
+
+    /* Tabs */
+    h += '<div style="display:flex;gap:6px;margin-bottom:14px;">';
+    h += '<button class="bd-tab" data-bd-tab="distribution" style="flex:1;padding:11px;border-radius:10px;border:1px solid rgba(16,185,129,.5);background:rgba(16,185,129,.12);color:#10b981;font-weight:900;font-size:12.5px;cursor:pointer;"><i class="fa-solid fa-chart-line"></i> Pool Distribution</button>';
+    h += '<button class="bd-tab" data-bd-tab="history" style="flex:1;padding:11px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#94a3b8;font-weight:900;font-size:12.5px;cursor:pointer;"><i class="fa-solid fa-clock-rotate-left"></i> Bounty History</button>';
+    h += '</div>';
+
+    /* --- Tab 1: Pool Distribution --- */
+    h += '<div id="bd-tab-dist">';
+    h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">';
+    h += '<div class="adm-kpi"><div class="lbl">Balance</div><div class="val" style="color:#10b981;">' + money(d.balance) + '</div></div>';
+    h += '<div class="adm-kpi green"><div class="lbl">Inflow</div><div class="val" style="color:#10b981;">' + money(d.total_inflow) + '</div></div>';
+    h += '<div class="adm-kpi red"><div class="lbl">Outflow</div><div class="val" style="color:#a16262;">' + money(d.total_outflow) + '</div></div>';
+    h += '<div class="adm-kpi blue"><div class="lbl">Txns</div><div class="val" style="color:#60a5fa;">' + (d.transaction_count || 0) + '</div></div>';
+    h += '</div>';
+
+    h += '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;margin-bottom:16px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;">Settings</div>';
+    h += '<button id="bd-set-edit" class="adm-btn ghost" style="font-size:11px;padding:6px 12px;"><i class="fa-solid fa-pen"></i> Edit</button>';
+    h += '</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+    h += '<div style="padding:10px;background:rgba(0,0,0,.22);border-radius:8px;"><div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;">Weekly %</div><div style="font-size:14px;font-weight:900;color:#fff;margin-top:4px;">' + (d.weekly_distribution_pct || 25) + '%</div></div>';
+    h += '<div style="padding:10px;background:rgba(0,0,0,.22);border-radius:8px;"><div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;">Weekly cap</div><div style="font-size:14px;font-weight:900;color:#fff;margin-top:4px;">' + (d.weekly_cap_usd ? money(d.weekly_cap_usd) : 'No cap') + '</div></div>';
+    h += '<div style="padding:10px;background:rgba(0,0,0,.22);border-radius:8px;"><div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;">Min threshold</div><div style="font-size:14px;font-weight:900;color:#fff;margin-top:4px;">' + money(d.min_balance_threshold) + '</div></div>';
+    h += '<div style="padding:10px;background:rgba(0,0,0,.22);border-radius:8px;"><div style="font-size:10px;color:#94a3b8;font-weight:800;text-transform:uppercase;">Base</div><div style="font-size:14px;font-weight:900;color:#fff;margin-top:4px;">' + (d.base_type === 'subscription_revenue' ? 'Subs rev' : 'Net profit') + '</div></div>';
+    h += '</div></div>';
+
+    h += '<div style="padding:16px;border-radius:12px;background:#131c30;border:1px solid #1e293b;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;">Transaction History</div>';
+    h += '<button id="bd-tx-add" class="adm-btn primary" style="font-size:11px;padding:6px 12px;"><i class="fa-solid fa-plus"></i> Add manual</button>';
+    h += '</div>';
+    h += '<div id="bd-tx-list"><div style="text-align:center;padding:20px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+    h += '</div></div>';
+
+    /* --- Tab 2: Bounty History --- */
+    h += '<div id="bd-tab-hist" style="display:none;">';
+    h += '<div style="display:flex;gap:6px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">';
+    h += '<select id="bd-days" style="padding:6px 10px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:11.5px;outline:none;"><option value="30">Last 30d</option><option value="90">Last 90d</option><option value="180" selected>Last 180d</option></select>';
+    h += '<input id="bd-search" placeholder="Search contributor…" style="flex:1;min-width:180px;padding:9px 12px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:12px;outline:none;">';
+    h += '<button id="bd-csv" class="adm-btn ghost" style="font-size:11px;padding:7px 12px;"><i class="fa-solid fa-download"></i> CSV</button>';
+    h += '</div>';
+    h += '<div id="bd-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+    h += '</div>';
+
+    main.innerHTML = h;
+
+    /* Wire back */
+    $('bd-back').addEventListener('click', function(){
+      if(window.AdminChunk7D && AdminChunk7D.renderPoolsMaster) AdminChunk7D.renderPoolsMaster(main);
+      else window.Admin.navigate('pools');
+    });
+
+    /* Wire tabs */
+    main.querySelectorAll('.bd-tab').forEach(function(b){
+      b.addEventListener('click', function(){
+        var t = this.getAttribute('data-bd-tab');
+        main.querySelectorAll('.bd-tab').forEach(function(x){
+          x.style.borderColor = '#1e293b';
+          x.style.background = 'transparent';
+          x.style.color = '#94a3b8';
+        });
+        this.style.borderColor = 'rgba(16,185,129,.5)';
+        this.style.background = 'rgba(16,185,129,.12)';
+        this.style.color = '#10b981';
+        $('bd-tab-dist').style.display = t === 'distribution' ? 'block' : 'none';
+        $('bd-tab-hist').style.display = t === 'history' ? 'block' : 'none';
+        if(t === 'history' && !bdState.loaded){
+          bdState.loaded = true;
+          loadBountyWeeksTabs();
+        }
+      });
+    });
+
+    /* Load Tab 1 content */
+    loadBountyTxTabs();
+    $('bd-set-edit').addEventListener('click', function(){ openBountyEditTabs(d); });
+    $('bd-tx-add').addEventListener('click', function(){ openBountyTxAddTabs(); });
+
+    /* Wire Tab 2 */
+    $('bd-days').addEventListener('change', function(){ bdState.days = parseInt(this.value, 10) || 180; loadBountyWeeksTabs(); });
+    var deb = null;
+    $('bd-search').addEventListener('input', function(){
+      bdState.search = this.value.trim();
+      if(deb) clearTimeout(deb);
+      deb = setTimeout(loadBountyWeeksTabs, 250);
+    });
+    $('bd-csv').addEventListener('click', exportBountyCsvTabs);
+
+  } catch(e){
+    main.innerHTML = '<div style="padding:40px;text-align:center;color:#a16262;">Failed: ' + esc(e.message || 'unknown') + '</div>';
+  }
+}
+
+/* --- Tab 1 helpers --- */
+async function loadBountyTxTabs(){
+  var host = $('bd-tx-list'); if(!host) return;
+  try {
+    var r = await sb.rpc('admin_pool_history', { p_pool: 'bounty', p_limit: 100 });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">No transactions yet.</div>'; return; }
+    var h = '';
+    list.forEach(function(t){
+      var isIn = t.direction === 'in';
+      h += '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 12px;background:rgba(0,0,0,.22);border-radius:9px;margin-bottom:5px;">' +
+        '<div style="flex:1;min-width:0;"><div style="font-size:12px;color:#e2e8f0;font-weight:800;">' + esc(t.reason || t.ref_type || 'tx') + '</div>' +
+        '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + timeAgo(t.created_at) + '</div></div>' +
+        '<div style="font-size:13px;font-weight:900;color:' + (isIn ? '#10b981' : '#a16262') + ';">' + (isIn ? '+' : '−') + money(t.amount) + '</div>' +
+      '</div>';
+    });
+    host.innerHTML = h;
+  } catch(e){ host.innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;">Failed.</div>'; }
+}
+
+function openBountyEditTabs(d){
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'bd-edit-modal';
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '520px';
+  inner.innerHTML =
+    '<h3>Edit Bounty Pool Settings</h3>' +
+    '<div class="adm-form-row"><label>Weekly distribution % (25 = 25% of balance per week)</label><input id="bd-pct" type="number" min="0" max="100" step="1" value="' + (d.weekly_distribution_pct || 25) + '"></div>' +
+    '<div class="adm-form-row"><label>Weekly cap per user (USD · blank = no cap)</label><input id="bd-cap" type="number" min="0" step="1" value="' + (d.weekly_cap_usd || '') + '"></div>' +
+    '<div class="adm-form-row"><label>Min balance threshold</label><input id="bd-thr" type="number" min="0" step="1" value="' + (d.min_balance_threshold || 0) + '"></div>' +
+    '<div class="adm-form-row"><label>Eligibility rules</label><textarea id="bd-rules" maxlength="500" rows="4">' + esc(d.eligibility_rules || '') + '</textarea></div>' +
+    '<div class="adm-form-row"><label>Notes</label><textarea id="bd-notes" maxlength="300" rows="3">' + esc(d.notes || '') + '</textarea></div>' +
+    '<div class="row"><button class="adm-btn primary" id="bd-save" style="flex:1;">Save</button><button class="adm-btn ghost" id="bd-cancel">Cancel</button></div>';
+  shell.appendChild(inner); document.body.appendChild(shell);
+  $('bd-cancel').addEventListener('click', function(){ shell.remove(); });
+  $('bd-save').addEventListener('click', async function(){
+    var pct = parseFloat($('bd-pct').value), capRaw = $('bd-cap').value, cap = capRaw === '' ? null : parseFloat(capRaw);
+    var thr = parseFloat($('bd-thr').value) || 0, rules = $('bd-rules').value || '', notes = $('bd-notes').value || '';
+    if(isNaN(pct) || pct < 0 || pct > 100){ toast('Invalid %', true); return; }
+    this.disabled = true; this.textContent = 'Saving…';
+    try {
+      var r = await sb.rpc('admin_pool_settings_update', { p_pool:'bounty', p_weekly_pct:pct, p_weekly_cap:cap, p_threshold:thr, p_rules:rules, p_notes:notes });
+      if(r.error) throw r.error;
+      toast('Saved.'); shell.remove(); renderBountyDetailTabs();
+    } catch(e){ toast('Failed: ' + ((e&&e.message)||'unknown'), true); this.disabled = false; this.textContent='Save'; }
+  });
+}
+
+function openBountyTxAddTabs(){
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'bd-tx-add-modal';
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '460px';
+  inner.innerHTML =
+    '<h3>Add Manual Transaction · Bounty</h3>' +
+    '<div class="adm-form-row"><label>Direction</label><select id="bd-dir"><option value="in">In (add)</option><option value="out">Out (remove)</option></select></div>' +
+    '<div class="adm-form-row"><label>Amount (USD)</label><input id="bd-amt" type="number" min="0.01" step="0.01"></div>' +
+    '<div class="adm-form-row"><label>Reason</label><input id="bd-rsn" maxlength="200"></div>' +
+    '<div class="row"><button class="adm-btn primary" id="bd-tx-save" style="flex:1;">Add</button><button class="adm-btn ghost" id="bd-tx-cancel">Cancel</button></div>';
+  shell.appendChild(inner); document.body.appendChild(shell);
+  $('bd-tx-cancel').addEventListener('click', function(){ shell.remove(); });
+  $('bd-tx-save').addEventListener('click', async function(){
+    var dir = $('bd-dir').value, amt = parseFloat($('bd-amt').value), rsn = ($('bd-rsn').value||'').trim();
+    if(!amt || amt <= 0){ toast('Valid amount required.', true); return; }
+    if(rsn.length < 3){ toast('Reason required.', true); return; }
+    this.disabled = true; this.textContent = 'Adding…';
+    try {
+      var r = await sb.rpc('admin_pool_manual_tx', { p_pool:'bounty', p_direction:dir, p_amount:amt, p_reason:rsn });
+      if(r.error) throw r.error;
+      toast('Added.'); shell.remove(); renderBountyDetailTabs();
+    } catch(e){ toast('Failed: ' + ((e&&e.message)||'unknown'), true); this.disabled = false; this.textContent='Add'; }
+  });
+}
+
+/* --- Tab 2 helpers --- */
+async function loadBountyWeeksTabs(){
+  var host = $('bd-list'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  try {
+    var r = await sb.rpc('admin_bounty_weeks', { p_days: bdState.days, p_search: bdState.search || null });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var list = r.data || [];
+    if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No distributions in this range.</div>'; return; }
+    var h = '';
+    list.forEach(function(w){
+      var ws = w.week_start, isOpen = !!bdState.expanded[ws];
+      h += '<div style="border-radius:10px;background:rgba(0,0,0,.22);margin-bottom:6px;overflow:hidden;">';
+      h += '<div data-bh-toggle="' + esc(ws) + '" style="padding:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:12.5px;font-weight:900;color:#fff;display:flex;align-items:center;gap:6px;">';
+      h += '<i class="fa-solid ' + (isOpen?'fa-chevron-down':'fa-chevron-right') + '" style="color:' + (isOpen?'#10b981':'#64748b') + ';font-size:10px;"></i>';
+      h += 'Week of ' + new Date(ws).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
+      h += '</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:3px;padding-left:16px;">' + (w.contributors_count||0) + ' contributor' + (w.contributors_count===1?'':'s');
+      if(w.capped_count > 0) h += ' · <span style="color:#fbbf24;">' + w.capped_count + ' capped</span>';
+      h += ' · by @' + esc(w.distributor||'system') + '</div></div>';
+      h += '<div style="text-align:right;flex-shrink:0;"><div style="font-size:15px;font-weight:900;color:#10b981;">' + money(w.amount_distributed) + '</div>';
+      h += '<div style="font-size:9.5px;color:#64748b;">sched ' + money(w.amount_scheduled) + '</div></div></div>';
+      h += '<div id="bh-wk-' + esc(ws) + '" style="display:' + (isOpen?'block':'none') + ';padding:0 12px 12px;border-top:1px solid rgba(255,255,255,.05);">';
+      h += '<div data-bh-detail="' + esc(ws) + '" style="padding-top:10px;">Loading…</div>';
+      h += '</div></div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-bh-toggle]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var ws = this.getAttribute('data-bh-toggle');
+        bdState.expanded[ws] = !bdState.expanded[ws];
+        var panel = document.getElementById('bh-wk-' + ws);
+        var chev = this.querySelector('i.fa-chevron-right, i.fa-chevron-down');
+        if(panel) panel.style.display = bdState.expanded[ws] ? 'block' : 'none';
+        if(chev){ chev.className = 'fa-solid ' + (bdState.expanded[ws]?'fa-chevron-down':'fa-chevron-right'); chev.style.color = bdState.expanded[ws]?'#10b981':'#64748b'; }
+        if(bdState.expanded[ws]) loadBountyWeekDetailTabs(ws);
+      });
+    });
+    Object.keys(bdState.expanded).forEach(function(ws){ if(bdState.expanded[ws]) loadBountyWeekDetailTabs(ws); });
+  } catch(e){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed.</div>'; }
+}
+
+async function loadBountyWeekDetailTabs(weekStart){
+  var host = document.querySelector('[data-bh-detail="' + weekStart + '"]'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:10px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  try {
+    var r = await sb.rpc('admin_bounty_week_detail', { p_week_start: weekStart });
+    if(r.error){ host.innerHTML = '<div style="color:#a16262;font-size:11px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var list = r.data || [];
+    if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:14px;color:#94a3b8;font-size:11.5px;">No contributors.</div>'; return; }
+    var h = '';
+    list.forEach(function(c){
+      var capped = Number(c.excess_returned) > 0;
+      var avatar = c.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(c.name||'U') + '&background=111827&color=34d399');
+      h += '<div style="display:flex;gap:10px;align-items:center;padding:8px 10px;background:rgba(0,0,0,.2);border-radius:8px;margin-bottom:4px;">';
+      h += '<div style="width:22px;text-align:center;font-size:11px;font-weight:900;color:' + (c.rank===1?'#fbbf24':'#64748b') + ';">#' + c.rank + '</div>';
+      h += '<img data-bh-user="' + esc(c.user_id) + '" src="' + esc(avatar) + '" style="width:32px;height:32px;border-radius:50%;object-fit:cover;cursor:pointer;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div data-bh-user="' + esc(c.user_id) + '" style="font-size:12px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;">' + esc(c.name||c.username||'User') + ' <span style="color:#94a3b8;font-weight:600;font-size:10.5px;">@' + esc(c.username||'') + '</span>' + (capped?' <span style="font-size:9px;color:#fbbf24;background:rgba(251,191,36,.12);padding:1px 6px;border-radius:5px;">CAPPED</span>':'') + '</div>';
+      h += '<div style="font-size:10px;color:#64748b;">' + c.points + ' pts · ' + Number(c.share_pct).toFixed(2) + '% share</div>';
+      h += '</div>';
+      h += '<div style="text-align:right;"><div style="font-size:13px;font-weight:900;color:#10b981;">' + money(c.capped_amount) + '</div>';
+      if(capped) h += '<div style="font-size:9px;color:#fbbf24;">+' + money(c.excess_returned) + ' back</div>';
+      h += '</div></div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-bh-user]').forEach(function(el){
+      el.addEventListener('click', function(e){
+        e.stopPropagation();
+        var uid = this.getAttribute('data-bh-user');
+        if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage) AdminChunk7A.renderUserDetailPage(uid);
+      });
+    });
+  } catch(e){ host.innerHTML = '<div style="color:#a16262;font-size:11px;">Failed.</div>'; }
+}
+
+function exportBountyCsvTabs(){
+  sb.rpc('admin_bounty_weeks', { p_days: bdState.days, p_search: bdState.search || null }).then(function(r){
+    if(r.error){ toast('Failed.', true); return; }
+    var list = r.data || [];
+    if(!list.length){ toast('Nothing to export.', true); return; }
+    var rows = [['Week Start','Week End','Scheduled','Distributed','Contributors','Capped Users','Distributor','Distributed At']];
+    list.forEach(function(w){
+      rows.push([w.week_start, w.week_end, (Number(w.amount_scheduled)||0).toFixed(2), (Number(w.amount_distributed)||0).toFixed(2), w.contributors_count||0, w.capped_count||0, w.distributor||'', w.distributed_at||'']);
+    });
+    var csv = rows.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+    var blob = new Blob([csv], { type:'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'bounty-history-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+    toast('CSV downloaded.');
+  }).catch(function(){ toast('Failed.', true); });
+}
+
+console.log('[Admin Chunk 10] Bounty detail with 2 tabs ready');
+})();
+</script>
 
 </body>
 </html>
