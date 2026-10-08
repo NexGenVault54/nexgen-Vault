@@ -82,7 +82,7 @@
     <div class="field"><label>Email</label><input id="adv-email" type="email" placeholder="you@example.com" autocomplete="email"></div>
     <div class="field"><label>Password</label><input id="adv-pass" type="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button id="adv-signin" class="primary">Sign In</button>
-    <button class="back" onclick="window.location.href='/'">← Back to ZYNIX</button>
+    <button class="back" onclick="window.location.href='/?nosound=1'">← Back to ZYNIX</button>
   </div>
 </div>
 
@@ -240,7 +240,20 @@ async function loadAds(){
       return;
     }
     var list = r.data || [];
-    console.log('[My Ads] RPC returned', list.length, 'ads:', list);
+
+
+        /* Retry once if empty — handles timing/RLS warmup */
+    if(!list.length){
+      await new Promise(function(res){ setTimeout(res, 700); });
+      try {
+        var r2 = await sb.rpc('advertiser_my_ads');
+        if(!r2.error && r2.data && r2.data.length){
+          list = r2.data;
+          console.log('[My Ads] retry hit — got', list.length, 'ads');
+        }
+      } catch(e){}
+    }
+
     State.myAds = list;
 
     if(!list.length){
