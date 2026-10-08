@@ -4576,9 +4576,8 @@ function renderQualityRewards(main){
       this.classList.add('active');
       var t = this.getAttribute('data-qr-tab');
       if(t === 'fv') renderFVApps();
-      else {
-        $('qr-host').innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">Coming in next update.</div>';
-      }
+      else if(t === 'space') renderSpaceRatings();
+      else if(t === 'video') renderVideoRatings();
     });
   });
 
@@ -4828,303 +4827,363 @@ setInterval(updateFvBadge, 30000);
 
 window.AdminChunk9 = { renderQualityRewards: renderQualityRewards, renderFVApps: renderFVApps };
 
-console.log('[Admin Chunk 9] Quality & Rewards · FV Applications ready');
-})();
-</script>
-<!-- ============================================================
-     Admin Chunk 9 — Quality & Rewards · FV Applications
-     ============================================================ -->
-<script>
-(function(){
-'use strict';
-var Admin = window.Admin; if(!Admin) return;
-if(Admin.__chunk9) return; Admin.__chunk9 = true;
+/* ============================================================
+   Space Ratings sub-page
+   ============================================================ */
+var spState = { search: '', band: 'all', sort: 'highest' };
 
-var sb = window.supabase.createClient(
-  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
-  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
-);
-
-function $(id){ return document.getElementById(id); }
-function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-function timeAgo(ts){ if(!ts) return ''; var s=Math.floor((Date.now()-new Date(ts).getTime())/1000); if(s<60)return s+'s ago'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; if(s<2592000)return Math.floor(s/86400)+'d ago'; return new Date(ts).toLocaleDateString(); }
-function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
-
-var fvState = { status: 'pending', search: '' };
-
-function renderQualityRewards(main){
-  main.innerHTML =
-    '<div class="adm-page-title">Quality &amp; Rewards</div>' +
-    '<div class="adm-page-sub">Full Video Applications · Space Ratings · Video Ratings</div>' +
-    '<div class="adm-chips" id="qr-tabs" style="margin-bottom:14px;">' +
-      '<button class="adm-chip active" data-qr-tab="fv">Full Video Applications</button>' +
-      '<button class="adm-chip" data-qr-tab="space">Space Ratings</button>' +
-      '<button class="adm-chip" data-qr-tab="video">Video Ratings</button>' +
-    '</div>' +
-    '<div id="qr-host"></div>';
-
-  main.querySelectorAll('[data-qr-tab]').forEach(function(b){
-    b.addEventListener('click', function(){
-      main.querySelectorAll('[data-qr-tab]').forEach(function(x){ x.classList.remove('active'); });
-      this.classList.add('active');
-      var t = this.getAttribute('data-qr-tab');
-      if(t === 'fv') renderFVApps();
-      else {
-        $('qr-host').innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">Coming in next update.</div>';
-      }
-    });
-  });
-
-  renderFVApps();
-}
-
-function renderFVApps(){
+function renderSpaceRatings(){
   var host = $('qr-host');
   host.innerHTML =
-    '<div class="adm-chips" id="fv-chips" style="margin-bottom:12px;">' +
-      '<button class="adm-chip ' + (fvState.status==='pending'?'active':'') + '" data-fv-s="pending">Pending</button>' +
-      '<button class="adm-chip ' + (fvState.status==='approved'?'active':'') + '" data-fv-s="approved">Approved</button>' +
-      '<button class="adm-chip ' + (fvState.status==='rejected'?'active':'') + '" data-fv-s="rejected">Rejected</button>' +
-      '<button class="adm-chip ' + (fvState.status==='all'?'active':'') + '" data-fv-s="all">All</button>' +
+    '<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">' +
+      '<div class="adm-chips" style="margin:0;flex-wrap:wrap;" id="sp-band-chips">' +
+        '<button class="adm-chip active" data-sp-band="all">All</button>' +
+        '<button class="adm-chip" data-sp-band="top">Top 9-10</button>' +
+        '<button class="adm-chip" data-sp-band="high">High 7-8</button>' +
+        '<button class="adm-chip" data-sp-band="mid">Mid 4-6</button>' +
+        '<button class="adm-chip" data-sp-band="low">Low 1-3</button>' +
+        '<button class="adm-chip" data-sp-band="none">No ratings</button>' +
+      '</div>' +
+      '<select id="sp-sort" class="adm-search" style="width:auto;margin:0;padding:8px 12px;font-size:12px;">' +
+        '<option value="highest">Highest rating</option>' +
+        '<option value="lowest">Lowest rating</option>' +
+        '<option value="most">Most ratings</option>' +
+        '<option value="recent">Recently joined</option>' +
+      '</select>' +
+      '<button id="sp-csv" class="adm-btn ghost" style="font-size:11.5px;padding:8px 12px;margin-left:auto;"><i class="fa-solid fa-download"></i> CSV</button>' +
     '</div>' +
-    '<input id="fv-search" class="adm-search" placeholder="Search name, username, or space…" value="' + esc(fvState.search) + '">' +
-    '<div id="fv-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+    '<input id="sp-search" class="adm-search" placeholder="Search name, username, or space…" value="' + esc(spState.search) + '">' +
+    '<div id="sp-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
 
-  host.querySelectorAll('[data-fv-s]').forEach(function(b){
+  host.querySelectorAll('[data-sp-band]').forEach(function(b){
     b.addEventListener('click', function(){
-      fvState.status = this.getAttribute('data-fv-s');
-      host.querySelectorAll('[data-fv-s]').forEach(function(x){ x.classList.remove('active'); });
+      spState.band = this.getAttribute('data-sp-band');
+      host.querySelectorAll('[data-sp-band]').forEach(function(x){ x.classList.remove('active'); });
       this.classList.add('active');
-      loadFVApps();
+      loadSpaceRatings();
     });
   });
-
-  var s = $('fv-search');
-  if(s && !s._hooked){
-    s._hooked = true;
-    var deb = null;
-    s.addEventListener('input', function(){
-      fvState.search = this.value.trim();
-      if(deb) clearTimeout(deb);
-      deb = setTimeout(loadFVApps, 250);
-    });
+  var s = $('sp-search');
+  if(s && !s._hooked){ s._hooked = true; var deb = null;
+    s.addEventListener('input', function(){ spState.search = this.value.trim(); if(deb) clearTimeout(deb); deb = setTimeout(loadSpaceRatings, 250); });
   }
+  var so = $('sp-sort');
+  if(so && !so._hooked){ so._hooked = true; so.addEventListener('change', function(){ spState.sort = this.value; loadSpaceRatings(); }); }
+  var csv = $('sp-csv'); if(csv) csv.addEventListener('click', function(){ exportSpaceCsv(); });
 
-  loadFVApps();
+  loadSpaceRatings();
 }
 
-async function loadFVApps(){
-  var host = $('fv-list'); if(!host) return;
+async function loadSpaceRatings(){
+  var host = $('sp-list'); if(!host) return;
   host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
   try {
-    var r = await sb.rpc('admin_fv_app_list', {
-      p_status: fvState.status, p_search: fvState.search || null, p_limit: 100, p_offset: 0
+    var r = await sb.rpc('admin_space_ratings_list', {
+      p_search: spState.search || null, p_band: spState.band, p_sort: spState.sort, p_limit: 100, p_offset: 0
     });
     if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
     var list = r.data || [];
+    window._spCache = list;
     if(!list.length){
-      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No applications in this filter.</div>';
+      host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No SPACEs match.</div>';
       return;
     }
     var h = '';
-    list.forEach(function(a){
-      var st = a.status;
-      var stCol = st === 'pending' ? '#fbbf24' : (st === 'approved' ? '#10b981' : '#a16262');
-      var stLbl = st === 'pending' ? 'PENDING' : (st === 'approved' ? 'APPROVED' : 'REJECTED');
-      var avatar = a.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(a.name||'U') + '&background=111827&color=34d399');
-
-      h += '<div style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:14px;margin-bottom:10px;">';
-      h += '<div style="display:flex;gap:12px;align-items:flex-start;">';
-      h += '<img data-fv-user="' + esc(a.user_id) + '" src="' + esc(avatar) + '" style="width:48px;height:48px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">';
+    list.forEach(function(sp){
+      var avg = Number(sp.avg_score) || 0, cnt = sp.rating_count || 0;
+      var col = cnt === 0 ? '#64748b' : (avg >= 8 ? '#10b981' : (avg >= 4 ? '#a18554' : '#a16262'));
+      var avatar = sp.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(sp.name||'U') + '&background=111827&color=34d399');
+      var total = Math.max(1, (sp.band_top||0) + (sp.band_high||0) + (sp.band_mid||0) + (sp.band_low||0));
+      h += '<div data-sp-open="' + esc(sp.space_id) + '" style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:12px;margin-bottom:8px;cursor:pointer;">';
+      h += '<div style="display:flex;gap:12px;align-items:center;">';
+      h += '<img data-sp-user="' + esc(sp.space_id) + '" src="' + esc(avatar) + '" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;cursor:pointer;">';
       h += '<div style="flex:1;min-width:0;">';
-      h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
-      h += '<span data-fv-user="' + esc(a.user_id) + '" style="font-size:14px;font-weight:900;color:#fff;cursor:pointer;">' + esc(a.name || 'Unnamed') + '</span>';
-      h += '<span style="font-size:11px;color:#94a3b8;">@' + esc(a.username || 'user') + '</span>';
-      h += '<span style="font-size:9.5px;font-weight:900;padding:3px 9px;border-radius:10px;background:' + stCol + '22;color:' + stCol + ';">' + stLbl + '</span>';
+      h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:13.5px;font-weight:900;color:#fff;">' + esc(sp.space_name || sp.name || 'Unnamed') + '</span><span style="font-size:10.5px;color:#94a3b8;">@' + esc(sp.username||'user') + '</span></div>';
+      h += '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">' + cnt + ' rating' + (cnt===1?'':'s') + '</div>';
       h += '</div>';
-      if(a.space_name){
-        h += '<div data-fv-space="' + esc(a.user_id) + '" style="font-size:11.5px;color:#60a5fa;margin-top:4px;cursor:pointer;font-weight:800;"><i class="fa-solid fa-house"></i> ' + esc(a.space_name) + '</div>';
-      }
-      h += '<div style="font-size:10.5px;color:#64748b;margin-top:6px;">Applied ' + timeAgo(a.applied_at) + (a.reviewed_at ? ' · Reviewed ' + timeAgo(a.reviewed_at) : '') + '</div>';
-      if(st === 'rejected' && a.rejection_reason){
-        h += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.3);font-size:11.5px;color:#c9a5a5;line-height:1.55;"><b>Reason:</b> ' + esc(a.rejection_reason) + '</div>';
-      }
-      h += '</div></div>';
-
-      if(st === 'pending'){
-        h += '<div style="display:flex;gap:8px;margin-top:12px;">';
-        h += '<button class="adm-btn primary" data-fv-approve="' + esc(a.id) + '" style="flex:1;font-size:12px;"><i class="fa-solid fa-check"></i> Approve</button>';
-        h += '<button class="adm-btn danger" data-fv-reject="' + esc(a.id) + '" data-fv-name="' + esc(a.name||'user') + '" style="flex:1;font-size:12px;"><i class="fa-solid fa-xmark"></i> Reject</button>';
+      h += '<div style="text-align:right;flex-shrink:0;"><div style="font-size:20px;font-weight:900;color:' + col + ';">' + (cnt > 0 ? avg.toFixed(1) : '—') + '</div><div style="font-size:9px;color:#64748b;">/ 10</div></div>';
+      h += '</div>';
+      if(cnt > 0){
+        h += '<div style="display:flex;height:5px;border-radius:3px;overflow:hidden;background:rgba(0,0,0,.35);margin-top:10px;">';
+        [['band_top','#10b981'],['band_high','#a18554'],['band_mid','#a18554'],['band_low','#a16262']].forEach(function(p){
+          var v = Number(sp[p[0]]) || 0;
+          if(v <= 0) return;
+          h += '<div style="flex:' + v + ';background:' + p[1] + ';"></div>';
+        });
         h += '</div>';
       }
       h += '</div>';
     });
     host.innerHTML = h;
-
-    host.querySelectorAll('[data-fv-approve]').forEach(function(b){
-      b.addEventListener('click', function(){
-        if(!confirm('Approve this Full Video Access application?')) return;
-        approveFV(this.getAttribute('data-fv-approve'));
+    host.querySelectorAll('[data-sp-open]').forEach(function(el){
+      el.addEventListener('click', function(e){
+        if(e.target.closest('[data-sp-user]')) return;
+        openSpaceRatingDetail(this.getAttribute('data-sp-open'));
       });
     });
-    host.querySelectorAll('[data-fv-reject]').forEach(function(b){
-      b.addEventListener('click', function(){
-        openRejectModal(this.getAttribute('data-fv-reject'), this.getAttribute('data-fv-name'));
+    host.querySelectorAll('[data-sp-user]').forEach(function(el){
+      el.addEventListener('click', function(e){ e.stopPropagation();
+        if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage) AdminChunk7A.renderUserDetailPage(this.getAttribute('data-sp-user'));
       });
     });
-    host.querySelectorAll('[data-fv-user]').forEach(function(el){
-      el.addEventListener('click', function(){
-        if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage){
-          AdminChunk7A.renderUserDetailPage(this.getAttribute('data-fv-user'));
-        }
-      });
-    });
-    host.querySelectorAll('[data-fv-space]').forEach(function(el){
-      el.addEventListener('click', function(){
-        window.open('/#space-' + this.getAttribute('data-fv-space'), '_blank');
-      });
-    });
-  } catch(e){
-    host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed.</div>';
-  }
+  } catch(e){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed.</div>'; }
 }
 
-async function approveFV(id){
+async function openSpaceRatingDetail(spaceId){
+  var host = $('qr-host');
+  host.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  var ctx = (window._spCache||[]).find(function(x){ return x.space_id === spaceId; }) || {};
+  var detState = { band: 'all' };
+  host.innerHTML =
+    '<button id="sp-back" class="adm-btn ghost" style="font-size:11.5px;padding:8px 12px;margin-bottom:12px;"><i class="fa-solid fa-arrow-left"></i> Back to list</button>' +
+    '<div style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:14px;margin-bottom:12px;">' +
+      '<div style="display:flex;gap:12px;align-items:center;"><img src="' + esc(ctx.avatar||'') + '" style="width:52px;height:52px;border-radius:50%;object-fit:cover;">' +
+      '<div><div style="font-size:15px;font-weight:900;color:#fff;">' + esc(ctx.space_name || ctx.name || '') + '</div>' +
+      '<div style="font-size:11px;color:#94a3b8;">@' + esc(ctx.username||'') + ' · ' + (ctx.rating_count||0) + ' ratings</div></div>' +
+      '<div style="margin-left:auto;text-align:right;"><div style="font-size:24px;font-weight:900;color:' + ((Number(ctx.avg_score)||0) >= 8 ? '#10b981' : '#a18554') + ';">' + (Number(ctx.avg_score)||0).toFixed(1) + '</div><div style="font-size:9px;color:#64748b;">/ 10</div></div></div>' +
+    '</div>' +
+    '<div class="adm-chips" id="spd-chips" style="margin-bottom:10px;">' +
+      '<button class="adm-chip active" data-spd-band="all">All</button>' +
+      '<button class="adm-chip" data-spd-band="top">9-10</button>' +
+      '<button class="adm-chip" data-spd-band="high">7-8</button>' +
+      '<button class="adm-chip" data-spd-band="mid">4-6</button>' +
+      '<button class="adm-chip" data-spd-band="low">1-3</button>' +
+    '</div>' +
+    '<div id="spd-list"></div>';
+  $('sp-back').addEventListener('click', function(){ renderSpaceRatings(); });
+  host.querySelectorAll('[data-spd-band]').forEach(function(b){
+    b.addEventListener('click', function(){
+      detState.band = this.getAttribute('data-spd-band');
+      host.querySelectorAll('[data-spd-band]').forEach(function(x){ x.classList.remove('active'); });
+      this.classList.add('active');
+      loadSpaceRatingDetail(spaceId, detState.band);
+    });
+  });
+  loadSpaceRatingDetail(spaceId, 'all');
+}
+
+async function loadSpaceRatingDetail(spaceId, band){
+  var host = $('spd-list'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
   try {
-    var r = await sb.rpc('admin_fv_app_decide', { p_id: id, p_decision: 'approved', p_reason: null, p_steps: null });
-    if(r.error) throw r.error;
-    toast('Application approved.');
-    loadFVApps();
-    updateFvBadge();
-  } catch(e){ toast('Failed: ' + ((e && e.message) || 'unknown'), true); }
+    var r = await sb.rpc('admin_space_ratings_detail', { p_space_id: spaceId, p_band: band, p_limit: 200, p_offset: 0 });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var list = r.data || [];
+    if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;font-size:12px;">No ratings in this band.</div>'; return; }
+    var h = '';
+    list.forEach(function(x){
+      var s = x.score, col = s >= 8 ? '#10b981' : (s >= 4 ? '#a18554' : '#a16262');
+      h += '<div style="padding:12px;border-radius:10px;background:#131c30;border:1px solid #1e293b;margin-bottom:6px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<span style="font-size:13px;font-weight:900;padding:3px 10px;border-radius:10px;background:' + col + '22;color:' + col + ';">★ ' + s + ' / 10</span>' +
+          '<span style="font-size:10px;color:#64748b;">' + timeAgo(x.created_at) + '</span>' +
+        '</div>' +
+        (x.comment ? '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-top:8px;font-style:italic;">"' + esc(x.comment) + '"</div>' : '') +
+      '</div>';
+    });
+    h += '<div style="text-align:center;padding:10px;font-size:10.5px;color:#64748b;">Ratings are anonymous. Only score and comment shown.</div>';
+    host.innerHTML = h;
+  } catch(e){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed.</div>'; }
 }
 
-function openRejectModal(id, name){
+function exportSpaceCsv(){
+  var list = window._spCache || [];
+  if(!list.length){ toast('Nothing to export.', true); return; }
+  var rows = [['SPACE Name','Username','Avg Score','Rating Count','Top(9-10)','High(7-8)','Mid(4-6)','Low(1-3)','Space ID']];
+  list.forEach(function(x){
+    rows.push([x.space_name||x.name||'', x.username||'', (Number(x.avg_score)||0).toFixed(1), x.rating_count||0, x.band_top||0, x.band_high||0, x.band_mid||0, x.band_low||0, x.space_id]);
+  });
+  var csv = rows.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'space-ratings-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+  toast('CSV downloaded.');
+}
+
+/* ============================================================
+   Video Ratings sub-page
+   ============================================================ */
+var vdState = { search: '', band: 'all', sort: 'highest' };
+
+function renderVideoRatings(){
+  var host = $('qr-host');
+  host.innerHTML =
+    '<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">' +
+      '<div class="adm-chips" style="margin:0;flex-wrap:wrap;">' +
+        '<button class="adm-chip active" data-vd-band="all">All</button>' +
+        '<button class="adm-chip" data-vd-band="top">Top 9-10</button>' +
+        '<button class="adm-chip" data-vd-band="high">High 7-8</button>' +
+        '<button class="adm-chip" data-vd-band="mid">Mid 4-6</button>' +
+        '<button class="adm-chip" data-vd-band="low">Low 1-3</button>' +
+      '</div>' +
+      '<select id="vd-sort" class="adm-search" style="width:auto;margin:0;padding:8px 12px;font-size:12px;">' +
+        '<option value="highest">Highest rating</option>' +
+        '<option value="lowest">Lowest rating</option>' +
+        '<option value="most">Most ratings</option>' +
+      '</select>' +
+      '<button id="vd-csv" class="adm-btn ghost" style="font-size:11.5px;padding:8px 12px;margin-left:auto;"><i class="fa-solid fa-download"></i> CSV</button>' +
+    '</div>' +
+    '<input id="vd-search" class="adm-search" placeholder="Search creator name, username, or space…" value="' + esc(vdState.search) + '">' +
+    '<div id="vd-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+
+  host.querySelectorAll('[data-vd-band]').forEach(function(b){
+    b.addEventListener('click', function(){
+      vdState.band = this.getAttribute('data-vd-band');
+      host.querySelectorAll('[data-vd-band]').forEach(function(x){ x.classList.remove('active'); });
+      this.classList.add('active');
+      loadVideoRatings();
+    });
+  });
+  var s = $('vd-search');
+  if(s && !s._hooked){ s._hooked = true; var deb = null;
+    s.addEventListener('input', function(){ vdState.search = this.value.trim(); if(deb) clearTimeout(deb); deb = setTimeout(loadVideoRatings, 250); });
+  }
+  var so = $('vd-sort');
+  if(so && !so._hooked){ so._hooked = true; so.addEventListener('change', function(){ vdState.sort = this.value; loadVideoRatings(); }); }
+  var csv = $('vd-csv'); if(csv) csv.addEventListener('click', function(){ exportVideoCsv(); });
+
+  loadVideoRatings();
+}
+
+async function loadVideoRatings(){
+  var host = $('vd-list'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  try {
+    var r = await sb.rpc('admin_video_ratings_list', {
+      p_search: vdState.search || null, p_band: vdState.band, p_sort: vdState.sort, p_limit: 100, p_offset: 0
+    });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var list = r.data || [];
+    window._vdCache = list;
+    if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No creators match.</div>'; return; }
+    var h = '';
+    list.forEach(function(cr){
+      var avg = Number(cr.avg_score) || 0, cnt = cr.rating_count || 0, vids = cr.video_count || 0;
+      var col = cnt === 0 ? '#64748b' : (avg >= 8 ? '#10b981' : (avg >= 4 ? '#a18554' : '#a16262'));
+      var avatar = cr.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(cr.name||'U') + '&background=111827&color=34d399');
+      h += '<div data-vd-open="' + esc(cr.creator_id) + '" style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:12px;margin-bottom:8px;cursor:pointer;">';
+      h += '<div style="display:flex;gap:12px;align-items:center;">';
+      h += '<img data-vd-user="' + esc(cr.creator_id) + '" src="' + esc(avatar) + '" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;cursor:pointer;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:13.5px;font-weight:900;color:#fff;">' + esc(cr.space_name || cr.name || 'Unnamed') + '</span><span style="font-size:10.5px;color:#94a3b8;">@' + esc(cr.username||'user') + '</span></div>';
+      h += '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">' + vids + ' video' + (vids===1?'':'s') + ' · ' + cnt + ' rating' + (cnt===1?'':'s') + '</div>';
+      h += '</div>';
+      h += '<div style="text-align:right;flex-shrink:0;"><div style="font-size:20px;font-weight:900;color:' + col + ';">' + (cnt > 0 ? avg.toFixed(1) : '—') + '</div><div style="font-size:9px;color:#64748b;">/ 10</div></div>';
+      h += '</div>';
+      h += '</div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-vd-open]').forEach(function(el){
+      el.addEventListener('click', function(e){
+        if(e.target.closest('[data-vd-user]')) return;
+        openVideoCreatorDetail(this.getAttribute('data-vd-open'));
+      });
+    });
+    host.querySelectorAll('[data-vd-user]').forEach(function(el){
+      el.addEventListener('click', function(e){ e.stopPropagation();
+        if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage) AdminChunk7A.renderUserDetailPage(this.getAttribute('data-vd-user'));
+      });
+    });
+  } catch(e){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed.</div>'; }
+}
+
+async function openVideoCreatorDetail(creatorId){
+  var host = $('qr-host');
+  var ctx = (window._vdCache||[]).find(function(x){ return x.creator_id === creatorId; }) || {};
+  host.innerHTML =
+    '<button id="vd-back" class="adm-btn ghost" style="font-size:11.5px;padding:8px 12px;margin-bottom:12px;"><i class="fa-solid fa-arrow-left"></i> Back to list</button>' +
+    '<div style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:14px;margin-bottom:12px;">' +
+      '<div style="display:flex;gap:12px;align-items:center;"><img src="' + esc(ctx.avatar||'') + '" style="width:52px;height:52px;border-radius:50%;object-fit:cover;">' +
+      '<div><div style="font-size:15px;font-weight:900;color:#fff;">' + esc(ctx.space_name || ctx.name || '') + '</div>' +
+      '<div style="font-size:11px;color:#94a3b8;">@' + esc(ctx.username||'') + ' · ' + (ctx.video_count||0) + ' videos · ' + (ctx.rating_count||0) + ' ratings</div></div>' +
+      '<div style="margin-left:auto;text-align:right;"><div style="font-size:24px;font-weight:900;color:' + ((Number(ctx.avg_score)||0) >= 8 ? '#10b981' : '#a18554') + ';">' + (Number(ctx.avg_score)||0).toFixed(1) + '</div><div style="font-size:9px;color:#64748b;">/ 10</div></div></div>' +
+    '</div>' +
+    '<div style="font-size:11px;font-weight:900;color:#e2e8f0;letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">Per-video breakdown</div>' +
+    '<div id="vd-videos"><div style="text-align:center;padding:20px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+  $('vd-back').addEventListener('click', function(){ renderVideoRatings(); });
+  try {
+    var r = await sb.rpc('admin_video_ratings_by_creator', { p_creator_id: creatorId, p_limit: 100, p_offset: 0 });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){ $('vd-videos').innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;">No videos.</div>'; return; }
+    var h = '';
+    list.forEach(function(v){
+      var avg = Number(v.avg_score) || 0, cnt = v.rating_count || 0;
+      var col = cnt === 0 ? '#64748b' : (avg >= 8 ? '#10b981' : (avg >= 4 ? '#a18554' : '#a16262'));
+      h += '<div data-vd-video="' + esc(v.video_id) + '" style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:12px;margin-bottom:8px;cursor:pointer;">' +
+        '<div style="display:flex;gap:12px;align-items:center;">' +
+          '<div style="width:64px;height:44px;border-radius:8px;background:#0f172a;overflow:hidden;flex-shrink:0;">' +
+            (v.thumb_url ? '<img src="' + esc(v.thumb_url) + '" style="width:100%;height:100%;object-fit:cover;">' : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#334155;"><i class="fa-solid fa-film"></i></div>') +
+          '</div>' +
+          '<div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(v.title) + '</div>' +
+          '<div style="font-size:10.5px;color:#64748b;margin-top:2px;">' + cnt + ' rating' + (cnt===1?'':'s') + '</div></div>' +
+          '<div style="text-align:right;"><div style="font-size:18px;font-weight:900;color:' + col + ';">' + (cnt > 0 ? avg.toFixed(1) : '—') + '</div></div>' +
+        '</div>' +
+      '</div>';
+    });
+    $('vd-videos').innerHTML = h;
+    $('vd-videos').querySelectorAll('[data-vd-video]').forEach(function(el){
+      el.addEventListener('click', function(){ openVideoRatingDetail(this.getAttribute('data-vd-video')); });
+    });
+  } catch(e){ $('vd-videos').innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed.</div>'; }
+}
+
+async function openVideoRatingDetail(videoId){
   var shell = document.createElement('div');
   shell.className = 'adm-modal-overlay';
-  shell.id = 'fv-reject-modal';
-
+  shell.id = 'vd-modal';
+  shell.addEventListener('click', function(e){ if(e.target === shell) shell.remove(); });
   var inner = document.createElement('div');
   inner.className = 'adm-modal';
-  inner.style.maxWidth = '560px';
-  inner.innerHTML =
-    '<h3>Reject Application · ' + esc(name) + '</h3>' +
-    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);border-radius:8px;">Both fields are shown to the applicant. Be clear and constructive.</div>' +
-    '<div class="adm-form-row"><label>Reason for rejection (required · max 150 words)</label>' +
-      '<textarea id="fv-rej-reason" maxlength="1200" rows="5" placeholder="e.g. Channel has fewer than 5 Full Videos at 20+ min live."></textarea>' +
-      '<div id="fv-rej-reason-count" style="font-size:10px;color:#64748b;text-align:right;margin-top:4px;">0 / 150 words</div></div>' +
-    '<div class="adm-form-row"><label>Steps to Qualify (optional · max 150 words)</label>' +
-      '<textarea id="fv-rej-steps" maxlength="1200" rows="5" placeholder="e.g. 1) Publish 5 Full Videos at 20+ min live. 2) Reach 500 bonded subscribers. 3) Maintain 7.0 aggregate rating."></textarea>' +
-      '<div id="fv-rej-steps-count" style="font-size:10px;color:#64748b;text-align:right;margin-top:4px;">0 / 150 words</div></div>' +
-    '<div class="row">' +
-      '<button class="adm-btn danger" id="fv-rej-go" style="flex:1;">Reject application</button>' +
-      '<button class="adm-btn ghost" id="fv-rej-cancel">Cancel</button>' +
-    '</div>';
+  inner.style.maxWidth = '640px';
+  inner.innerHTML = '<h3>Video ratings</h3><div id="vd-modal-list" style="max-height:60vh;overflow-y:auto;">Loading…</div><div class="row"><button class="adm-btn ghost" id="vd-modal-close" style="flex:1;">Close</button></div>';
   shell.appendChild(inner);
   document.body.appendChild(shell);
-
-  function wc(t){ return t.trim() ? t.trim().split(/\s+/).length : 0; }
-  var rEl = $('fv-rej-reason'), sEl = $('fv-rej-steps');
-  var rC = $('fv-rej-reason-count'), sC = $('fv-rej-steps-count');
-  function upd(){
-    var rw = wc(rEl.value), sw = wc(sEl.value);
-    rC.textContent = rw + ' / 150 words'; rC.style.color = rw > 150 ? '#a16262' : '#64748b';
-    sC.textContent = sw + ' / 150 words'; sC.style.color = sw > 150 ? '#a16262' : '#64748b';
-  }
-  rEl.addEventListener('input', upd); sEl.addEventListener('input', upd); upd();
-
-  $('fv-rej-cancel').addEventListener('click', function(){ shell.remove(); });
-
-  $('fv-rej-go').addEventListener('click', async function(){
-    var reason = rEl.value.trim(), steps = sEl.value.trim();
-    if(wc(reason) < 3){ toast('Reason required (min 3 words).', true); return; }
-    if(wc(reason) > 150){ toast('Reason exceeds 150 words.', true); return; }
-    if(wc(steps) > 150){ toast('Steps exceed 150 words.', true); return; }
-
-    var btn = this; btn.disabled = true; btn.textContent = 'Rejecting…';
-    try {
-      var r = await sb.rpc('admin_fv_app_decide', { p_id: id, p_decision: 'rejected', p_reason: reason, p_steps: steps || null });
-      if(r.error) throw r.error;
-      toast('Application rejected.');
-      shell.remove();
-      loadFVApps();
-      updateFvBadge();
-    } catch(e){
-      toast('Failed: ' + ((e && e.message) || 'unknown'), true);
-      btn.disabled = false; btn.textContent = 'Reject application';
-    }
-  });
-}
-
-async function updateFvBadge(){
+  $('vd-modal-close').addEventListener('click', function(){ shell.remove(); });
   try {
-    var r = await sb.rpc('admin_fv_pending_count');
-    if(r.error) return;
-    var n = Number(r.data) || 0;
-    var b = document.getElementById('adm-nav-badge-fv');
-    if(b){ if(n > 0){ b.textContent = n > 99 ? '99+' : n; b.style.display = 'inline-block'; } else b.style.display = 'none'; }
-  } catch(e){}
-}
-
-function injectNavItem(){
-  var sidebar = document.getElementById('adm-sidebar');
-  if(!sidebar) return;
-  if(sidebar.querySelector('[data-nav="quality-rewards"]')) return;
-
-  var sections = sidebar.querySelectorAll('.nav-section');
-  var anchor = null;
-  for(var i = 0; i < sections.length; i++){
-    if(/Operations/i.test(sections[i].textContent)){ anchor = sections[i]; break; }
-  }
-  if(!anchor) anchor = sidebar.querySelector('.nav-section');
-  if(!anchor) return;
-
-  var next = anchor.nextElementSibling;
-  while(next && !next.classList.contains('nav-item')) next = next.nextElementSibling;
-
-  var btn = document.createElement('button');
-  btn.className = 'nav-item';
-  btn.setAttribute('data-nav', 'quality-rewards');
-  btn.innerHTML = '<i class="fa-solid fa-award"></i> Quality &amp; Rewards <span class="badge" id="adm-nav-badge-fv" style="display:none;">0</span>';
-  if(next) next.parentNode.insertBefore(btn, next);
-  else sidebar.appendChild(btn);
-
-  btn.addEventListener('click', function(){
-    Admin.currentView = 'quality-rewards';
-    document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
-      b.classList.toggle('active', b.getAttribute('data-nav') === 'quality-rewards');
+    var r = await sb.rpc('admin_video_ratings_detail', { p_video_id: videoId, p_band: null, p_limit: 200, p_offset: 0 });
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){ $('vd-modal-list').innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">No ratings.</div>'; return; }
+    var h = '';
+    list.forEach(function(x){
+      var s = x.score, col = s >= 8 ? '#10b981' : (s >= 4 ? '#a18554' : '#a16262');
+      h += '<div style="padding:12px;border-radius:10px;background:#131c30;border:1px solid #1e293b;margin-bottom:6px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<span style="font-size:13px;font-weight:900;padding:3px 10px;border-radius:10px;background:' + col + '22;color:' + col + ';">★ ' + s + ' / 10</span>' +
+          '<span style="font-size:10px;color:#64748b;">' + timeAgo(x.created_at) + '</span>' +
+        '</div>' +
+        (x.comment ? '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-top:8px;font-style:italic;">"' + esc(x.comment) + '"</div>' : '') +
+      '</div>';
     });
-    var main = document.getElementById('adm-main');
-    if(main) renderQualityRewards(main);
-  });
-
-  updateFvBadge();
+    $('vd-modal-list').innerHTML = h;
+  } catch(e){ $('vd-modal-list').innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed.</div>'; }
 }
 
-setInterval(injectNavItem, 1500);
-setTimeout(injectNavItem, 400);
-
-document.addEventListener('click', function(e){
-  var btn = e.target.closest('[data-nav="quality-rewards"]');
-  if(!btn) return;
-  e.stopImmediatePropagation();
-  e.preventDefault();
-  Admin.currentView = 'quality-rewards';
-  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
-    b.classList.toggle('active', b.getAttribute('data-nav') === 'quality-rewards');
+function exportVideoCsv(){
+  var list = window._vdCache || [];
+  if(!list.length){ toast('Nothing to export.', true); return; }
+  var rows = [['SPACE Name','Username','Avg Score','Rating Count','Video Count','Creator ID']];
+  list.forEach(function(x){
+    rows.push([x.space_name||x.name||'', x.username||'', (Number(x.avg_score)||0).toFixed(1), x.rating_count||0, x.video_count||0, x.creator_id]);
   });
-  var main = document.getElementById('adm-main');
-  if(main) renderQualityRewards(main);
-}, true);
+  var csv = rows.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'video-ratings-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+  toast('CSV downloaded.');
+}
 
-setInterval(updateFvBadge, 30000);
-
-window.AdminChunk9 = { renderQualityRewards: renderQualityRewards, renderFVApps: renderFVApps };
 
 console.log('[Admin Chunk 9] Quality & Rewards · FV Applications ready');
 })();
 </script>
+
+
 
 </body>
 </html>
