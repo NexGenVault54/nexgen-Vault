@@ -4654,7 +4654,15 @@ async function loadFVApps(){
       }
       h += '<div style="font-size:10.5px;color:#64748b;margin-top:6px;">Applied ' + timeAgo(a.applied_at) + (a.reviewed_at ? ' · Reviewed ' + timeAgo(a.reviewed_at) : '') + '</div>';
       if(st === 'rejected' && a.rejection_reason){
-        h += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.3);font-size:11.5px;color:#c9a5a5;line-height:1.55;"><b>Reason:</b> ' + esc(a.rejection_reason) + '</div>';
+        var _rid = 'fv-r-' + a.id;
+        h += '<div style="margin-top:8px;">';
+        h += '<button type="button" data-fv-reason-toggle="' + esc(_rid) + '" style="background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.3);color:#c9a5a5;font-size:11.5px;font-weight:800;padding:6px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">';
+        h += '<i class="fa-solid fa-chevron-right" id="' + esc(_rid) + '-chev" style="font-size:9px;transition:transform .2s;"></i> Rejection reason';
+        h += '</button>';
+        h += '<div id="' + esc(_rid) + '" style="display:none;margin-top:6px;padding:10px;border-radius:8px;background:rgba(161,98,98,.08);border:1px solid rgba(161,98,98,.25);font-size:11.5px;color:#c9a5a5;line-height:1.6;">';
+        h += '<b style="color:#e2e8f0;display:block;margin-bottom:4px;">Reason:</b>' + esc(a.rejection_reason);
+        if(a.steps_to_qualify) h += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(161,98,98,.25);"><b style="color:#e2e8f0;">Steps to qualify:</b><br>' + esc(a.steps_to_qualify) + '</div>';
+        h += '</div></div>';
       }
       h += '</div></div>';
 
@@ -4679,6 +4687,20 @@ async function loadFVApps(){
         openRejectModal(this.getAttribute('data-fv-reject'), this.getAttribute('data-fv-name'));
       });
     });
+
+    host.querySelectorAll('[data-fv-reason-toggle]').forEach(function(b){
+      b.addEventListener('click', function(e){
+        e.stopPropagation();
+        var id = this.getAttribute('data-fv-reason-toggle');
+        var body = document.getElementById(id);
+        var chev = document.getElementById(id + '-chev');
+        if(!body) return;
+        var isOpen = body.style.display === 'block';
+        body.style.display = isOpen ? 'none' : 'block';
+        if(chev) chev.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+      });
+    });
+
     host.querySelectorAll('[data-fv-user]').forEach(function(el){
       el.addEventListener('click', function(){
         if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage){
@@ -4707,6 +4729,9 @@ async function approveFV(id){
 }
 
 function openRejectModal(id, name){
+  window._fvRejectDrafts = window._fvRejectDrafts || {};
+  var draft = window._fvRejectDrafts[id] || { reason: '', steps: '' };
+
   var shell = document.createElement('div');
   shell.className = 'adm-modal-overlay';
   shell.id = 'fv-reject-modal';
@@ -4716,12 +4741,12 @@ function openRejectModal(id, name){
   inner.style.maxWidth = '560px';
   inner.innerHTML =
     '<h3>Reject Application · ' + esc(name) + '</h3>' +
-    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);border-radius:8px;">Both fields are shown to the applicant. Be clear and constructive.</div>' +
+    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);border-radius:8px;">Both fields are shown to the applicant. Draft is preserved if you close — reopen any time.</div>' +
     '<div class="adm-form-row"><label>Reason for rejection (required · max 150 words)</label>' +
-      '<textarea id="fv-rej-reason" maxlength="1200" rows="5" placeholder="e.g. Channel has fewer than 5 Full Videos at 20+ min live."></textarea>' +
+      '<textarea id="fv-rej-reason" maxlength="1200" rows="5" placeholder="e.g. Channel has fewer than 5 Full Videos at 20+ min live.">' + esc(draft.reason) + '</textarea>' +
       '<div id="fv-rej-reason-count" style="font-size:10px;color:#64748b;text-align:right;margin-top:4px;">0 / 150 words</div></div>' +
     '<div class="adm-form-row"><label>Steps to Qualify (optional · max 150 words)</label>' +
-      '<textarea id="fv-rej-steps" maxlength="1200" rows="5" placeholder="e.g. 1) Publish 5 Full Videos at 20+ min live. 2) Reach 500 bonded subscribers. 3) Maintain 7.0 aggregate rating."></textarea>' +
+      '<textarea id="fv-rej-steps" maxlength="1200" rows="5" placeholder="e.g. 1) Publish 5 Full Videos at 20+ min live. 2) Reach 500 bonded subscribers. 3) Maintain 7.0 aggregate rating.">' + esc(draft.steps) + '</textarea>' +
       '<div id="fv-rej-steps-count" style="font-size:10px;color:#64748b;text-align:right;margin-top:4px;">0 / 150 words</div></div>' +
     '<div class="row">' +
       '<button class="adm-btn danger" id="fv-rej-go" style="flex:1;">Reject application</button>' +
@@ -4733,14 +4758,22 @@ function openRejectModal(id, name){
   function wc(t){ return t.trim() ? t.trim().split(/\s+/).length : 0; }
   var rEl = $('fv-rej-reason'), sEl = $('fv-rej-steps');
   var rC = $('fv-rej-reason-count'), sC = $('fv-rej-steps-count');
+
+  function saveDraft(){
+    window._fvRejectDrafts[id] = { reason: rEl.value, steps: sEl.value };
+  }
   function upd(){
     var rw = wc(rEl.value), sw = wc(sEl.value);
     rC.textContent = rw + ' / 150 words'; rC.style.color = rw > 150 ? '#a16262' : '#64748b';
     sC.textContent = sw + ' / 150 words'; sC.style.color = sw > 150 ? '#a16262' : '#64748b';
+    saveDraft();
   }
   rEl.addEventListener('input', upd); sEl.addEventListener('input', upd); upd();
 
-  $('fv-rej-cancel').addEventListener('click', function(){ shell.remove(); });
+  $('fv-rej-cancel').addEventListener('click', function(){
+    saveDraft();
+    shell.remove();
+  });
 
   $('fv-rej-go').addEventListener('click', async function(){
     var reason = rEl.value.trim(), steps = sEl.value.trim();
@@ -4752,6 +4785,7 @@ function openRejectModal(id, name){
     try {
       var r = await sb.rpc('admin_fv_app_decide', { p_id: id, p_decision: 'rejected', p_reason: reason, p_steps: steps || null });
       if(r.error) throw r.error;
+      delete window._fvRejectDrafts[id];
       toast('Application rejected.');
       shell.remove();
       loadFVApps();
@@ -5689,6 +5723,82 @@ function exportBountyCsvTabs(){
 }
 
 console.log('[Admin Chunk 10] Bounty detail with 2 tabs ready');
+})();
+</script>
+
+<!-- ============================================================
+     Admin — User detail page: SPACE chip
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+if(window.__admSpaceChip) return; window.__admSpaceChip = true;
+
+/* Watch user detail page: inject "View SPACE" button */
+var _lastUserId = null;
+function injectSpaceChip(){
+  var main = document.getElementById('adm-main');
+  if(!main) return;
+  var spaceBox = main.querySelector('[data-user-space-box], [data-ud-space]');
+  if(!spaceBox){
+    /* find SPACE IDENTITY box by heading */
+    main.querySelectorAll('div').forEach(function(d){
+      var first = d.firstElementChild;
+      if(first && (first.textContent || '').trim() === 'SPACE IDENTITY'){
+        spaceBox = d;
+      }
+    });
+  }
+  if(!spaceBox) return;
+  if(spaceBox.querySelector('[data-view-space-btn]')) return;
+  var uid = spaceBox.getAttribute('data-user-space-id') || null;
+  if(!uid){
+    /* try to extract uid from URL or global */
+    uid = (window.Admin && window.Admin.currentUserId) || null;
+  }
+  if(!uid) return;
+  var btn = document.createElement('button');
+  btn.setAttribute('data-view-space-btn','1');
+  btn.type = 'button';
+  btn.style.cssText = 'margin-top:10px;width:100%;padding:10px;border-radius:9px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-weight:900;font-size:11.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;';
+  btn.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square"></i> View full SPACE';
+  btn.addEventListener('click', function(){
+    window.open('/#space-' + uid, '_blank');
+  });
+  spaceBox.appendChild(btn);
+}
+
+/* Poll only when user detail page is likely open */
+setInterval(function(){
+  if(!document.getElementById('adm-main')) return;
+  /* Only when a back-to-users button exists (detail page indicator) */
+  var detailBack = document.querySelector('#adm-u7-back, [data-ud-back], [id^="adm-ud-"]');
+  if(!detailBack) return;
+  injectSpaceChip();
+}, 1200);
+
+/* Wrap AdminChunk7A.renderUserDetailPage if available */
+function wrapDetail(){
+  if(!window.AdminChunk7A || !window.AdminChunk7A.renderUserDetailPage) return false;
+  if(window.AdminChunk7A.__spaceChipWrapped) return true;
+  var _orig = window.AdminChunk7A.renderUserDetailPage;
+  window.AdminChunk7A.renderUserDetailPage = async function(uid){
+    var r = await _orig.apply(this, arguments);
+    window.Admin = window.Admin || {};
+    window.Admin.currentUserId = uid;
+    setTimeout(function(){ try { injectSpaceChip(); } catch(e){} }, 300);
+    setTimeout(function(){ try { injectSpaceChip(); } catch(e){} }, 900);
+    return r;
+  };
+  window.AdminChunk7A.__spaceChipWrapped = true;
+  return true;
+}
+if(!wrapDetail()){
+  var iv = setInterval(function(){ if(wrapDetail()) clearInterval(iv); }, 500);
+  setTimeout(function(){ clearInterval(iv); }, 20000);
+}
+
+console.log('[Admin] User space chip ready');
 })();
 </script>
 
