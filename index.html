@@ -14113,19 +14113,19 @@ console.log('[Guides] CSF + CFAR ready');
 </script> 
 
 <!-- ============================================================
-     MEMBER DIRECTORY + DATA EXPORT
-     Paste BEFORE Section 9 comment
+     MEMBER DIRECTORY v2 + DATA EXPORT
+     Space-scoped, owner-only, global privacy.
      ============================================================ -->
 <script>
 (function(){
 'use strict';
 var Z = window.Z; if(!Z) return;
-if(Z.__zynixMemberDirectory) return; Z.__zynixMemberDirectory = true;
+if(Z.__zynixMemberDirectoryV2) return; Z.__zynixMemberDirectoryV2 = true;
 
 function esc(s){
   if(s == null) return '';
   return String(s).replace(/[&<>"']/g, function(c){
-    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
   });
 }
 function me(){ return Z.State.currentUser || null; }
@@ -14139,33 +14139,78 @@ function safeAvatar(u){
 function isOnline(p){
   if(!p || !p.last_seen_at) return false;
   var ms = Date.now() - new Date(p.last_seen_at).getTime();
-  return ms < 5 * 60 * 1000;
+  return ms >= 0 && ms < 5 * 60 * 1000;
+}
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if(s < 60) return 'just now';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
 }
 
 /* ============================================================
-   MEMBER DIRECTORY VIEW
+   RENDER — owner-only view of MY SPACE's bonded members
    ============================================================ */
 function renderMemberDirectory(){
+  var u = me();
+  if(!u){
+    return Z.emptyState({
+      icon: 'fa-solid fa-users',
+      title: 'Login to view your Space directory.',
+      cta: { label: 'Login', onclick: "Z.openAuthModal('login')" }
+    });
+  }
+
   var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
-  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+
+  /* Header */
+  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:0;">';
   h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
   h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
-  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-users" style="color:#10b981;"></i> Members</h2>';
+  h += '<h2 class="view-title" style="margin:0;font-size:16px;display:flex;align-items:center;gap:6px;">';
+  h += '<i class="fa-solid fa-users" style="color:#10b981;"></i> Member Directory</h2>';
   h += '</div>';
-  h += '<button id="mdr-hide-toggle" onclick="Z.toggleHideFromDiscovery()" title="Hide me from discovery" style="padding:7px 12px;border-radius:16px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-size:11px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-eye"></i></button>';
+  h += '<button id="mdr-hide-toggle" onclick="Z.toggleHideFromDiscovery()" ' +
+       'title="Hide me from other creators\' directories" ' +
+       'style="padding:7px 12px;border-radius:16px;border:1px solid #1e293b;' +
+       'background:#0f172a;color:#94a3b8;font-size:11px;font-weight:900;cursor:pointer;">' +
+       '<i class="fa-solid fa-eye"></i></button>';
   h += '</div>';
-  h += '<input id="mdr-search" type="text" placeholder="Search by name or @username…" style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">';
+
+  /* Purpose line */
+  h += '<div style="padding:12px 14px;border-radius:12px;background:rgba(59,130,246,.06);' +
+       'border:1px solid rgba(59,130,246,.22);font-size:11.5px;color:#cbd5e1;line-height:1.6;">' +
+       '<i class="fa-solid fa-circle-info" style="color:#60a5fa;margin-right:6px;"></i>' +
+       'People who have <b style="color:#e2e8f0;">Bonded to your SPACE</b>. ' +
+       'This is your channel\'s subscriber roster — only you can see it.</div>';
+
+  /* Search */
+  h += '<input id="mdr-search" type="text" placeholder="Search by name or @username…" ' +
+       'style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid #1e293b;' +
+       'background:#0f172a;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">';
+
+  /* Filter chips */
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
   h += '<button data-mdr-filter="all" data-active="1" class="mkt-sort-btn">All</button>';
-  h += '<button data-mdr-filter="online" class="mkt-sort-btn">Online</button>';
-  h += '<button data-mdr-filter="connected" class="mkt-sort-btn">Connected</button>';
+  h += '<button data-mdr-filter="online" class="mkt-sort-btn">Online now</button>';
+  h += '<button data-mdr-filter="recent" class="mkt-sort-btn">Recently Bonded</button>';
   h += '</div>';
-  h += '<div id="mdr-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+
+  /* List host */
+  h += '<div id="mdr-list"><div style="text-align:center;padding:30px;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;"></i></div></div>';
+
   h += '</div>';
+
   setTimeout(loadMemberDirectory, 40);
   return h;
 }
 
+/* ============================================================
+   LOAD — query space_subscriptions + profiles
+   ============================================================ */
 async function loadMemberDirectory(){
   var host = document.getElementById('mdr-list');
   if(!host) return;
@@ -14174,82 +14219,129 @@ async function loadMemberDirectory(){
   if(!u || !c) return;
 
   try {
-    var r = await c.from('profiles')
-      .select('id, name, username, avatar, profession, last_seen_at, hide_from_discovery')
-      .neq('id', u.id)
-      .eq('hide_from_discovery', false)
-      .order('last_seen_at', { ascending: false, nullsFirst: false })
-      .limit(200);
+    /* 1. Fetch active bond rows for MY space */
+    var r = await c.from('space_subscriptions')
+      .select('viewer_id, created_at, status')
+      .eq('creator_id', u.id)
+      .eq('status', 'active');
 
-    var all = r.data || [];
+    if(r.error){ console.warn('[mdr]', r.error); host.innerHTML = _errState(); return; }
+    var subs = r.data || [];
 
-    /* Connections map */
-    var connSet = {};
-    (Z.State.allConnections || []).forEach(function(cn){
-      if(cn.status === 'accepted'){
-        if(cn.requester_id === u.id) connSet[cn.recipient_id] = true;
-        if(cn.recipient_id === u.id) connSet[cn.requester_id] = true;
-      }
+    if(!subs.length){
+      host.innerHTML = Z.emptyState({
+        icon: 'fa-solid fa-users',
+        title: 'No members yet. When people Bond to your SPACE, they appear here.',
+        cta: { label: 'Back to Dashboard', onclick: "Z.showView('owner-dashboard')", soft: true }
+      });
+      return;
+    }
+
+    var viewerIds = subs.map(function(x){ return x.viewer_id; }).filter(Boolean);
+    var bondMap = {};
+    subs.forEach(function(s){ if(s.viewer_id) bondMap[s.viewer_id] = s.created_at; });
+
+    /* 2. Fetch profiles for those viewers */
+    var pr = await c.from('profiles')
+      .select('id, name, username, avatar, profession, last_seen_at, package, hide_from_member_directory')
+      .in('id', viewerIds);
+
+    if(pr.error){ console.warn('[mdr] profiles', pr.error); host.innerHTML = _errState(); return; }
+    var profiles = pr.data || [];
+
+    /* 3. Global privacy: filter out anyone with hide_from_member_directory = true */
+    profiles = profiles.filter(function(p){
+      return p.hide_from_member_directory !== true;
     });
 
-    Z._mdrAll = all;
-    Z._mdrConnSet = connSet;
+    /* 4. Attach bond date + sort */
+    profiles.forEach(function(p){ p._bonded_at = bondMap[p.id]; });
+    profiles.sort(function(a, b){
+      return new Date(b._bonded_at || 0) - new Date(a._bonded_at || 0);
+    });
+
+    Z._mdrAll = profiles;
+    Z._mdrViewerIds = viewerIds;
+    Z._mdrFilter = Z._mdrFilter || 'all';
+    Z._mdrSearch = Z._mdrSearch || '';
+
     paintMembers();
   } catch(e){
-    host.innerHTML = '<div style="text-align:center;padding:30px;color:#a16262;font-size:12px;">Could not load members.</div>';
+    console.warn('[mdr] load', e);
+    host.innerHTML = _errState();
   }
 }
 
+function _errState(){
+  return '<div style="text-align:center;padding:30px;color:#a16262;font-size:12px;">Could not load.</div>';
+}
+
+/* ============================================================
+   PAINT
+   ============================================================ */
 function paintMembers(){
   var host = document.getElementById('mdr-list');
   if(!host) return;
   var all = Z._mdrAll || [];
-  var connSet = Z._mdrConnSet || {};
-  var qEl = document.getElementById('mdr-search');
-  var q = qEl ? (qEl.value || '').toLowerCase().trim() : '';
-  var activeBtn = document.querySelector('[data-mdr-filter][data-active="1"]');
-  var filter = activeBtn ? activeBtn.getAttribute('data-mdr-filter') : 'all';
+  var filter = Z._mdrFilter || 'all';
+  var q = (Z._mdrSearch || '').toLowerCase().trim();
 
   var list = all.filter(function(p){
     if(filter === 'online' && !isOnline(p)) return false;
-    if(filter === 'connected' && !connSet[p.id]) return false;
     if(q){
-      var nm = (p.name || '').toLowerCase();
-      var un = (p.username || '').toLowerCase();
+      var nm = String(p.name || '').toLowerCase();
+      var un = String(p.username || '').toLowerCase();
       if(nm.indexOf(q) === -1 && un.indexOf(q) === -1) return false;
     }
     return true;
   });
 
-  /* Sort: online first, then alphabetical */
-  list.sort(function(a, b){
-    var ao = isOnline(a) ? 1 : 0;
-    var bo = isOnline(b) ? 1 : 0;
-    if(ao !== bo) return bo - ao;
-    return (a.name || '').localeCompare(b.name || '');
-  });
+  if(filter === 'online'){
+    list.sort(function(a, b){ return (isOnline(b) ? 1 : 0) - (isOnline(a) ? 1 : 0); });
+  }
 
   if(!list.length){
-    host.innerHTML = '<div style="padding:40px;text-align:center;color:#94a3b8;font-size:12px;">No members match.</div>';
+    host.innerHTML = '<div style="padding:30px 20px;border-radius:12px;background:#111827;' +
+      'border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">' +
+      (q ? 'No members match your search.' :
+       filter === 'online' ? 'No members online right now.' :
+       'No members yet.') + '</div>';
     return;
   }
 
-  var h = '';
+  var h = '<div style="font-size:10.5px;color:#64748b;font-weight:800;' +
+    'text-transform:uppercase;letter-spacing:.5px;padding:0 4px;">' +
+    list.length + ' member' + (list.length === 1 ? '' : 's') + '</div>';
+
+  h += '<div style="display:flex;flex-direction:column;gap:8px;">';
   list.forEach(function(p){
     var online = isOnline(p);
-    var dot = online ? '<span style="position:absolute;bottom:2px;right:2px;width:12px;height:12px;border-radius:50%;background:#10b981;border:2px solid #0f172a;"></span>' : '';
-    h += '<div data-mdr-open="' + esc(p.id) + '" style="display:flex;gap:12px;align-items:center;padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;margin-bottom:8px;cursor:pointer;">';
+    var dot = online
+      ? '<span style="position:absolute;bottom:2px;right:2px;width:11px;height:11px;' +
+        'border-radius:50%;background:#10b981;border:2px solid #0f172a;' +
+        'box-shadow:0 0 6px rgba(16,185,129,.8);"></span>'
+      : '';
+    h += '<div data-mdr-open="' + esc(p.id) + '" ' +
+         'style="display:flex;gap:12px;align-items:center;padding:12px;' +
+         'border-radius:12px;background:#111827;border:1px solid #1e293b;cursor:pointer;">';
     h += '<div style="position:relative;width:44px;height:44px;flex-shrink:0;">';
-    h += '<img src="' + esc(safeAvatar(p)) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+    h += '<img src="' + esc(safeAvatar(p)) + '" style="width:100%;height:100%;' +
+         'border-radius:50%;object-fit:cover;">';
     h += dot;
     h += '</div>';
     h += '<div style="flex:1;min-width:0;">';
-    h += '<div style="font-size:13px;font-weight:800;color:#fff;">' + esc(p.name || p.username || 'User') + '</div>';
-    h += '<div style="font-size:10.5px;color:#94a3b8;">@' + esc(p.username || 'user') + (p.profession ? (' · ' + esc(p.profession)) : '') + '</div>';
+    h += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;' +
+         'text-overflow:ellipsis;white-space:nowrap;">' +
+         esc(p.name || p.username || 'User') + '</div>';
+    h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">' +
+         '@' + esc(p.username || 'user') +
+         (p.profession ? (' · ' + esc(p.profession)) : '') +
+         ' · Bonded ' + timeAgo(p._bonded_at) + '</div>';
     h += '</div>';
-    h += '<button onclick="event.stopPropagation();Z.openDMWith(\'' + esc(p.id) + '\')" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-weight:900;font-size:11px;cursor:pointer;"><i class="fa-solid fa-comment"></i></button>';
+    h += '<i class="fa-solid fa-chevron-right" style="color:#475569;font-size:12px;"></i>';
     h += '</div>';
   });
+  h += '</div>';
   host.innerHTML = h;
 
   host.querySelectorAll('[data-mdr-open]').forEach(function(el){
@@ -14259,9 +14351,14 @@ function paintMembers(){
   });
 }
 
-/* Filter and search wiring */
+/* ============================================================
+   WIRING — search + filter chips
+   ============================================================ */
 document.addEventListener('input', function(e){
-  if(e.target && e.target.id === 'mdr-search') paintMembers();
+  if(e.target && e.target.id === 'mdr-search'){
+    Z._mdrSearch = e.target.value || '';
+    if(Z.State.currentView === 'members') paintMembers();
+  }
 });
 document.addEventListener('click', function(e){
   var b = e.target.closest('[data-mdr-filter]');
@@ -14269,11 +14366,12 @@ document.addEventListener('click', function(e){
   if(Z.State.currentView !== 'members') return;
   document.querySelectorAll('[data-mdr-filter]').forEach(function(x){ x.removeAttribute('data-active'); });
   b.setAttribute('data-active','1');
+  Z._mdrFilter = b.getAttribute('data-mdr-filter');
   paintMembers();
 });
 
 /* ============================================================
-   HIDE FROM DISCOVERY
+   HIDE-FROM-DIRECTORY TOGGLE (unchanged behaviour)
    ============================================================ */
 Z.toggleHideFromDiscovery = async function(){
   var u = me();
@@ -14284,16 +14382,14 @@ Z.toggleHideFromDiscovery = async function(){
     var r = await c.from('profiles').update({ hide_from_discovery: next }).eq('id', u.id);
     if(r.error) throw r.error;
     if(Z.State.currentUser) Z.State.currentUser.hide_from_discovery = next;
-    /* Update button */
     var btn = document.getElementById('mdr-hide-toggle');
     if(btn){
       btn.style.background = next ? 'rgba(161,98,98,.08)' : '#0f172a';
       btn.style.borderColor = next ? 'rgba(161,98,98,.4)' : '#1e293b';
       btn.style.color = next ? '#c9a5a5' : '#94a3b8';
       btn.innerHTML = next
-        ? '<i class="fa-solid fa-eye-slash"></i> Hidden'
+        ? '<i class="fa-solid fa-eye-slash"></i>'
         : '<i class="fa-solid fa-eye"></i>';
-      btn.title = next ? 'You are hidden from discovery' : 'You are visible in discovery';
     }
     toast(next ? 'Hidden from discovery.' : 'Visible in discovery.');
   } catch(e){
@@ -14301,7 +14397,9 @@ Z.toggleHideFromDiscovery = async function(){
   }
 };
 
-/* Paint hide button state on load */
+/* ============================================================
+   ROUTER HOOK — 'members' view
+   ============================================================ */
 var _prevRenderV = Z.renderView;
 Z.renderView = function(view, param){
   if(view === 'members'){
@@ -14315,7 +14413,7 @@ Z.renderView = function(view, param){
         btn.style.borderColor = next ? 'rgba(161,98,98,.4)' : '#1e293b';
         btn.style.color = next ? '#c9a5a5' : '#94a3b8';
         btn.innerHTML = next
-          ? '<i class="fa-solid fa-eye-slash"></i> Hidden'
+          ? '<i class="fa-solid fa-eye-slash"></i>'
           : '<i class="fa-solid fa-eye"></i>';
       }
     }, 200);
@@ -14325,7 +14423,7 @@ Z.renderView = function(view, param){
 };
 
 /* ============================================================
-   DATA EXPORT (GDPR) — client-side JSON download
+   DATA EXPORT (GDPR) — unchanged
    ============================================================ */
 Z.exportMyData = async function(){
   var u = me();
@@ -14347,38 +14445,30 @@ Z.exportMyData = async function(){
       legal_acceptance: { terms: true, privacy: true }
     };
 
-    /* Profile (strip admin-only fields) */
     var pr = await c.from('profiles').select('id,name,username,avatar,bio,profession,package,tier,wallet_cash,wallet_bounty,wallet_total,referral_code,created_at,space_data').eq('id', u.id).maybeSingle();
     if(pr.data){
       var p = Object.assign({}, pr.data);
-      /* Strip admin/mod notes if present */
       delete p.is_admin;
       delete p.moderation_notes;
       delete p.flags;
       out.profile = p;
     }
 
-    /* Posts */
     var ps = await c.from('posts').select('id,content,media_url,media_type,created_at,views,shares').eq('author_id', u.id).limit(500);
     out.posts = ps.data || [];
 
-    /* Sparks */
     var sp = await c.from('sparks').select('id,title,caption,video_url,type,created_at,views,shares').eq('author_id', u.id).limit(500);
     out.sparks = sp.data || [];
 
-    /* Comments */
     var cm = await c.from('comments').select('id,post_id,spark_id,text,created_at').eq('author_id', u.id).limit(500);
     out.comments = cm.data || [];
 
-    /* Wallet */
     var wt = await c.from('wallet_transactions').select('*').eq('user_id', u.id).limit(1000);
     out.wallet_transactions = wt.data || [];
 
-    /* Connections */
     var cn = await c.from('connection_requests').select('*').or('requester_id.eq.' + u.id + ',recipient_id.eq.' + u.id);
     out.connections = cn.data || [];
 
-    /* Download as JSON */
     var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -14396,9 +14486,9 @@ Z.exportMyData = async function(){
   }
 };
 
-console.log('[Members + Export] ready');
+console.log('[Members v2 + Export] ready · owner-only · space-scoped');
 })();
-</script> 
+</script>
 
 <!-- ============================================================
      ANALYTICS DASHBOARD
@@ -44160,7 +44250,14 @@ function renderAll(u, bondCount){
   var tier        = tierLabel(u.package);
   var adBudget    = Number(u.ad_budget || 0);
 
-  var h = '<div class="zv3-root">';
+
+    var h = '<div class="zv3-root">' +
+    '<div class="zv4-topbar">' +
+      '<button type="button" class="zv4-tb-back" title="Back" onclick="Z.zv4BackToSpace()"><i class="fa-solid fa-arrow-left"></i></button>' +
+      '<button type="button" class="zv4-tb-book" title="Dashboard guide" onclick="Z.openOwnerDashboardGuide()"><i class="fa-solid fa-book-open"></i></button>' +
+      '<button type="button" class="zv4-tb-x" title="Close dashboard" onclick="Z.zv4BackToSpace()"><i class="fa-solid fa-xmark"></i></button>' +
+    '</div>';
+
 
   /* ---- SPACE Identity (top, back-left, cross-right, avatar small) ---- */
   h += '<div class="zv3-fold" id="zv3-space-fold">';
@@ -44599,19 +44696,7 @@ function applySpaceHeaderSwap(){
       dashBtn.innerHTML = '<i class="' + wantIcon + '"></i> ' + wantText;
     }
   }
-  if(!head.querySelector('[data-zv5g-help]')){
-    var actions = head.querySelector('.sp5-actions');
-    if(actions){
-      var help = document.createElement('button');
-      help.setAttribute('data-zv5g-help','1');
-      help.setAttribute('onclick', 'Z.openOwnerDashboardGuide()');
-      help.setAttribute('title', 'Dashboard guide');
-      help.className = 'sp5-act';
-      help.style.cssText = 'width:34px;height:34px;font-size:14px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;';
-      help.innerHTML = '?';
-      actions.insertBefore(help, actions.firstChild);
-    }
-  }
+
 }
 var _prevSp5Header = Z.sp5RenderHeader;
 if(typeof _prevSp5Header === 'function'){
@@ -44737,25 +44822,6 @@ function fmtNum(n){
 }
 
 /* ============================================================
-   A — BUILD TOPBAR (once per .zv3-root)
-   ============================================================ */
-function buildTopbar(){
-  var bar = document.createElement('div');
-  bar.className = 'zv4-topbar';
-  bar.innerHTML =
-    '<button type="button" class="zv4-tb-back" title="Back" ' +
-      'onclick="Z.zv4BackToSpace()">' +
-      '<i class="fa-solid fa-arrow-left"></i></button>' +
-    '<button type="button" class="zv4-tb-book" title="Dashboard guide" ' +
-      'onclick="Z.openOwnerDashboardGuide()">' +
-      '<i class="fa-solid fa-book-open"></i></button>' +
-    '<button type="button" class="zv4-tb-x" title="Close dashboard" ' +
-      'onclick="Z.zv4BackToSpace()">' +
-      '<i class="fa-solid fa-xmark"></i></button>';
-  return bar;
-}
-
-/* ============================================================
    OBSERVER #1 — app-container
    Synchronously keeps topbar first + removes old fold-hdr buttons
    + kills [data-zv5g-help] the instant v5g adds it.
@@ -44767,15 +44833,6 @@ var _killedCount = { topbar: 0, foldBtns: 0, help: 0 };
 function cleanDashboard(root){
   if(!root) return;
 
-  /* Ensure topbar exists and is first child */
-  var bar = root.querySelector('.zv4-topbar');
-  if(!bar){
-    bar = buildTopbar();
-    root.insertBefore(bar, root.firstChild);
-    _killedCount.topbar++;
-  } else if(root.firstChild !== bar){
-    root.insertBefore(bar, root.firstChild);
-  }
 
   /* Remove old fold header back/X buttons */
   root.querySelectorAll('.zv3-fold-hdr-back').forEach(function(b){
