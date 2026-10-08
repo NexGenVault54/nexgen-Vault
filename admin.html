@@ -4002,5 +4002,520 @@ console.log('[Admin Chunk 7F] Tier Analytics + Cohorts ready');
 })();
 </script>
 
+<!-- ============================================================
+     ZYNIX Admin — Chunk 8
+     Ads Manager v2 (redesign · file upload · source toggle · audience)
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Admin = window.Admin; if(!Admin) return;
+if(Admin.__chunk8AdsManager) return; Admin.__chunk8AdsManager = true;
+
+var sb = window.supabase.createClient(
+  'https://ipypwqajsfxrdzlxfnlr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+);
+
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  if(s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function money(n){ return '$' + (Number(n)||0).toFixed(2); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  if(s < 2592000) return Math.floor(s/86400) + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+function toast(m,e){ if(window.AdminToaster) window.AdminToaster(m,e); }
+
+var adsState = { list: [], filter: 'all', profiles: {} };
+
+async function renderAdsManagerV2(main){
+  main.innerHTML =
+    '<div class="adm-page-title">Ads Manager</div>' +
+    '<div class="adm-page-sub">Create platform ads (free, ZYNIX-sponsored) or advertiser-style ads. Platform ads are visible to everyone including logged-out users.</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
+      '<button id="adm-ad-new" style="padding:10px 16px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;"><i class="fa-solid fa-plus"></i> New ad</button>' +
+      '<button id="adm-ad-refresh" class="adm-btn ghost" style="font-size:12px;padding:10px 14px;"><i class="fa-solid fa-rotate"></i> Refresh</button>' +
+    '</div>' +
+    '<div class="adm-chips" style="margin-bottom:14px;">' +
+      '<button class="adm-chip active" data-ad-filter="all">All</button>' +
+      '<button class="adm-chip" data-ad-filter="platform">Platform</button>' +
+      '<button class="adm-chip" data-ad-filter="advertiser">Advertiser</button>' +
+    '</div>' +
+    '<div id="adm-ads-host"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+
+  $('adm-ad-new').addEventListener('click', function(){ adsMgrOpenEditor(null); });
+  $('adm-ad-refresh').addEventListener('click', adsMgrLoad);
+
+  document.querySelectorAll('[data-ad-filter]').forEach(function(b){
+    if(b._hooked) return; b._hooked = true;
+    b.addEventListener('click', function(){
+      adsState.filter = this.getAttribute('data-ad-filter');
+      document.querySelectorAll('[data-ad-filter]').forEach(function(x){ x.classList.remove('active'); });
+      this.classList.add('active');
+      adsMgrPaint();
+    });
+  });
+
+  adsMgrLoad();
+}
+
+async function adsMgrLoad(){
+  var host = $('adm-ads-host'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  try {
+    var r = await sb.rpc('admin_ads_list', { p_limit: 200 });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    adsState.list = r.data || [];
+
+    var ids = [];
+    adsState.list.forEach(function(a){
+      var oid = a.owner_id || a.advertiser_id || a.created_by;
+      if(oid && ids.indexOf(oid) === -1) ids.push(oid);
+    });
+    if(ids.length){
+      try {
+        var pr = await sb.from('profiles').select('id,name,username,avatar,email,package,wallet_cash,wallet_bounty,space_data').in('id', ids);
+        if(!pr.error && pr.data){
+          pr.data.forEach(function(p){ adsState.profiles[p.id] = p; });
+        }
+      } catch(e){}
+    }
+    adsMgrPaint();
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed.</div>';
+  }
+}
+
+function adsMgrPaint(){
+  var host = $('adm-ads-host'); if(!host) return;
+  var list = adsState.list;
+  if(adsState.filter !== 'all'){
+    list = list.filter(function(a){ return (a.source || 'advertiser') === adsState.filter; });
+  }
+  if(!list.length){
+    host.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No ads in this filter.</div>';
+    return;
+  }
+
+  var h = '';
+  list.forEach(function(a){
+    var src = a.source || 'advertiser';
+    var srcColor = src === 'platform' ? '#fbbf24' : '#10b981';
+    var srcLabel = src === 'platform' ? 'PLATFORM' : 'ADVERTISER';
+
+    var spent = Number(a.total_spent) || 0;
+    var budget = Number(a.monthly_budget) || 0;
+    var remaining = Math.max(0, budget - spent);
+    var pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
+    var isExhausted = budget > 0 && remaining <= 0.01;
+
+    var statusCol, statusLbl;
+    if(!a.is_active){ statusCol = '#94a3b8'; statusLbl = 'PAUSED'; }
+    else if(isExhausted){ statusCol = '#a16262'; statusLbl = 'EXHAUSTED'; }
+    else { statusCol = '#10b981'; statusLbl = 'ACTIVE'; }
+
+    h += '<div style="background:#131c30;border:1px solid #1e293b;border-radius:12px;padding:14px;margin-bottom:10px;">';
+    h += '<div style="display:flex;gap:12px;">';
+    var thumbHtml = a.media_url
+      ? (a.media_type === 'video'
+          ? '<video src="' + esc(a.media_url) + '" muted style="width:80px;height:80px;object-fit:cover;border-radius:10px;"></video>'
+          : '<img src="' + esc(a.media_url) + '" style="width:80px;height:80px;object-fit:cover;border-radius:10px;">')
+      : '<div style="width:80px;height:80px;border-radius:10px;background:#0f172a;display:flex;align-items:center;justify-content:center;color:#334155;"><i class="fa-solid fa-image" style="font-size:22px;"></i></div>';
+    h += thumbHtml;
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+    h += '<span style="font-size:13px;font-weight:900;color:#fff;">' + esc(a.internal_title || a.heading || 'Untitled') + '</span>';
+    h += '<span style="font-size:9px;font-weight:900;padding:2px 8px;border-radius:8px;background:' + srcColor + '22;color:' + srcColor + ';">' + srcLabel + '</span>';
+    h += '<span style="font-size:9px;font-weight:900;padding:2px 8px;border-radius:8px;background:' + statusCol + '22;color:' + statusCol + ';">' + statusLbl + '</span>';
+    h += '</div>';
+    if(a.heading) h += '<div style="font-size:11px;color:#cbd5e1;margin-top:4px;">' + esc(a.heading) + '</div>';
+
+    var ownerId = a.owner_id || a.advertiser_id || a.created_by;
+    if(src === 'advertiser' && ownerId){
+      var p = adsState.profiles[ownerId];
+      var disp = p ? (p.space_data && p.space_data.name ? p.space_data.name + ' · @' + (p.username || 'user') : (p.name || p.username || 'Advertiser')) : 'Advertiser';
+      h += '<div style="font-size:10.5px;color:#10b981;margin-top:6px;cursor:pointer;font-weight:800;" data-ad-owner="' + esc(ownerId) + '"><i class="fa-solid fa-user"></i> ' + esc(disp) + '</div>';
+    } else if(src === 'platform'){
+      h += '<div style="font-size:10.5px;color:#fbbf24;margin-top:6px;font-weight:800;"><i class="fa-solid fa-crown"></i> ZYNIX Platform Ad</div>';
+    }
+
+    h += '<div style="font-size:10px;color:#64748b;margin-top:4px;">' + (a.total_views||0) + ' views · ' + (budget > 0 ? (money(spent) + ' / ' + money(budget)) : 'No budget') + ' · ' + timeAgo(a.created_at) + '</div>';
+
+    if(budget > 0){
+      h += '<div style="height:5px;border-radius:3px;background:rgba(0,0,0,.35);overflow:hidden;margin-top:8px;">';
+      h += '<div style="height:100%;width:' + pct + '%;background:' + (isExhausted ? '#a16262' : 'linear-gradient(90deg,#10b981,#3b82f6)') + ';"></div>';
+      h += '</div>';
+    }
+    h += '</div></div>';
+
+    h += '<div style="display:flex;gap:6px;margin-top:12px;">';
+    h += '<button class="adm-btn ghost" data-ad-edit="' + esc(a.id) + '" style="flex:1;font-size:11.5px;padding:9px;"><i class="fa-solid fa-pen"></i> Edit</button>';
+    h += '<button class="adm-btn ghost" data-ad-toggle="' + esc(a.id) + '" data-ad-active="' + (a.is_active?'1':'0') + '" style="flex:1;font-size:11.5px;padding:9px;"><i class="fa-solid fa-' + (a.is_active?'pause':'play') + '"></i> ' + (a.is_active?'Pause':'Resume') + '</button>';
+    h += '<button class="adm-btn danger" data-ad-del="' + esc(a.id) + '" data-ad-title="' + esc(a.internal_title || 'Untitled') + '" style="padding:9px 14px;font-size:11.5px;"><i class="fa-solid fa-trash"></i></button>';
+    h += '</div>';
+    h += '</div>';
+  });
+  host.innerHTML = h;
+
+  host.querySelectorAll('[data-ad-edit]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var id = this.getAttribute('data-ad-edit');
+      var ad = adsState.list.find(function(x){ return x.id === id; });
+      if(ad) adsMgrOpenEditor(ad);
+    });
+  });
+  host.querySelectorAll('[data-ad-toggle]').forEach(function(b){
+    b.addEventListener('click', function(){ adsMgrToggle(this.getAttribute('data-ad-toggle'), this.getAttribute('data-ad-active') === '1'); });
+  });
+  host.querySelectorAll('[data-ad-del]').forEach(function(b){
+    b.addEventListener('click', function(){ adsMgrDelete(this.getAttribute('data-ad-del'), this.getAttribute('data-ad-title')); });
+  });
+  host.querySelectorAll('[data-ad-owner]').forEach(function(el){
+    el.addEventListener('click', function(){
+      var uid = this.getAttribute('data-ad-owner');
+      if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage){
+        AdminChunk7A.renderUserDetailPage(uid);
+      }
+    });
+  });
+}
+
+function adsMgrOpenEditor(ad){
+  var isEdit = !!ad;
+  var d = ad || {
+    internal_title:'', heading:'', subtitle:'', cta:'',
+    media_type:'', media_url:'',
+    monthly_budget:null, is_active:true,
+    source:'platform', target_audience:'all'
+  };
+  var src = d.source || 'platform';
+  var aud = d.target_audience || (src === 'platform' ? 'all' : 'eligible_only');
+
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'adm-ad-editor';
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '560px';
+
+  var h = '';
+  h += '<h3>' + (isEdit ? 'Edit ad' : 'New ad') + '</h3>';
+
+  if(!isEdit){
+    h += '<div class="adm-form-row">' +
+      '<label>Mode</label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+        '<button type="button" data-src-btn="platform" class="adm-btn" style="padding:12px;font-size:12px;border:1px solid ' + (src==='platform'?'#fbbf24':'#1e293b') + ';background:' + (src==='platform'?'rgba(251,191,36,.12)':'transparent') + ';color:' + (src==='platform'?'#fbbf24':'#94a3b8') + ';">' +
+          '<i class="fa-solid fa-crown"></i><br><b>Platform</b><br><span style="font-size:10px;opacity:.75;">Free · no budget</span>' +
+        '</button>' +
+        '<button type="button" data-src-btn="advertiser" class="adm-btn" style="padding:12px;font-size:12px;border:1px solid ' + (src==='advertiser'?'#10b981':'#1e293b') + ';background:' + (src==='advertiser'?'rgba(16,185,129,.12)':'transparent') + ';color:' + (src==='advertiser'?'#10b981':'#94a3b8') + ';">' +
+          '<i class="fa-solid fa-bullhorn"></i><br><b>Advertiser</b><br><span style="font-size:10px;opacity:.75;">Paid · budget required</span>' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  h += '<div class="adm-form-row"><label>Audience</label>' +
+    '<select id="adm-adv-aud">' +
+      '<option value="all"' + (aud === 'all' ? ' selected' : '') + '>Everyone (including logged-out users)</option>' +
+      '<option value="eligible_only"' + (aud === 'eligible_only' ? ' selected' : '') + '>Eligible earners only</option>' +
+    '</select></div>';
+
+  h += '<div class="adm-form-row"><label>Internal title (admin only)</label>' +
+    '<input id="adm-adv-t" maxlength="80" value="' + esc(d.internal_title || '') + '" placeholder="e.g. Summer promo"></div>';
+
+  h += '<div class="adm-form-row"><label>Heading</label>' +
+    '<input id="adm-adv-h" maxlength="60" value="' + esc(d.heading || '') + '" placeholder="Shown on ad"></div>';
+
+  h += '<div class="adm-form-row"><label>Subtitle</label>' +
+    '<input id="adm-adv-s" maxlength="100" value="' + esc(d.subtitle || '') + '" placeholder="Supporting line"></div>';
+
+  h += '<div class="adm-form-row"><label>CTA label (optional)</label>' +
+    '<input id="adm-adv-c" maxlength="30" value="' + esc(d.cta || '') + '" placeholder="e.g. Shop now"></div>';
+
+  h += '<div class="adm-form-row">' +
+    '<label>Media (image · or video max 10s)</label>' +
+    '<input type="file" id="adm-adv-file" accept="image/*,video/*" style="display:none;">' +
+    '<button type="button" id="adm-adv-pick" class="adm-btn ghost" style="width:100%;font-size:12px;padding:10px;"><i class="fa-solid fa-cloud-arrow-up"></i> Choose file</button>' +
+    '<div id="adm-adv-preview" style="margin-top:10px;height:150px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;overflow:hidden;display:flex;align-items:center;justify-content:center;background-size:cover;background-position:center;"></div>' +
+  '</div>';
+
+  h += '<div class="adm-form-row" id="adm-adv-budget-row" style="' + (src === 'advertiser' || isEdit ? '' : 'display:none;') + '">' +
+    '<label>Budget (USD)</label>' +
+    '<input id="adm-adv-b" type="number" min="0" step="1" value="' + (d.monthly_budget || '') + '" placeholder="e.g. 50">' +
+    '<div style="font-size:10.5px;color:#94a3b8;margin-top:6px;">For admin-created ads, no wallet is charged.</div>' +
+  '</div>';
+
+  h += '<div class="row">' +
+    '<button class="adm-btn primary" id="adm-adv-save" style="flex:1;">' + (isEdit ? 'Save changes' : 'Create ad') + '</button>' +
+    '<button class="adm-btn ghost" id="adm-adv-cancel">Cancel</button>' +
+  '</div>';
+
+  inner.innerHTML = h;
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  if(!isEdit){
+    shell.querySelectorAll('[data-src-btn]').forEach(function(b){
+      b.addEventListener('click', function(){
+        src = this.getAttribute('data-src-btn');
+        shell.querySelectorAll('[data-src-btn]').forEach(function(x){
+          var isOn = x.getAttribute('data-src-btn') === src;
+          var col = x.getAttribute('data-src-btn') === 'platform' ? '#fbbf24' : '#10b981';
+          x.style.borderColor = isOn ? col : '#1e293b';
+          x.style.background = isOn ? col + '22' : 'transparent';
+          x.style.color = isOn ? col : '#94a3b8';
+        });
+        var budgetRow = $('adm-adv-budget-row');
+        if(budgetRow) budgetRow.style.display = (src === 'advertiser') ? '' : 'none';
+        var audSel = $('adm-adv-aud');
+        if(audSel) audSel.value = (src === 'platform') ? 'all' : 'eligible_only';
+      });
+    });
+  }
+
+  var mediaFile = null;
+  var preview = $('adm-adv-preview');
+
+  function paintPreview(){
+    if(mediaFile){
+      var url = URL.createObjectURL(mediaFile);
+      var isVid = mediaFile.type.indexOf('video/') === 0;
+      if(isVid){
+        preview.style.backgroundImage = 'none';
+        preview.innerHTML = '<video src="' + url + '" controls muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
+      } else {
+        preview.innerHTML = '';
+        preview.style.backgroundImage = 'url(' + url + ')';
+      }
+    } else if(d.media_url){
+      if(d.media_type === 'video'){
+        preview.innerHTML = '<video src="' + esc(d.media_url) + '" controls muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
+      } else {
+        preview.style.backgroundImage = 'url(' + esc(d.media_url) + ')';
+      }
+    } else {
+      preview.style.backgroundImage = 'none';
+      preview.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
+    }
+  }
+  paintPreview();
+
+  $('adm-adv-pick').addEventListener('click', function(){ $('adm-adv-file').click(); });
+  $('adm-adv-file').addEventListener('change', function(){
+    var f = this.files && this.files[0];
+    if(!f) return;
+    if(f.size > 100*1024*1024){ toast('Under 100 MB.', true); this.value = ''; return; }
+    if(f.type.indexOf('video/') === 0){
+      var url = URL.createObjectURL(f);
+      var v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = function(){
+        var dur = v.duration || 0;
+        URL.revokeObjectURL(url);
+        if(dur > 10.5){ toast('Video max 10 seconds.', true); $('adm-adv-file').value = ''; return; }
+        mediaFile = f;
+        paintPreview();
+      };
+      v.onerror = function(){ URL.revokeObjectURL(url); toast('Could not read video.', true); };
+      v.src = url;
+    } else {
+      mediaFile = f;
+      paintPreview();
+    }
+  });
+
+  $('adm-adv-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  $('adm-adv-save').addEventListener('click', async function(){
+    var btn = this;
+    var internal_title = ($('adm-adv-t').value || '').trim();
+    var heading = ($('adm-adv-h').value || '').trim();
+    var subtitle = ($('adm-adv-s').value || '').trim();
+    var cta = ($('adm-adv-c').value || '').trim();
+    var audience = $('adm-adv-aud').value;
+    var budgetRaw = $('adm-adv-b').value;
+    var budget = budgetRaw === '' ? null : parseFloat(budgetRaw);
+
+    if(internal_title.length < 2){ toast('Internal title required.', true); return; }
+    if(src === 'advertiser' && (!budget || budget < 1)){
+      toast('Advertiser mode requires budget ≥ $1.', true);
+      return;
+    }
+
+    var mediaUrl = d.media_url || '';
+    var mediaType = d.media_type || '';
+
+    btn.disabled = true;
+    btn.textContent = mediaFile ? 'Uploading…' : 'Saving…';
+
+    try {
+      if(mediaFile){
+        var uploaded = await adsMgrUploadMedia(mediaFile);
+        if(!uploaded) throw new Error('upload failed');
+        mediaUrl = uploaded;
+        mediaType = mediaFile.type.indexOf('video/') === 0 ? 'video' : 'image';
+      }
+
+      if(isEdit){
+        var r = await sb.rpc('admin_ad_update', {
+          p_ad_id: ad.id,
+          p_internal_title: internal_title,
+          p_heading: heading,
+          p_subtitle: subtitle,
+          p_cta: cta,
+          p_media_type: mediaType,
+          p_media_url: mediaUrl,
+          p_bg_id: 'deep-blue',
+          p_wp_id: '',
+          p_font_id: 'display',
+          p_monthly_budget: ad.monthly_budget || null,
+          p_is_active: ad.is_active !== false,
+          p_target_audience: audience
+        });
+        if(r.error) throw r.error;
+        toast('Ad updated.');
+      } else {
+        var r2 = await sb.rpc('admin_ad_create', {
+          p_internal_title: internal_title,
+          p_heading: heading,
+          p_subtitle: subtitle,
+          p_cta: cta,
+          p_media_type: mediaType,
+          p_media_url: mediaUrl,
+          p_bg_id: 'deep-blue',
+          p_wp_id: '',
+          p_font_id: 'display',
+          p_monthly_budget: budget,
+          p_is_active: true,
+          p_source: src,
+          p_target_audience: audience
+        });
+        if(r2.error) throw r2.error;
+        toast('Ad created.');
+      }
+
+      shell.remove();
+      adsMgrLoad();
+    } catch(e){
+      var msg = (e && e.message) || 'unknown';
+      if(msg.indexOf('super_admin_only') !== -1) toast('Platform ads require super_admin.', true);
+      else if(msg.indexOf('invalid_source') !== -1) toast('Invalid source.', true);
+      else if(msg.indexOf('invalid_target_audience') !== -1) toast('Invalid audience.', true);
+      else if(msg.indexOf('not_admin') !== -1) toast('Admin access required.', true);
+      else toast('Failed: ' + msg, true);
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'Save changes' : 'Create ad';
+    }
+  });
+}
+
+async function adsMgrUploadMedia(file){
+  try {
+    var s = await sb.auth.getSession();
+    var session = s && s.data ? s.data.session : null;
+    if(!session) throw new Error('not logged in');
+
+    var ext = 'bin';
+    if(file.name && file.name.indexOf('.') > -1) ext = file.name.split('.').pop().toLowerCase();
+    var path = session.user.id + '/ads/' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + '.' + ext;
+
+    var presignRes = await fetch('/api/r2-presign', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({ action: 'put', path: path, contentType: file.type || '' })
+    });
+    if(!presignRes.ok) throw new Error('presign failed');
+    var presignData = await presignRes.json();
+    if(!presignData.url) throw new Error('no url');
+
+    var putRes = await fetch(presignData.url, {
+      method: 'PUT',
+      body: file,
+      headers: {
+        'Content-Type': presignData.contentType || file.type || 'application/octet-stream',
+        'Cache-Control': 'public, max-age=31536000'
+      }
+    });
+    if(!putRes.ok) throw new Error('upload failed');
+
+    return 'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev/' + path;
+  } catch(e){
+    console.error('[admin upload]', e);
+    return null;
+  }
+}
+
+async function adsMgrToggle(id, wasActive){
+  var ad = adsState.list.find(function(x){ return x.id === id; });
+  if(!ad) return;
+  try {
+    var r = await sb.rpc('admin_ad_update', {
+      p_ad_id: id,
+      p_internal_title: ad.internal_title || '',
+      p_heading: ad.heading || '',
+      p_subtitle: ad.subtitle || '',
+      p_cta: ad.cta || '',
+      p_media_type: ad.media_type || '',
+      p_media_url: ad.media_url || '',
+      p_bg_id: 'deep-blue',
+      p_wp_id: '',
+      p_font_id: 'display',
+      p_monthly_budget: ad.monthly_budget || null,
+      p_is_active: !wasActive,
+      p_target_audience: ad.target_audience || null
+    });
+    if(r.error) throw r.error;
+    toast(!wasActive ? 'Ad activated.' : 'Ad paused.');
+    adsMgrLoad();
+  } catch(e){
+    toast('Failed: ' + ((e && e.message) || 'unknown'), true);
+  }
+}
+
+async function adsMgrDelete(id, title){
+  if(!confirm('Delete ad "' + title + '"?\n\nThis cannot be undone.')) return;
+  try {
+    var r = await sb.rpc('admin_ad_delete', { p_ad_id: id });
+    if(r.error) throw r.error;
+    toast('Ad deleted.');
+    adsMgrLoad();
+  } catch(e){
+    toast('Failed: ' + ((e && e.message) || 'unknown'), true);
+  }
+}
+
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-nav="ads"]');
+  if(!btn) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  Admin.currentView = 'ads';
+  document.querySelectorAll('#adm-sidebar .nav-item').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-nav') === 'ads');
+  });
+  var main = document.getElementById('adm-main');
+  if(main) renderAdsManagerV2(main);
+}, true);
+
+console.log('[Admin Chunk 8] Ads Manager v2 ready');
+})();
+</script>
+
 </body>
 </html>
