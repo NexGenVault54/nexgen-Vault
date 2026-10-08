@@ -1236,7 +1236,7 @@ async function renderLedger(main){
   if(mIn && !mIn._h4){ mIn._h4 = true; mIn.addEventListener('change', function(){ ledgerState4.month = this.value; loadLedger4(); }); }
   var clr = $('adm-ldg4-clr'); if(clr) clr.addEventListener('click', function(){ ledgerState4.month = ''; if(mIn) mIn.value = ''; loadLedger4(); });
   var mk = $('adm-ldg4-mk'); if(mk) mk.addEventListener('click', openManageHeads);
-  var addBtn = $('adm-ldg4-add'); if(addBtn) addBtn.addEventListener('click', function(){ openAddEntryModal(null, null); });
+  var addBtn = $('adm-ldg4-add'); if(addBtn) addBtn.addEventListener('click', function(){ openHeadModal(null); });
 
   document.querySelectorAll('[data-ldg4-t]').forEach(function(b){
     if(b._h4) return; b._h4 = true;
@@ -1570,13 +1570,101 @@ async function openHeadEntriesModal(headKey){
   } catch(e){ $('adm-ldg4-entries-body').innerHTML = '<div style="text-align:center;color:#a16262;font-size:12px;">Failed.</div>'; }
 }
 
+function openHeadModal(existing){
+  var isEdit = !!existing;
+  var shell = document.createElement('div');
+  shell.className = 'adm-modal-overlay';
+  shell.id = 'adm-head-modal';
+
+  var inner = document.createElement('div');
+  inner.className = 'adm-modal';
+  inner.style.maxWidth = '480px';
+
+  var d = existing || { display_name:'', entry_type:'expense', category:'', description:'' };
+
+  inner.innerHTML =
+    '<h3>' + (isEdit ? 'Edit section' : 'Add new section') + '</h3>' +
+    '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;margin-bottom:14px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">' +
+      'Section = top-level head in the ledger (e.g. "Ad Revenue", "Server Costs"). Add sub-items to it after saving.' +
+    '</div>' +
+    '<div class="adm-form-row"><label>Display Name</label>' +
+      '<input id="adm-hm-name" type="text" maxlength="60" value="' + esc(d.display_name || '') + '" placeholder="e.g. Ad Revenue, Server Costs"></div>' +
+    '<div class="adm-form-row"><label>Type</label>' +
+      '<select id="adm-hm-type" ' + (isEdit ? 'disabled' : '') + '>' +
+        '<option value="income" ' + (d.entry_type === 'income' ? 'selected' : '') + '>Income</option>' +
+        '<option value="expense" ' + (d.entry_type === 'expense' ? 'selected' : '') + '>Expense</option>' +
+      '</select>' +
+      (isEdit ? '<div style="font-size:10px;color:#94a3b8;margin-top:6px;">Type cannot be changed after creation.</div>' : '') +
+    '</div>' +
+    '<div class="adm-form-row"><label>Category (grouping)</label>' +
+      '<input id="adm-hm-cat" type="text" maxlength="40" value="' + esc(d.category || '') + '" placeholder="e.g. Revenue, Operations, Marketing"></div>' +
+    '<div class="adm-form-row"><label>Description (optional)</label>' +
+      '<input id="adm-hm-desc" type="text" maxlength="200" value="' + esc(d.description || '') + '" placeholder="Short note"></div>' +
+    '<div class="row">' +
+      '<button class="adm-btn primary" id="adm-hm-save" style="flex:1;">' + (isEdit ? 'Save changes' : 'Add section') + '</button>' +
+      '<button class="adm-btn ghost" id="adm-hm-cancel">Cancel</button>' +
+    '</div>';
+
+  shell.appendChild(inner);
+  document.body.appendChild(shell);
+
+  setTimeout(function(){ var e = document.getElementById('adm-hm-name'); if(e){ e.focus(); if(isEdit) e.select(); } }, 50);
+  document.getElementById('adm-hm-cancel').addEventListener('click', function(){ shell.remove(); });
+
+  document.getElementById('adm-hm-save').addEventListener('click', async function(){
+    var btn = this;
+    var name = (document.getElementById('adm-hm-name').value || '').trim();
+    var type = document.getElementById('adm-hm-type').value;
+    var cat  = (document.getElementById('adm-hm-cat').value  || '').trim();
+    var desc = (document.getElementById('adm-hm-desc').value || '').trim();
+
+    if(name.length < 2){ toast('Name too short.', true); return; }
+
+    btn.disabled = true;
+    btn.textContent = isEdit ? 'Saving…' : 'Adding…';
+
+    try {
+      if(isEdit){
+        var r = await sb.rpc('admin_head_update', {
+          p_key: existing.head_key,
+          p_display_name: name,
+          p_category: cat || null,
+          p_description: desc || null
+        });
+        if(r.error) throw r.error;
+        toast('Section updated.');
+      } else {
+        var r2 = await sb.rpc('admin_head_create', {
+          p_display_name: name,
+          p_entry_type: type,
+          p_category: cat || null,
+          p_description: desc || null
+        });
+        if(r2.error) throw r2.error;
+        toast('Section added.');
+      }
+      shell.remove();
+      loadLedger4();
+    } catch(e){
+      var msg = (e && e.message) || 'unknown';
+      if(msg.indexOf('not_admin') !== -1) toast('Admin access required.', true);
+      else if(msg.indexOf('name_too_short') !== -1) toast('Name too short.', true);
+      else if(msg.indexOf('cannot_edit_auto_head') !== -1) toast('Auto-wired sections cannot be edited.', true);
+      else toast('Failed: ' + msg, true);
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'Save changes' : 'Add section';
+    }
+  });
+}
+
+
 async function openManageHeads(){
   var r = await sb.rpc('admin_ledger_heads');
   var heads = (!r.error && r.data) ? r.data : [];
-  var h = '<div class="adm-modal-overlay" id="adm-mh4" onclick="if(event.target===this)document.getElementById(\'adm-mh4\').remove()">' +
+  var h = '<div class="adm-modal-overlay" id="adm-mh4">' +
     '<div class="adm-modal" style="max-width:640px;">' +
       '<h3>Manage Heads</h3>' +
-      '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;margin-bottom:12px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">AUTO heads are wired by SQL — cannot be edited or deleted. MANUAL heads can be deleted (only if zero entries).</div>' +
+      '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;margin-bottom:12px;padding:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);border-radius:8px;">AUTO heads are wired by SQL — cannot be edited or deleted. MANUAL heads can be edited or deleted.</div>' +
       '<div style="max-height:420px;overflow-y:auto;">';
   heads.forEach(function(x){
     var isAuto = x.auto_wired;
@@ -1585,13 +1673,20 @@ async function openManageHeads(){
         '<div style="font-size:12px;color:#fff;font-weight:800;">' + esc(x.display_name) + ' ' + (isAuto ? '<span style="font-size:8.5px;color:#60a5fa;background:rgba(59,130,246,.12);padding:1px 6px;border-radius:5px;">AUTO</span>' : '<span style="font-size:8.5px;color:#94a3b8;background:rgba(148,163,184,.10);padding:1px 6px;border-radius:5px;">MANUAL</span>') + '</div>' +
         '<div style="font-size:10px;color:#64748b;margin-top:2px;">' + esc(x.head_key) + ' · ' + esc(x.category || '') + '</div>' +
       '</div>' +
-      (!isAuto ? '<button data-mh4-del="' + esc(x.head_key) + '" style="background:transparent;border:none;color:#a16262;cursor:pointer;font-size:11px;padding:4px;"><i class="fa-solid fa-trash"></i></button>' : '') +
+      (!isAuto ? (
+        '<button data-mh4-edit="' + esc(x.head_key) + '" style="background:transparent;border:none;color:#60a5fa;cursor:pointer;font-size:11px;padding:4px;margin-right:4px;"><i class="fa-solid fa-pen"></i></button>' +
+        '<button data-mh4-del="' + esc(x.head_key) + '" style="background:transparent;border:none;color:#a16262;cursor:pointer;font-size:11px;padding:4px;"><i class="fa-solid fa-trash"></i></button>'
+      ) : '') +
     '</div>';
   });
   h += '</div>';
-  h += '<div class="row"><button class="adm-btn ghost" style="flex:1;" onclick="document.getElementById(\'adm-mh4\').remove()">Close</button></div>';
+  h += '<div class="row"><button class="adm-btn ghost" style="flex:1;" id="adm-mh4-close">Close</button></div>';
   h += '</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
+
+  document.getElementById('adm-mh4-close').addEventListener('click', function(){
+    document.getElementById('adm-mh4').remove();
+  });
 
   document.querySelectorAll('[data-mh4-del]').forEach(function(b){
     b.addEventListener('click', function(){
@@ -1605,8 +1700,24 @@ async function openManageHeads(){
           return;
         }
         toast('Head deleted.');
-        $('adm-mh4').remove();
+        document.getElementById('adm-mh4').remove();
         loadLedger4();
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-mh4-edit]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var key = this.getAttribute('data-mh4-edit');
+      var head = heads.find(function(x){ return x.head_key === key; });
+      if(!head) return;
+      document.getElementById('adm-mh4').remove();
+      openHeadModal({
+        head_key: head.head_key,
+        display_name: head.display_name,
+        entry_type: head.entry_type,
+        category: head.category || '',
+        description: head.description || ''
       });
     });
   });
