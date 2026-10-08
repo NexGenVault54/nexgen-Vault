@@ -1743,6 +1743,7 @@ async function renderPools(main){
   $('adm-calc-profit').addEventListener('click', openCalcProfit);
   $('adm-dist-week').addEventListener('click', openDistributeWeek);
   $('adm-view-tx').addEventListener('click', openViewTx);
+  if(typeof initBountyHistory === 'function') initBountyHistory();
 }
 
 async function loadPools(){
@@ -5176,6 +5177,184 @@ function exportVideoCsv(){
   a.download = 'video-ratings-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
   toast('CSV downloaded.');
+}
+
+/* ============================================================
+   Bounty Distribution History (180 days, weekly grouped)
+   Injected into Pools page below the 3 pool cards
+   ============================================================ */
+var bhState = { days: 180, search: '', expanded: {}, onlyCapped: false };
+
+function initBountyHistory(){
+  /* Look for pools page host and append history section */
+  var main = document.getElementById('adm-main');
+  if(!main) return;
+  if(main.querySelector('#adm-bounty-hist')) return;
+
+  var anchor = main.querySelector('#adm-pool-extra');
+  if(!anchor) return;
+
+  var wrap = document.createElement('div');
+  wrap.id = 'adm-bounty-hist';
+  wrap.style.cssText = 'margin-top:22px;padding:16px;border-radius:14px;background:#131c30;border:1px solid #1e293b;';
+  wrap.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">' +
+      '<div style="font-size:13px;font-weight:900;color:#fff;"><i class="fa-solid fa-clock-rotate-left" style="color:#10b981;margin-right:6px;"></i>Bounty Distribution History</div>' +
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
+        '<select id="bh-days" style="padding:6px 10px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#fff;font-size:11.5px;outline:none;">' +
+          '<option value="30">Last 30d</option>' +
+          '<option value="90">Last 90d</option>' +
+          '<option value="180" selected>Last 180d</option>' +
+        '</select>' +
+        '<button id="bh-csv" class="adm-btn ghost" style="font-size:11px;padding:6px 12px;"><i class="fa-solid fa-download"></i> CSV</button>' +
+      '</div>' +
+    '</div>' +
+    '<input id="bh-search" class="adm-search" placeholder="Search contributor name, username, or space…" style="margin-bottom:12px;">' +
+    '<div id="bh-list"><div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div></div>';
+
+  anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+
+  var dSel = document.getElementById('bh-days');
+  if(dSel) dSel.addEventListener('change', function(){ bhState.days = parseInt(this.value, 10) || 180; loadBountyWeeks(); });
+
+  var sIn = document.getElementById('bh-search');
+  if(sIn){
+    var deb = null;
+    sIn.addEventListener('input', function(){
+      bhState.search = this.value.trim();
+      if(deb) clearTimeout(deb);
+      deb = setTimeout(loadBountyWeeks, 250);
+    });
+  }
+
+  var csv = document.getElementById('bh-csv');
+  if(csv) csv.addEventListener('click', exportBountyCsv);
+
+  loadBountyWeeks();
+}
+
+async function loadBountyWeeks(){
+  var host = document.getElementById('bh-list'); if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  try {
+    var r = await sb.rpc('admin_bounty_weeks', { p_days: bhState.days, p_search: bhState.search || null });
+    if(r.error){ host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;font-size:12px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var list = r.data || [];
+    if(!list.length){
+      host.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;font-size:12px;border-radius:12px;background:#111827;border:1px dashed #1e293b;">No bounty distributions in this range.</div>';
+      return;
+    }
+    var h = '';
+    list.forEach(function(w){
+      var ws = w.week_start;
+      var isOpen = !!bhState.expanded[ws];
+      h += '<div style="border-radius:10px;background:rgba(0,0,0,.22);margin-bottom:6px;overflow:hidden;">';
+      h += '<div data-bh-toggle="' + esc(ws) + '" style="padding:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:12.5px;font-weight:900;color:#fff;display:flex;align-items:center;gap:6px;">';
+      h += '<i class="fa-solid ' + (isOpen ? 'fa-chevron-down' : 'fa-chevron-right') + '" style="color:' + (isOpen ? '#10b981' : '#64748b') + ';font-size:10px;"></i>';
+      h += 'Week of ' + new Date(ws).toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' });
+      h += '</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:3px;padding-left:16px;">';
+      h += (w.contributors_count || 0) + ' contributor' + (w.contributors_count === 1 ? '' : 's');
+      if(w.capped_count > 0) h += ' · <span style="color:#fbbf24;">' + w.capped_count + ' capped</span>';
+      h += ' · distributed by @' + esc(w.distributor || 'system');
+      h += '</div></div>';
+      h += '<div style="text-align:right;flex-shrink:0;">';
+      h += '<div style="font-size:15px;font-weight:900;color:#10b981;">' + money(w.amount_distributed) + '</div>';
+      h += '<div style="font-size:9.5px;color:#64748b;">scheduled ' + money(w.amount_scheduled) + '</div>';
+      h += '</div></div>';
+      h += '<div id="bh-wk-' + esc(ws) + '" style="display:' + (isOpen ? 'block' : 'none') + ';padding:0 12px 12px;border-top:1px solid rgba(255,255,255,.05);">';
+      h += '<div data-bh-detail="' + esc(ws) + '" style="padding-top:10px;">Loading…</div>';
+      h += '</div></div>';
+    });
+    host.innerHTML = h;
+
+    host.querySelectorAll('[data-bh-toggle]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var ws = this.getAttribute('data-bh-toggle');
+        bhState.expanded[ws] = !bhState.expanded[ws];
+        var panel = document.getElementById('bh-wk-' + ws);
+        var chev = this.querySelector('i.fa-chevron-right, i.fa-chevron-down');
+        if(panel) panel.style.display = bhState.expanded[ws] ? 'block' : 'none';
+        if(chev){
+          chev.className = 'fa-solid ' + (bhState.expanded[ws] ? 'fa-chevron-down' : 'fa-chevron-right');
+          chev.style.color = bhState.expanded[ws] ? '#10b981' : '#64748b';
+        }
+        if(bhState.expanded[ws]) loadBountyWeekDetail(ws);
+      });
+    });
+
+    Object.keys(bhState.expanded).forEach(function(ws){
+      if(bhState.expanded[ws]) loadBountyWeekDetail(ws);
+    });
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;padding:20px;color:#a16262;">Failed.</div>';
+  }
+}
+
+async function loadBountyWeekDetail(weekStart){
+  var host = document.querySelector('[data-bh-detail="' + weekStart + '"]');
+  if(!host) return;
+  host.innerHTML = '<div style="text-align:center;padding:10px;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin;"></i></div>';
+  try {
+    var r = await sb.rpc('admin_bounty_week_detail', { p_week_start: weekStart });
+    if(r.error){ host.innerHTML = '<div style="color:#a16262;font-size:11px;">Failed: ' + esc(r.error.message) + '</div>'; return; }
+    var list = r.data || [];
+    if(!list.length){ host.innerHTML = '<div style="text-align:center;padding:14px;color:#94a3b8;font-size:11.5px;">No contributors.</div>'; return; }
+    var h = '';
+    list.forEach(function(c){
+      var capped = Number(c.excess_returned) > 0;
+      var avatar = c.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(c.name||'U') + '&background=111827&color=34d399');
+      h += '<div style="display:flex;gap:10px;align-items:center;padding:8px 10px;background:rgba(0,0,0,.2);border-radius:8px;margin-bottom:4px;">';
+      h += '<div style="width:22px;text-align:center;font-size:11px;font-weight:900;color:' + (c.rank === 1 ? '#fbbf24' : '#64748b') + ';">#' + c.rank + '</div>';
+      h += '<img data-bh-user="' + esc(c.user_id) + '" src="' + esc(avatar) + '" style="width:32px;height:32px;border-radius:50%;object-fit:cover;cursor:pointer;flex-shrink:0;">';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div data-bh-user="' + esc(c.user_id) + '" style="font-size:12px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;">' + esc(c.name || c.username || 'User') + ' <span style="color:#94a3b8;font-weight:600;font-size:10.5px;">@' + esc(c.username || '') + '</span>' + (capped ? ' <span style="font-size:9px;color:#fbbf24;background:rgba(251,191,36,.12);padding:1px 6px;border-radius:5px;">CAPPED</span>' : '') + '</div>';
+      h += '<div style="font-size:10px;color:#64748b;">' + c.points + ' pts · ' + Number(c.share_pct).toFixed(2) + '% share</div>';
+      h += '</div>';
+      h += '<div style="text-align:right;flex-shrink:0;">';
+      h += '<div style="font-size:13px;font-weight:900;color:#10b981;">' + money(c.capped_amount) + '</div>';
+      if(capped) h += '<div style="font-size:9px;color:#fbbf24;">+' + money(c.excess_returned) + ' back to pool</div>';
+      h += '</div></div>';
+    });
+    host.innerHTML = h;
+    host.querySelectorAll('[data-bh-user]').forEach(function(el){
+      el.addEventListener('click', function(e){
+        e.stopPropagation();
+        var uid = this.getAttribute('data-bh-user');
+        if(window.AdminChunk7A && AdminChunk7A.renderUserDetailPage) AdminChunk7A.renderUserDetailPage(uid);
+      });
+    });
+  } catch(e){ host.innerHTML = '<div style="color:#a16262;font-size:11px;">Failed.</div>'; }
+}
+
+function exportBountyCsv(){
+  /* Collect current visible data — we re-fetch weeks to build CSV */
+  sb.rpc('admin_bounty_weeks', { p_days: bhState.days, p_search: bhState.search || null }).then(function(r){
+    if(r.error){ toast('Failed to export.', true); return; }
+    var list = r.data || [];
+    if(!list.length){ toast('Nothing to export.', true); return; }
+    var rows = [['Week Start','Week End','Scheduled','Distributed','Contributors','Capped Users','Distributor','Distributed At']];
+    list.forEach(function(w){
+      rows.push([
+        w.week_start, w.week_end,
+        (Number(w.amount_scheduled) || 0).toFixed(2),
+        (Number(w.amount_distributed) || 0).toFixed(2),
+        w.contributors_count || 0,
+        w.capped_count || 0,
+        w.distributor || '',
+        w.distributed_at || ''
+      ]);
+    });
+    var csv = rows.map(function(r){ return r.map(function(c){ return '"' + String(c).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'bounty-history-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+    toast('CSV downloaded.');
+  }).catch(function(){ toast('Failed.', true); });
 }
 
 
