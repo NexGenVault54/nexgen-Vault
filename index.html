@@ -8071,16 +8071,26 @@ function _getCardsFor(profile){
   var me = Z.State.currentUser;
   var isOwner = me && me.id === profile.id;
 
-  /* Owner reads live space_data (reflects unsaved edits from header) */
   var sd = isOwner
     ? Object.assign({}, profile.space_data || {}, me.space_data || {})
     : (profile.space_data || {});
 
   var cards = Array.isArray(sd.cards) ? sd.cards.slice() : [];
-  if(cards.length) return cards;
 
-  /* No cards → generate defaults based on profile data */
-  return _defaultCards(profile);
+  if(typeof Z._needsDefaultMaterialization === 'function'
+     && Z._needsDefaultMaterialization(cards)){
+    var defaults = _defaultCards(profile);
+    var editedById = {};
+    cards.forEach(function(c){ if(c && c.id) editedById[c.id] = c; });
+    var merged = defaults.map(function(d){
+      return editedById[d.id] ? Object.assign({}, d, editedById[d.id]) : d;
+    });
+    var custom = cards.filter(function(c){
+      return c && c.id && c.id.indexOf('_d_') !== 0;
+    });
+    return merged.concat(custom);
+  }
+  return cards;
 }
 
 function _defaultCards(profile){
@@ -15802,8 +15812,20 @@ function _getCardsFromProfile(profile){
     ? Object.assign({}, profile.space_data || {}, me.space_data || {})
     : (profile.space_data || {});
   var arr = Array.isArray(sd.cards) ? sd.cards.slice() : [];
-  if(arr.length) return arr;
-  return (typeof _defaultCards === 'function') ? _defaultCards(profile) : [];
+
+  if(typeof _needsDefaultMaterialization === 'function' && _needsDefaultMaterialization(arr)){
+    var defaults = (typeof _defaultCards === 'function') ? _defaultCards(profile) : [];
+    var editedById = {};
+    arr.forEach(function(c){ if(c && c.id) editedById[c.id] = c; });
+    var merged = defaults.map(function(d){
+      return editedById[d.id] ? Object.assign({}, d, editedById[d.id]) : d;
+    });
+    var custom = arr.filter(function(c){
+      return c && c.id && c.id.indexOf('_d_') !== 0;
+    });
+    return merged.concat(custom);
+  }
+  return arr;
 }
 
 function _persistCards(cards){
@@ -15829,6 +15851,32 @@ function _persistCards(cards){
 var _draft = null;
 var _draftIdx = -1;
 var _gallerySelection = { active: false, selected: {} };
+
+
+/* ============================================================
+   PARTIAL-CARDS DETECTION
+   ------------------------------------------------------------
+   A "partial" card state is when the space_data.cards array
+   has 1 to 4 cards, AND at least one of them is a default
+   (has an id starting with "_d_"). This can happen from an
+   old bug, a crash, or a race condition. When detected, we
+   rebuild the missing defaults while preserving any edits
+   the user made to the existing cards.
+   ============================================================ */
+function _needsDefaultMaterialization(cards){
+  if(!Array.isArray(cards)) return false;
+  if(cards.length === 0) return true;
+  if(cards.length >= 5) return false;
+  for(var i = 0; i < cards.length; i++){
+    var c = cards[i];
+    if(c && typeof c.id === 'string' && c.id.indexOf('_d_') === 0){
+      return true;
+    }
+  }
+  return false;
+}
+
+Z._needsDefaultMaterialization = _needsDefaultMaterialization;
 
 Z.openCardEditor = function(idx){
   var u = me();
