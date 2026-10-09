@@ -5313,6 +5313,9 @@ Z.renderSpark = function(){
 
 Z.renderSparkSlide = function(spark, index){
   var a = Z.getProfileById(spark.author_id) || {id:spark.author_id, name:'User', avatar:''};
+  var _identity = (typeof Z.getSpaceIdentity === 'function')
+    ? Z.getSpaceIdentity(a)
+    : { avatar: (typeof Z.displayAvatar === 'function' ? Z.displayAvatar(a) : a.avatar), name: a.name || a.username || 'User' };
   var isFull = spark.type === 'long_video';
   var me = Z.State.currentUser;
   var isOwn = me && me.id === a.id;
@@ -5391,9 +5394,9 @@ Z.renderSparkSlide = function(spark, index){
     viewBadge + menuHtml +
     '<div class="spark-info">' +
       '<div class="spark-info-author">' +
-        '<img src="' + Z.escape(Z.displayAvatar(a)) + '" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
+        '<img src="' + Z.escape(_identity.avatar) + '" onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
         '<div onclick="event.stopPropagation();Z.showView(\'public-profile\',\'' + Z.escape(a.id) + '\')" style="cursor:pointer;">' +
-          '<div class="sname">' + Z.escape(Z.displayName(a)) + '</div>' +
+          '<div class="sname">' + Z.escape(_identity.name) + '</div>' +
           '<div class="shandle">@' + Z.escape(a.username || 'user') + ' · ' + Z.timeAgo(new Date(spark.created_at).getTime()) + '</div>' +
         '</div>' +
       '</div>' +
@@ -8256,10 +8259,13 @@ function renderHeader(p, isOwner, rating, bondCount){
   if(isOwner && Z.State.currentUser && Z.State.currentUser.id === p.id){
     sd = Object.assign({}, sd, Z.State.currentUser.space_data || {});
   }
-  var avUrl = sd.avatar || p.avatar || safeAvatar(p);
+  var _identity = (typeof Z.getSpaceIdentity === 'function')
+    ? Z.getSpaceIdentity(p)
+    : { avatar: sd.avatar || p.avatar || safeAvatar(p), name: (sd.name || '').trim() || p.name || 'User' };
+  var avUrl = _identity.avatar;
   var avInner = '<img src="' + esc(avUrl) + '" alt="">';
 
-  var spaceName = (sd.name || '').trim() || p.name || 'User';
+  var spaceName = _identity.name;
   var subs = Number(bondCount) || 0;
   var subsTxt = subs > 0 ? (formatSubs(subs) + ' Subs') : 'New SPACE';
 
@@ -42701,6 +42707,54 @@ Z.getSpaceDisplayName = function(profile){
   var uname = profile.username == null ? '' : String(profile.username).trim();
   if(uname) return uname;
   return 'User';
+};
+
+/* ============================================================
+   SPACE IDENTITY HELPER
+   ------------------------------------------------------------
+   Returns { avatar, name } that follows the SPACE rules:
+     · If hasSpace (space_data.name set) → SPACE avatar/name
+     · If no SPACE → Profile avatar/name
+     · Owner: merges live space_data so header reflects unsaved edits
+   Used by: SPACE header · Spark slide · FV overlay · Ad TV
+   ============================================================ */
+Z.getSpaceIdentity = function(profile){
+  if(!profile){
+    var me0 = Z.State.currentUser;
+    if(me0) profile = me0;
+  }
+  if(!profile){
+    return {
+      avatar: 'https://ui-avatars.com/api/?name=U&background=111827&color=34d399',
+      name: 'User'
+    };
+  }
+
+  /* Owner: merge live currentUser.space_data so header is fresh */
+  var me = Z.State.currentUser;
+  var isOwner = me && me.id === profile.id;
+  var sd = profile.space_data || {};
+  if(isOwner && me.space_data){
+    sd = Object.assign({}, sd, me.space_data);
+  }
+
+  var spaceName = sd.name == null ? '' : String(sd.name).trim();
+  var hasSP = spaceName.length >= 1;
+
+  var profileName = profile.name == null ? '' : String(profile.name).trim();
+  var profileUname = profile.username == null ? '' : String(profile.username).trim();
+  var fallbackName = profileName || profileUname || 'User';
+  var fallbackAvatar = profile.avatar
+    || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(fallbackName) + '&background=111827&color=34d399');
+
+  if(!hasSP){
+    return { avatar: fallbackAvatar, name: fallbackName };
+  }
+
+  return {
+    avatar: sd.avatar || fallbackAvatar,
+    name: spaceName || fallbackName
+  };
 };
 
 console.log('[Section 21 Step 1] SPACE/PROFILE helpers ready — Z.hasSpace · Z.getSpaceDisplayName');
