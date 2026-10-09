@@ -5752,6 +5752,11 @@ Z._openSparkCommentsId = null;
 Z.renderSparkComment = function(cm, spark, isReply){
   var me = Z.State.currentUser;
   var ca = Z.getProfileById(cm.author_id) || {name:'User', id:cm.author_id};
+  var _isOwnerComment = (spark && spark.author_id && cm.author_id === spark.author_id);
+  var _cIdentity = (_isOwnerComment && typeof Z.getSpaceIdentity === 'function')
+    ? Z.getSpaceIdentity(ca)
+    : { avatar: (typeof Z.displayAvatar === 'function' ? Z.displayAvatar(ca) : ca.avatar), name: (ca.name || ca.username || 'User') };
+  
   var isMyComment = me && me.id === cm.author_id;
   var isMySpark = me && spark && me.id === spark.author_id;
   var counts = cm._reactionCounts || {};
@@ -9125,6 +9130,11 @@ Z.sp5OpenVideo = async function(videoId, scope){
   var author = Z.getProfileById(v.author_id) || { id: v.author_id, name: 'User' };
   var isOwner = me && me.id === v.author_id;
 
+
+  var _identity = (typeof Z.getSpaceIdentity === 'function')
+    ? Z.getSpaceIdentity(author)
+    : { avatar: safeAvatar(author), name: author.name || author.username || 'User' };
+
   /* Parallel fetch: reactions, comments, video rating aggregate (owner only) */
   var rxP = c.from('spark_reactions').select('reaction, user_id').eq('spark_id', videoId);
   var cmP = c.from('comments').select('*').eq('spark_id', videoId).order('created_at', {ascending: true});
@@ -9226,7 +9236,7 @@ Z.sp5OpenVideo = async function(videoId, scope){
 
   /* Header row: avatar · bond · rate · cfar pill · share pill · share icon · ⋮ */
   h += '<div class="sp5-vd-header-row">';
-  h += '<img src="' + esc(safeAvatar(author)) + '" onclick="Z.sp5CloseVideo();Z.showView(\'public-profile\',\'' + esc(v.author_id) + '\')" class="sp5-vd-avatar" alt="">';
+  h += '<img src="' + esc(_identity.avatar) + '" onclick="Z.sp5CloseVideo();Z.showView(\'public-profile\',\'' + esc(v.author_id) + '\')" class="sp5-vd-avatar" alt="">';
 
   if(!isOwner){
     if(bs.bonded){
