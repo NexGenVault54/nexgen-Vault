@@ -1126,22 +1126,92 @@ Z._reconcilePendingUploads = async function(){
   if(!list.length) return;
   var c = sb();
   if(!c) return;
+
+  /* ─── Pre-fetch own profile + dependent tables ONCE ───
+     These tables store media URLs outside the classic
+     posts/sparks/statuses shape. Without checking them,
+     reconcile deletes avatars, covers, card thumbnails,
+     gallery items, ad banners, market assets, and drive
+     car media. */
+
+  var profileText = '';
+  try {
+    var pr = await c.from('profiles').select('*').eq('id', me.id).maybeSingle();
+    if(!pr.error && pr.data){
+      try { profileText = JSON.stringify(pr.data) || ''; } catch(e){ profileText = ''; }
+    }
+  } catch(e){}
+  /* If we cannot verify the profile, abort this pass entirely.
+     Leaving pending intact is safer than deleting blindly. */
+  if(!profileText){ return; }
+
+  var driveText = '';
+  try {
+    var dd = await c.from('drive_drivers').select('*').eq('user_id', me.id).maybeSingle();
+    if(!dd.error && dd.data){
+      try { driveText = JSON.stringify(dd.data) || ''; } catch(e){ driveText = ''; }
+    }
+  } catch(e){}
+
+  var adsUrls = {};
+  try {
+    var ad = await c.from('ads').select('media_url').eq('owner_id', me.id);
+    if(!ad.error && ad.data){
+      ad.data.forEach(function(row){ if(row.media_url) adsUrls[row.media_url] = true; });
+    }
+  } catch(e){}
+
+  var assetUrls = {};
+  try {
+    var ma = await c.from('market_assets').select('media_url,preview_url').eq('seller_id', me.id);
+    if(!ma.error && ma.data){
+      ma.data.forEach(function(row){
+        if(row.media_url)   assetUrls[row.media_url]   = true;
+        if(row.preview_url) assetUrls[row.preview_url] = true;
+      });
+    }
+  } catch(e){}
+
   var remaining = [];
   for(var i = 0; i < list.length; i++){
     var url = list[i];
     try {
       var inDb = false;
-      var rp  = await c.from('posts').select('id').eq('media_url', url).limit(1);
-      if(rp.data && rp.data.length) inDb = true;
+
+      /* 1. Own profile — avatar, cover, space_data.*, cards, gallery */
+      if(profileText.indexOf(url) !== -1) inDb = true;
+
+      /* 2. Own drive profile — car video, photos, insurance proof */
+      if(!inDb && driveText && driveText.indexOf(url) !== -1) inDb = true;
+
+      /* 3. Own ads */
+      if(!inDb && adsUrls[url]) inDb = true;
+
+      /* 4. Own market assets */
+      if(!inDb && assetUrls[url]) inDb = true;
+
+      /* 5. Posts */
       if(!inDb){
-        var rs  = await c.from('sparks').select('id').eq('video_url', url).limit(1);
+        var rp = await c.from('posts').select('id').eq('media_url', url).limit(1);
+        if(rp.data && rp.data.length) inDb = true;
+      }
+
+      /* 6. Sparks */
+      if(!inDb){
+        var rs = await c.from('sparks').select('id').eq('video_url', url).limit(1);
         if(rs.data && rs.data.length) inDb = true;
       }
+
+      /* 7. Statuses */
       if(!inDb){
         var rSt = await c.from('statuses').select('id').eq('media_url', url).limit(1);
         if(rSt.data && rSt.data.length) inDb = true;
       }
+
+      /* Referenced somewhere → keep in R2, drop from pending */
       if(inDb){ continue; }
+
+      /* Not referenced → delete from R2 */
       try {
         await Z.deleteStorageIfOrphan(url, null, null);
       } catch(e){
