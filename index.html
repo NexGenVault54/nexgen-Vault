@@ -7780,6 +7780,7 @@ Z.sp5FetchContent = async function(profile){
 /* ============================================================
    GLOBAL PUBLIC POOL
    ============================================================ */
+
 Z.sp5FetchGlobalContent = function(){
   if(_publicFetchInFlight) return _publicFetchPromise;
   var c = Z.sb && Z.sb();
@@ -7792,6 +7793,12 @@ Z.sp5FetchGlobalContent = function(){
       var res = await Promise.all([sparksP, videosP]);
       var sparks = res[0].data || [];
       var videos = res[1].data || [];
+
+      if(typeof Z._enrichSparksWithInteractions === 'function'){
+        try { await Z._enrichSparksWithInteractions(sparks); } catch(e){}
+        try { await Z._enrichSparksWithInteractions(videos); } catch(e){}
+      }
+
       var blocked = Z.State._blockedIds || [];
       Z.State.publicSparksAll = blocked.length ? sparks.filter(function(s){ return blocked.indexOf(s.author_id) === -1; }) : sparks;
       Z.State.publicVideosAll = blocked.length ? videos.filter(function(v){ return blocked.indexOf(v.author_id) === -1; }) : videos;
@@ -7804,6 +7811,8 @@ Z.sp5FetchGlobalContent = function(){
   })();
   return _publicFetchPromise;
 };
+
+
 function scheduleGlobalPrewarm(){
   if(_warmScheduled) return;
   if(!Z.State.currentUser) return;
@@ -12145,6 +12154,40 @@ Z.markSparkNotInterested = function(sparkId){
    context = 'public' → GLOBAL feed
    context = 'author' → SCOPED author feed
    ============================================================ */
+
+Z._enrichSparksWithInteractions = async function(sparks){
+  if(!Array.isArray(sparks) || !sparks.length) return sparks;
+  var c = db(); if(!c) return sparks;
+  var u = me();
+  var ids = sparks.map(function(s){ return s && s.id; }).filter(Boolean);
+  if(!ids.length) return sparks;
+  try {
+    var rx = await c.from('spark_reactions').select('spark_id, reaction, user_id').in('spark_id', ids);
+    var scMap = {}, myRxMap = {};
+    (rx.data || []).forEach(function(x){
+      scMap[x.spark_id] = scMap[x.spark_id] || {};
+      scMap[x.spark_id][x.reaction] = (scMap[x.spark_id][x.reaction] || 0) + 1;
+      if(u && x.user_id === u.id){
+        myRxMap[x.spark_id] = myRxMap[x.spark_id] || {};
+        myRxMap[x.spark_id][x.reaction] = true;
+      }
+    });
+    var cm = await c.from('comments').select('spark_id').in('spark_id', ids);
+    var cmMap = {};
+    (cm.data || []).forEach(function(x){
+      cmMap[x.spark_id] = (cmMap[x.spark_id] || 0) + 1;
+    });
+    sparks.forEach(function(s){
+      if(!s) return;
+      s._reactions = scMap[s.id] || {};
+      s._myReactions = myRxMap[s.id] || {};
+      s._commentsCount = cmMap[s.id] || 0;
+      if(!Array.isArray(s._comments)) s._comments = [];
+    });
+  } catch(e){}
+  return sparks;
+};
+
 Z.sp5OpenUserSpark = async function(sparkId, userId, context){
   context = context || 'author';
   var c = db();
@@ -12156,6 +12199,8 @@ Z.sp5OpenUserSpark = async function(sparkId, userId, context){
     all = all.filter(function(s){ return !Z.isNotInterested('spark', s.id); });
 
     if(!all.length){ toast('Sparks still loading…'); return; }
+
+    await Z._enrichSparksWithInteractions(all);
 
     try {
       sessionStorage.setItem('zynix_scoped_spark_src', JSON.stringify({
@@ -12178,7 +12223,6 @@ Z.sp5OpenUserSpark = async function(sparkId, userId, context){
     return;
   }
 
-  /* AUTHOR scope */
   if(!c){ toast('Not connected.'); return; }
   if(!userId){ toast('Author not found.'); return; }
   try {
@@ -12190,6 +12234,8 @@ Z.sp5OpenUserSpark = async function(sparkId, userId, context){
       .limit(60);
     var sparks = (r.data || []).filter(function(s){ return s.video_url && !Z.isNotInterested('spark', s.id); });
     if(!sparks.length){ toast('No sparks.'); return; }
+
+    await Z._enrichSparksWithInteractions(sparks);
 
     Z._prevAllSparksForScope = Z.State.allSparks;
     Z._spaceFeedScopedTo = userId;
@@ -12212,7 +12258,6 @@ Z.sp5OpenUserSpark = async function(sparkId, userId, context){
     toast('Could not load.');
   }
 };
-
 /* ============================================================
    4. SEARCH BAR + FILTER
    ============================================================ */
@@ -26505,6 +26550,7 @@ Z.openSparkInFeed = async function(sparkId){
 };
 
 /* ---------- 2. Hero card HTML ---------- */
+
 Z.renderHeroSparkCard = function(spark, author){
   if(!spark || !author || !spark.video_url) return '';
   var views = spark.views || 0;
@@ -26517,9 +26563,8 @@ Z.renderHeroSparkCard = function(spark, author){
     'onclick="Z.openSparkInFeed(\'' + sparkId + '\')" ' +
     'style="position:relative;border-radius:16px;overflow:hidden;background:#000;height:clamp(380px,58vh,560px);cursor:pointer;">' +
 
-      '<video src="' + Z.escape(spark.video_url) + '" autoplay muted loop playsinline preload="metadata" controls ' +
-      'onclick="event.stopPropagation()" ' +
-      'style="width:100%;height:100%;object-fit:contain;background:#000;display:block;"></video>' +
+      '<video src="' + Z.escape(spark.video_url) + '" autoplay muted loop playsinline preload="metadata" ' +
+      'style="width:100%;height:100%;object-fit:contain;background:#000;display:block;pointer-events:none;"></video>' +
 
     '<div style="position:absolute;top:0;left:0;right:0;height:100px;background:linear-gradient(to bottom,rgba(0,0,0,.65),transparent);pointer-events:none;"></div>' +
     '<div style="position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(0,0,0,.85),transparent);pointer-events:none;"></div>' +
@@ -26534,7 +26579,7 @@ Z.renderHeroSparkCard = function(spark, author){
       '<span>' + views + '</span>' +
     '</div>' +
 
-    '<div style="position:absolute;bottom:0;left:0;right:0;padding:14px;pointer-events:none;">' +
+    '<div style="position:absolute;bottom:0;left:0;right:0;padding:14px;">' +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
         '<img src="' + Z.escape(Z.displayAvatar(author)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.9);flex-shrink:0;">' +
         '<div style="min-width:0;">' +
