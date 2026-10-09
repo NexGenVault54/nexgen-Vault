@@ -45457,7 +45457,88 @@ console.log('[Tab Pause] active — videos pause on tab hide');
 })();
 </script>
 
+<!-- ============================================================
+     FULL VIDEO ACCESS GATE
+     ------------------------------------------------------------
+     Full Videos require:
+       · SPACE set (space_data.name non-empty)
+       · FV Access application status = 'approved'
+     Checked at both modal-open and submit time.
+     Add-only — removes cleanly.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixFvGate) return; Z.__zynixFvGate = true;
 
+async function fvGateCheck(){
+  var u = Z.State.currentUser;
+  if(!u) return { ok:false, msg:'Login first.' };
+
+  /* 1. SPACE check */
+  var hasSpace = (typeof Z.hasSpace === 'function') ? Z.hasSpace(u.id) : false;
+  if(!hasSpace){
+    return { ok:false, msg:'Set up your SPACE first — Full Videos need a channel.' };
+  }
+
+  /* 2. FV application check */
+  var c = Z.sb && Z.sb();
+  if(!c) return { ok:false, msg:'Not connected. Try again.' };
+
+  try {
+    var r = await c.from('full_video_applications')
+      .select('status').eq('user_id', u.id).maybeSingle();
+    if(r.error || !r.data){
+      return { ok:false, msg:'Apply for Full Video Access from your SPACE Dashboard first.' };
+    }
+    var s = String(r.data.status || '').toLowerCase();
+    if(s !== 'approved'){
+      var label = s === 'pending' ? 'under review'
+                : s === 'rejected' ? 'rejected'
+                : 'not approved';
+      return { ok:false, msg:'FV Access is ' + label + '. Wait for approval.' };
+    }
+  } catch(e){
+    return { ok:false, msg:'Could not verify FV access. Try again.' };
+  }
+
+  return { ok:true };
+}
+
+Z._fvGateCheck = fvGateCheck;
+
+/* Wrap: openCreateFullVideoModal — gate BEFORE modal opens */
+var _prevOpenFV = Z.openCreateFullVideoModal;
+if(typeof _prevOpenFV === 'function'){
+  Z.openCreateFullVideoModal = async function(){
+    var g = await fvGateCheck();
+    if(!g.ok){
+      Z.toast(g.msg, 'error');
+      try { Z.closeModal(); } catch(e){}
+      return;
+    }
+    return _prevOpenFV.apply(this, arguments);
+  };
+}
+
+/* Wrap: submitFullVideo — gate BEFORE publish */
+var _prevSubmitFV = Z.submitFullVideo;
+if(typeof _prevSubmitFV === 'function'){
+  Z.submitFullVideo = async function(){
+    var g = await fvGateCheck();
+    if(!g.ok){
+      Z.toast(g.msg, 'error');
+      try { Z.closeModal(); } catch(e){}
+      return;
+    }
+    return _prevSubmitFV.apply(this, arguments);
+  };
+}
+
+console.log('[FV Gate] active — SPACE + approved FV Access required');
+})();
+</script>
 
 </body>
 </html>
