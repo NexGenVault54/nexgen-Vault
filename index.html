@@ -16143,24 +16143,51 @@ function _cdThumbPreview(bgCss, icon){
   }
 }
 
+
 Z._cdThumbUpload = async function(input){
   var f = input && input.files && input.files[0];
-  if(!f) return;
-  if(f.size > 5*1024*1024){ toast('Under 5 MB.', 'error'); input.value=''; return; }
+  if(!f){ return; }
+  if(f.size > 5*1024*1024){
+    toast('Thumbnail under 5 MB.', 'error');
+    input.value = '';
+    return;
+  }
+  if(f.type && f.type.indexOf('image/') !== 0){
+    toast('Please choose an image file.', 'error');
+    input.value = '';
+    return;
+  }
+
   try {
     toast('Uploading…');
     var url = await Z.storeMedia(f);
-    if(!url) throw new Error('upload failed');
+    if(!url){ throw new Error('Upload returned empty URL.'); }
+
     _draft.thumbnail_url = url;
     _draft.thumbnail_preset = '';
+
     var prev = document.getElementById('cd-thumb-preview');
     if(prev){
       prev.style.background = '#0f172a';
       prev.style.backgroundImage = 'url(' + url + ')';
       prev.innerHTML = '';
     }
+
     toast('Thumbnail ready.');
-  } catch(e){ toast('Upload failed.', 'error'); }
+  } catch(e){
+    var msg = (e && e.message) ? e.message : 'Upload failed.';
+    toast('Thumbnail upload failed: ' + msg, 'error');
+    /* Ensure preview stays clean on failure */
+    var prev2 = document.getElementById('cd-thumb-preview');
+    if(prev2 && !_draft.thumbnail_url){
+      prev2.style.backgroundImage = 'none';
+      prev2.style.background = '#0f172a';
+      prev2.innerHTML = '<i class="fa-solid fa-image" style="color:#334155;font-size:28px;"></i>';
+    }
+  } finally {
+    /* ALWAYS clear input so the same file can be re-picked */
+    try { input.value = ''; } catch(e){}
+  }
 };
 
 /* ============================================================
