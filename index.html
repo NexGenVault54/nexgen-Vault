@@ -25958,113 +25958,6 @@ console.log('[Spark Display Fix v2] rate inside share button · budget as stacke
 var Z = window.Z; if(!Z) return;
 if(Z.__zynixSparkFullPage) return; Z.__zynixSparkFullPage = true;
 
-/* ---------- Full page renderer ---------- */
-Z.renderSparkFullPage = function(spark, author){
-  if(!spark || !author) return '';
-  var me = Z.State.currentUser;
-  var isMine = me && me.id === spark.author_id;
-  var isSaved = (Z.State.savedSparks || []).indexOf(spark.id) !== -1;
-  var comments = spark._comments || [];
-  var totalCount = 0;
-  (function count(list){ list.forEach(function(c){ totalCount++; if(c._replies) count(c._replies); }); })(comments);
-
-  /* Caption */
-  var captionHtml = '';
-  if(spark.caption){
-    captionHtml =
-      '<div class="post-content post-caption" onclick="Z.toggleCaptionEl(event, this)">' +
-        '<div class="pc-text">' + Z.escape(spark.caption) + '</div>' +
-        '<button class="pc-see-more" type="button" aria-label="Unfold caption" onclick="Z.toggleCaptionEl(event, this.parentElement)">' + Z.UNFOLD_LABEL + '</button>' +
-      '</div>';
-  }
-
-  /* Tags */
-  var tagsHtml = '';
-  if(spark.tags && spark.tags.length){
-    tagsHtml = '<div class="spark-info-tags" style="margin-bottom:10px;">' +
-      spark.tags.map(function(t){ return '<span style="color:#10b981;font-weight:600;font-size:10px;margin-right:6px;">#' + Z.escape(t) + '</span>'; }).join('') +
-    '</div>';
-  }
-
-  /* Menu (Save / Not Interested / Delete) */
-  var menuHtml =
-    '<div class="post-menu-wrap">' +
-      '<button class="post-menu-btn" onclick="Z.togglePostMenu(\'' + Z.escape(spark.id) + '\', event)" type="button">' +
-        '<i class="fa-solid fa-ellipsis-vertical"></i>' +
-      '</button>' +
-      '<div class="post-menu" id="post-menu-' + Z.escape(spark.id) + '" style="display:none;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:6px;min-width:210px;box-shadow:0 8px 32px rgba(0,0,0,.7);">' +
-        (isMine
-          ? '<button class="danger" onclick="Z.deleteSpark(\'' + Z.escape(spark.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#fca5a5;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-trash" style="width:14px;text-align:center;"></i> Delete</button><div style="height:1px;background:#1e293b;margin:4px 0;"></div>'
-          : '') +
-        '<button onclick="Z.toggleSaveSpark(\'' + Z.escape(spark.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-' + (isSaved?'solid':'regular') + ' fa-bookmark" style="width:14px;text-align:center;"></i> ' + (isSaved?'Unsave':'Save') + '</button>' +
-        '<button onclick="Z.markSparkNotInterested(\'' + Z.escape(spark.id) + '\')" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:12px;cursor:pointer;text-align:left;"><i class="fa-solid fa-thumbs-down" style="width:14px;text-align:center;"></i> Not Interested</button>' +
-      '</div>' +
-    '</div>';
-
-  /* Comments body */
-  var commentsHtml = comments.length
-    ? comments.map(function(cm){ return Z.renderSparkComment(cm, spark, false); }).join('')
-    : '<div style="text-align:center;padding:20px;color:#64748b;font-size:12px;">No comments yet.</div>';
-
-  /* Color picker */
-  var cp =
-    '<div class="comment-color-picker">' +
-      ['light-green','light-blue','light-yellow','light-pink','light-purple'].map(function(c){
-        var short = c.replace('light-','');
-        return '<div class="comment-color-dot c-' + short + ' ' + (Z.State.commentColor===c?'selected':'') +
-               '" data-color="' + c + '" onclick="Z.setCommentColor(\'' + c + '\')"></div>';
-      }).join('') +
-    '</div>';
-
-  /* Input */
-  var inputHtml = me
-    ? '<div class="comment-input-wrap">' +
-        '<textarea id="spark-page-comment-input-' + Z.escape(spark.id) + '" rows="1" placeholder="Write a comment..." oninput="Z.autoGrow(this)"></textarea>' +
-        '<button onclick="Z.addSparkPageComment(\'' + Z.escape(spark.id) + '\')">Send</button>' +
-      '</div>'
-    : '<button onclick="Z.openAuthModal(\'login\')" style="width:100%;background:#10b981;border:none;color:#000;font-weight:700;padding:10px;border-radius:8px;font-size:12px;cursor:pointer;">Login to comment</button>';
-
-  /* Rate + budget pills (same as home post-actions) */
-  var shareRate = Number(spark.share_bounty) || 0;
-  var budgetCap = Number(spark.share_budget_cap) || 0;
-  var budgetPaid = Number(spark.share_bounty_paid) || 0;
-  var budgetRem = Math.max(0, budgetCap - budgetPaid);
-  var rateText = shareRate > 0 ? '<span style="color:#10b981;font-weight:800;">· $' + shareRate.toFixed(2) + '</span>' : '';
-  var budgetHtml = '';
-  if(budgetCap > 0){
-    var bCol = budgetRem > 0 ? '#10b981' : '#a16262';
-    budgetHtml = '<span data-share-budget="1" style="white-space:nowrap;font-size:10px;font-weight:800;color:' + bCol + ';background:rgba(255,255,255,.04);padding:3px 8px;border-radius:12px;">'+budgetRem.toFixed(2)+'/' + budgetCap.toFixed(2) + '</span>';
-  }
-
-  return '<div class="post-card" data-post-id="' + Z.escape(spark.id) + '" data-spark-page="1">' +
-    '<div class="post-author">' +
-      '<img src="' + Z.escape(Z.displayAvatar(author)) + '" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')" style="cursor:pointer;">' +
-      '<div style="flex:1;min-width:0;cursor:pointer;" onclick="Z.showView(\'public-profile\',\'' + Z.escape(author.id) + '\')">' +
-        '<div class="pname">' + Z.escape(Z.displayName(author)) + '</div>' +
-        '<div class="phandle">@' + Z.escape(author.username || 'user') + ' · ' + Z.timeAgo(new Date(spark.created_at).getTime()) + '</div>' +
-      '</div>' +
-      menuHtml +
-    '</div>' +
-    captionHtml +
-    '<div class="post-media has-video" data-post-media="' + Z.escape(spark.id) + '">' +
-      '<video src="' + Z.escape(spark.video_url) + '" controls playsinline preload="metadata" loop data-spark-id="' + Z.escape(spark.id) + '"></video>' +
-    '</div>' +
-    tagsHtml +
-    '<div class="post-reactions" data-spark-page-rx="' + Z.escape(spark.id) + '">' +
-      Z._renderSparkPageReactionRow(spark) +
-    '</div>' +
-    '<div class="post-actions" style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">' +
-      '<button onclick="Z.toggleSparkPageComments(\'' + Z.escape(spark.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-regular fa-comment"></i><span>' + totalCount + '</span></button>' +
-      '<button onclick="Z.openSparkShare(\'' + Z.escape(spark.id) + '\')" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-share-nodes"></i><span>' + (spark.shares || 0) + '</span>' + rateText + '</button>' +
-      budgetHtml +
-      '<button style="background:transparent;border:none;color:#64748b;cursor:default;margin-left:auto;padding:4px 0;font-size:12px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-regular fa-eye"></i><span>' + (spark.views || 0) + '</span></button>' +
-    '</div>' +
-    '<div class="post-comments" id="comments-' + Z.escape(spark.id) + '">' +
-      commentsHtml + cp + inputHtml +
-    '</div>' +
-  '</div>';
-};
-
 /* ---------- Open/close comments ---------- */
 Z.toggleSparkPageComments = function(sparkId){
   var el = document.getElementById('comments-' + sparkId);
@@ -26560,7 +26453,7 @@ Z.renderHeroSparkCard = function(spark, author){
   var sparkId = Z.escape(spark.id);
 
   return '<div class="home-hero-spark" data-hero-spark="' + sparkId + '" ' +
-    'onclick="Z.openSparkInFeed(\'' + sparkId + '\')" ' +
+
     'style="position:relative;border-radius:16px;overflow:hidden;background:#000;height:clamp(380px,58vh,560px);cursor:pointer;">' +
 
       '<video src="' + Z.escape(spark.video_url) + '" autoplay muted loop playsinline preload="metadata" ' +
@@ -26588,7 +26481,7 @@ Z.renderHeroSparkCard = function(spark, author){
         '</div>' +
       '</div>' +
       (captionPreview ? '<div style="font-size:12px;color:#f1f5f9;line-height:1.4;margin-bottom:10px;text-shadow:0 1px 4px rgba(0,0,0,.9);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">' + Z.escape(captionPreview) + '</div>' : '') +
-      '<div style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:800;font-size:11px;padding:7px 14px;border-radius:20px;box-shadow:0 4px 14px rgba(0,0,0,.4);">' +
+      '<div onclick="Z.openSparkInFeed(\'' + sparkId + '\')" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:800;font-size:11px;padding:7px 14px;border-radius:20px;box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;">' +
         '<i class="fa-solid fa-bolt" style="font-size:10px;"></i>' +
         '<span>Watch in Spark feed</span>' +
       '</div>' +
