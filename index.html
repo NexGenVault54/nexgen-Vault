@@ -16110,6 +16110,17 @@ Z._cdThumbUpload = async function(input){
    GALLERY ITEMS (inside editor)
    ============================================================ */
 Z._cdGalleryAdd = function(){
+  if(!_draft) return;
+  var items = _draft.gallery_items || [];
+  if(items.length >= 30){
+    toast('Gallery max 30 items.', 'error');
+    return;
+  }
+  var vidCount = items.filter(function(it){ return it.media_type === 'video'; }).length;
+  if(vidCount >= 5){
+    // User can still add images — only block videos.
+    // We can't predict what user picks. Real check happens in upload.
+  }
   var el = document.getElementById('cd-gallery-file');
   if(el) el.click();
 };
@@ -16117,19 +16128,53 @@ Z._cdGalleryAdd = function(){
 Z._cdGalleryUpload = async function(input){
   var f = input && input.files && input.files[0];
   if(!f) return;
-  if(f.size > 100*1024*1024){ toast('Under 100 MB.', 'error'); input.value=''; return; }
+  if(!_draft) return;
+  _draft.gallery_items = _draft.gallery_items || [];
+
+  // Total items cap
+  if(_draft.gallery_items.length >= 30){
+    toast('Gallery max 30 items.', 'error');
+    input.value = '';
+    return;
+  }
+
+  var isVid = (f.type && f.type.indexOf('video/') === 0) || Z.isVideoUrl(f.name);
+
+  if(isVid){
+    // Video size
+    if(f.size > 100*1024*1024){
+      toast('Video under 100 MB.', 'error');
+      input.value = '';
+      return;
+    }
+    // Video count
+    var vidCount = _draft.gallery_items.filter(function(it){ return it.media_type === 'video'; }).length;
+    if(vidCount >= 5){
+      toast('Max 5 videos in gallery.', 'error');
+      input.value = '';
+      return;
+    }
+  } else {
+    // Image size
+    if(f.size > 4*1024*1024){
+      toast('Image under 4 MB.', 'error');
+      input.value = '';
+      return;
+    }
+  }
+
   try {
     toast('Uploading…');
     var url = await Z.storeMedia(f);
     if(!url) throw new Error('upload failed');
-    var isVid = (f.type && f.type.indexOf('video/') === 0) || Z.isVideoUrl(f.name);
-    _draft.gallery_items = _draft.gallery_items || [];
     _draft.gallery_items.push({ url: url, media_type: isVid ? 'video' : 'image', title: '' });
     if(!_draft.cover_image_url && !isVid) _draft.cover_image_url = url;
     input.value = '';
     _cdGalleryPaint();
     toast('Added.');
-  } catch(e){ toast('Upload failed.', 'error'); }
+  } catch(e){
+    toast('Upload failed.', 'error');
+  }
 };
 
 function _cdGalleryPaint(){
@@ -16312,6 +16357,7 @@ Z.renderView = function(view, param){
   return _prevRenderCard.call(this, view, param);
 };
 
+
 function _renderCardDetailPage(param){
   var parts = String(param || '').split('|');
   var userId = parts[0];
@@ -16333,46 +16379,59 @@ function _renderCardDetailPage(param){
     return '<div style="padding:40px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
   }
 
-  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
-
-  /* Header */
-  h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
-  h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
-  h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
-  h += '<h2 class="view-title" style="margin:0;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(card.title || 'Card') + '</h2>';
-  h += '</div>';
-  if(isOwner){
-    h += '<button onclick="Z.openCardEditor(' + idx + ')" style="padding:7px 14px;border-radius:16px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-size:11px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-pen"></i> Edit</button>';
-  }
-  h += '</div>';
-
-  /* Banner / Thumbnail header */
   var bg = card.banner_gradient || DEFAULT_BANNER;
-  h += '<div style="border-radius:16px;overflow:hidden;position:relative;min-height:180px;background:' + bg + ';display:flex;flex-direction:column;justify-content:flex-end;padding:20px;' + (card.thumbnail_url ? 'background-image:url(' + card.thumbnail_url + ');background-size:cover;background-position:center;' : '') + '">';
-  if(card.thumbnail_url) h += '<div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,.15));"></div>';
-  h += '<div style="position:relative;z-index:1;">';
-  h += '<div style="font-size:10px;font-weight:900;color:rgba(255,255,255,.85);letter-spacing:.8px;text-transform:uppercase;margin-bottom:6px;"><i class="' + _typeIcon(card.type) + '"></i> ' + _typeLabel(card.type) + '</div>';
-  h += '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.2;">' + esc(card.title || _typeLabel(card.type)) + '</div>';
-  if(card.subtitle) h += '<div style="font-size:13px;color:rgba(255,255,255,.85);margin-top:6px;">' + esc(card.subtitle) + '</div>';
-  h += '</div></div>';
-
-  /* Description */
-  if(card.description){
-    h += '<div style="padding:16px;border-radius:14px;background:#111827;border:1px solid #1e293b;font-size:13.5px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;word-break:break-word;">' + esc(card.description) + '</div>';
+  var bgStyle = 'background:' + bg + ';';
+  if(card.thumbnail_url){
+    bgStyle = 'background-image:url(' + esc(card.thumbnail_url) + ');background-size:cover;background-position:center;';
   }
 
-  /* Link button */
+  var h = '';
+
+  h += '<div class="zynix-card-banner" style="' + bgStyle + '">';
+
+  if(card.thumbnail_url){
+    h += '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.35),rgba(0,0,0,.55));pointer-events:none;"></div>';
+  }
+
+  h += '<div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:16px;">';
+  h += '<button onclick="Z.goBack()" style="width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;"><i class="fa-solid fa-arrow-left"></i></button>';
+  if(isOwner){
+    h += '<button onclick="Z.openCardEditor(' + idx + ')" style="padding:8px 14px;border-radius:20px;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:11.5px;font-weight:900;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-pen"></i> Edit</button>';
+  }
+  h += '</div>';
+
+  h += '<div style="position:relative;z-index:2;flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:40px 28px;text-align:center;">';
+
+  h += '<div style="display:inline-flex;align-items:center;gap:6px;background:rgba(0,0,0,.35);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:20px;margin-bottom:20px;">';
+  h += '<i class="' + _typeIcon(card.type) + '" style="font-size:11px;color:rgba(255,255,255,.9);"></i>';
+  h += '<span style="font-size:10px;font-weight:900;color:rgba(255,255,255,.9);letter-spacing:1px;text-transform:uppercase;">' + esc(_typeLabel(card.type)) + '</span>';
+  h += '</div>';
+
+  h += '<h1 style="font-size:clamp(24px,6vw,34px);font-weight:900;color:#fff;line-height:1.15;margin:0 0 10px;text-shadow:0 3px 20px rgba(0,0,0,.7);letter-spacing:-.5px;max-width:100%;word-break:break-word;">' + esc(card.title || _typeLabel(card.type)) + '</h1>';
+
+  if(card.subtitle){
+    h += '<div style="font-size:15px;font-weight:700;color:rgba(255,255,255,.85);line-height:1.4;text-shadow:0 2px 12px rgba(0,0,0,.7);margin-bottom:22px;max-width:100%;word-break:break-word;">' + esc(card.subtitle) + '</div>';
+  }
+
+  if(card.description){
+    h += '<div style="width:44px;height:2px;background:rgba(255,255,255,.35);border-radius:2px;margin:0 auto 22px;"></div>';
+    h += '<div style="font-size:14px;color:rgba(255,255,255,.92);line-height:1.8;max-width:640px;white-space:pre-wrap;word-break:break-word;text-shadow:0 1px 8px rgba(0,0,0,.65);">' + esc(card.description) + '</div>';
+  }
+
   if(card.link_url){
-    h += '<button onclick="Z._openAnyLink(\'' + esc(card.link_url) + '\')" style="width:100%;padding:16px;border-radius:14px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;"><i class="fa-solid fa-arrow-up-right-from-square" style="margin-right:6px;"></i> ' + esc(card.link_label || 'Open') + '</button>';
+    h += '<button onclick="Z._openAnyLink(\'' + esc(card.link_url) + '\')" style="margin-top:30px;padding:14px 30px;border-radius:14px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.5);display:inline-flex;align-items:center;gap:8px;"><i class="fa-solid fa-arrow-up-right-from-square"></i> ' + esc(card.link_label || 'Open') + '</button>';
   }
 
   h += '</div>';
+  h += '</div>';
+
   return h;
 }
 
 /* ============================================================
    GALLERY PAGE
    ============================================================ */
+
 function _renderGalleryPage(userId){
   var profile = (Z.State.spaceProfile && Z.State.spaceProfile.id === userId)
     ? Z.State.spaceProfile
@@ -16387,40 +16446,41 @@ function _renderGalleryPage(userId){
   var items = card.gallery_items || [];
   var cover = card.cover_image_url;
 
-  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+  var h = '<div style="display:flex;flex-direction:column;gap:12px;padding-bottom:24px;">';
+
   h += '<div class="view-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
   h += '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">';
   h += '<button class="colored-back-btn" onclick="Z.goBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>';
-  h += '<h2 class="view-title" style="margin:0;font-size:15px;">' + esc(card.title || 'Gallery') + '</h2>';
+  h += '<h2 class="view-title" style="margin:0;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(card.title || 'Gallery') + '</h2>';
   h += '</div>';
   if(isOwner){
     h += '<button onclick="Z.openCardEditor(' + arr.indexOf(card) + ')" style="padding:7px 14px;border-radius:16px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.06);color:#10b981;font-size:11px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-pen"></i> Manage</button>';
   }
   h += '</div>';
 
-  /* Cover */
   if(cover){
-    h += '<div style="border-radius:16px;overflow:hidden;aspect-ratio:16/9;background:#000;"><img src="' + esc(cover) + '" style="width:100%;height:100%;object-fit:cover;display:block;"></div>';
+    h += '<div style="border-radius:16px;overflow:hidden;aspect-ratio:16/9;background:#000;">';
+    h += '<img src="' + esc(cover) + '" style="width:100%;height:100%;object-fit:cover;display:block;">';
+    h += '</div>';
   }
+
   if(card.subtitle){
     h += '<div style="font-size:12.5px;color:#94a3b8;text-align:center;">' + esc(card.subtitle) + '</div>';
   }
 
   if(!items.length){
-    h += '<div style="padding:40px;border-radius:14px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">' + (isOwner ? 'Tap Manage to add media.' : 'No media yet.') + '</div>';
+    h += '<div style="padding:60px 20px;border-radius:14px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">' + (isOwner ? 'Tap Manage to add media.' : 'No media yet.') + '</div>';
   } else {
-    h += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">';
+    h += '<div class="zynix-gallery-grid">';
     items.forEach(function(it){
-      h += '<div style="border-radius:12px;overflow:hidden;background:#0f172a;border:1px solid #1e293b;">';
-      h += '<div style="aspect-ratio:1;background:#000;position:relative;">';
+      h += '<div class="zynix-gallery-tile">';
       if(it.media_type === 'video'){
-        h += '<video src="' + esc(it.url) + '" controls preload="metadata" playsinline style="width:100%;height:100%;object-fit:cover;background:#000;display:block;"></video>';
+        h += '<video src="' + esc(it.url) + '" preload="metadata" muted playsinline controls style="width:100%;height:100%;object-fit:cover;background:#000;display:block;"></video>';
       } else {
         h += '<img src="' + esc(it.url) + '" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in;" onclick="Z.openImageLightbox(\'' + esc(it.url) + '\')">';
       }
-      h += '</div>';
       if(it.title){
-        h += '<div style="padding:8px 10px;font-size:11px;color:#cbd5e1;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(it.title) + '</div>';
+        h += '<div class="zynix-gallery-label">' + esc(it.title) + '</div>';
       }
       h += '</div>';
     });
@@ -16429,7 +16489,7 @@ function _renderGalleryPage(userId){
 
   h += '</div>';
   return h;
-}
+}   
 
 /* ============================================================
    LINK OPENER — universal
@@ -16505,6 +16565,69 @@ console.log('[Cards System v2] ready');
 })();
 </script>
      
+
+<!-- ============================================================
+     CARDS SYSTEM v2 — Card Detail + Gallery CSS
+     ------------------------------------------------------------
+     Full-page banner (card detail) + portrait 9:16 grid (gallery)
+     Loaded after all JS so it can override inline styles.
+     Delete this entire <style> block to revert to old design.
+     ============================================================ -->
+
+
+<style id="zynix-card-detail-v2-css">
+.zynix-card-banner{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  min-height:calc(100vh - 176px);
+  margin-left:-14px;
+  margin-right:-14px;
+  margin-top:-12px;
+  overflow:hidden;
+}
+@media(min-width:900px){
+  .zynix-card-banner{
+    border-radius:18px;
+    margin-left:0;
+    margin-right:0;
+    min-height:calc(100vh - 200px);
+  }
+}
+.zynix-gallery-grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+}
+@media(min-width:641px){
+  .zynix-gallery-grid{grid-template-columns:repeat(3,1fr);gap:12px;}
+}
+@media(min-width:900px){
+  .zynix-gallery-grid{grid-template-columns:repeat(4,1fr);gap:12px;}
+}
+.zynix-gallery-tile{
+  position:relative;
+  aspect-ratio:9/16;
+  border-radius:12px;
+  overflow:hidden;
+  background:#000;
+  border:1px solid #1e293b;
+}
+.zynix-gallery-label{
+  position:absolute;
+  left:0;right:0;bottom:0;
+  padding:8px 10px;
+  font-size:11px;
+  color:#fff;
+  font-weight:800;
+  background:linear-gradient(to top,rgba(0,0,0,.85),transparent);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  pointer-events:none;
+}
+</style>
+
 <!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
@@ -45118,6 +45241,8 @@ document.addEventListener('visibilitychange', function(){
 console.log('[Tab Pause] active — videos pause on tab hide');
 })();
 </script>
+
+
 
 </body>
 </html>
