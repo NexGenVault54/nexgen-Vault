@@ -16874,6 +16874,72 @@ console.log('[Cards System v2] ready');
 </style>
 
 <!-- ============================================================
+     CARD DETAIL — async profile fetch
+     ------------------------------------------------------------
+     Card detail page ke liye. Agar profile state mein na ho
+     (deep-link, reload pe last view card-detail, ya SPACE race),
+     DB se fetch karta hai aur phir render karta hai.
+     Normal case mein kuch nahi badalta — seedha render.
+     Add-only. Revert = delete this block.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var Z = window.Z; if(!Z) return;
+if(Z.__zynixCardDetailFetch) return; Z.__zynixCardDetailFetch = true;
+
+function _resolveProfileCD(userId){
+  if(Z.State.spaceProfile && Z.State.spaceProfile.id === userId){
+    return Z.State.spaceProfile;
+  }
+  if(Z.getProfileById){
+    var p = Z.getProfileById(userId);
+    if(p) return p;
+  }
+  return null;
+}
+
+var _prevRenderViewCD = Z.renderView;
+Z.renderView = function(view, param){
+  if(view === 'card-detail'){
+    var parts = String(param || '').split('|');
+    var userId = parts[0];
+    var existing = _resolveProfileCD(userId);
+    if(!existing){
+      /* Async fetch + re-render */
+      (async function(){
+        try {
+          var c = Z.sb && Z.sb();
+          if(!c) return;
+          var r = await c.from('profiles').select('*').eq('id', userId).maybeSingle();
+          if(r.data){
+            Z.State.allProfiles = (Z.State.allProfiles || []).concat([r.data]);
+            /* Re-render the same view */
+            if(Z.State.currentView === 'card-detail'){
+              var cont = document.getElementById('app-container');
+              if(cont){
+                cont.innerHTML = Z.renderView('card-detail', param);
+                try { Z.observeFreezeDots(); } catch(e){}
+                try { Z._tagMediaContainers(); } catch(e){}
+              }
+            }
+          }
+        } catch(e){}
+      })();
+
+      return '<div style="padding:80px 20px;text-align:center;color:#64748b;">' +
+        '<i class="fa-solid fa-circle-notch fa-spin" style="font-size:24px;color:#10b981;"></i>' +
+        '<div style="margin-top:14px;font-size:12.5px;">Loading profile…</div></div>';
+    }
+  }
+  return _prevRenderViewCD.apply(this, arguments);
+};
+
+console.log('[Card Detail Fetch] active');
+})();
+</script>
+
+<!-- ============================================================
      SECTION 9 — CIRCLES
      ============================================================ -->
 <script>
