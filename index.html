@@ -11057,9 +11057,24 @@ Z._saveSpaceName = async function(){
   var val = el ? el.value.trim() : '';
   if(val.length < 2){ toast('Name must be at least 2 characters.', 'error'); return; }
   if(val.length > 60){ toast('Name too long.', 'error'); return; }
-  var sd = Object.assign({}, u.space_data || {});
-  if(sd.name_locked){ toast('SPACE name is permanently locked.'); return; }
+
+  /* Fresh fetch before write — prevents cross-device race. */
+  var base = null;
+  var c = db();
+  if(c){
+    try {
+      var fr = await c.from('profiles').select('space_data').eq('id', u.id).maybeSingle();
+      if(fr && !fr.error && fr.data && fr.data.space_data){
+        base = fr.data.space_data;
+      }
+    } catch(e){}
+  }
+  if(!base) base = u.space_data || {};
+
+  if(base.name_locked){ toast('SPACE name is permanently locked.'); return; }
+  var sd = Object.assign({}, base);
   sd.name = val;
+
   var r = await Z.DB.updateProfile(u.id, { space_data: sd });
   if(!r){ toast('Failed.', 'error'); return; }
   if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
@@ -11453,7 +11468,14 @@ Z.submitFullVideoApplication = async function(btn){
   if(btn){ btn.disabled = true; btn.textContent = 'Submitting…'; }
 
   try {
-    var sd = Object.assign({}, u.space_data || {});
+    /* Fresh fetch before write — prevents cross-device race */
+    var _base = null;
+    try {
+      var _fr = await c.from('profiles').select('space_data').eq('id', u.id).maybeSingle();
+      if(_fr && !_fr.error && _fr.data && _fr.data.space_data) _base = _fr.data.space_data;
+    } catch(e){}
+    if(!_base) _base = u.space_data || {};
+    var sd = Object.assign({}, _base);
     sd.name = spaceName;
     sd.description = spaceDesc;
     sd.name_locked = true;
@@ -15583,7 +15605,14 @@ Z.openSpaceEditor = function(){
       saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
 
       try {
-        var sdNew = Object.assign({}, u.space_data || {});
+        /* Fresh fetch before write — prevents cross-device race */
+        var _base2 = null;
+        try {
+          var _fr2 = await c.from('profiles').select('space_data').eq('id', u.id).maybeSingle();
+          if(_fr2 && !_fr2.error && _fr2.data && _fr2.data.space_data) _base2 = _fr2.data.space_data;
+        } catch(e){}
+        if(!_base2) _base2 = u.space_data || {};
+        var sdNew = Object.assign({}, _base2);
         sdNew.name = newName;
         sdNew.description = newDesc;
 
@@ -15963,15 +15992,23 @@ function _persistCards(cards){
   if(!u) return Promise.reject(new Error('not logged in'));
   var c = db();
   if(!c) return Promise.reject(new Error('no db'));
-  var sd = Object.assign({}, u.space_data || {});
-  sd.cards = cards;
-  return c.from('profiles').update({ space_data: sd }).eq('id', u.id).then(function(r){
-    if(r.error) throw r.error;
-    if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
-    if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
-      Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, sd);
-    }
-    return cards;
+
+  /* Fresh fetch before write — prevents cross-device race.
+     Device A saves name, device B saves cards → without this,
+     one overwrites the other. */
+  return c.from('profiles').select('space_data').eq('id', u.id).maybeSingle().then(function(fr){
+    var fresh = (fr && !fr.error && fr.data && fr.data.space_data) ? fr.data.space_data : {};
+    var base = Object.keys(fresh).length ? fresh : (u.space_data || {});
+    var sd = Object.assign({}, base);
+    sd.cards = cards;
+    return c.from('profiles').update({ space_data: sd }).eq('id', u.id).then(function(r){
+      if(r.error) throw r.error;
+      if(Z.State.currentUser) Z.State.currentUser.space_data = sd;
+      if(Z.State.spaceProfile && Z.State.spaceProfile.id === u.id){
+        Z.State.spaceProfile.space_data = Object.assign({}, Z.State.spaceProfile.space_data || {}, sd);
+      }
+      return cards;
+    });
   });
 }
 
