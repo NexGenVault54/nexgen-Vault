@@ -7788,6 +7788,11 @@ Z.sp5FetchGlobalContent = function(){
   _publicFetchInFlight = true;
   _publicFetchPromise = (async function(){
     try {
+      /* Ensure blocked list is loaded before filtering.
+         Prevents brief flash of blocked users' content. */
+      if(typeof Z._loadBlockedIds === 'function'){
+        try { await Z._loadBlockedIds(); } catch(e){}
+      }
       var sparksP = c.from('sparks').select('*').eq('type','spark').order('created_at',{ascending:false}).limit(60);
       var videosP = c.from('sparks').select('*').eq('type','long_video').order('created_at',{ascending:false}).limit(60);
       var res = await Promise.all([sparksP, videosP]);
@@ -8196,9 +8201,9 @@ function _cardFaceHTML(c, idx, isOwner){
 
   /* Background: cover_image (gallery) → thumbnail → gradient+icon */
   if(c.type === 'gallery' && c.cover_image_url){
-    face = '<div class="sp5-card-media" style="background-image:url(' + esc(c.cover_image_url) + ');"></div>';
+    face = '<div class="sp5-card-media" style="background-image:url(' + esc(c.cover_image_url) + '),' + bg + ';background-size:cover;background-position:center;"></div>';
   } else if(c.thumbnail_url){
-    face = '<div class="sp5-card-media" style="background-image:url(' + esc(c.thumbnail_url) + ');"></div>';
+    face = '<div class="sp5-card-media" style="background-image:url(' + esc(c.thumbnail_url) + '),' + bg + ';background-size:cover;background-position:center;"></div>';
   } else {
     var icon = _typeIcon(c.type);
     face = '<div class="sp5-card-media" style="background:' + bg + ';display:flex;align-items:center;justify-content:center;">';
@@ -16653,7 +16658,7 @@ function _renderCardDetailPage(param){
   var bg = card.banner_gradient || DEFAULT_BANNER;
   var bgStyle = 'background:' + bg + ';';
   if(card.thumbnail_url){
-    bgStyle = 'background-image:url(' + esc(card.thumbnail_url) + ');background-size:cover;background-position:center;';
+    bgStyle = 'background-image:url(' + esc(card.thumbnail_url) + '),' + bg + ';background-size:cover;background-position:center;';
   }
 
   var h = '';
@@ -40383,21 +40388,34 @@ Z.sendDM = async function(threadId){
   inp.value = '';
   inp.style.height = 'auto';
 
-  /* Optimistic paint */
+  /* Optimistic paint — with unique id for rollback */
   var host = document.getElementById('dm-chat-body');
+  var tmpId = 'dm-opt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
   if(host){
     if(host.querySelector('.dm-empty')) host.innerHTML = '';
     var tmp = document.createElement('div');
+    tmp.id = tmpId;
     tmp.className = 'dm-msg out';
     tmp.innerHTML = esc(body) + '<span class="t">now</span>';
     host.appendChild(tmp);
     host.scrollTop = host.scrollHeight;
   }
 
+  function _rollback(){
+    var el = document.getElementById(tmpId);
+    if(el && el.parentNode) el.parentNode.removeChild(el);
+    inp.value = body;
+    inp.style.height = 'auto';
+  }
+
   try {
     var r = await c.rpc('dm_send', { p_thread_id: threadId, p_body: body });
-    if(r.error){ toast('Failed to send.', 'error'); }
+    if(r.error){
+      _rollback();
+      toast('Failed to send.', 'error');
+    }
   } catch(e){
+    _rollback();
     toast('Failed to send.', 'error');
   }
 };
