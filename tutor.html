@@ -1023,86 +1023,210 @@ ZT.sendChatText = async function(){
   }
 };
 
-/* Voice recording */
-ZT._rec = null; ZT._recChunks = []; ZT._recSecs = 0; ZT._recTimer = null;
-
-/* Voice recording — FIXED */
-ZT._rec = null; ZT._recChunks = []; ZT._recSecs = 0; ZT._recTimer = null;
-
-/* Voice recording — FIXED: force video/webm for R2 compatibility */
-ZT._rec = null; ZT._recChunks = []; ZT._recSecs = 0; ZT._recTimer = null;
+/* ============================================================
+   BULLETPROOF VOICE RECORDER v2
+   - Track monitoring (auto-detect mic loss)
+   - Manual flush every 1s (Chrome/Android fix)
+   - Wait for final dataavailable before upload
+   - Codec-stripped mime (R2 allowlist fix)
+   - Live seconds counter on button
+   ============================================================ */
+ZT._rec = null;
+ZT._recChunks = [];
+ZT._recSecs = 0;
+ZT._recTimer = null;
+ZT._recFlush = null;
+ZT._recStream = null;
+ZT._recStopping = false;
 
 ZT.toggleVoiceRecording = async function(){
-  var btn = document.getElementById('zt-voice-btn'); if(!btn) return;
-  if(ZT._rec && ZT._rec.state === 'recording'){ try { ZT._rec.stop(); } catch(e){} return; }
-  if(!navigator.mediaDevices || !window.MediaRecorder){ ZT.toast('Voice not supported.', 'error'); return; }
+  var btn = document.getElementById('zt-voice-btn');
+  if(!btn) return;
+
+  /* STOP path */
+  if(ZT._rec && ZT._rec.state === 'recording'){
+    ZT._stopVoiceRecording();
+    return;
+  }
+
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    ZT.toast('Voice not supported on this browser.', 'error');
+    return;
+  }
+
+  /* START path */
   try {
-    var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    ZT._recChunks = []; ZT._recSecs = 0;
+    var stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000
+      }
+    });
+    ZT._recStream = stream;
 
-    /* Pick any supported recording mime */
-    var recMime = '';
-    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
-    for(var i = 0; i < candidates.length; i++){
-      try { if(MediaRecorder.isTypeSupported(candidates[i])){ recMime = candidates[i]; break; } } catch(e){}
+    /* TRACK MONITOR — auto-stop if mic dies */
+    var at = stream.getAudioTracks()[0];
+    if(!at){
+      ZT.toast('No mic track found.', 'error');
+      stream.getTracks().forEach(function(t){ t.stop(); });
+      return;
     }
-    if(!recMime){ ZT.toast('No supported audio format.', 'error'); return; }
+    at.onended = function(){
+      console.warn('[rec] mic track ended unexpectedly');
+      if(ZT._rec && ZT._rec.state === 'recording') ZT._stopVoiceRecording();
+    };
 
-    var rec = new MediaRecorder(stream, { mimeType: recMime });
+    /* PICK MIME (server-compatible list) */
+    var recMime = '';
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    for(var i = 0; i < candidates.length; i++){
+      try {
+        if(MediaRecorder.isTypeSupported(candidates[i])){
+          recMime = candidates[i];
+          break;
+        }
+      } catch(e){}
+    }
+    if(!recMime){
+      ZT.toast('No supported audio format.', 'error');
+      stream.getTracks().forEach(function(t){ t.stop(); });
+      return;
+    }
+
+    /* CREATE RECORDER */
+    var rec = new MediaRecorder(stream, {
+      mimeType: recMime,
+      audioBitsPerSecond: 128000
+    });
     ZT._rec = rec;
+    ZT._recChunks = [];
+    ZT._recSecs = 0;
+    ZT._recStopping = false;
 
-    rec.ondataavailable = function(e){ if(e.data && e.data.size > 0) ZT._recChunks.push(e.data); };
+    rec.ondataavailable = function(e){
+      if(e.data && e.data.size > 0){
+        ZT._recChunks.push(e.data);
+        console.log('[rec] chunk +' + e.data.size + ' bytes (total chunks=' + ZT._recChunks.length + ')');
+      }
+    };
+
+    rec.onerror = function(e){
+      console.error('[rec] recorder error', e);
+      ZT.toast('Recorder error.', 'error');
+      ZT._stopVoiceRecording();
+    };
 
     rec.onstop = async function(){
+      try { if(ZT._recFlush){ clearInterval(ZT._recFlush); ZT._recFlush = null; } } catch(e){}
+      try { if(ZT._recTimer){ clearInterval(ZT._recTimer); ZT._recTimer = null; } } catch(e){}
       try { stream.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
-      if(ZT._recTimer){ clearInterval(ZT._recTimer); ZT._recTimer = null; }
-      btn.classList.remove('rec'); btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
-      var secs = ZT._recSecs;
-      var chunks = ZT._recChunks.slice();
-      ZT._rec = null; ZT._recChunks = [];
-      if(!chunks.length){ ZT.toast('Recording empty.', 'warning'); return; }
+      ZT._recStream = null;
+      ZT._rec = null;
 
-      /* CRITICAL: force video/webm — server allowlist only accepts webm */
-      var baseMime = (rec.mimeType || recMime).split(';')[0].trim();
+      var vbtn = document.getElementById('zt-voice-btn');
+      if(vbtn){
+        vbtn.classList.remove('rec');
+        vbtn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+      }
+
+      /* WAIT 300ms for final dataavailable to arrive */
+      await new Promise(function(r){ setTimeout(r, 300); });
+
+      var chunks = ZT._recChunks.slice();
+      var secs = ZT._recSecs;
+      ZT._recChunks = [];
+
+      var totalBytes = chunks.reduce(function(a, b){ return a + b.size; }, 0);
+      console.log('[rec] STOPPED — secs=' + secs + ' chunks=' + chunks.length + ' bytes=' + totalBytes);
+
+      if(!chunks.length || totalBytes < 1000){
+        ZT.toast('Recording too short.', 'warning');
+        return;
+      }
+
+      /* BUILD BLOB — force video/webm for R2 (server allowlist) */
+      var baseMime = recMime.split(';')[0].trim();
       var sendMime = 'video/webm';
       if(baseMime.indexOf('mp4') !== -1) sendMime = 'video/mp4';
       var ext = sendMime === 'video/mp4' ? 'mp4' : 'webm';
 
       var blob = new Blob(chunks, { type: sendMime });
-      if(blob.size < 500){ ZT.toast('Too short.', 'warning'); return; }
+      console.log('[rec] final blob — mime=' + sendMime + ' size=' + blob.size);
 
-      console.log('[voice] sendMime=' + sendMime + ' size=' + blob.size + ' secs=' + secs);
-      ZT.toast('Uploading voice…');
+      ZT.toast('Uploading voice (' + secs + 's)…');
 
       try {
         var file = new File([blob], 'voice_' + Date.now() + '.' + ext, { type: sendMime });
         var url = await ZT.storeMedia(file);
-        if(!url){ ZT.toast('Upload returned empty URL.', 'error'); return; }
-        var tid = ZT.State.chatThreadId; if(!tid){ ZT.toast('No chat thread.', 'error'); return; }
+        if(!url){
+          ZT.toast('Upload returned empty URL.', 'error');
+          return;
+        }
+        var tid = ZT.State.chatThreadId;
+        if(!tid){ ZT.toast('No chat thread.', 'error'); return; }
         var me = ZT.State.currentUser;
         var c = sb();
         var r = await c.from('tutor_chat_messages').insert({
-          thread_id: tid, sender_id: me.id,
-          audio_url: url, audio_seconds: secs, body: '🎤 Voice note'
+          thread_id: tid,
+          sender_id: me.id,
+          audio_url: url,
+          audio_seconds: secs,
+          body: '🎤 Voice note'
         }).select().maybeSingle();
         if(r.error) throw r.error;
         ZT.State.chatMessages.push(r.data);
         ZT.paintChatMessages();
-        var bodyEl = document.getElementById('zt-chat-body'); if(bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight;
-        ZT.toast('Voice sent.');
+        var bodyEl = document.getElementById('zt-chat-body');
+        if(bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight;
+        ZT.toast('Voice sent ✓');
       } catch(e){
         console.error('[voice upload]', e);
         ZT.toast('Voice failed: ' + ((e && e.message) || 'unknown'), 'error');
       }
     };
 
-    rec.start(500);
-    btn.classList.add('rec'); btn.innerHTML = '<i class="fa-solid fa-stop"></i>';
+    /* START with timeslice */
+    rec.start(1000);
+
+    btn.classList.add('rec');
+    btn.innerHTML = '<i class="fa-solid fa-stop"></i> 0s';
+
+    /* MANUAL FLUSH every 1s — Chrome/Android fix */
+    ZT._recFlush = setInterval(function(){
+      if(ZT._rec && ZT._rec.state === 'recording'){
+        try { ZT._rec.requestData(); } catch(e){}
+      }
+    }, 1000);
+
+    /* LIVE SECONDS COUNTER + 60s auto-stop */
     ZT._recTimer = setInterval(function(){
       ZT._recSecs++;
-      if(ZT._recSecs >= 60){ try { rec.stop(); } catch(e){} }
+      var b = document.getElementById('zt-voice-btn');
+      if(b) b.innerHTML = '<i class="fa-solid fa-stop"></i> ' + ZT._recSecs + 's';
+      if(ZT._recSecs >= 60) ZT._stopVoiceRecording();
     }, 1000);
-  } catch(e){ ZT.toast('Mic denied.', 'error'); }
+
+  } catch(e){
+    console.error('[rec start]', e);
+    ZT.toast('Mic denied: ' + ((e && e.message) || ''), 'error');
+  }
+};
+
+/* Explicit stop — flush BEFORE stop */
+ZT._stopVoiceRecording = function(){
+  if(ZT._recStopping) return;
+  ZT._recStopping = true;
+  if(!ZT._rec || ZT._rec.state !== 'recording') return;
+  try { ZT._rec.requestData(); } catch(e){}
+  setTimeout(function(){
+    try {
+      if(ZT._rec && ZT._rec.state === 'recording') ZT._rec.stop();
+    } catch(e){}
+    ZT._recStopping = false;
+  }, 150);
 };
 /* ============================================================
    LIVE (stub with clear message)
