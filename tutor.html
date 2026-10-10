@@ -1024,6 +1024,9 @@ ZT.sendChatText = async function(){
 /* Voice recording */
 ZT._rec = null; ZT._recChunks = []; ZT._recSecs = 0; ZT._recTimer = null;
 
+/* Voice recording — FIXED */
+ZT._rec = null; ZT._recChunks = []; ZT._recSecs = 0; ZT._recTimer = null;
+
 ZT.toggleVoiceRecording = async function(){
   var btn = document.getElementById('zt-voice-btn'); if(!btn) return;
   if(ZT._rec && ZT._rec.state === 'recording'){ try { ZT._rec.stop(); } catch(e){} return; }
@@ -1031,39 +1034,62 @@ ZT.toggleVoiceRecording = async function(){
   try {
     var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     ZT._recChunks = []; ZT._recSecs = 0;
-    var mime = 'video/webm';
-    try { if(MediaRecorder.isTypeSupported('video/webm')) mime = 'video/webm'; else if(MediaRecorder.isTypeSupported('audio/webm')) mime = 'audio/webm'; else if(MediaRecorder.isTypeSupported('audio/mp4')) mime = 'audio/mp4'; } catch(e){}
+
+    /* Pick best supported mimetype */
+    var mime = '';
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    for(var i = 0; i < candidates.length; i++){
+      try { if(MediaRecorder.isTypeSupported(candidates[i])){ mime = candidates[i]; break; } } catch(e){}
+    }
+    if(!mime){ ZT.toast('No supported audio format on this browser.', 'error'); return; }
+
     var rec = new MediaRecorder(stream, { mimeType: mime });
     ZT._rec = rec;
+
     rec.ondataavailable = function(e){ if(e.data && e.data.size > 0) ZT._recChunks.push(e.data); };
+
     rec.onstop = async function(){
       try { stream.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
       if(ZT._recTimer){ clearInterval(ZT._recTimer); ZT._recTimer = null; }
       btn.classList.remove('rec'); btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
       var secs = ZT._recSecs; var chunks = ZT._recChunks.slice();
       ZT._rec = null; ZT._recChunks = [];
-      if(!chunks.length) return;
-      var blobType = (rec.mimeType || mime).split(';')[0].trim();
-      if(blobType === 'audio/webm') blobType = 'video/webm';
-      var blob = new Blob(chunks, { type: blobType });
-      if(blob.size < 500){ ZT.toast('Recording empty.', 'warning'); return; }
+      if(!chunks.length){ ZT.toast('Recording empty.', 'warning'); return; }
+
+      /* Base mimetype only — strip codec suffix for storage */
+      var baseMime = (rec.mimeType || mime).split(';')[0].trim();
+
+      var ext = 'webm';
+      if(baseMime.indexOf('mp4') !== -1) ext = 'mp4';
+      if(baseMime.indexOf('ogg') !== -1) ext = 'ogg';
+
+      var blob = new Blob(chunks, { type: baseMime });
+      if(blob.size < 500){ ZT.toast('Recording too short.', 'warning'); return; }
+
       ZT.toast('Sending voice…');
       try {
-        var file = new File([blob], 'voice_' + Date.now() + '.webm', { type: blobType });
+        var file = new File([blob], 'voice_' + Date.now() + '.' + ext, { type: baseMime });
         var url = await ZT.storeMedia(file);
         var tid = ZT.State.chatThreadId; if(!tid) return;
         var me = ZT.State.currentUser;
         var c = sb();
-        var r = await c.from('tutor_chat_messages').insert({ thread_id: tid, sender_id: me.id, audio_url: url, audio_seconds: secs, body: '🎤 Voice note' }).select().maybeSingle();
+        var r = await c.from('tutor_chat_messages').insert({
+          thread_id: tid, sender_id: me.id,
+          audio_url: url, audio_seconds: secs, body: '🎤 Voice note'
+        }).select().maybeSingle();
         if(r.error) throw r.error;
         ZT.State.chatMessages.push(r.data);
         ZT.paintChatMessages();
         var bodyEl = document.getElementById('zt-chat-body'); if(bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight;
-      } catch(e){ ZT.toast('Voice send failed.', 'error'); }
+      } catch(e){ ZT.toast('Voice send failed: ' + ((e&&e.message)||''), 'error'); }
     };
+
     rec.start(500);
     btn.classList.add('rec'); btn.innerHTML = '<i class="fa-solid fa-stop"></i>';
-    ZT._recTimer = setInterval(function(){ ZT._recSecs++; if(ZT._recSecs >= 60){ try { rec.stop(); } catch(e){} } }, 1000);
+    ZT._recTimer = setInterval(function(){
+      ZT._recSecs++;
+      if(ZT._recSecs >= 60){ try { rec.stop(); } catch(e){} }
+    }, 1000);
   } catch(e){ ZT.toast('Mic permission denied.', 'error'); }
 };
 
@@ -1129,19 +1155,19 @@ ZT.openSlideBuilder = function(){
   var h = '';
   h += '<div class="zt-field"><label class="zt-label">Lesson title *</label><input id="zt-sl-title" class="zt-input" placeholder="e.g. Chapter 5 — Quadratic Equations"></div>';
   h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-sl-desc" class="zt-textarea" style="min-height:60px;" placeholder="Brief description"></textarea></div>';
-  h += '<div class="zt-st" style="margin-top:6px;">Slides (' + (ZT._newSlide.items.length) + ')</div>';
+  h += '<div class="zt-st" style="margin-top:6px;">Slides</div>';
   h += '<div id="zt-sl-items-host"></div>';
-  h += '<button class="zt-btn secondary" id="zt-sl-add" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add slide</button>';
+  h += '<button class="zt-btn secondary" id="zt-sl-add" type="button" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add slide</button>';
   ZT.Modal.open({
     title:'New Slide Lesson', icon:'fa-solid fa-images', submitLabel:'Save Lesson',
     body: h,
     onOpen: function(){
       ZT.paintSlideBuilderItems();
       var addBtn = document.getElementById('zt-sl-add');
-      if(addBtn) addBtn.addEventListener('click', function(){
+      if(addBtn) addBtn.onclick = function(){
         ZT._newSlide.items.push({ text:'', image_url:'', audio_url:'' });
         ZT.paintSlideBuilderItems();
-      });
+      };
     },
     onSubmit: async function(){
       var title = (document.getElementById('zt-sl-title').value || '').trim();
@@ -1150,16 +1176,18 @@ ZT.openSlideBuilder = function(){
       if(!ZT._newSlide.items.length){ ZT.toast('Add at least one slide.', 'error'); return false; }
       var c = sb();
       var sr = await c.from('tutor_slides').insert({ circle_id: cir.id, author_id: me.id, title: title, description: desc || null }).select().maybeSingle();
-      if(sr.error){ ZT.toast('Failed.', 'error'); return false; }
+      if(sr.error){ ZT.toast('Failed: ' + sr.error.message, 'error'); return false; }
       var slideId = sr.data.id;
       for(var i = 0; i < ZT._newSlide.items.length; i++){
         var it = ZT._newSlide.items[i];
-        await c.from('tutor_slide_items').insert({
-          slide_id: slideId, order: i,
+        var ir = await c.from('tutor_slide_items').insert({
+          slide_id: slideId,
+          order: i,
           text_content: it.text || null,
           image_url: it.image_url || null,
           audio_url: it.audio_url || null
         });
+        if(ir.error){ ZT.toast('Slide ' + (i+1) + ' failed.', 'error'); return false; }
       }
       ZT.toast('Lesson saved.');
       ZT.loadSlidesList();
@@ -1167,26 +1195,26 @@ ZT.openSlideBuilder = function(){
     }
   });
 };
-
 ZT.paintSlideBuilderItems = function(){
   var host = document.getElementById('zt-sl-items-host'); if(!host) return;
   if(!ZT._newSlide.items.length){
-    host.innerHTML = '<div style="text-align:center;padding:16px;color:#64748b;font-size:12px;">No slides yet.</div>';
+    host.innerHTML = '<div style="text-align:center;padding:16px;color:#64748b;font-size:12px;">No slides yet. Click "Add slide" to start.</div>';
     return;
   }
   var h = '';
   ZT._newSlide.items.forEach(function(it, i){
     h += '<div style="padding:12px;border-radius:12px;background:#0f172a;border:1px solid #1e293b;margin-bottom:8px;">';
-    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-size:11px;font-weight:900;color:#94a3b8;">SLIDE ' + (i+1) + '</div>';
-    h += '<button style="background:transparent;border:none;color:#a16262;cursor:pointer;" onclick="ZT.removeSlideItem(' + i + ')"><i class="fa-solid fa-trash"></i></button></div>';
-    h += '<textarea class="zt-textarea" style="min-height:50px;font-size:12px;" placeholder="Text (optional)" onchange="ZT.setSlideItemText(' + i + ', this.value)">' + ZT.escape(it.text || '') + '</textarea>';
-    h += '<div style="margin-top:8px;display:flex;gap:6px;">';
-    h += '<button class="zt-media-btn" onclick="document.getElementById(\'zt-sl-img-' + i + '\').click()"><i class="fa-solid fa-camera"></i> ' + (it.image_url ? 'Change image' : 'Image') + '</button>';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    h += '<div style="font-size:11px;font-weight:900;color:#94a3b8;">SLIDE ' + (i+1) + '</div>';
+    h += '<button type="button" style="background:transparent;border:none;color:#a16262;cursor:pointer;" onclick="ZT.removeSlideItem(' + i + ')"><i class="fa-solid fa-trash"></i></button></div>';
+    h += '<textarea class="zt-textarea" style="min-height:50px;font-size:12px;" placeholder="Text on this slide (optional)" oninput="ZT.setSlideItemText(' + i + ', this.value)">' + ZT.escape(it.text || '') + '</textarea>';
+    h += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">';
+    h += '<button type="button" class="zt-media-btn" onclick="document.getElementById(\'zt-sl-img-' + i + '\').click()"><i class="fa-solid fa-camera"></i> ' + (it.image_url ? 'Change image' : 'Add image') + '</button>';
     h += '<input type="file" id="zt-sl-img-' + i + '" accept="image/*" style="display:none;" onchange="ZT.uploadSlideImage(' + i + ', this)">';
-    if(!it.audio_url) h += '<button class="zt-media-btn" onclick="ZT.recordSlideAudio(' + i + ')"><i class="fa-solid fa-microphone"></i> Record audio</button>';
+    if(!it.audio_url) h += '<button type="button" class="zt-media-btn" onclick="ZT.recordSlideAudio(' + i + ')"><i class="fa-solid fa-microphone"></i> Record audio</button>';
     else h += '<div style="font-size:11px;color:#10b981;font-weight:800;padding:8px 12px;">🎤 Audio recorded ✓</div>';
     h += '</div>';
-    if(it.image_url) h += '<div style="margin-top:8px;border-radius:8px;overflow:hidden;border:1px solid #1e293b;"><img src="' + ZT.escape(it.image_url) + '" style="width:100%;max-height:120px;object-fit:contain;display:block;"></div>';
+    if(it.image_url) h += '<div style="margin-top:8px;border-radius:8px;overflow:hidden;border:1px solid #1e293b;"><img src="' + ZT.escape(it.image_url) + '" style="width:100%;max-height:120px;object-fit:contain;display:block;background:#000;"></div>';
     h += '</div>';
   });
   host.innerHTML = h;
@@ -1207,44 +1235,71 @@ ZT.uploadSlideImage = async function(i, input){
   } catch(e){ ZT.toast('Upload failed.', 'error'); }
 };
 
+/* Slide audio recording — FIXED */
 ZT.recordSlideAudio = async function(i){
-  var btn = event && event.target; if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Recording…'; }
+  var btn = (typeof event !== 'undefined' && event) ? event.target : null;
+  if(!navigator.mediaDevices || !window.MediaRecorder){ ZT.toast('Not supported.', 'error'); return; }
   try {
     var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     var chunks = [];
-    var mime = 'video/webm';
-    try { if(MediaRecorder.isTypeSupported('video/webm')) mime = 'video/webm'; else if(MediaRecorder.isTypeSupported('audio/webm')) mime = 'audio/webm'; else mime = 'audio/mp4'; } catch(e){}
+    var mime = '';
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    for(var x = 0; x < candidates.length; x++){
+      try { if(MediaRecorder.isTypeSupported(candidates[x])){ mime = candidates[x]; break; } } catch(e){}
+    }
+    if(!mime){ ZT.toast('No audio format supported.', 'error'); return; }
+
     var rec = new MediaRecorder(stream, { mimeType: mime });
     rec.ondataavailable = function(e){ if(e.data && e.data.size > 0) chunks.push(e.data); };
+
+    var stopped = false;
+    var stopRec = function(){
+      if(stopped) return; stopped = true;
+      try { rec.stop(); } catch(e){}
+    };
+
     rec.onstop = async function(){
       try { stream.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
-      if(!chunks.length){ ZT.toast('No audio.', 'error'); ZT.paintSlideBuilderItems(); return; }
-      var blobType = (rec.mimeType || mime).split(';')[0].trim();
-      if(blobType === 'audio/webm') blobType = 'video/webm';
-      var blob = new Blob(chunks, { type: blobType });
+      if(!chunks.length){ ZT.toast('No audio captured.', 'warning'); ZT.paintSlideBuilderItems(); return; }
+      var baseMime = (rec.mimeType || mime).split(';')[0].trim();
+      var ext = baseMime.indexOf('mp4') !== -1 ? 'mp4' : (baseMime.indexOf('ogg') !== -1 ? 'ogg' : 'webm');
+      var blob = new Blob(chunks, { type: baseMime });
       if(blob.size < 500){ ZT.toast('Too short.', 'warning'); ZT.paintSlideBuilderItems(); return; }
       ZT.toast('Uploading audio…');
       try {
-        var file = new File([blob], 'slide_' + i + '.webm', { type: blobType });
+        var file = new File([blob], 'slide_' + i + '.' + ext, { type: baseMime });
         var url = await ZT.storeMedia(file);
-        ZT._newSlide.items[i].audio_url = url;
-        ZT.paintSlideBuilderItems();
-        ZT.toast('Audio recorded.');
-      } catch(e){ ZT.toast('Upload failed.', 'error'); }
+        if(ZT._newSlide && ZT._newSlide.items[i]){
+          ZT._newSlide.items[i].audio_url = url;
+          ZT.paintSlideBuilderItems();
+          ZT.toast('Audio recorded ✓');
+        }
+      } catch(e){ ZT.toast('Upload failed.', 'error'); ZT.paintSlideBuilderItems(); }
     };
+
     rec.start(500);
     var secs = 0;
-    var t = setInterval(function(){ secs++; if(secs >= 60){ clearInterval(t); try { rec.stop(); } catch(e){} } }, 1000);
-    var stop = function(){ clearInterval(t); try { rec.stop(); } catch(e){}; btn.removeEventListener('click', stop); };
-    /* Replace button label with STOP */
+    var t = setInterval(function(){ secs++; if(secs >= 60){ clearInterval(t); stopRec(); } }, 1000);
+
+    /* Show STOP state */
     setTimeout(function(){
-      if(btn){
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-stop"></i> STOP (' + secs + 's)';
-        btn.addEventListener('click', stop);
+      if(btn && btn.parentNode){
+        var stopBtn = document.createElement('button');
+        stopBtn.className = 'zt-media-btn';
+        stopBtn.innerHTML = '<i class="fa-solid fa-stop"></i> STOP (' + secs + 's)';
+        stopBtn.style.background = '#a16262';
+        stopBtn.style.borderColor = '#a16262';
+        stopBtn.style.color = '#fff';
+        stopBtn.onclick = function(){
+          clearInterval(t);
+          stopRec();
+          stopBtn.remove();
+        };
+        btn.parentNode.replaceChild(stopBtn, btn);
       }
-    }, 100);
-  } catch(e){ ZT.toast('Mic denied.', 'error'); ZT.paintSlideBuilderItems(); }
+    }, 60);
+
+  } catch(e){ ZT.toast('Mic denied.', 'error'); }
 };
 
 /* Slide player */
