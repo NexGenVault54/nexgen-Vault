@@ -8156,29 +8156,19 @@ function renderFiveCards(p, isOwner, gallery){
    ============================================================ */
 function _getCardsFor(profile){
   if(!profile) return [];
+  /* Delegate to shared impl (Cards v2). Falls back if v2 not loaded yet. */
+  if(typeof Z._cardsFromProfileImpl === 'function'){
+    return Z._cardsFromProfileImpl(profile);
+  }
+  /* Fallback — minimal, only if v2 failed to load */
   var me = Z.State.currentUser;
   var isOwner = me && me.id === profile.id;
-
   var sd = isOwner
     ? Object.assign({}, profile.space_data || {}, me.space_data || {})
     : (profile.space_data || {});
-
   var cards = Array.isArray(sd.cards) ? sd.cards.slice() : [];
-
-  if(typeof Z._needsDefaultMaterialization === 'function'
-     && Z._needsDefaultMaterialization(cards)){
-    var defaults = _defaultCards(profile);
-    var editedById = {};
-    cards.forEach(function(c){ if(c && c.id) editedById[c.id] = c; });
-    var merged = defaults.map(function(d){
-      return editedById[d.id] ? Object.assign({}, d, editedById[d.id]) : d;
-    });
-    var custom = cards.filter(function(c){
-      return c && c.id && c.id.indexOf('_d_') !== 0;
-    });
-    return merged.concat(custom);
-  }
-  return cards;
+  if(cards.length) return cards;
+  return _defaultCards(profile);
 }
 
 function _defaultCards(profile){
@@ -15986,6 +15976,7 @@ function _getCardsFromProfile(profile){
   }
   return arr;
 }
+Z._cardsFromProfileImpl = _getCardsFromProfile;
 
 function _persistCards(cards){
   var u = me();
