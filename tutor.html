@@ -6,6 +6,7 @@
 <title>ZYNIX Tutor</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -221,6 +222,9 @@ var ZT = window.ZT;
 ZT.SUPABASE_URL = 'https://ipypwqajsfxrdzlxfnlr.supabase.co';
 ZT.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4';
 ZT.R2_PUBLIC_BASE = 'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev';
+
+ZT.LIVEKIT_URL = 'wss://abbas-tutorial-i2ujvztp.livekit.cloud';
+ZT.TOKEN_SERVER = 'https://zynix-tutor-token.abbascrs.workers.dev/';
 
 var _sb = null;
 function sb(){
@@ -1228,21 +1232,289 @@ ZT._stopVoiceRecording = function(){
     ZT._recStopping = false;
   }, 150);
 };
+
 /* ============================================================
-   LIVE (stub with clear message)
+   LIVE TAB — LiveKit Integration
    ============================================================ */
-ZT.renderLive = function(){
-  return '<div class="zt-hero" style="background:linear-gradient(135deg,rgba(161,98,98,.20),rgba(139,92,246,.12));border-color:rgba(161,98,98,.4);">' +
-    '<h2><i class="fa-solid fa-video" style="margin-right:8px;"></i>Live Classroom</h2>' +
-    '<p>Zoom-style live class with speaker/listener roles.</p></div>' +
-    '<div class="zt-placeholder"><div class="pi" style="background:linear-gradient(135deg,#a16262,#8b5cf6);"><i class="fa-solid fa-satellite-dish"></i></div>' +
-    '<h3>LiveKit setup needed</h3>' +
-    '<p>Live classes require a LiveKit Cloud API key. Signup is free (10,000 minutes/month).</p>' +
-    '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.8;text-align:left;max-width:340px;margin:0 auto 20px;padding:14px;border-radius:12px;background:rgba(0,0,0,.25);">' +
-    '<b style="color:#a78bfa;">Next step:</b> create a LiveKit account and share the URL + API Key + Secret with the developer to activate this tab.</div>' +
-    '<button class="zt-btn small" style="width:auto;margin:0 auto;" onclick="ZT.toast(\'Waiting for LiveKit keys\',\'info\')">Notify me when ready</button></div>';
+ZT._lk = {
+  room: null,
+  connected: false,
+  isTutor: false,
+  audioEls: []
 };
 
+ZT.renderLive = function(){
+  var cir = ZT.State.currentCircle;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin';
+
+  if(!ZT._lk.connected){
+    var h = '';
+    h += '<div class="zt-circle-head">';
+    h += '<button class="back" onclick="ZT.showView(\'feed\')"><i class="fa-solid fa-arrow-left"></i></button>';
+    h += '<div style="flex:1;min-width:0;"><div class="nm">Live Classroom</div>';
+    h += '<div class="sub">' + ZT.escape(cir.name) + '</div></div></div>';
+
+    h += '<div class="zt-hero" style="background:linear-gradient(135deg,rgba(139,92,246,.18),rgba(16,185,129,.10));border-color:rgba(139,92,246,.4);">';
+    h += '<h2><i class="fa-solid fa-video" style="margin-right:8px;"></i>Ready to go live?</h2>';
+    h += '<p>' + (isTutor ? 'You are the host. Your mic and camera will be on.' : 'You will join as a listener. Raise your hand to speak.') + '</p></div>';
+
+    h += '<button class="zt-btn" onclick="ZT.joinLiveRoom()" style="margin-bottom:14px;">';
+    h += '<i class="fa-solid fa-satellite-dish"></i> Join Live Class</button>';
+
+    h += '<div class="zt-card" style="font-size:12px;color:#94a3b8;line-height:1.8;">';
+    h += '<b style="color:#a78bfa;font-size:13px;">How it works</b><br>';
+    h += '• Tutor starts class → everyone joins as <b style="color:#fff;">Listener</b><br>';
+    h += '• Tap the mic button to unmute yourself<br>';
+    h += '• Tutor can share screen during the class<br>';
+    h += '• Chat with everyone in real time</div>';
+
+    return h;
+  }
+
+  /* IN-ROOM UI */
+  var h = '';
+  h += '<div class="zt-circle-head" style="padding:10px;gap:8px;">';
+  h += '<button class="back" onclick="ZT.leaveLiveRoom()"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;"><div class="nm">Live Class</div>';
+  h += '<div class="sub" id="zt-live-status" style="color:#10b981;">● Connected</div></div>';
+  h += '<button class="zt-hbtn" onclick="ZT.toggleLiveMic()" id="zt-live-mic" style="width:36px;height:36px;font-size:13px;"><i class="fa-solid fa-microphone"></i></button>';
+  if(ZT._lk.isTutor){
+    h += '<button class="zt-hbtn" onclick="ZT.toggleLiveCam()" id="zt-live-cam" style="width:36px;height:36px;font-size:13px;"><i class="fa-solid fa-video"></i></button>';
+    h += '<button class="zt-hbtn" onclick="ZT.toggleScreenShare()" id="zt-live-screen" style="width:36px;height:36px;font-size:13px;"><i class="fa-solid fa-desktop"></i></button>';
+  }
+  h += '</div>';
+
+  h += '<div id="zt-video-grid" style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:12px;"></div>';
+  h += '<div id="zt-live-participants" style="font-size:11px;color:#94a3b8;margin-bottom:12px;font-weight:700;"></div>';
+  h += '<div class="zt-st" style="margin-top:8px;">Live chat</div>';
+  h += '<div id="zt-live-chat" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:10px;max-height:200px;overflow-y:auto;font-size:12px;color:#cbd5e1;margin-bottom:10px;min-height:60px;"></div>';
+  h += '<div style="display:flex;gap:6px;">';
+  h += '<input id="zt-live-chat-input" class="zt-input" placeholder="Type message..." style="flex:1;font-size:12px;padding:10px 12px;">';
+  h += '<button class="zt-btn small" onclick="ZT.sendLiveChat()" style="width:auto;padding:10px 16px;font-size:11px;">Send</button>';
+  h += '</div>';
+
+  setTimeout(function(){ ZT.paintLiveGrid(); ZT.paintLiveParticipants(); }, 100);
+  return h;
+};
+
+ZT.joinLiveRoom = async function(){
+  var cir = ZT.State.currentCircle;
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin';
+
+  if(!window.LivekitClient){
+    ZT.toast('LiveKit SDK not loaded. Refresh the page.', 'error'); return;
+  }
+  if(!ZT.TOKEN_SERVER){ ZT.toast('Token server not configured.', 'error'); return; }
+
+  ZT.toast('Connecting to live class…');
+  ZT._lk.isTutor = isTutor;
+
+  try {
+    var res = await fetch(ZT.TOKEN_SERVER, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        room: 'circle-' + cir.id,
+        user: (me.name || 'User') + '-' + me.id.slice(0, 6),
+        role: isTutor ? 'tutor' : 'listener'
+      })
+    });
+    var data = await res.json();
+    if(!data.token){ throw new Error(data.error || 'No token'); }
+
+    var Room = window.LivekitClient.Room;
+    var room = new Room({ adaptiveStream: true, dynacast: true });
+    ZT._lk.room = room;
+
+    room.on('participantConnected', function(p){
+      console.log('[live] participant joined', p.identity);
+      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
+    });
+    room.on('participantDisconnected', function(p){
+      console.log('[live] participant left', p.identity);
+      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
+    });
+    room.on('trackSubscribed', function(){ ZT.paintLiveGrid(); });
+    room.on('trackUnsubscribed', function(){ ZT.paintLiveGrid(); });
+    room.on('dataReceived', function(payload){
+      try {
+        var msg = new TextDecoder().decode(payload);
+        var el = document.getElementById('zt-live-chat');
+        if(el){
+          el.innerHTML += '<div style="margin-bottom:5px;line-height:1.5;">' + ZT.escape(msg) + '</div>';
+          el.scrollTop = el.scrollHeight;
+        }
+      } catch(e){}
+    });
+    room.on('disconnected', function(){
+      ZT._lk.connected = false;
+      ZT._lk.room = null;
+      ZT.showView('live');
+    });
+
+    await room.connect(ZT.LIVEKIT_URL, data.token);
+    ZT._lk.connected = true;
+
+    if(isTutor){
+      try { await room.localParticipant.enableCameraAndMicrophone(); } catch(e){ console.warn('[live] mic/cam', e); }
+    }
+
+    ZT.toast('Connected ✓');
+    ZT.haptic(15);
+    ZT.showView('live');
+
+  } catch(e){
+    console.error('[live join]', e);
+    ZT._lk.connected = false;
+    ZT._lk.room = null;
+    ZT.toast('Join failed: ' + ((e && e.message) || 'unknown'), 'error');
+  }
+};
+
+ZT.paintLiveGrid = function(){
+  var grid = document.getElementById('zt-video-grid');
+  if(!grid || !ZT._lk.room) return;
+
+  /* Clean old audio elements */
+  ZT._lk.audioEls.forEach(function(a){ try { a.remove(); } catch(e){} });
+  ZT._lk.audioEls = [];
+
+  var room = ZT._lk.room;
+  var all = [room.localParticipant];
+  room.remoteParticipants.forEach(function(p){ all.push(p); });
+
+  var h = '';
+  all.forEach(function(p){
+    var isLocal = p === room.localParticipant;
+    var name = p.identity || 'User';
+    var hasVideo = false;
+    p.trackPublications.forEach(function(pub){
+      if(pub.kind === 'video' && pub.track) hasVideo = true;
+    });
+    var sid = (p.sid || p.identity || '').replace(/[^a-zA-Z0-9-]/g, '');
+    h += '<div style="position:relative;border-radius:14px;overflow:hidden;background:#0f172a;border:1px solid #1e293b;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;">';
+    if(hasVideo){
+      h += '<video id="zt-vid-' + sid + '" autoplay playsinline muted="' + (isLocal ? 'true' : 'false') + '" style="width:100%;height:100%;object-fit:cover;"></video>';
+    } else {
+      h += '<div style="text-align:center;">';
+      h += '<div style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;font-weight:900;color:#000;font-size:22px;">' + ZT.escape(name.charAt(0).toUpperCase()) + '</div>';
+      h += '<div style="font-size:11px;color:#94a3b8;font-weight:700;">' + ZT.escape(name) + (isLocal ? ' (You)' : '') + '</div>';
+      h += '</div>';
+    }
+    h += '<div style="position:absolute;bottom:8px;left:8px;font-size:9.5px;background:rgba(0,0,0,.75);padding:3px 8px;border-radius:8px;color:#fff;font-weight:700;">' + ZT.escape(name) + '</div>';
+    h += '</div>';
+  });
+  grid.innerHTML = h;
+
+  /* Attach tracks */
+  all.forEach(function(p){
+    var sid = (p.sid || p.identity || '').replace(/[^a-zA-Z0-9-]/g, '');
+    p.trackPublications.forEach(function(pub){
+      if(pub.kind === 'video' && pub.track && pub.track.attach){
+        var el = document.getElementById('zt-vid-' + sid);
+        if(el){
+          try { pub.track.attach(el); } catch(e){}
+          if(p === room.localParticipant){
+            try { el.muted = true; el.play().catch(function(){}); } catch(e){}
+          }
+        }
+      }
+      if(pub.kind === 'audio' && pub.track && pub.track.attach && p !== room.localParticipant){
+        try {
+          var a = pub.track.attach();
+          a.autoplay = true;
+          document.body.appendChild(a);
+          ZT._lk.audioEls.push(a);
+        } catch(e){}
+      }
+    });
+  });
+};
+
+ZT.paintLiveParticipants = function(){
+  var el = document.getElementById('zt-live-participants');
+  if(!el || !ZT._lk.room) return;
+  var count = ZT._lk.room.remoteParticipants.size + 1;
+  el.innerHTML = '<i class="fa-solid fa-users"></i> ' + count + ' in room';
+};
+
+ZT.toggleLiveMic = async function(){
+  if(!ZT._lk.room) return;
+  var btn = document.getElementById('zt-live-mic');
+  var lp = ZT._lk.room.localParticipant;
+  try {
+    if(lp.isMicrophoneEnabled){
+      await lp.setMicrophoneEnabled(false);
+      if(btn) btn.style.color = '#a16262';
+    } else {
+      await lp.setMicrophoneEnabled(true);
+      if(btn) btn.style.color = '';
+    }
+  } catch(e){ ZT.toast('Mic error.', 'error'); }
+};
+
+ZT.toggleLiveCam = async function(){
+  if(!ZT._lk.room) return;
+  var btn = document.getElementById('zt-live-cam');
+  var lp = ZT._lk.room.localParticipant;
+  try {
+    if(lp.isCameraEnabled){
+      await lp.setCameraEnabled(false);
+      if(btn) btn.style.color = '#a16262';
+    } else {
+      await lp.setCameraEnabled(true);
+      if(btn) btn.style.color = '';
+      ZT.paintLiveGrid();
+    }
+  } catch(e){ ZT.toast('Cam error.', 'error'); }
+};
+
+ZT.toggleScreenShare = async function(){
+  if(!ZT._lk.room) return;
+  var btn = document.getElementById('zt-live-screen');
+  var lp = ZT._lk.room.localParticipant;
+  try {
+    if(lp.isScreenShareEnabled){
+      await lp.setScreenShareEnabled(false);
+      if(btn) btn.style.color = '';
+    } else {
+      await lp.setScreenShareEnabled(true);
+      if(btn) btn.style.color = '#10b981';
+    }
+    ZT.paintLiveGrid();
+  } catch(e){ ZT.toast('Screen share cancelled.', 'warning'); }
+};
+
+ZT.sendLiveChat = async function(){
+  if(!ZT._lk.room) return;
+  var inp = document.getElementById('zt-live-chat-input');
+  var txt = (inp.value || '').trim(); if(!txt) return;
+  inp.value = '';
+  var me = ZT.State.currentUser;
+  var msg = (me.name || 'User') + ': ' + txt;
+  try {
+    await ZT._lk.room.localParticipant.publishData(new TextEncoder().encode(msg));
+    var el = document.getElementById('zt-live-chat');
+    if(el){
+      el.innerHTML += '<div style="margin-bottom:5px;line-height:1.5;">' + ZT.escape(msg) + '</div>';
+      el.scrollTop = el.scrollHeight;
+    }
+  } catch(e){ ZT.toast('Send failed.', 'error'); }
+};
+
+ZT.leaveLiveRoom = async function(){
+  ZT._lk.audioEls.forEach(function(a){ try { a.remove(); } catch(e){} });
+  ZT._lk.audioEls = [];
+  if(ZT._lk.room){
+    try { await ZT._lk.room.disconnect(); } catch(e){}
+  }
+  ZT._lk.room = null;
+  ZT._lk.connected = false;
+  ZT.showView('live');
+};
 /* ============================================================
    SLIDES
    ============================================================ */
