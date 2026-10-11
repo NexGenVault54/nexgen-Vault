@@ -1234,19 +1234,21 @@ ZT._stopVoiceRecording = function(){
 };
 
 /* ============================================================
-   LIVE TAB — LiveKit Integration
+   LIVE TAB v2 — LiveKit with PiP, End Class, Hand Raise
    ============================================================ */
 ZT._lk = {
   room: null,
   connected: false,
   isTutor: false,
-  audioEls: []
+  audioEls: [],
+  handRaised: false
 };
 
 ZT.renderLive = function(){
   var cir = ZT.State.currentCircle;
   var role = ZT.State.myRoleInCircle || 'student';
-  var isTutor = role === 'tutor' || role === 'admin';
+  /* FIX: owner bhi tutor hai */
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
 
   if(!ZT._lk.connected){
     var h = '';
@@ -1257,57 +1259,79 @@ ZT.renderLive = function(){
 
     h += '<div class="zt-hero" style="background:linear-gradient(135deg,rgba(139,92,246,.18),rgba(16,185,129,.10));border-color:rgba(139,92,246,.4);">';
     h += '<h2><i class="fa-solid fa-video" style="margin-right:8px;"></i>Ready to go live?</h2>';
-    h += '<p>' + (isTutor ? 'You are the host. Your mic and camera will be on.' : 'You will join as a listener. Raise your hand to speak.') + '</p></div>';
+    h += '<p>' + (isTutor ? 'You are the host. Your mic and camera will be on.' : 'You will join as a listener.') + '</p></div>';
 
     h += '<button class="zt-btn" onclick="ZT.joinLiveRoom()" style="margin-bottom:14px;">';
     h += '<i class="fa-solid fa-satellite-dish"></i> Join Live Class</button>';
 
     h += '<div class="zt-card" style="font-size:12px;color:#94a3b8;line-height:1.8;">';
     h += '<b style="color:#a78bfa;font-size:13px;">How it works</b><br>';
-    h += '• Tutor starts class → everyone joins as <b style="color:#fff;">Listener</b><br>';
-    h += '• Tap the mic button to unmute yourself<br>';
-    h += '• Tutor can share screen during the class<br>';
-    h += '• Chat with everyone in real time</div>';
+    h += '• Tutor starts class → everyone joins<br>';
+    h += '• Tap mic button to unmute<br>';
+    h += '• Students: tap 🙋 hand icon to raise hand<br>';
+    h += '• Host: End button stops class for everyone</div>';
 
     return h;
   }
 
   /* IN-ROOM UI */
   var h = '';
-  h += '<div class="zt-circle-head" style="padding:10px;gap:8px;">';
-  h += '<button class="back" onclick="ZT.leaveLiveRoom()"><i class="fa-solid fa-arrow-left"></i></button>';
-  h += '<div style="flex:1;min-width:0;"><div class="nm">Live Class</div>';
-  h += '<div class="sub" id="zt-live-status" style="color:#10b981;">● Connected</div></div>';
-  h += '<button class="zt-hbtn" onclick="ZT.toggleLiveMic()" id="zt-live-mic" style="width:36px;height:36px;font-size:13px;"><i class="fa-solid fa-microphone"></i></button>';
-  if(ZT._lk.isTutor){
-    h += '<button class="zt-hbtn" onclick="ZT.toggleLiveCam()" id="zt-live-cam" style="width:36px;height:36px;font-size:13px;"><i class="fa-solid fa-video"></i></button>';
-    h += '<button class="zt-hbtn" onclick="ZT.toggleScreenShare()" id="zt-live-screen" style="width:36px;height:36px;font-size:13px;"><i class="fa-solid fa-desktop"></i></button>';
+  h += '<div style="display:flex;align-items:center;gap:6px;padding:10px;background:#111827;border:1px solid #1e293b;border-radius:12px;margin-bottom:12px;flex-wrap:wrap;">';
+  h += '<button onclick="ZT.leaveLiveRoom()" style="background:rgba(161,98,98,.15);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:100px;">';
+  h += '<div style="font-size:13px;font-weight:900;color:#fff;">Live Class</div>';
+  h += '<div id="zt-live-status" style="font-size:10px;color:#10b981;font-weight:700;">● Connected</div>';
+  h += '</div>';
+  h += '<button id="zt-live-mic" onclick="ZT.toggleLiveMic()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-microphone"></i></button>';
+  if(isTutor){
+    h += '<button id="zt-live-cam" onclick="ZT.toggleLiveCam()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-video"></i></button>';
+    h += '<button id="zt-live-screen" onclick="ZT.toggleScreenShare()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-desktop"></i></button>';
+    h += '<button onclick="ZT.endLiveClass()" style="background:rgba(161,98,98,.25);border:1px solid rgba(161,98,98,.5);color:#c9a5a5;height:38px;padding:0 14px;border-radius:10px;cursor:pointer;font-size:11px;font-weight:900;display:flex;align-items:center;gap:5px;flex-shrink:0;"><i class="fa-solid fa-phone-slash"></i> END</button>';
+  } else {
+    h += '<button id="zt-live-hand" onclick="ZT.toggleRaiseHand()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-hand"></i></button>';
   }
   h += '</div>';
 
-  h += '<div id="zt-video-grid" style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:12px;"></div>';
-  h += '<div id="zt-live-participants" style="font-size:11px;color:#94a3b8;margin-bottom:12px;font-weight:700;"></div>';
-  h += '<div class="zt-st" style="margin-top:8px;">Live chat</div>';
-  h += '<div id="zt-live-chat" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:10px;max-height:200px;overflow-y:auto;font-size:12px;color:#cbd5e1;margin-bottom:10px;min-height:60px;"></div>';
-  h += '<div style="display:flex;gap:6px;">';
-  h += '<input id="zt-live-chat-input" class="zt-input" placeholder="Type message..." style="flex:1;font-size:12px;padding:10px 12px;">';
-  h += '<button class="zt-btn small" onclick="ZT.sendLiveChat()" style="width:auto;padding:10px 16px;font-size:11px;">Send</button>';
+  /* Video stage with PiP */
+  h += '<div style="position:relative;background:#000;border:1px solid #1e293b;border-radius:14px;overflow:hidden;margin-bottom:12px;">';
+  h += '<div id="zt-video-grid" style="display:grid;grid-template-columns:1fr;gap:6px;min-height:260px;align-items:center;justify-content:center;"></div>';
+  h += '<div id="zt-video-pip" style="position:absolute;bottom:12px;right:12px;width:90px;height:130px;border-radius:10px;overflow:hidden;background:#000;border:2px solid #8b5cf6;box-shadow:0 6px 20px rgba(0,0,0,.6);display:none;z-index:10;"></div>';
   h += '</div>';
 
-  setTimeout(function(){ ZT.paintLiveGrid(); ZT.paintLiveParticipants(); }, 100);
+  h += '<div id="zt-live-participants" style="font-size:11px;color:#94a3b8;margin-bottom:12px;font-weight:700;"></div>';
+  h += '<div class="zt-st" style="margin-top:8px;">Live chat</div>';
+  h += '<div id="zt-live-chat" style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:10px;max-height:180px;overflow-y:auto;font-size:12px;color:#cbd5e1;margin-bottom:10px;min-height:50px;"></div>';
+  h += '<div style="display:flex;gap:6px;">';
+  h += '<input id="zt-live-chat-input" placeholder="Type message..." style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;font-size:12px;color:#fff;outline:none;">';
+  h += '<button onclick="ZT.sendLiveChat()" style="background:linear-gradient(135deg,#8b5cf6,#10b981);color:#000;font-weight:900;padding:0 18px;border:none;border-radius:10px;font-size:11px;cursor:pointer;">Send</button>';
+  h += '</div>';
+
+  setTimeout(function(){
+    ZT.paintLiveGrid();
+    ZT.paintLiveParticipants();
+    ZT.wireLiveChat();
+  }, 100);
   return h;
+};
+
+ZT.wireLiveChat = function(){
+  var inp = document.getElementById('zt-live-chat-input');
+  if(inp && !inp._wired){
+    inp._wired = true;
+    inp.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ZT.sendLiveChat(); }
+    });
+  }
 };
 
 ZT.joinLiveRoom = async function(){
   var cir = ZT.State.currentCircle;
   var me = ZT.State.currentUser;
   var role = ZT.State.myRoleInCircle || 'student';
-  var isTutor = role === 'tutor' || role === 'admin';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
 
-  if(!window.LivekitClient){
-    ZT.toast('LiveKit SDK not loaded. Refresh the page.', 'error'); return;
-  }
-  if(!ZT.TOKEN_SERVER){ ZT.toast('Token server not configured.', 'error'); return; }
+  if(!window.LivekitClient){ ZT.toast('LiveKit SDK not loaded. Refresh.', 'error'); return; }
+  if(!ZT.TOKEN_SERVER){ ZT.toast('Token server missing.', 'error'); return; }
 
   ZT.toast('Connecting to live class…');
   ZT._lk.isTutor = isTutor;
@@ -1329,19 +1353,26 @@ ZT.joinLiveRoom = async function(){
     var room = new Room({ adaptiveStream: true, dynacast: true });
     ZT._lk.room = room;
 
-    room.on('participantConnected', function(p){
-      console.log('[live] participant joined', p.identity);
-      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
-    });
-    room.on('participantDisconnected', function(p){
-      console.log('[live] participant left', p.identity);
-      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
-    });
-    room.on('trackSubscribed', function(){ ZT.paintLiveGrid(); });
+    room.on('participantConnected', function(){ ZT.paintLiveGrid(); ZT.paintLiveParticipants(); });
+    room.on('participantDisconnected', function(){ ZT.paintLiveGrid(); ZT.paintLiveParticipants(); });
+    room.on('trackSubscribed', function(){ setTimeout(ZT.paintLiveGrid, 100); });
     room.on('trackUnsubscribed', function(){ ZT.paintLiveGrid(); });
+    room.on('localTrackPublished', function(){ setTimeout(ZT.paintLiveGrid, 100); });
+    room.on('localTrackUnpublished', function(){ ZT.paintLiveGrid(); });
+
     room.on('dataReceived', function(payload){
       try {
         var msg = new TextDecoder().decode(payload);
+        if(msg === '__END_CLASS__'){
+          ZT.toast('Host ended the class.', 'warning');
+          ZT.leaveLiveRoom();
+          return;
+        }
+        if(msg.startsWith('__HAND_RAISE__:')){
+          var who = msg.split(':')[1];
+          ZT.toast('🙋 ' + who + ' raised hand', 'info');
+          return;
+        }
         var el = document.getElementById('zt-live-chat');
         if(el){
           el.innerHTML += '<div style="margin-bottom:5px;line-height:1.5;">' + ZT.escape(msg) + '</div>';
@@ -1349,6 +1380,7 @@ ZT.joinLiveRoom = async function(){
         }
       } catch(e){}
     });
+
     room.on('disconnected', function(){
       ZT._lk.connected = false;
       ZT._lk.room = null;
@@ -1359,7 +1391,7 @@ ZT.joinLiveRoom = async function(){
     ZT._lk.connected = true;
 
     if(isTutor){
-      try { await room.localParticipant.enableCameraAndMicrophone(); } catch(e){ console.warn('[live] mic/cam', e); }
+      try { await room.localParticipant.enableCameraAndMicrophone(); } catch(e){ console.warn('[live]', e); }
     }
 
     ZT.toast('Connected ✓');
@@ -1376,61 +1408,94 @@ ZT.joinLiveRoom = async function(){
 
 ZT.paintLiveGrid = function(){
   var grid = document.getElementById('zt-video-grid');
+  var pip = document.getElementById('zt-video-pip');
   if(!grid || !ZT._lk.room) return;
 
-  /* Clean old audio elements */
+  /* Clear old audio */
   ZT._lk.audioEls.forEach(function(a){ try { a.remove(); } catch(e){} });
   ZT._lk.audioEls = [];
 
   var room = ZT._lk.room;
-  var all = [room.localParticipant];
-  room.remoteParticipants.forEach(function(p){ all.push(p); });
+  var remote = [];
+  room.remoteParticipants.forEach(function(p){ remote.push(p); });
+  var local = room.localParticipant;
 
-  var h = '';
-  all.forEach(function(p){
-    var isLocal = p === room.localParticipant;
-    var name = p.identity || 'User';
-    var hasVideo = false;
-    p.trackPublications.forEach(function(pub){
-      if(pub.kind === 'video' && pub.track) hasVideo = true;
-    });
-    var sid = (p.sid || p.identity || '').replace(/[^a-zA-Z0-9-]/g, '');
-    h += '<div style="position:relative;border-radius:14px;overflow:hidden;background:#0f172a;border:1px solid #1e293b;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;">';
-    if(hasVideo){
-      h += '<video id="zt-vid-' + sid + '" autoplay playsinline muted="' + (isLocal ? 'true' : 'false') + '" style="width:100%;height:100%;object-fit:cover;"></video>';
+  function hasVideo(p){
+    var found = false;
+    p.trackPublications.forEach(function(pub){ if(pub.kind === 'video' && pub.track) found = true; });
+    return found;
+  }
+  function sidOf(p){ return (p.sid || p.identity || '').replace(/[^a-zA-Z0-9-]/g, ''); }
+  function shortName(p){ return (p.identity || 'User').split('-')[0]; }
+
+  /* If no remotes: show local big */
+  if(remote.length === 0){
+    pip.style.display = 'none';
+    var h = '';
+    h += '<div style="position:relative;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:#0f172a;">';
+    if(hasVideo(local)){
+      h += '<video id="zt-vid-' + sidOf(local) + '" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>';
     } else {
-      h += '<div style="text-align:center;">';
-      h += '<div style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;font-weight:900;color:#000;font-size:22px;">' + ZT.escape(name.charAt(0).toUpperCase()) + '</div>';
-      h += '<div style="font-size:11px;color:#94a3b8;font-weight:700;">' + ZT.escape(name) + (isLocal ? ' (You)' : '') + '</div>';
-      h += '</div>';
+      h += '<div style="text-align:center;"><div style="width:70px;height:70px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;margin:0 auto 10px;font-weight:900;color:#000;font-size:28px;">' + ZT.escape(shortName(local).charAt(0).toUpperCase()) + '</div><div style="font-size:12px;color:#94a3b8;font-weight:700;">' + ZT.escape(shortName(local)) + ' (You)</div></div>';
     }
-    h += '<div style="position:absolute;bottom:8px;left:8px;font-size:9.5px;background:rgba(0,0,0,.75);padding:3px 8px;border-radius:8px;color:#fff;font-weight:700;">' + ZT.escape(name) + '</div>';
+    h += '<div style="position:absolute;bottom:8px;left:8px;font-size:10px;background:rgba(0,0,0,.75);padding:3px 8px;border-radius:8px;color:#fff;font-weight:700;">You</div>';
     h += '</div>';
-  });
-  grid.innerHTML = h;
+    grid.innerHTML = h;
+    grid.style.gridTemplateColumns = '1fr';
+    /* Attach */
+    local.trackPublications.forEach(function(pub){
+      if(pub.kind === 'video' && pub.track && pub.track.attach){
+        var el = document.getElementById('zt-vid-' + sidOf(local));
+        if(el){ try { pub.track.attach(el); el.muted = true; el.play().catch(function(){}); } catch(e){} }
+      }
+    });
+    return;
+  }
 
-  /* Attach tracks */
-  all.forEach(function(p){
-    var sid = (p.sid || p.identity || '').replace(/[^a-zA-Z0-9-]/g, '');
+  /* Remotes exist: show remotes in grid, local in PiP */
+  pip.style.display = 'block';
+  grid.style.gridTemplateColumns = remote.length === 1 ? '1fr' : '1fr 1fr';
+
+  var gh = '';
+  remote.forEach(function(p){
+    gh += '<div style="position:relative;aspect-ratio:16/9;background:#0f172a;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;">';
+    if(hasVideo(p)){
+      gh += '<video id="zt-vid-' + sidOf(p) + '" autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>';
+    } else {
+      gh += '<div style="text-align:center;"><div style="width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;font-weight:900;color:#000;font-size:20px;">' + ZT.escape(shortName(p).charAt(0).toUpperCase()) + '</div><div style="font-size:10px;color:#94a3b8;font-weight:700;">' + ZT.escape(shortName(p)) + '</div></div>';
+    }
+    gh += '<div style="position:absolute;bottom:6px;left:6px;font-size:9px;background:rgba(0,0,0,.75);padding:2px 6px;border-radius:6px;color:#fff;font-weight:700;">' + ZT.escape(shortName(p)) + '</div>';
+    gh += '</div>';
+  });
+  grid.innerHTML = gh;
+
+  /* Local PiP */
+  var ph = '';
+  if(hasVideo(local)){
+    ph += '<video id="zt-vid-pip" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>';
+  } else {
+    ph += '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#0f172a;"><div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;font-weight:900;color:#000;font-size:16px;">' + ZT.escape(shortName(local).charAt(0).toUpperCase()) + '</div></div>';
+  }
+  pip.innerHTML = ph;
+
+  /* Attach remote videos */
+  remote.forEach(function(p){
     p.trackPublications.forEach(function(pub){
       if(pub.kind === 'video' && pub.track && pub.track.attach){
-        var el = document.getElementById('zt-vid-' + sid);
-        if(el){
-          try { pub.track.attach(el); } catch(e){}
-          if(p === room.localParticipant){
-            try { el.muted = true; el.play().catch(function(){}); } catch(e){}
-          }
-        }
+        var el = document.getElementById('zt-vid-' + sidOf(p));
+        if(el){ try { pub.track.attach(el); el.play().catch(function(){}); } catch(e){} }
       }
-      if(pub.kind === 'audio' && pub.track && pub.track.attach && p !== room.localParticipant){
-        try {
-          var a = pub.track.attach();
-          a.autoplay = true;
-          document.body.appendChild(a);
-          ZT._lk.audioEls.push(a);
-        } catch(e){}
+      if(pub.kind === 'audio' && pub.track && pub.track.attach){
+        try { var a = pub.track.attach(); a.autoplay = true; document.body.appendChild(a); ZT._lk.audioEls.push(a); } catch(e){}
       }
     });
+  });
+  /* Attach local to PiP */
+  local.trackPublications.forEach(function(pub){
+    if(pub.kind === 'video' && pub.track && pub.track.attach){
+      var el = document.getElementById('zt-vid-pip');
+      if(el){ try { pub.track.attach(el); el.muted = true; el.play().catch(function(){}); } catch(e){} }
+    }
   });
 };
 
@@ -1448,10 +1513,10 @@ ZT.toggleLiveMic = async function(){
   try {
     if(lp.isMicrophoneEnabled){
       await lp.setMicrophoneEnabled(false);
-      if(btn) btn.style.color = '#a16262';
+      if(btn){ btn.style.color = '#a16262'; btn.style.borderColor = '#a16262'; }
     } else {
       await lp.setMicrophoneEnabled(true);
-      if(btn) btn.style.color = '';
+      if(btn){ btn.style.color = '#10b981'; btn.style.borderColor = '#10b981'; }
     }
   } catch(e){ ZT.toast('Mic error.', 'error'); }
 };
@@ -1463,13 +1528,13 @@ ZT.toggleLiveCam = async function(){
   try {
     if(lp.isCameraEnabled){
       await lp.setCameraEnabled(false);
-      if(btn) btn.style.color = '#a16262';
+      if(btn){ btn.style.color = '#a16262'; btn.style.borderColor = '#a16262'; }
     } else {
       await lp.setCameraEnabled(true);
-      if(btn) btn.style.color = '';
-      ZT.paintLiveGrid();
+      if(btn){ btn.style.color = '#10b981'; btn.style.borderColor = '#10b981'; }
     }
-  } catch(e){ ZT.toast('Cam error.', 'error'); }
+    setTimeout(ZT.paintLiveGrid, 200);
+  } catch(e){ ZT.toast('Camera error.', 'error'); }
 };
 
 ZT.toggleScreenShare = async function(){
@@ -1479,22 +1544,39 @@ ZT.toggleScreenShare = async function(){
   try {
     if(lp.isScreenShareEnabled){
       await lp.setScreenShareEnabled(false);
-      if(btn) btn.style.color = '';
+      if(btn){ btn.style.color = ''; btn.style.borderColor = ''; }
     } else {
       await lp.setScreenShareEnabled(true);
-      if(btn) btn.style.color = '#10b981';
+      if(btn){ btn.style.color = '#10b981'; btn.style.borderColor = '#10b981'; }
     }
     ZT.paintLiveGrid();
   } catch(e){ ZT.toast('Screen share cancelled.', 'warning'); }
 };
 
+ZT.toggleRaiseHand = async function(){
+  if(!ZT._lk.room) return;
+  var btn = document.getElementById('zt-live-hand');
+  var me = ZT.State.currentUser;
+  ZT._lk.handRaised = !ZT._lk.handRaised;
+  try {
+    var msg = '__HAND_RAISE__:' + (me.name || 'User');
+    await ZT._lk.room.localParticipant.publishData(new TextEncoder().encode(msg));
+    if(btn){
+      btn.style.color = ZT._lk.handRaised ? '#10b981' : '';
+      btn.style.borderColor = ZT._lk.handRaised ? '#10b981' : '';
+    }
+    ZT.toast(ZT._lk.handRaised ? 'Hand raised 🙋' : 'Hand lowered');
+  } catch(e){ ZT.toast('Failed.', 'error'); }
+};
+
 ZT.sendLiveChat = async function(){
   if(!ZT._lk.room) return;
   var inp = document.getElementById('zt-live-chat-input');
+  if(!inp) return;
   var txt = (inp.value || '').trim(); if(!txt) return;
   inp.value = '';
   var me = ZT.State.currentUser;
-  var msg = (me.name || 'User') + ': ' + txt;
+  var msg = (me.name || 'User').split('-')[0] + ': ' + txt;
   try {
     await ZT._lk.room.localParticipant.publishData(new TextEncoder().encode(msg));
     var el = document.getElementById('zt-live-chat');
@@ -1505,6 +1587,16 @@ ZT.sendLiveChat = async function(){
   } catch(e){ ZT.toast('Send failed.', 'error'); }
 };
 
+ZT.endLiveClass = async function(){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  if(!confirm('End the class for everyone?')) return;
+  try {
+    await ZT._lk.room.localParticipant.publishData(new TextEncoder().encode('__END_CLASS__'));
+    ZT.toast('Class ended.');
+    setTimeout(function(){ ZT.leaveLiveRoom(); }, 400);
+  } catch(e){ ZT.leaveLiveRoom(); }
+};
+
 ZT.leaveLiveRoom = async function(){
   ZT._lk.audioEls.forEach(function(a){ try { a.remove(); } catch(e){} });
   ZT._lk.audioEls = [];
@@ -1513,8 +1605,10 @@ ZT.leaveLiveRoom = async function(){
   }
   ZT._lk.room = null;
   ZT._lk.connected = false;
+  ZT._lk.handRaised = false;
   ZT.showView('live');
 };
+
 /* ============================================================
    SLIDES
    ============================================================ */
