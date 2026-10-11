@@ -82,6 +82,11 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .zt-badge-author{font-size:8.5px;font-weight:900;padding:2px 7px;border-radius:10px;background:linear-gradient(135deg,#8b5cf6,#10b981);color:#000}
 .zt-badge-pinned{font-size:8.5px;font-weight:900;padding:2px 7px;border-radius:10px;background:rgba(161,133,84,.15);color:#a18554;border:1px solid rgba(161,133,84,.4)}
 .zt-post-content{font-size:13px;color:#e2e8f0;line-height:1.65;margin-bottom:10px;white-space:pre-wrap;word-break:break-word}
+.zt-post-content.folded{max-height:130px;overflow:hidden;position:relative}
+.zt-post-content.folded::after{content:'';position:absolute;bottom:0;left:0;right:0;height:50px;background:linear-gradient(to bottom,rgba(17,24,39,0),rgba(17,24,39,1));pointer-events:none}
+.zt-see-more{background:transparent;border:none;color:#a78bfa;font-size:12px;font-weight:800;cursor:pointer;padding:4px 0;margin-bottom:8px;display:inline-block}
+
+
 .zt-post-media{border-radius:12px;overflow:hidden;margin-bottom:10px;background:#0f172a;max-height:500px}
 .zt-post-media img,.zt-post-media video{width:100%;height:auto;max-height:500px;object-fit:contain;display:block;background:#000}
 .zt-post-reactions{display:flex;flex-wrap:wrap;gap:4px;padding:10px 0;border-top:1px solid #1e293b;align-items:center;min-height:44px}
@@ -243,7 +248,7 @@ ZT.State = {
   currentUser:null, currentView:'feed', currentParam:null,
   currentCircle:null, myRoleInCircle:null,
   circles:[], searchQuery:'',
-  posts:[], reactions:{}, myReactions:{}, comments:{},
+  posts:[], reactions:{}, myReactions:{}, comments:{}, foldedPosts:{},
   profileCache:{}, markedLearned:{},
   chatThreadId:null, chatMessages:[], chatTimer:null,
   slides:[], currentSlide:null, slideItems:[], slideIndex:0, slideAudio:null,
@@ -452,13 +457,23 @@ ZT.renderLanding = async function(){
   h += '<div class="zt-search">';
   h += '<input id="zt-search-input" type="text" placeholder="Search tutor circles…" value="' + ZT.escape(ZT.State.searchQuery) + '" autocomplete="off">';
   h += '<i class="fa-solid fa-magnifying-glass"></i></div>';
-  if(me){
-    h += '<button class="zt-cta-create" onclick="ZT.openCreateCircle()">';
-    h += '<div class="ico"><i class="fa-solid fa-plus"></i></div>';
-    h += '<div style="flex:1;min-width:0;"><div class="ttl">Create your Tutor Circle</div>';
-    h += '<div class="sub">Start teaching. Invite students. One place for feed, chat, and live class.</div></div>';
-    h += '<i class="fa-solid fa-chevron-right" style="color:#a78bfa;font-size:13px;"></i></button>';
+  
+    if(me){
+    var isPro = !!me.is_tutor_approved;
+    h += '<button class="zt-cta-create" onclick="ZT.openCreateCircle()" style="' + (isPro ? '' : 'background:linear-gradient(135deg,rgba(161,133,84,.18),rgba(240,201,117,.10));border-color:rgba(161,133,84,.5);') + '">';
+    h += '<div class="ico" style="' + (isPro ? '' : 'background:linear-gradient(135deg,#a18554,#f0c975);') + '">' + (isPro ? '<i class="fa-solid fa-plus"></i>' : '<i class="fa-solid fa-crown"></i>') + '</div>';
+    h += '<div style="flex:1;min-width:0;">';
+    if(isPro){
+      h += '<div class="ttl">Create your Tutor Circle</div>';
+      h += '<div class="sub">Start teaching. Invite students. One place for feed, chat, and live class.</div>';
+    } else {
+      h += '<div class="ttl">Unlock Tutor Circle <span style="font-size:9px;background:rgba(240,201,117,.15);color:#f0c975;padding:2px 6px;border-radius:6px;font-weight:900;margin-left:4px;">PRO</span></div>';
+      h += '<div class="sub">$25/month · Apply to start teaching.</div>';
+    }
+    h += '</div>';
+    h += '<i class="fa-solid fa-chevron-right" style="color:' + (isPro ? '#a78bfa' : '#f0c975') + ';font-size:13px;"></i></button>';
   }
+  
   h += '<div id="zt-circles-host">' + ZT.circlesSkeleton() + '</div>';
   setTimeout(function(){
     var inp = document.getElementById('zt-search-input');
@@ -533,6 +548,13 @@ ZT.reloadCircles = async function(){
 ZT.openCreateCircle = function(){
   var me = ZT.State.currentUser;
   if(!me){ ZT.toast('Please log in.', 'error'); return; }
+
+  /* Pro gating */
+  if(!me.is_tutor_approved){
+    ZT.showProUpgradeModal();
+    return;
+  }
+
   var gradients = ['emerald','ocean','violet','teal','slate','forest','midnight','deep'];
   var gradHtml = '<div class="zt-gradient-pick">';
   gradients.forEach(function(g, i){
@@ -563,6 +585,88 @@ ZT.openCreateCircle = function(){
         await ZT.enterCircle(r.data.id);
         return true;
       } catch(e){ ZT.toast('Failed: ' + ((e&&e.message)||''), 'error'); return false; }
+    }
+  });
+};
+
+/* ============================================================
+   PRO UPGRADE MODAL
+   ============================================================ */
+ZT.showProUpgradeModal = function(){
+  var me = ZT.State.currentUser;
+  var html = '';
+  html += '<div style="text-align:center;padding:10px 0 20px;">';
+  html += '<div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#a18554,#f0c975);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;box-shadow:0 10px 30px rgba(161,133,84,.35);">';
+  html += '<i class="fa-solid fa-crown" style="font-size:32px;color:#000;"></i></div>';
+  html += '<div style="font-size:20px;font-weight:900;color:#fff;margin-bottom:6px;">Unlock ZYNIX Tutor Pro</div>';
+  html += '<div style="font-size:12.5px;color:#94a3b8;line-height:1.6;">Create your own tutor circle and start teaching.</div>';
+  html += '</div>';
+
+  html += '<div style="background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);border-radius:14px;padding:16px;margin-bottom:14px;">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+  html += '<div style="font-size:15px;font-weight:900;color:#f0c975;">Pro Plan</div>';
+  html += '<div style="font-size:18px;font-weight:900;color:#fff;">$25<span style="font-size:11px;color:#94a3b8;font-weight:700;">/month</span></div>';
+  html += '</div>';
+  var features = [
+    'Unlimited Tutor Circles',
+    'Up to 500 members per circle',
+    'Live classes up to 100 concurrent',
+    'Unlimited recording',
+    'Hand raise + speaker promotion',
+    'Post analytics (who viewed)',
+    'Priority support'
+  ];
+  features.forEach(function(f){
+    html += '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;font-size:12px;color:#cbd5e1;">';
+    html += '<i class="fa-solid fa-check" style="color:#10b981;font-size:11px;flex-shrink:0;"></i>';
+    html += '<span>' + ZT.escape(f) + '</span>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  html += '<div style="display:flex;gap:8px;margin-bottom:10px;">';
+  html += '<button onclick="ZT.openProApplication()" style="flex:1;background:linear-gradient(135deg,#a18554,#f0c975);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-paper-plane"></i> Apply Now</button>';
+  html += '<button onclick="ZT.Modal.close()" style="flex:0 0 auto;padding:14px 18px;border-radius:10px;font-size:13px;font-weight:900;cursor:pointer;background:rgba(30,41,59,.9);border:1px solid #334155;color:#cbd5e1;">Later</button>';
+  html += '</div>';
+  html += '<div style="text-align:center;font-size:10.5px;color:#64748b;">Applications reviewed within 24 hours.</div>';
+
+  ZT.Modal.open({ title:'', icon:'fa-solid fa-crown', body:html, footer:false });
+};
+
+ZT.openProApplication = async function(){
+  var me = ZT.State.currentUser;
+  if(!me){ ZT.toast('Log in first.', 'error'); return; }
+
+  var html = '';
+  html += '<div class="zt-field"><label class="zt-label">Full name *</label><input id="zt-pro-name" class="zt-input" value="' + ZT.escape(me.name || '') + '" placeholder="Your full name"></div>';
+  html += '<div class="zt-field"><label class="zt-label">Email *</label><input id="zt-pro-email" class="zt-input" value="' + ZT.escape(me.email || '') + '" placeholder="you@example.com" readonly></div>';
+  html += '<div class="zt-field"><label class="zt-label">Why do you want to teach? *</label><textarea id="zt-pro-reason" class="zt-textarea" placeholder="What will you teach? How many students?" maxlength="500" style="min-height:100px;"></textarea></div>';
+  html += '<div style="font-size:11px;color:#94a3b8;line-height:1.6;">After approval, we will contact you to complete the $25/month payment setup.</div>';
+
+  ZT.Modal.open({
+    title:'Apply for Pro', icon:'fa-solid fa-crown',
+    submitLabel:'Submit Application',
+    body: html,
+    onSubmit: async function(){
+      var name = (document.getElementById('zt-pro-name').value || '').trim();
+      var email = (document.getElementById('zt-pro-email').value || '').trim();
+      var reason = (document.getElementById('zt-pro-reason').value || '').trim();
+      if(name.length < 2){ ZT.toast('Name required.', 'error'); return false; }
+      if(reason.length < 20){ ZT.toast('Please write at least 20 characters.', 'error'); return false; }
+      var c = sb(); if(!c) return false;
+      try {
+        var r = await c.from('tutor_pro_applications').insert({
+          user_id: me.id, full_name: name, email: email, reason: reason, status: 'pending'
+        });
+        if(r.error) throw r.error;
+        ZT.toast('Application submitted! We will review shortly.');
+        ZT.haptic(15);
+        return true;
+      } catch(e){
+        console.warn('[pro apply]', e);
+        ZT.toast('Failed: ' + ((e && e.message) || 'Try again'), 'error');
+        return false;
+      }
     }
   });
 };
@@ -634,6 +738,7 @@ ZT.renderCircleFeed = async function(){
   return h;
 };
 
+
 ZT.loadCirclePosts = async function(){
   var host = document.getElementById('zt-posts-host');
   if(!host) return;
@@ -678,6 +783,9 @@ ZT.loadCirclePosts = async function(){
     posts.forEach(function(p){ h += ZT.renderPostCard(p); });
     host.innerHTML = h;
     ZT.attachPostInteractions();
+    /* Record views silently — non-blocking */
+    setTimeout(function(){ ZT.recordPostViews(posts); }, 800);
+
   } catch(e){ console.warn(e); host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
 };
 
@@ -688,21 +796,49 @@ ZT.renderPostCard = function(p){
   var myRx = ZT.State.myReactions[p.id] || {};
   var comments = ZT.State.comments[p.id] || [];
   var role = ZT.State.myRoleInCircle || 'student';
-  var isTutor = role === 'tutor' || role === 'admin';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var isMyPost = me && me.id === p.author_id;
   var pinned = !!p.is_pinned;
   var learned = !!ZT.State.markedLearned[p.id];
+  var banner = p.banner_style;
+  var contentText = p.content || '';
+  var contentLines = contentText.split('\n').length;
+  var tooLong = contentText.length > 350 || contentLines > 8;
+  var folded = !!ZT.State.foldedPosts[p.id];
+  if(folded === undefined) folded = false;
+
   var h = '<div class="zt-post" data-post-id="' + ZT.escape(p.id) + '">';
-  h += '<div class="zt-post-author"><img src="' + ZT.escape(ZT.safeAvatar(a)) + '">';
+  h += '<div class="zt-post-author" style="position:relative;">';
+  h += '<img src="' + ZT.escape(ZT.safeAvatar(a)) + '">';
   h += '<div style="flex:1;min-width:0;"><div class="pname">' + ZT.escape(a.name || 'User');
   if(a.id === ZT.State.currentCircle.owner_id) h += ' <span class="zt-badge-author">TUTOR</span>';
   if(pinned) h += ' <span class="zt-badge-pinned"><i class="fa-solid fa-thumbtack"></i> PINNED</span>';
-  h += '</div><div class="phandle">@' + ZT.escape(a.username || 'user') + ' · ' + ZT.timeAgo(p.created_at) + '</div></div></div>';
-  if(p.content) h += '<div class="zt-post-content">' + ZT.escape(p.content) + '</div>';
+  h += '</div><div class="phandle">@' + ZT.escape(a.username || 'user') + ' · ' + ZT.timeAgo(p.created_at) + '</div></div>';
+
+  if(isMyPost || isTutor){
+    h += '<button onclick="ZT.openPostMenu(\'' + ZT.escape(p.id) + '\', event)" style="background:transparent;border:none;color:#64748b;cursor:pointer;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
+  }
+  h += '</div>';
+
+  if(contentText){
+    if(banner){
+      var bannerCss = ZT.gradientCss(banner);
+      h += '<div style="background:' + bannerCss + ';border-radius:14px;padding:24px 18px;margin-bottom:10px;min-height:110px;display:flex;align-items:center;justify-content:center;text-align:center;">';
+      h += '<div style="font-size:16px;font-weight:800;color:#fff;line-height:1.5;text-shadow:0 1px 3px rgba(0,0,0,.35);white-space:pre-wrap;word-break:break-word;">' + ZT.escape(contentText) + '</div>';
+      h += '</div>';
+    } else {
+      h += '<div class="zt-post-content' + ((tooLong && !folded) ? ' folded' : '') + '" data-post-content="' + ZT.escape(p.id) + '">' + ZT.escape(contentText) + '</div>';
+      if(tooLong){
+        h += '<button class="zt-see-more" onclick="ZT.togglePostFold(\'' + ZT.escape(p.id) + '\')" data-fold-btn="' + ZT.escape(p.id) + '">' + (folded ? 'Show less' : 'See more') + '</button>';
+      }
+    }
+  }
+
   if(p.media_url){
     if(p.media_type === 'video') h += '<div class="zt-post-media"><video src="' + ZT.escape(p.media_url) + '" controls playsinline preload="metadata"></video></div>';
     else h += '<div class="zt-post-media"><img src="' + ZT.escape(p.media_url) + '" loading="lazy"></div>';
   }
+
   h += '<div class="zt-post-reactions">';
   ZT.ALL_REACTIONS.forEach(function(k){
     var r = ZT.Reactions[k];
@@ -711,16 +847,15 @@ ZT.renderPostCard = function(p){
     h += '<button class="zt-react-btn ' + (active ? 'active' : '') + '" data-react-post="' + ZT.escape(p.id) + '" data-react-key="' + k + '">' + r.symbol + ' <span class="count">' + cnt + '</span></button>';
   });
   h += '</div>';
+
   h += '<div class="zt-post-actions">';
   h += '<button data-toggle-comments="' + ZT.escape(p.id) + '"><i class="fa-regular fa-comment"></i> ' + comments.length + ' Comments</button>';
-  if(isTutor && isMyPost){
-    h += '<button data-pin-post="' + ZT.escape(p.id) + '" style="margin-left:auto;"><i class="fa-solid fa-thumbtack"></i> ' + (pinned ? 'Unpin' : 'Pin') + '</button>';
-    h += '<button data-del-post="' + ZT.escape(p.id) + '" style="color:#a16262;"><i class="fa-solid fa-trash"></i></button>';
-  } else if(!isTutor){
+  if(!isTutor){
     h += '<button data-learned-post="' + ZT.escape(p.id) + '" style="margin-left:auto;' + (learned ? 'color:#10b981;font-weight:900;' : '') + '">';
     h += '<i class="' + (learned ? 'fa-solid' : 'fa-regular') + ' fa-circle-check"></i> ' + (learned ? 'Learned' : 'Mark as Learned') + '</button>';
   }
   h += '</div>';
+
   h += '<div class="zt-comments" id="zt-comments-' + ZT.escape(p.id) + '">';
   var listHtml = comments.length
     ? comments.map(function(cm){
@@ -748,11 +883,102 @@ ZT.attachPostInteractions = function(){
     if(ac){ ZT.addComment(ac.getAttribute('data-add-comment')); return; }
     var lp = e.target.closest('[data-learned-post]');
     if(lp){ var id = lp.getAttribute('data-learned-post'); ZT.State.markedLearned[id] = !ZT.State.markedLearned[id]; ZT.haptic(8); ZT.repaintPost(id); return; }
-    var pp = e.target.closest('[data-pin-post]');
-    if(pp){ ZT.togglePin(pp.getAttribute('data-pin-post')); return; }
-    var dp = e.target.closest('[data-del-post]');
-    if(dp){ ZT.deletePost(dp.getAttribute('data-del-post')); return; }
+    var fb = e.target.closest('[data-fold-btn]');
+    if(fb){ ZT.togglePostFold(fb.getAttribute('data-fold-btn')); return; }
   });
+};
+
+ZT.foldedPosts = ZT.State.foldedPosts = ZT.State.foldedPosts || {};
+
+ZT.togglePostFold = function(postId){
+  if(!ZT.State.foldedPosts) ZT.State.foldedPosts = {};
+  ZT.State.foldedPosts[postId] = !ZT.State.foldedPosts[postId];
+  var content = document.querySelector('[data-post-content="' + postId + '"]');
+  var btn = document.querySelector('[data-fold-btn="' + postId + '"]');
+  if(content) content.classList.toggle('folded', !ZT.State.foldedPosts[postId]);
+  if(btn) btn.textContent = ZT.State.foldedPosts[postId] ? 'See more' : 'Show less';
+};
+
+ZT.openPostMenu = function(postId, ev){
+  if(ev) ev.stopPropagation();
+  var post = ZT.State.posts.find(function(x){ return x.id === postId; });
+  if(!post) return;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+  var isMyPost = ZT.State.currentUser && post.author_id === ZT.State.currentUser.id;
+  var pinned = !!post.is_pinned;
+
+  var items = [];
+  if(isMyPost || isTutor){
+    items.push({ icon: pinned ? 'fa-thumbtack' : 'fa-thumbtack', label: pinned ? 'Unpin post' : 'Pin to top', color: '#a18554', fn: 'ZT.togglePin(\'' + postId + '\')' });
+  }
+  if(isMyPost || isTutor){
+    items.push({ icon: 'fa-trash', label: 'Delete post', color: '#a16262', fn: 'ZT.deletePost(\'' + postId + '\')' });
+  }
+  if(isTutor){
+    items.push({ icon: 'fa-eye', label: 'Who viewed this', color: '#60a5fa', fn: 'ZT.showPostViews(\'' + postId + '\')' });
+  }
+
+  var html = '';
+  items.forEach(function(it){
+    html += '<button onclick="' + it.fn + '; ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#cbd5e1;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;margin-bottom:2px;">';
+    html += '<i class="fa-solid ' + it.icon + '" style="color:' + it.color + ';font-size:15px;width:22px;text-align:center;"></i>';
+    html += '<span>' + ZT.escape(it.label) + '</span>';
+    html += '</button>';
+  });
+  if(!items.length){ html = '<div style="text-align:center;color:#64748b;padding:20px;font-size:12px;">No actions available.</div>'; }
+
+  ZT.Modal.open({ title:'Post options', icon:'fa-solid fa-ellipsis', body:html, footer:false });
+};
+
+ZT.recordPostViews = async function(posts){
+  var me = ZT.State.currentUser;
+  if(!me || !posts || !posts.length) return;
+  var c = sb(); if(!c) return;
+  for(var i = 0; i < posts.length; i++){
+    try {
+      await c.from('tutor_post_views').insert({
+        post_id: posts[i].id,
+        viewer_id: me.id
+      });
+    } catch(e){ /* unique constraint — already viewed, ignore */ }
+  }
+};
+
+ZT.showPostViews = async function(postId){
+  var c = sb(); if(!c) return;
+  try {
+    var r = await c.from('tutor_post_views')
+      .select('viewer_id, viewed_at')
+      .eq('post_id', postId)
+      .order('viewed_at', { ascending: false })
+      .limit(200);
+    if(r.error) throw r.error;
+    var list = r.data || [];
+    if(!list.length){
+      ZT.Modal.open({ title:'Post views (0)', icon:'fa-solid fa-eye', body:'<div style="text-align:center;color:#64748b;padding:20px;font-size:12px;">No views yet.</div>', footer:false });
+      return;
+    }
+    var ids = list.map(function(x){ return x.viewer_id; });
+    var pr = await c.from('profiles').select('id,name,username,avatar').in('id', ids);
+    (pr.data || []).forEach(function(p){ ZT.State.profileCache[p.id] = p; });
+
+    var html = '';
+    html += '<div style="font-size:11px;color:#94a3b8;margin-bottom:10px;font-weight:800;">' + list.length + ' people viewed this post</div>';
+    list.forEach(function(v){
+      var p = ZT.profileOf(v.viewer_id);
+      html += '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #1e293b;">';
+      html += '<img src="' + ZT.escape(ZT.safeAvatar(p)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+      html += '<div style="flex:1;min-width:0;">';
+      html += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'User') + '</div>';
+      html += '<div style="font-size:10px;color:#94a3b8;">@' + ZT.escape(p.username || 'user') + ' · ' + ZT.timeAgo(v.viewed_at) + '</div>';
+      html += '</div></div>';
+    });
+    ZT.Modal.open({ title:'Post views (' + list.length + ')', icon:'fa-solid fa-eye', body:html, footer:false });
+  } catch(e){
+    console.warn('[views]', e);
+    ZT.Modal.open({ title:'Post views', icon:'fa-solid fa-eye', body:'<div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;">Could not load views.</div>', footer:false });
+  }
 };
 
 ZT.toggleReaction = async function(postId, key){
@@ -830,18 +1056,41 @@ ZT.addComment = async function(postId){
   catch(e){ ZT.State.comments[postId] = ZT.State.comments[postId].filter(function(x){ return x.id !== newId; }); ZT.repaintPost(postId); ZT.toast('Failed.', 'error'); }
 };
 
+ZT.COMPOSER_BANNERS = [
+  { id:'none',    name:'Default', css:'' },
+  { id:'violet',  name:'Violet',  css:'linear-gradient(135deg,#8b5cf6,#4c1d95)' },
+  { id:'emerald', name:'Emerald', css:'linear-gradient(135deg,#10b981,#065f46)' },
+  { id:'ocean',   name:'Ocean',   css:'linear-gradient(135deg,#3b82f6,#1e3a8a)' },
+  { id:'teal',    name:'Teal',    css:'linear-gradient(135deg,#0d9488,#0f766e)' },
+  { id:'sunset',  name:'Sunset',  css:'linear-gradient(135deg,#a16262,#8b5cf6)' }
+];
+
 ZT.openComposer = function(){
   var host = document.getElementById('zt-composer-host'); if(!host) return;
   var me = ZT.State.currentUser; if(!me) return;
   var avatar = ZT.safeAvatar(me);
+  ZT._composerBanner = 'none';
   var h = '';
   h += '<div class="zt-composer-expanded" style="margin-top:10px;">';
   h += '<div style="display:flex;gap:10px;align-items:center;"><img src="' + ZT.escape(avatar) + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;">';
   h += '<div style="font-size:12px;font-weight:800;color:#fff;">Posting as ' + ZT.escape(me.name || 'Tutor') + '</div></div>';
+
   h += '<div class="zt-composer-chips">';
   h += '<button class="zt-chip active" data-type="text" onclick="ZT.composerType(\'text\')"><i class="fa-solid fa-align-left"></i> Post</button>';
   h += '<button class="zt-chip" data-type="announcement" onclick="ZT.composerType(\'announcement\')"><i class="fa-solid fa-bullhorn"></i> Announcement</button>';
   h += '</div>';
+
+  h += '<div class="zt-st" style="margin:0;padding:0 4px;">Banner style</div>';
+  h += '<div id="zt-banner-picker" style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;scrollbar-width:none;">';
+  ZT.COMPOSER_BANNERS.forEach(function(b){
+    var isActive = b.id === 'none';
+    var style = b.css || 'background:#0f172a;border:1px dashed #334155;';
+    h += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:52px;height:52px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : style) + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">';
+    if(b.id === 'none') h += '<i class="fa-solid fa-font" style="color:#64748b;font-size:14px;"></i>';
+    h += '</div>';
+  });
+  h += '</div>';
+
   h += '<textarea id="zt-composer-text" class="zt-textarea" placeholder="Share something with your students…" style="min-height:110px;"></textarea>';
   h += '<div class="zt-media-row">';
   h += '<button class="zt-media-btn" onclick="document.getElementById(\'zt-file-photo\').click()"><i class="fa-solid fa-camera"></i> Photo</button>';
@@ -856,6 +1105,14 @@ ZT.openComposer = function(){
   h += '</div></div>';
   host.innerHTML = h;
   ZT._composerType = 'text'; ZT._composerFile = null; ZT._composerKind = null;
+};
+
+ZT.pickBanner = function(id){
+  ZT._composerBanner = id;
+  document.querySelectorAll('[data-banner]').forEach(function(el){
+    var isActive = el.getAttribute('data-banner') === id;
+    el.style.border = isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)';
+  });
 };
 
 ZT.composerType = function(type){
@@ -1092,14 +1349,19 @@ ZT._lk = {
   connected: false,
   isTutor: false,
   audioEls: [],
-  handRaised: false
+  handRaised: false,
+  approved: false,
+  pendingJoins: [],
+  raisedHands: [],
+  handLog: [],
+  speakers: {}
 };
 
 ZT.renderLive = function(){
   var cir = ZT.State.currentCircle;
   var role = ZT.State.myRoleInCircle || 'student';
   var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
-  var canStart = role === 'tutor' || role === 'admin' || role === 'owner';
+  var canStart = isTutor;
 
   if(!ZT._lk.connected){
     var h = '';
@@ -1110,20 +1372,20 @@ ZT.renderLive = function(){
 
     h += '<div class="zt-hero" style="background:linear-gradient(135deg,rgba(139,92,246,.18),rgba(16,185,129,.10));border-color:rgba(139,92,246,.4);">';
     h += '<h2><i class="fa-solid fa-video" style="margin-right:8px;"></i>Ready to go live?</h2>';
-    h += '<p>' + (isTutor ? 'You are the host. Your mic and camera will be on.' : 'You will join as a listener.') + '</p></div>';
+    h += '<p>' + (isTutor ? 'You are the host. Your mic and camera will be on.' : 'You will join as a listener. Host will approve your entry.') + '</p></div>';
 
     if(canStart){
       h += '<button class="zt-btn" onclick="ZT.joinLiveRoom()" style="margin-bottom:14px;">';
       h += '<i class="fa-solid fa-satellite-dish"></i> Start Live Class</button>';
     } else {
       h += '<button class="zt-btn secondary" style="margin-bottom:14px;" onclick="ZT.joinLiveRoom()">';
-      h += '<i class="fa-solid fa-sign-in-alt"></i> Wait for Host (Join)</button>';
+      h += '<i class="fa-solid fa-sign-in-alt"></i> Request to Join</button>';
     }
     h += '<div class="zt-card" style="font-size:12px;color:#94a3b8;line-height:1.8;">';
     h += '<b style="color:#a78bfa;font-size:13px;">How it works</b><br>';
-    h += '• Tutor starts class → everyone joins<br>';
-    h += '• Tap mic button to unmute<br>';
-    h += '• Students: tap 🙋 hand icon to raise hand<br>';
+    h += '• Tutor starts class → students request to join<br>';
+    h += '• Host approves each student<br>';
+    h += '• Students: tap 🙋 hand to raise hand<br>';
     h += '• Host: End button stops class for everyone</div>';
 
     return h;
@@ -1139,9 +1401,13 @@ ZT.renderLive = function(){
   h += '</div>';
 
   if(isTutor){
+    /* Pending joins button */
+    h += '<button id="zt-live-pending" onclick="ZT.showPendingJoins()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-user-clock"></i><span id="zt-pending-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#3b82f6;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
+    /* Raised hands button */
     h += '<button id="zt-live-hands" onclick="ZT.showRaisedHands()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-hand"></i><span id="zt-hands-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#a16262;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
   }
 
+  h += '<button id="zt-live-participants-btn" onclick="ZT.showParticipantsPanel()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-users"></i></button>';
   h += '<button id="zt-live-mic" onclick="ZT.toggleLiveMic()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-microphone"></i></button>';
 
   if(isTutor){
@@ -1152,6 +1418,15 @@ ZT.renderLive = function(){
     h += '<button id="zt-live-hand" onclick="ZT.toggleRaiseHand()" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-hand"></i></button>';
   }
   h += '</div>';
+
+  /* Pending approval banner for students */
+  if(!isTutor && !ZT._lk.approved){
+    h += '<div id="zt-pending-banner" style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.4);border-radius:12px;padding:14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;">';
+    h += '<i class="fa-solid fa-hourglass-half fa-spin" style="color:#60a5fa;font-size:18px;"></i>';
+    h += '<div style="flex:1;"><div style="font-size:13px;font-weight:900;color:#60a5fa;">Waiting for host approval…</div>';
+    h += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">You are muted until host allows you in.</div></div>';
+    h += '</div>';
+  }
 
   h += '<div style="position:relative;background:#000;border:1px solid #1e293b;border-radius:14px;overflow:hidden;margin-bottom:12px;">';
   h += '<div id="zt-video-grid" style="display:grid;grid-template-columns:1fr;gap:6px;min-height:260px;align-items:center;justify-content:center;"></div>';
@@ -1171,6 +1446,7 @@ ZT.renderLive = function(){
     ZT.paintLiveGrid();
     ZT.paintLiveParticipants();
     ZT.paintRaisedHandBadge();
+    ZT.paintPendingBadge();
     ZT.wireLiveChat();
   }, 100);
   return h;
@@ -1211,13 +1487,16 @@ ZT.joinLiveRoom = async function(){
     ZT._resumeBackgroundActivity();
     return;
   }
-
   if(!window.LivekitClient){ ZT.toast('LiveKit SDK not loaded. Refresh.', 'error'); ZT._resumeBackgroundActivity(); return; }
   if(!ZT.TOKEN_SERVER){ ZT.toast('Token server missing.', 'error'); ZT._resumeBackgroundActivity(); return; }
 
   ZT.toast('Connecting to live class…');
   ZT._lk.isTutor = isTutor;
+  ZT._lk.approved = isTutor ? true : false;
+  ZT._lk.pendingJoins = [];
   ZT._lk.raisedHands = [];
+  ZT._lk.handLog = [];
+  ZT._lk.speakers = {};
 
   try {
     var res = await fetch(ZT.TOKEN_SERVER, {
@@ -1240,25 +1519,19 @@ ZT.joinLiveRoom = async function(){
         resolution: { width: 480, height: 360, frameRate: 20 },
         facingMode: 'user'
       },
-      audioCaptureDefaults: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      },
-      publishDefaults: {
-        videoSimulcastLayers: [],
-        videoCodec: 'vp8',
-        dtx: true,
-        red: false
-      }
+      audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      publishDefaults: { videoSimulcastLayers: [], videoCodec: 'vp8', dtx: true, red: false }
     });
     ZT._lk.room = room;
 
-    room.on('participantConnected', function(){ ZT.paintLiveGrid(); ZT.paintLiveParticipants(); });
+    room.on('participantConnected', function(p){
+      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
+      /* When tutor is already in room and a new student connects, they'll send JOIN_REQUEST themselves */
+    });
     room.on('participantDisconnected', function(p){
-      /* Remove from raised hands if they leave */
       ZT._lk.raisedHands = (ZT._lk.raisedHands || []).filter(function(x){ return x.identity !== p.identity; });
-      ZT.paintRaisedHandBadge();
+      ZT._lk.pendingJoins = (ZT._lk.pendingJoins || []).filter(function(x){ return x.identity !== p.identity; });
+      ZT.paintRaisedHandBadge(); ZT.paintPendingBadge();
       ZT.paintLiveGrid(); ZT.paintLiveParticipants();
     });
     room.on('trackSubscribed', function(){ setTimeout(ZT.paintLiveGrid, 100); });
@@ -1269,6 +1542,7 @@ ZT.joinLiveRoom = async function(){
     room.on('dataReceived', function(payload, participant){
       try {
         var msg = new TextDecoder().decode(payload);
+        var fromId = participant && participant.identity ? participant.identity : '';
 
         if(msg === '__END_CLASS__'){
           ZT.toast('Host ended the class.', 'warning');
@@ -1276,37 +1550,82 @@ ZT.joinLiveRoom = async function(){
           return;
         }
 
-        if(msg.startsWith('__HAND_RAISE__:')){
+        if(msg.startsWith('__JOIN_REQUEST__:')){
           var parts = msg.split(':');
-          var identity = parts[1] || 'User';
-          var name = parts[2] || identity.split('-')[0];
+          var idJ = parts[1] || 'User';
+          var nmJ = parts[2] || idJ.split('-')[0];
+          if(!ZT._lk.pendingJoins) ZT._lk.pendingJoins = [];
+          if(!ZT._lk.pendingJoins.find(function(x){ return x.identity === idJ; })){
+            ZT._lk.pendingJoins.push({ identity: idJ, name: nmJ, at: Date.now() });
+          }
+          if(ZT._lk.isTutor){
+            ZT.paintPendingBadge();
+            ZT.toast('👤 ' + nmJ + ' wants to join', 'info');
+          }
+          return;
+        }
+
+        if(msg === '__JOIN_APPROVED__'){
+          ZT._lk.approved = true;
+          var banner = document.getElementById('zt-pending-banner');
+          if(banner) banner.remove();
+          ZT.toast('✅ Host approved! You can now interact.', 'success');
+          ZT.haptic(20);
+          return;
+        }
+
+        if(msg === '__JOIN_DENIED__'){
+          ZT.toast('Host denied your request.', 'error');
+          setTimeout(function(){ ZT.leaveLiveRoom(); }, 800);
+          return;
+        }
+
+        if(msg === '__KICKED__'){
+          ZT.toast('You were removed from the class.', 'error');
+          setTimeout(function(){ ZT.leaveLiveRoom(); }, 800);
+          return;
+        }
+
+        if(msg.startsWith('__HAND_RAISE__:')){
+          var parts2 = msg.split(':');
+          var idH = parts2[1] || 'User';
+          var nmH = parts2[2] || idH.split('-')[0];
           if(!ZT._lk.raisedHands) ZT._lk.raisedHands = [];
-          var exists = ZT._lk.raisedHands.find(function(x){ return x.identity === identity; });
-          if(!exists){
-            ZT._lk.raisedHands.push({ identity: identity, name: name, at: Date.now() });
+          if(!ZT._lk.raisedHands.find(function(x){ return x.identity === idH; })){
+            ZT._lk.raisedHands.push({ identity: idH, name: nmH, at: Date.now() });
           }
           if(ZT._lk.isTutor){
             ZT.paintRaisedHandBadge();
-            ZT.toast('🙋 ' + name + ' raised hand', 'info');
+            ZT.toast('🙋 ' + nmH + ' raised hand', 'info');
           }
           return;
         }
 
         if(msg.startsWith('__HAND_LOWER__:')){
-          var id2 = msg.split(':')[1];
-          ZT._lk.raisedHands = (ZT._lk.raisedHands || []).filter(function(x){ return x.identity !== id2; });
+          var idL = msg.split(':')[1];
+          ZT._lk.raisedHands = (ZT._lk.raisedHands || []).filter(function(x){ return x.identity !== idL; });
           if(ZT._lk.isTutor) ZT.paintRaisedHandBadge();
           return;
         }
 
         if(msg === '__PROMOTE_ME__'){
-          ZT.toast('🎤 Host allowed you to speak. Unmute yourself to talk.', 'success');
+          ZT._lk.speakers[fromId] = true;
+          ZT._lk.approved = true;
+          ZT.toast('🎤 Host allowed you to speak.', 'success');
           var micBtn = document.getElementById('zt-live-mic');
-          if(micBtn){
-            micBtn.style.animation = 'ztPulse 1s infinite';
-            micBtn.style.borderColor = '#10b981';
-          }
+          if(micBtn){ micBtn.style.animation = 'ztPulse 1s infinite'; micBtn.style.borderColor = '#10b981'; }
           ZT.haptic(20);
+          ZT.paintLiveGrid();
+          return;
+        }
+
+        if(msg === '__DEMOTED__'){
+          ZT._lk.speakers[fromId] = false;
+          ZT.toast('You were moved to listener.', 'info');
+          if(ZT._lk.room && ZT._lk.room.localParticipant && ZT._lk.room.localParticipant.isMicrophoneEnabled){
+            try { ZT._lk.room.localParticipant.setMicrophoneEnabled(false); } catch(e){}
+          }
+          ZT.paintLiveGrid();
           return;
         }
 
@@ -1318,7 +1637,6 @@ ZT.joinLiveRoom = async function(){
           return;
         }
 
-        /* Regular chat */
         var el = document.getElementById('zt-live-chat');
         if(el){
           el.innerHTML += '<div style="margin-bottom:5px;line-height:1.5;">' + ZT.escape(msg) + '</div>';
@@ -1343,9 +1661,17 @@ ZT.joinLiveRoom = async function(){
           resolution: { width: 480, height: 360, frameRate: 20 }
         });
       } catch(e){ console.warn('[live]', e); }
+    } else {
+      /* Student: send join request after connecting */
+      try {
+        var myIdentity = (me.name || 'User') + '-' + me.id.slice(0, 6);
+        await room.localParticipant.publishData(
+          new TextEncoder().encode('__JOIN_REQUEST__:' + myIdentity + ':' + (me.name || 'User'))
+        );
+      } catch(e){ console.warn('[join req]', e); }
     }
 
-    ZT.toast('Connected ✓');
+    ZT.toast(isTutor ? 'Connected as host ✓' : 'Request sent. Waiting for approval…');
     ZT.haptic(15);
     ZT.showView('live');
 
@@ -2465,6 +2791,11 @@ async function boot(){
           avatar: 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.email||'U') + '&background=8b5cf6&color=000'
         };
         ZT.State.profileCache[ZT.State.currentUser.id] = ZT.State.currentUser;
+      /* Ensure is_tutor_approved field exists on currentUser */
+      if(ZT.State.currentUser && ZT.State.currentUser.is_tutor_approved === undefined){
+        ZT.State.currentUser.is_tutor_approved = false;
+      }
+
       }
     }
   } catch(e){ console.warn('session', e); }
@@ -2498,6 +2829,162 @@ ZT.openUserProfile = async function(userId){
   html += '</div>';
 
   ZT.Modal.open({ title:'Member Profile', icon:'fa-solid fa-user', body:html, footer:false });
+};
+
+/* ============================================================
+   PENDING JOINS (Tutor-side approval)
+   ============================================================ */
+ZT.paintPendingBadge = function(){
+  var badge = document.getElementById('zt-pending-badge');
+  if(!badge) return;
+  var count = (ZT._lk.pendingJoins || []).length;
+  if(count > 0){ badge.style.display = 'inline-block'; badge.textContent = count; }
+  else { badge.style.display = 'none'; }
+};
+
+ZT.showPendingJoins = function(){
+  if(!ZT._lk.isTutor) return;
+  var list = ZT._lk.pendingJoins || [];
+  var html = '';
+  if(!list.length){
+    html = '<div style="text-align:center;color:#64748b;padding:20px;font-size:12px;">No pending requests.</div>';
+  } else {
+    list.forEach(function(h){
+      html += '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #1e293b;">';
+      html += '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;font-weight:900;color:#000;font-size:15px;">' + ZT.escape((h.name || 'U').charAt(0).toUpperCase()) + '</div>';
+      html += '<div style="flex:1;min-width:0;">';
+      html += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(h.name || 'User') + '</div>';
+      html += '<div style="font-size:10px;color:#94a3b8;">requested ' + ZT.timeAgo(h.at) + '</div>';
+      html += '</div>';
+      html += '<button onclick="ZT.approveJoin(\'' + ZT.escape(h.identity) + '\')" style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.45);color:#10b981;padding:6px 12px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;margin-right:4px;">Allow</button>';
+      html += '<button onclick="ZT.denyJoin(\'' + ZT.escape(h.identity) + '\')" style="background:rgba(161,98,98,.15);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;padding:6px 12px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;">Deny</button>';
+      html += '</div>';
+    });
+  }
+  ZT.Modal.open({ title:'Join Requests (' + list.length + ')', icon:'fa-solid fa-user-clock', body:html, footer:false });
+};
+
+ZT.approveJoin = async function(identity){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  try {
+    await ZT._lk.room.localParticipant.publishData(
+      new TextEncoder().encode('__JOIN_APPROVED__'),
+      { destinationIdentities: [identity] }
+    );
+    ZT._lk.pendingJoins = (ZT._lk.pendingJoins || []).filter(function(x){ return x.identity !== identity; });
+    ZT.paintPendingBadge();
+    ZT.toast('Approved.');
+    ZT.Modal.close();
+  } catch(e){ ZT.toast('Failed.', 'error'); }
+};
+
+ZT.denyJoin = async function(identity){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  try {
+    await ZT._lk.room.localParticipant.publishData(
+      new TextEncoder().encode('__JOIN_DENIED__'),
+      { destinationIdentities: [identity] }
+    );
+    ZT._lk.pendingJoins = (ZT._lk.pendingJoins || []).filter(function(x){ return x.identity !== identity; });
+    ZT.paintPendingBadge();
+    ZT.toast('Denied.');
+    ZT.Modal.close();
+  } catch(e){ ZT.toast('Failed.', 'error'); }
+};
+
+/* ============================================================
+   PARTICIPANTS PANEL (Tutor controls)
+   ============================================================ */
+ZT.showParticipantsPanel = function(){
+  if(!ZT._lk.room){ ZT.toast('Not connected.', 'error'); return; }
+  var room = ZT._lk.room;
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+
+  var list = [];
+  /* Local first */
+  list.push({
+    identity: room.localParticipant.identity,
+    isLocal: true,
+    name: (me.name || 'You') + ' (You)',
+    isSpeaker: ZT._lk.isTutor || (room.localParticipant.isMicrophoneEnabled && ZT._lk.speakers[room.localParticipant.identity])
+  });
+  /* Remotes */
+  room.remoteParticipants.forEach(function(p){
+    var nm = (p.identity || 'User').split('-')[0];
+    var isSpk = p.trackPublications.size > 0 && Array.from(p.trackPublications.values()).some(function(pub){ return pub.kind === 'audio' && pub.track; });
+    list.push({ identity: p.identity, name: nm, isLocal: false, isSpeaker: isSpk });
+  });
+
+  var html = '';
+  html += '<div style="font-size:11px;color:#94a3b8;margin-bottom:10px;font-weight:800;">' + list.length + ' in room</div>';
+
+  list.forEach(function(x){
+    var isHost = x.identity === room.localParticipant.identity && isTutor;
+    var roleLabel = isHost ? 'HOST' : (x.isSpeaker ? 'SPEAKER' : 'LISTENER');
+    var roleColor = isHost ? '#a18554' : (x.isSpeaker ? '#10b981' : '#64748b');
+
+    html += '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #1e293b;">';
+    html += '<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#10b981);display:flex;align-items:center;justify-content:center;font-weight:900;color:#000;font-size:16px;flex-shrink:0;">' + ZT.escape((x.name || 'U').charAt(0).toUpperCase()) + '</div>';
+    html += '<div style="flex:1;min-width:0;">';
+    html += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(x.name) + '</div>';
+    html += '<div style="font-size:9px;color:' + roleColor + ';font-weight:900;letter-spacing:.5px;">' + roleLabel + '</div>';
+    html += '</div>';
+
+    if(isTutor && !x.isLocal && !isHost){
+      if(x.isSpeaker){
+        html += '<button onclick="ZT.demoteSpeaker(\'' + ZT.escape(x.identity) + '\')" title="Demote to listener" style="background:rgba(161,98,98,.15);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:11px;margin-right:4px;"><i class="fa-solid fa-microphone-slash"></i></button>';
+      } else {
+        html += '<button onclick="ZT.promoteSpeaker(\'' + ZT.escape(x.identity) + '\')" title="Promote to speaker" style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.45);color:#10b981;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:11px;margin-right:4px;"><i class="fa-solid fa-microphone"></i></button>';
+      }
+      html += '<button onclick="ZT.kickParticipant(\'' + ZT.escape(x.identity) + '\')" title="Remove" style="background:rgba(161,98,98,.15);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:11px;"><i class="fa-solid fa-user-xmark"></i></button>';
+    }
+    html += '</div>';
+  });
+
+  ZT.Modal.open({ title:'Participants', icon:'fa-solid fa-users', body:html, footer:false });
+};
+
+ZT.promoteSpeaker = async function(identity){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  try {
+    ZT._lk.speakers[identity] = true;
+    await ZT._lk.room.localParticipant.publishData(
+      new TextEncoder().encode('__PROMOTE_ME__'),
+      { destinationIdentities: [identity] }
+    );
+    ZT.toast('Promoted to speaker.');
+    ZT.Modal.close();
+    setTimeout(ZT.showParticipantsPanel, 200);
+  } catch(e){ ZT.toast('Failed.', 'error'); }
+};
+
+ZT.demoteSpeaker = async function(identity){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  try {
+    ZT._lk.speakers[identity] = false;
+    await ZT._lk.room.localParticipant.publishData(
+      new TextEncoder().encode('__DEMOTED__'),
+      { destinationIdentities: [identity] }
+    );
+    ZT.toast('Demoted to listener.');
+    ZT.Modal.close();
+    setTimeout(ZT.showParticipantsPanel, 200);
+  } catch(e){ ZT.toast('Failed.', 'error'); }
+};
+
+ZT.kickParticipant = async function(identity){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  if(!confirm('Remove this participant from the class?')) return;
+  try {
+    await ZT._lk.room.localParticipant.publishData(
+      new TextEncoder().encode('__KICKED__'),
+      { destinationIdentities: [identity] }
+    );
+    ZT.toast('Removed.');
+    ZT.Modal.close();
+  } catch(e){ ZT.toast('Failed.', 'error'); }
 };
 
 /* ============================================================
@@ -2542,18 +3029,21 @@ ZT.showRaisedHands = function(){
 ZT.allowSpeak = async function(identity){
   if(!ZT._lk.room || !ZT._lk.isTutor) return;
   try {
+    ZT._lk.speakers[identity] = true;
     await ZT._lk.room.localParticipant.publishData(
       new TextEncoder().encode('__PROMOTE_ME__'),
       { destinationIdentities: [identity] }
     );
+    var rec = (ZT._lk.raisedHands || []).find(function(x){ return x.identity === identity; });
+    if(rec){
+      if(!ZT._lk.handLog) ZT._lk.handLog = [];
+      ZT._lk.handLog.push({ name: rec.name, identity: identity, action: 'allowed', at: Date.now() });
+    }
     ZT._lk.raisedHands = (ZT._lk.raisedHands || []).filter(function(x){ return x.identity !== identity; });
     ZT.paintRaisedHandBadge();
     ZT.toast('Promoted. They can now unmute themselves.');
     ZT.Modal.close();
-  } catch(e){
-    console.warn('[promote]', e);
-    ZT.toast('Failed.', 'error');
-  }
+  } catch(e){ console.warn('[promote]', e); ZT.toast('Failed.', 'error'); }
 };
 
 ZT.dismissHand = async function(identity){
@@ -2563,6 +3053,11 @@ ZT.dismissHand = async function(identity){
       new TextEncoder().encode('__DISMISS_HAND__'),
       { destinationIdentities: [identity] }
     );
+    var rec = (ZT._lk.raisedHands || []).find(function(x){ return x.identity === identity; });
+    if(rec){
+      if(!ZT._lk.handLog) ZT._lk.handLog = [];
+      ZT._lk.handLog.push({ name: rec.name, identity: identity, action: 'dismissed', at: Date.now() });
+    }
     ZT._lk.raisedHands = (ZT._lk.raisedHands || []).filter(function(x){ return x.identity !== identity; });
     ZT.paintRaisedHandBadge();
     ZT.toast('Dismissed.');
