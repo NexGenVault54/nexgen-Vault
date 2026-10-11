@@ -248,7 +248,7 @@ ZT.State = {
   currentUser:null, currentView:'feed', currentParam:null,
   currentCircle:null, myRoleInCircle:null,
   circles:[], searchQuery:'',
-  posts:[], reactions:{}, myReactions:{}, comments:{}, foldedPosts:{},
+  posts:[], reactions:{}, myReactions:{}, comments:{}, foldedPosts:{}, completedSlides:{},
   profileCache:{}, markedLearned:{},
   chatThreadId:null, chatMessages:[], chatTimer:null,
   slides:[], currentSlide:null, slideItems:[], slideIndex:0, slideAudio:null,
@@ -1268,26 +1268,46 @@ ZT.paintChatMessages = function(){
   var me = ZT.State.currentUser;
   var msgs = ZT.State.chatMessages || [];
   if(!msgs.length){
-    host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:12px;padding:20px;">No messages yet. Say hi!</div>';
+    host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:12px;padding:20px;">No messages yet. Say hi! 👋</div>';
     return;
   }
   var wasAtBottom = (host.scrollTop + host.clientHeight) >= (host.scrollHeight - 40);
   var h = '';
   var lastSender = null;
+  var lastDate = null;
+
   msgs.forEach(function(m){
     var mine = m.sender_id === me.id;
     var sender = ZT.profileOf(m.sender_id);
-    if(!mine && lastSender !== m.sender_id){
-      h += '<div style="font-size:10px;color:#94a3b8;font-weight:800;padding:2px 4px;">' + ZT.escape(sender.name || 'User') + '</div>';
+
+    /* Date divider */
+    var mDate = new Date(m.created_at);
+    var dateKey = mDate.toDateString();
+    if(dateKey !== lastDate){
+      var today = new Date().toDateString();
+      var yest = new Date(Date.now() - 86400000).toDateString();
+      var label = dateKey === today ? 'Today' : (dateKey === yest ? 'Yesterday' : mDate.toLocaleDateString(undefined, { day:'numeric', month:'short' }));
+      h += '<div style="text-align:center;margin:10px 0 6px;"><span style="background:#1e293b;color:#94a3b8;font-size:10px;font-weight:800;padding:3px 10px;border-radius:10px;">' + label + '</span></div>';
+      lastSender = null;
+      lastDate = dateKey;
     }
-    h += '<div class="zt-msg ' + (mine ? 'out' : 'in') + '">';
+
+    /* Sender name for group chat */
+    if(!mine && lastSender !== m.sender_id){
+      h += '<div style="display:flex;gap:6px;align-items:center;padding:2px 4px;margin-top:2px;">';
+      h += '<img src="' + ZT.escape(ZT.safeAvatar(sender)) + '" style="width:20px;height:20px;border-radius:50%;object-fit:cover;">';
+      h += '<div style="font-size:10.5px;color:#94a3b8;font-weight:800;">' + ZT.escape(sender.name || 'User') + '</div>';
+      h += '</div>';
+    }
+
+    h += '<div class="zt-msg ' + (mine ? 'out' : 'in') + '" data-msg-id="' + ZT.escape(m.id) + '">';
     if(m.audio_url){
       h += '<audio controls src="' + ZT.escape(m.audio_url) + '"></audio>';
       if(m.audio_seconds) h += '<span style="font-size:10px;opacity:.7;margin-left:6px;">' + m.audio_seconds + 's</span>';
     } else {
       h += ZT.escape(m.body || '');
     }
-    h += '<span class="t">' + ZT.timeAgo(m.created_at) + '</span></div>';
+    h += '<span class="t">' + ZT.timeAgo(m.created_at) + (mine ? ' <i class="fa-solid fa-check" style="color:#10b981;font-size:9px;"></i>' : '') + '</span></div>';
     lastSender = m.sender_id;
   });
   host.innerHTML = h;
@@ -1968,9 +1988,12 @@ ZT.loadSlidesList = async function(){
     var h = '';
     list.forEach(function(s){
       h += '<button class="zt-tile" onclick="ZT.openSlidePlayer(\'' + ZT.escape(s.id) + '\')">';
+     
+       var isDone = !!ZT.State.completedSlides[s.id];
       h += '<div class="zt-tile-icon" style="background:rgba(139,92,246,.12);color:#a78bfa;"><i class="fa-solid fa-images"></i></div>';
       h += '<div style="flex:1;min-width:0;"><div class="zt-tile-title">' + ZT.escape(s.title) + '</div>';
       h += '<div class="zt-tile-sub">' + ZT.timeAgo(s.created_at) + '</div></div>';
+      if(isDone) h += '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:16px;margin-right:6px;"></i>';
       h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></button>';
     });
     host.innerHTML = h;
@@ -2147,6 +2170,13 @@ ZT.openSlidePlayer = async function(slideId){
   var ir = await c.from('tutor_slide_items').select('*').eq('slide_id', slideId).order('order', { ascending: true });
   ZT.State.slideItems = ir.data || [];
   ZT.State.slideIndex = 0;
+  /* Load completion status */
+  ZT.State.completedSlides = ZT.State.completedSlides || {};
+  try {
+    var prog = await c.from('tutor_slide_progress').select('slide_id').eq('user_id', ZT.State.currentUser.id);
+    (prog.data || []).forEach(function(p){ ZT.State.completedSlides[p.slide_id] = true; });
+  } catch(e){}
+
   ZT.showView('slide-player', slideId);
 };
 
@@ -2154,6 +2184,8 @@ ZT.renderSlidePlayer = function(){
   var s = ZT.State.currentSlide;
   if(!s) return '<div class="zt-empty"><p>Not found.</p></div>';
   var items = ZT.State.slideItems;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var h = '';
   h += '<div class="zt-circle-head"><button class="back" onclick="ZT.showView(\'slides\')"><i class="fa-solid fa-arrow-left"></i></button>';
   h += '<div style="flex:1;min-width:0;"><div class="nm">' + ZT.escape(s.title) + '</div><div class="sub">' + items.length + ' slides</div></div></div>';
@@ -2165,9 +2197,49 @@ ZT.renderSlidePlayer = function(){
   h += '<button class="zt-btn" id="zt-slide-next" style="flex:1;">Next ›</button>';
   h += '</div>';
   h += '<div id="zt-slide-audio-host" style="margin-top:12px;"></div>';
-  h += '<button class="zt-btn secondary" onclick="ZT.showView(\'slides\')" style="margin-top:16px;">Back to list</button>';
-  setTimeout(function(){ ZT.paintSlidePlayer(); }, 30);
+  if(!isTutor){
+    h += '<button class="zt-btn secondary" id="zt-slide-complete" onclick="ZT.markSlideComplete()" style="margin-top:12px;"><i class="fa-regular fa-circle-check"></i> Mark lesson complete</button>';
+  }
+  h += '<button class="zt-btn secondary" onclick="ZT.showView(\'slides\')" style="margin-top:8px;">Back to list</button>';
+  setTimeout(function(){ ZT.paintSlidePlayer(); ZT.checkSlideComplete(); }, 30);
   return h;
+};
+
+ZT.markSlideComplete = async function(){
+  var s = ZT.State.currentSlide; if(!s) return;
+  var me = ZT.State.currentUser; if(!me) return;
+  var c = sb(); if(!c) return;
+  try {
+    var r = await c.from('tutor_slide_progress').insert({ user_id: me.id, slide_id: s.id });
+    if(r.error && r.error.code !== '23505') throw r.error;
+    ZT.toast('Lesson marked complete ✓');
+    ZT.haptic(15);
+    var btn = document.getElementById('zt-slide-complete');
+    if(btn){
+      btn.style.background = 'rgba(16,185,129,.15)';
+      btn.style.borderColor = 'rgba(16,185,129,.45)';
+      btn.style.color = '#10b981';
+      btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Completed';
+      btn.disabled = true;
+    }
+  } catch(e){ ZT.toast('Failed.', 'error'); }
+};
+
+ZT.checkSlideComplete = async function(){
+  var s = ZT.State.currentSlide; if(!s) return;
+  var me = ZT.State.currentUser; if(!me) return;
+  var c = sb(); if(!c) return;
+  var r = await c.from('tutor_slide_progress').select('id').eq('user_id', me.id).eq('slide_id', s.id).maybeSingle();
+  if(r.data){
+    var btn = document.getElementById('zt-slide-complete');
+    if(btn){
+      btn.style.background = 'rgba(16,185,129,.15)';
+      btn.style.borderColor = 'rgba(16,185,129,.45)';
+      btn.style.color = '#10b981';
+      btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Completed';
+      btn.disabled = true;
+    }
+  }
 };
 
 ZT.paintSlidePlayer = function(){
