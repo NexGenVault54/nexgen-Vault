@@ -1448,6 +1448,104 @@ ZT._lk = {
   egressTimer: null
 };
 
+
+/* ============================================================
+   RECORDINGS LIBRARY
+   ============================================================ */
+ZT.showRecordingsLibrary = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir){ ZT.toast('Open a circle first.', 'warning'); return; }
+
+  ZT.showView('recordings', cir.id);
+};
+
+ZT.renderRecordingsList = async function(){
+  var cir = ZT.State.currentCircle;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+
+  var h = '';
+  h += '<div class="zt-circle-head"><button class="back" onclick="ZT.showView(\'live\')"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;"><div class="nm">Recordings</div><div class="sub">' + ZT.escape(cir.name) + '</div></div></div>';
+  h += '<div id="zt-recordings-host"><div style="padding:30px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+
+  setTimeout(ZT.loadRecordingsList, 30);
+  return h;
+};
+
+ZT.loadRecordingsList = async function(){
+  var host = document.getElementById('zt-recordings-host'); if(!host) return;
+  var cir = ZT.State.currentCircle; if(!cir) return;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+
+  try {
+    var res = await fetch(ZT.TOKEN_SERVER + 'record/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ circle: cir.id })
+    });
+    var data = await res.json();
+    if(!res.ok){ throw new Error(data.error || 'list failed'); }
+
+    var files = data.files || [];
+    if(!files.length){
+      host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-film"></i><p>No recordings yet. Start a live class and click the record button.</p></div>';
+      return;
+    }
+
+    files.sort(function(a,b){ return b.name.localeCompare(a.name); });
+
+    var h = '';
+    files.forEach(function(f){
+      var ts = f.name.replace('.mp4','');
+      var dateStr = !isNaN(ts) ? new Date(parseInt(ts)).toLocaleString() : f.name;
+      h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+      h += '<button onclick="ZT.playRecording(\'' + ZT.escape(f.url) + '\',\'' + ZT.escape(dateStr) + '\')" style="flex:1;background:transparent;border:none;padding:0;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;min-width:0;">';
+      h += '<div style="width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#a16262,#8b5cf6);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i class="fa-solid fa-play"></i></div>';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(dateStr) + '</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">Tap to play</div>';
+      h += '</div></button>';
+      if(isTutor){
+        h += '<button onclick="ZT.deleteRecording(\'' + ZT.escape(f.path) + '\',event)" style="background:rgba(161,98,98,.15);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;width:36px;height:36px;border-radius:8px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-trash"></i></button>';
+      }
+      h += '</div>';
+    });
+    host.innerHTML = h;
+  } catch(e){
+    console.error('[rec list]', e);
+    host.innerHTML = '<div class="zt-empty"><p>Could not load recordings.</p></div>';
+  }
+};
+
+ZT.playRecording = function(url, title){
+  var html = '';
+  html += '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">' + ZT.escape(title) + '</div>';
+  html += '<video src="' + ZT.escape(url) + '" controls playsinline style="width:100%;max-height:60vh;background:#000;border-radius:12px;"></video>';
+  ZT.Modal.open({ title:'Recording', icon:'fa-solid fa-film', body:html, footer:false });
+};
+
+ZT.deleteRecording = async function(path, ev){
+  if(ev) ev.stopPropagation();
+  if(!confirm('Delete this recording permanently?')) return;
+  ZT.toast('Deleting…');
+  try {
+    var res = await fetch(ZT.TOKEN_SERVER + 'record/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path })
+    });
+    var data = await res.json();
+    if(!res.ok){ throw new Error(data.error || 'delete failed'); }
+    ZT.toast('Recording deleted.');
+    ZT.loadRecordingsList();
+  } catch(e){
+    console.error('[rec delete]', e);
+    ZT.toast('Delete failed: ' + ((e && e.message) || ''), 'error');
+  }
+};
+
 ZT.renderLive = function(){
   var cir = ZT.State.currentCircle;
   var role = ZT.State.myRoleInCircle || 'student';
@@ -1472,6 +1570,8 @@ ZT.renderLive = function(){
       h += '<button class="zt-btn secondary" style="margin-bottom:14px;" onclick="ZT.joinLiveRoom()">';
       h += '<i class="fa-solid fa-sign-in-alt"></i> Request to Join</button>';
     }
+
+    h += '<button class="zt-btn secondary" onclick="ZT.showRecordingsLibrary()" style="margin-bottom:10px;"><i class="fa-solid fa-film"></i> Recordings Library</button>';
     h += '<div class="zt-card" style="font-size:12px;color:#94a3b8;line-height:1.8;">';
     h += '<b style="color:#a78bfa;font-size:13px;">How it works</b><br>';
     h += '• Tutor starts class → students request to join<br>';
@@ -2030,7 +2130,7 @@ ZT.toggleLiveRecording = async function(){
       var mm = String(Math.floor(s / 60)).padStart(2, '0');
       var ss = String(s % 60).padStart(2, '0');
       var b = document.getElementById('zt-live-rec');
-      if(b) b.innerHTML = '<i class="fa-solid fa-circle"></i><span style="font-size:8px;font-weight:900;position:absolute;bottom:1px;right:3px;color:#fff;">' + mm + ':' + ss + '</span>';
+      if(b) b.innerHTML = '<i class="fa-solid fa-circle"></i><span style="position:absolute;bottom:1px;left:50%;transform:translateX(-50%);font-size:8px;font-weight:900;color:#fff;white-space:nowrap;">' + mm + ':' + ss + '</span>';
     }, 1000);
   } catch(e){
     console.error('[rec start]', e);
@@ -3449,6 +3549,7 @@ ZT.renderView = async function(view, param){
   if(view === 'assignment-detail') return await ZT.renderAssignmentDetail();
   if(view === 'quizzes') return await ZT.renderQuizzes();
   if(view === 'quiz-detail') return ZT.renderQuizDetail();
+  if(view === 'recordings') return await ZT.renderRecordingsList();
   return await _origRenderView.call(this, view, param);
 };
 
