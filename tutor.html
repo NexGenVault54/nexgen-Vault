@@ -2379,18 +2379,19 @@ ZT.loadSlidesList = async function(){
     var h = '';
     list.forEach(function(s){
       var slideBg = s.banner_style ? ZT.gradientCss(s.banner_style) : '#111827';
-      h += '<button class="zt-tile" style="background:' + slideBg + ';border-color:rgba(255,255,255,.08);" onclick="ZT.openSlidePlayer(\'' + ZT.escape(s.id) + '\')">';
-     
+      h += '<div style="position:relative;margin-bottom:10px;">';
+      h += '<button class="zt-tile" style="background:' + slideBg + ';border-color:rgba(255,255,255,.08);margin-bottom:0;width:100%;" onclick="ZT.openSlidePlayer(\'' + ZT.escape(s.id) + '\')">';
        var isDone = !!ZT.State.completedSlides[s.id];
       h += '<div class="zt-tile-icon" style="background:rgba(139,92,246,.12);color:#a78bfa;"><i class="fa-solid fa-images"></i></div>';
-      h += '<div style="flex:1;min-width:0;"><div class="zt-tile-title">' + ZT.escape(s.title) + '</div>';
+      h += '<div style="flex:1;min-width:0;padding-right:36px;"><div class="zt-tile-title">' + ZT.escape(s.title) + '</div>';
       h += '<div class="zt-tile-sub">' + ZT.timeAgo(s.created_at) + '</div></div>';
       if(isDone) h += '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:16px;margin-right:6px;"></i>';
       h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i>';
       h += '</button>';
       if(role === 'tutor' || role === 'admin' || role === 'owner'){
-        h += '<button onclick="ZT.openSlideMenu(\'' + ZT.escape(s.id) + '\',event)" style="background:transparent;border:none;color:#64748b;width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
+        h += '<button onclick="ZT.openSlideMenu(\'' + ZT.escape(s.id) + '\',event)" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.35);border:none;color:#fff;width:30px;height:30px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
       }
+      h += '</div>';
     });
     host.innerHTML = h;
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
@@ -3281,6 +3282,7 @@ ZT.editQuiz = async function(quizId){
   h += '<div class="zt-st">Questions (' + ZT._newQuiz.questions.length + ')</div>';
   h += '<div id="zt-qz-host"></div>';
   h += '<button class="zt-btn secondary" id="zt-qz-add" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add MCQ</button>';
+  h += '<button class="zt-btn" id="zt-qz-ai" style="margin-top:6px;background:linear-gradient(135deg,#8b5cf6,#3b82f6);color:#fff;"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Generate Questions</button>';
 
   ZT.Modal.open({
     title:'Edit Quiz', icon:'fa-solid fa-list-check', submitLabel:'Save Changes',
@@ -3291,6 +3293,7 @@ ZT.editQuiz = async function(quizId){
         ZT._newQuiz.questions.push({ question:'', options:['','','',''], correct_index:0 });
         ZT.paintQuizBuilder();
       });
+      document.getElementById('zt-qz-ai').addEventListener('click', ZT.openAIGenerator);
     },
     onSubmit: async function(){
       var title = (document.getElementById('zt-qz-title').value || '').trim();
@@ -3311,10 +3314,11 @@ ZT.editQuiz = async function(quizId){
       for(var j=0;j<ZT._newQuiz.questions.length;j++){
         var qq2 = ZT._newQuiz.questions[j];
         var opts = qq2.options.filter(function(o){ return (o||'').trim(); });
-        var correctIdx = 0;
-        var orig = qq2.correct_index;
-        for(var k=0;k<orig;k++){ if(!(qq2.options[k]||'').trim()) correctIdx--; }
-        correctIdx = Math.max(0, Math.min(correctIdx, opts.length-1));
+        var nonEmptyBefore = 0;
+        for(var k = 0; k < qq2.correct_index; k++){
+          if((qq2.options[k]||'').trim()) nonEmptyBefore++;
+        }
+        var correctIdx = Math.max(0, Math.min(nonEmptyBefore, opts.length-1));
         await c.from('tutor_quiz_questions').insert({ quiz_id:quizId, order:j, question:qq2.question, options:opts, correct_index:correctIdx });
       }
       ZT.toast('Quiz updated.');
@@ -3343,6 +3347,7 @@ ZT.openCreateQuiz = function(){
   h += '<div class="zt-st">Questions (' + ZT._newQuiz.questions.length + ')</div>';
   h += '<div id="zt-qz-host"></div>';
   h += '<button class="zt-btn secondary" id="zt-qz-add" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add MCQ</button>';
+  h += '<button class="zt-btn" id="zt-qz-ai" style="margin-top:6px;background:linear-gradient(135deg,#8b5cf6,#3b82f6);color:#fff;"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Generate Questions</button>';
   ZT.Modal.open({
     title:'New Quiz (MCQ)', icon:'fa-solid fa-list-check', submitLabel:'Save Quiz',
     body: h,
@@ -3352,6 +3357,7 @@ ZT.openCreateQuiz = function(){
         ZT._newQuiz.questions.push({ question:'', options:['','','',''], correct_index:0 });
         ZT.paintQuizBuilder();
       });
+      document.getElementById('zt-qz-ai').addEventListener('click', ZT.openAIGenerator);
     },
     onSubmit: async function(){
       var title = (document.getElementById('zt-qz-title').value || '').trim();
@@ -3376,10 +3382,11 @@ ZT.openCreateQuiz = function(){
       for(var j = 0; j < ZT._newQuiz.questions.length; j++){
         var qq = ZT._newQuiz.questions[j];
         var opts = qq.options.filter(function(o){ return (o||'').trim(); });
-        var correctIdx = 0;
-        var original = qq.correct_index;
-        for(var k = 0; k < original; k++){ if(!(qq.options[k]||'').trim()) correctIdx--; }
-        correctIdx = Math.max(0, Math.min(correctIdx, opts.length-1));
+        var nonEmptyBefore = 0;
+        for(var k = 0; k < qq.correct_index; k++){
+          if((qq.options[k]||'').trim()) nonEmptyBefore++;
+        }
+        var correctIdx = Math.max(0, Math.min(nonEmptyBefore, opts.length-1));
         await c.from('tutor_quiz_questions').insert({ quiz_id: qid, order: j, question: qq.question, options: opts, correct_index: correctIdx });
       }
       ZT.toast('Quiz saved.');
@@ -3388,6 +3395,79 @@ ZT.openCreateQuiz = function(){
     }
   });
 };
+
+/* ============================================================
+   AI QUIZ GENERATOR
+   ============================================================ */
+ZT.openAIGenerator = function(){
+  var html = '';
+  html += '<div class="zt-field"><label class="zt-label">Paste your lesson text here *</label><textarea id="zt-ai-text" class="zt-textarea" placeholder="Paste chapter text, notes, or any study material (min 50 characters, max 30,000)..." style="min-height:180px;"></textarea></div>';
+  html += '<div class="zt-field"><label class="zt-label">How many questions?</label><select id="zt-ai-count" class="zt-select">';
+  html += '<option value="3">3 questions</option>';
+  html += '<option value="5" selected>5 questions</option>';
+  html += '<option value="8">8 questions</option>';
+  html += '<option value="10">10 questions</option>';
+  html += '</select></div>';
+  html += '<div id="zt-ai-status" style="font-size:11.5px;color:#94a3b8;line-height:1.6;">AI will generate multiple-choice questions from your text. Takes ~5-10 seconds.</div>';
+
+  ZT.Modal.open({
+    title:'AI Generate Quiz', icon:'fa-solid fa-wand-magic-sparkles',
+    submitLabel:'Generate Questions',
+    body: html,
+    onSubmit: async function(){
+      var text = (document.getElementById('zt-ai-text').value || '').trim();
+      var count = parseInt(document.getElementById('zt-ai-count').value) || 5;
+
+      if(text.length < 50){ ZT.toast('Please paste at least 50 characters.', 'error'); return false; }
+      if(text.length > 30000){ ZT.toast('Text too long. Max 30,000 characters.', 'error'); return false; }
+
+      var statusEl = document.getElementById('zt-ai-status');
+      if(statusEl) statusEl.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="color:#8b5cf6;"></i> AI is thinking… (this can take 5-15 seconds)';
+
+      try {
+        var res = await fetch(ZT.TOKEN_SERVER + 'ai/generate-quiz', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text, count: count })
+        });
+        var data = await res.json();
+        if(!res.ok || !data.ok){ throw new Error(data.error || 'AI failed'); }
+
+        var questions = data.questions || [];
+        if(!questions.length){ throw new Error('AI returned no questions'); }
+
+        /* Convert to our internal format */
+        questions.forEach(function(q){
+          if(!q.q || !Array.isArray(q.options)) return;
+          var correctIdx = parseInt(q.correct);
+          if(isNaN(correctIdx) || correctIdx < 0 || correctIdx >= q.options.length) correctIdx = 0;
+          ZT._newQuiz.questions.push({
+            question: String(q.q),
+            options: q.options.map(function(o){ return String(o); }),
+            correct_index: correctIdx
+          });
+        });
+
+        ZT.toast('✅ ' + questions.length + ' questions generated!');
+        ZT.haptic(20);
+        ZT.Modal.close();
+
+        /* Refresh quiz builder to show new questions */
+        setTimeout(function(){
+          ZT.paintQuizBuilder();
+        }, 200);
+
+        return true;
+      } catch(e){
+        console.error('[AI gen]', e);
+        if(statusEl) statusEl.innerHTML = '<span style="color:#a16262;">❌ ' + ZT.escape((e && e.message) || 'Failed') + '</span>';
+        ZT.toast('AI failed: ' + ((e && e.message) || 'unknown'), 'error');
+        return false;
+      }
+    }
+  });
+};
+
 
 ZT.paintQuizBuilder = function(){
   var host = document.getElementById('zt-qz-host'); if(!host) return;
