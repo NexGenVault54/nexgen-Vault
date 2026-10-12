@@ -2416,55 +2416,94 @@ ZT.openSlideMenu = function(slideId, ev){
 
 ZT.editSlide = async function(slideId){
   var c = sb(); if(!c) return;
+
+  /* Load slide */
   var r = await c.from('tutor_slides').select('*').eq('id', slideId).maybeSingle();
   if(r.error || !r.data){ ZT.toast('Not found.', 'error'); return; }
   var data = r.data;
-  ZT._editSlideId = slideId;
-  ZT._editSlideBanner = data.banner_style || 'classic';
 
-  var bannersHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Slide theme</div><div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
-  ZT.SLIDE_TEMPLATES.forEach(function(t){
-    var isActive = t.id === ZT._editSlideBanner;
-    bannersHtml += '<div onclick="ZT.pickEditSlideTheme(\'' + t.id + '\')" data-edit-slide-theme="' + t.id + '" style="flex-shrink:0;width:64px;height:56px;border-radius:12px;cursor:pointer;' + (t.css ? 'background:' + t.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:' + (t.css ? '#fff' : '#64748b') + ';">';
-    bannersHtml += '<i class="fa-solid ' + t.icon + '" style="font-size:14px;"></i>';
-    bannersHtml += '<div style="font-size:8.5px;font-weight:900;letter-spacing:.3px;">' + ZT.escape(t.name) + '</div>';
-    bannersHtml += '</div>';
+  /* Load existing items */
+  var ir = await c.from('tutor_slide_items').select('*').eq('slide_id', slideId).order('order', { ascending: true });
+  var items = (ir.data || []).map(function(x){
+    return {
+      text: x.text_content || '',
+      image_url: x.image_url || '',
+      audio_url: x.audio_url || ''
+    };
   });
-  bannersHtml += '</div>';
+
+  /* Populate same state used by builder */
+  ZT._editSlideId = slideId;
+  ZT._newSlide = {
+    items: items,
+    banner: data.banner_style || 'classic',
+    template: 'classic'
+  };
+
+  /* Same banner picker HTML as builder */
+  var bannerHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Slide theme</div><div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.SLIDE_TEMPLATES.forEach(function(t){
+    var isActive = t.id === ZT._newSlide.banner;
+    bannerHtml += '<div onclick="ZT.pickSlideTheme(\'' + t.id + '\')" data-slide-theme="' + t.id + '" style="flex-shrink:0;width:64px;height:56px;border-radius:12px;cursor:pointer;' + (t.css ? 'background:' + t.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:' + (t.css ? '#fff' : '#64748b') + ';">';
+    bannerHtml += '<i class="fa-solid ' + t.icon + '" style="font-size:14px;"></i>';
+    bannerHtml += '<div style="font-size:8.5px;font-weight:900;letter-spacing:.3px;">' + ZT.escape(t.name) + '</div>';
+    bannerHtml += '</div>';
+  });
+  bannerHtml += '</div>';
 
   var h = '';
-  h += '<div class="zt-field"><label class="zt-label">Lesson title *</label><input id="zt-sl-edit-title" class="zt-input" value="' + ZT.escape(data.title) + '"></div>';
-  h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-sl-edit-desc" class="zt-textarea" style="min-height:60px;">' + ZT.escape(data.description || '') + '</textarea></div>';
-  h += bannersHtml;
-  h += '<div style="font-size:11px;color:#94a3b8;line-height:1.6;">To edit individual slides (text, images, audio), delete this lesson and create a new one.</div>';
+  h += '<div class="zt-field"><label class="zt-label">Lesson title *</label><input id="zt-sl-title" class="zt-input" value="' + ZT.escape(data.title) + '"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-sl-desc" class="zt-textarea" style="min-height:60px;">' + ZT.escape(data.description || '') + '</textarea></div>';
+  h += bannerHtml;
+  h += '<div class="zt-st" style="margin-top:6px;">Slides</div>';
+  h += '<div id="zt-sl-items-host"></div>';
+  h += '<button class="zt-btn secondary" id="zt-sl-add" type="button" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add slide</button>';
 
   ZT.Modal.open({
     title:'Edit Slide Lesson', icon:'fa-solid fa-images', submitLabel:'Save Changes',
-    body:h,
+    body: h,
+    onOpen: function(){
+      ZT.paintSlideBuilderItems();
+      document.getElementById('zt-sl-add').onclick = function(){
+        ZT._newSlide.items.push({ text:'', image_url:'', audio_url:'' });
+        ZT.paintSlideBuilderItems();
+      };
+    },
     onSubmit: async function(){
-      var title = (document.getElementById('zt-sl-edit-title').value || '').trim();
-      var desc = (document.getElementById('zt-sl-edit-desc').value || '').trim();
+      var title = (document.getElementById('zt-sl-title').value || '').trim();
+      var desc = (document.getElementById('zt-sl-desc').value || '').trim();
       if(title.length < 2){ ZT.toast('Title required.', 'error'); return false; }
+      if(!ZT._newSlide.items.length){ ZT.toast('Add at least one slide.', 'error'); return false; }
+
       var c = sb();
-      var r = await c.from('tutor_slides').update({
+
+      var ur = await c.from('tutor_slides').update({
         title: title,
         description: desc || null,
-        banner_style: ZT._editSlideBanner !== 'classic' ? ZT._editSlideBanner : null,
+        banner_style: ZT._newSlide.banner !== 'classic' ? ZT._newSlide.banner : null,
         updated_at: new Date().toISOString()
       }).eq('id', slideId);
-      if(r.error){ ZT.toast('Failed.', 'error'); return false; }
-      ZT.toast('Lesson updated.');
+      if(ur.error){ ZT.toast('Failed: ' + ur.error.message, 'error'); return false; }
+
+      await c.from('tutor_slide_items').delete().eq('slide_id', slideId);
+
+      for(var i = 0; i < ZT._newSlide.items.length; i++){
+        var it = ZT._newSlide.items[i];
+        await c.from('tutor_slide_items').insert({
+          slide_id: slideId,
+          order: i,
+          text_content: it.text || null,
+          image_url: it.image_url || null,
+          audio_url: it.audio_url || null
+        });
+      }
+
+      ZT.toast('Lesson updated ✓');
+      ZT.haptic(15);
+      ZT._editSlideId = null;
       ZT.loadSlidesList();
       return true;
     }
-  });
-};
-
-ZT.pickEditSlideTheme = function(id){
-  ZT._editSlideBanner = id;
-  document.querySelectorAll('[data-edit-slide-theme]').forEach(function(el){
-    var isActive = el.getAttribute('data-edit-slide-theme') === id;
-    el.style.border = isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)';
   });
 };
 
