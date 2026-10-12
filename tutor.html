@@ -1440,7 +1440,12 @@ ZT._lk = {
   handLog: [],
   speakers: {},
   discussionMode: false,
-  discussionMembers: []
+  discussionMembers: [],
+  recording: false,
+  egressId: null,
+  recFilepath: null,
+  recStart: null,
+  egressTimer: null
 };
 
 ZT.renderLive = function(){
@@ -1489,6 +1494,7 @@ ZT.renderLive = function(){
   if(isTutor){
     /* Pending joins button */
     h += '<button id="zt-live-pending" onclick="ZT.showPendingJoins()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-user-clock"></i><span id="zt-pending-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#3b82f6;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
+    h += '<button id="zt-live-rec" onclick="ZT.toggleLiveRecording()" title="Record" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-circle"></i></button>';
     /* Raised hands button */
     h += '<button id="zt-live-hands" onclick="ZT.showRaisedHands()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-hand"></i><span id="zt-hands-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#a16262;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
   }
@@ -1964,6 +1970,101 @@ ZT.paintLiveGrid = function(){
     }
   });
 };
+
+/* ============================================================
+   LIVE RECORDING (Pro tutor only)
+   ============================================================ */
+ZT.toggleLiveRecording = async function(){
+  if(!ZT._lk.room || !ZT._lk.isTutor) return;
+  var me = ZT.State.currentUser;
+  if(!me || !me.is_tutor_approved){ ZT.toast('Recording is a Pro feature.', 'warning'); return; }
+
+  if(ZT._lk.recording){
+    ZT._lk.recording = false;
+    var btn = document.getElementById('zt-live-rec');
+    if(btn){ btn.style.color = ''; btn.style.borderColor = ''; }
+    if(ZT._lk.egressTimer){ clearInterval(ZT._lk.egressTimer); ZT._lk.egressTimer = null; }
+    var durSec = ZT._lk.recStart ? Math.floor((Date.now() - ZT._lk.recStart) / 1000) : 0;
+    ZT.toast('Stopping recording…');
+    try {
+      var res = await fetch(ZT.TOKEN_SERVER + 'record/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ egress_id: ZT._lk.egressId })
+      });
+      var data = await res.json();
+      if(!res.ok){ throw new Error(data.error || 'stop failed'); }
+      setTimeout(function(){ ZT.saveRecordingEntry(durSec); }, 20000);
+      ZT.toast('Recording saved — processing (' + durSec + 's)');
+    } catch(e){
+      console.error('[rec stop]', e);
+      ZT.toast('Stop failed: ' + ((e && e.message) || ''), 'error');
+    }
+    return;
+  }
+
+  var cir = ZT.State.currentCircle;
+  var filename = 'recordings/circle-' + cir.id + '/' + Date.now() + '.mp4';
+  ZT.toast('Starting recording…');
+  try {
+    var res2 = await fetch(ZT.TOKEN_SERVER + 'record/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room: 'circle-' + cir.id, filepath: filename })
+    });
+    var data2 = await res2.json();
+    if(!res2.ok){ throw new Error(data2.error || 'start failed'); }
+    ZT._lk.egressId = data2.egress_id;
+    ZT._lk.recFilepath = data2.filepath || filename;
+    ZT._lk.recording = true;
+    ZT._lk.recStart = Date.now();
+    var btn2 = document.getElementById('zt-live-rec');
+    if(btn2){ btn2.style.color = '#a16262'; btn2.style.borderColor = '#a16262'; }
+    ZT.toast('🔴 Recording started');
+    ZT.haptic(15);
+    ZT._lk.egressTimer = setInterval(function(){
+      if(!ZT._lk.recStart) return;
+      var s = Math.floor((Date.now() - ZT._lk.recStart) / 1000);
+      var mm = String(Math.floor(s / 60)).padStart(2, '0');
+      var ss = String(s % 60).padStart(2, '0');
+      var b = document.getElementById('zt-live-rec');
+      if(b) b.innerHTML = '<i class="fa-solid fa-circle"></i><span style="font-size:8px;font-weight:900;position:absolute;bottom:1px;right:3px;color:#fff;">' + mm + ':' + ss + '</span>';
+    }, 1000);
+  } catch(e){
+    console.error('[rec start]', e);
+    ZT.toast('Start failed: ' + ((e && e.message) || ''), 'error');
+  }
+};
+
+ZT.saveRecordingEntry = async function(durSec){
+  var cir = ZT.State.currentCircle; if(!cir) return;
+  var me = ZT.State.currentUser; if(!me) return;
+  var c = sb(); if(!c) return;
+  var path = ZT._lk.recFilepath || '';
+  var url = ZT.R2_PUBLIC_BASE + '/' + path;
+  try {
+    await c.from('tutor_recordings').insert({
+      circle_id: cir.id,
+      egress_id: ZT._lk.egressId,
+      room_name: 'circle-' + cir.id,
+      title: 'Recording ' + new Date().toLocaleString(),
+      file_path: path,
+      file_url: url,
+      duration_sec: durSec,
+      recorded_by: me.id,
+      status: 'ready',
+      ended_at: new Date().toISOString()
+    });
+    ZT.toast('Recording saved to library ✓');
+    ZT._lk.recFilepath = null;
+    ZT._lk.egressId = null;
+    ZT._lk.recStart = null;
+  } catch(e){
+    console.error('[save rec]', e);
+    ZT.toast('Could not save recording record.', 'error');
+  }
+};
+
 
 ZT.toggleDiscussionMode = function(){
   if(!ZT._lk.room || !ZT._lk.isTutor) return;
