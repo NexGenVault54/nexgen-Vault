@@ -1718,19 +1718,18 @@ ZT.joinLiveRoom = async function(){
     ZT._lk.room = room;
 
     room.on('participantConnected', function(p){
-      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
-      /* When tutor is already in room and a new student connects, they'll send JOIN_REQUEST themselves */
+      ZT.schedulePaintLiveGrid(); ZT.paintLiveParticipants();
     });
     room.on('participantDisconnected', function(p){
       ZT._lk.raisedHands = (ZT._lk.raisedHands || []).filter(function(x){ return x.identity !== p.identity; });
       ZT._lk.pendingJoins = (ZT._lk.pendingJoins || []).filter(function(x){ return x.identity !== p.identity; });
       ZT.paintRaisedHandBadge(); ZT.paintPendingBadge();
-      ZT.paintLiveGrid(); ZT.paintLiveParticipants();
+      ZT.schedulePaintLiveGrid(); ZT.paintLiveParticipants();
     });
-    room.on('trackSubscribed', function(){ setTimeout(ZT.paintLiveGrid, 100); });
-    room.on('trackUnsubscribed', function(){ ZT.paintLiveGrid(); });
-    room.on('localTrackPublished', function(){ setTimeout(ZT.paintLiveGrid, 100); });
-    room.on('localTrackUnpublished', function(){ ZT.paintLiveGrid(); });
+    room.on('trackSubscribed', function(){ ZT.schedulePaintLiveGrid(); });
+    room.on('trackUnsubscribed', function(){ ZT.schedulePaintLiveGrid(); });
+    room.on('localTrackPublished', function(){ ZT.schedulePaintLiveGrid(); });
+    room.on('localTrackUnpublished', function(){ ZT.schedulePaintLiveGrid(); });
 
     room.on('dataReceived', async function(payload, participant){
       try {
@@ -1891,6 +1890,16 @@ ZT.joinLiveRoom = async function(){
     ZT._resumeBackgroundActivity();
     ZT.toast('Join failed: ' + ((e && e.message) || 'unknown'), 'error');
   }
+};
+
+/* Debounced paint — prevents multiple re-renders per event */
+ZT._paintTimer = null;
+ZT.schedulePaintLiveGrid = function(){
+  if(ZT._paintTimer) clearTimeout(ZT._paintTimer);
+  ZT._paintTimer = setTimeout(function(){
+    ZT._paintTimer = null;
+    ZT.paintLiveGrid();
+  }, 250);
 };
 
 ZT.paintLiveGrid = function(){
@@ -2316,7 +2325,23 @@ ZT.renderSlidesList = async function(){
   if(isTutor){
     h += '<button class="zt-btn" style="margin-bottom:14px;" onclick="ZT.openSlideBuilder()"><i class="fa-solid fa-plus"></i> New slide lesson</button>';
   }
+  h += '<div class="zt-search" style="margin-bottom:14px;">';
+  h += '<input id="zt-slides-search" type="text" placeholder="Search slides by title or description…" autocomplete="off" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:12px 42px 12px 14px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">';
+  h += '<i class="fa-solid fa-magnifying-glass" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#64748b;font-size:13px;pointer-events:none;"></i>';
+  h += '</div>';
   h += '<div id="zt-slides-host"><div style="padding:30px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  setTimeout(function(){
+    var inp = document.getElementById('zt-slides-search');
+    if(inp && !inp._wired){
+      inp._wired = true;
+      var deb = null;
+      inp.addEventListener('input', function(){
+        ZT._slideSearch = this.value;
+        if(deb) clearTimeout(deb);
+        deb = setTimeout(ZT.loadSlidesList, 200);
+      });
+    }
+  }, 50);
   setTimeout(ZT.loadSlidesList, 30);
   return h;
 };
@@ -2324,12 +2349,32 @@ ZT.renderSlidesList = async function(){
 ZT.loadSlidesList = async function(){
   var host = document.getElementById('zt-slides-host'); if(!host) return;
   var cir = ZT.State.currentCircle; if(!cir) return;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var me = ZT.State.currentUser;
   var c = sb(); if(!c) return;
+  /* Load completion status once */
+  ZT.State.completedSlides = ZT.State.completedSlides || {};
+  if(me && !ZT._slidesStatusLoaded){
+    try {
+      var prog = await c.from('tutor_slide_progress').select('slide_id').eq('user_id', me.id);
+      (prog.data || []).forEach(function(p){ ZT.State.completedSlides[p.slide_id] = true; });
+      ZT._slidesStatusLoaded = true;
+    } catch(e){}
+  }
   try {
     var r = await c.from('tutor_slides').select('*').eq('circle_id', cir.id).order('created_at', { ascending: false }).limit(60);
     if(r.error){ host.innerHTML = '<div class="zt-empty"><p>Could not load.</p></div>'; return; }
     var list = r.data || [];
     ZT.State.slides = list;
+    /* Filter by search query */
+    var q = (ZT._slideSearch || '').trim().toLowerCase();
+    if(q){
+      list = list.filter(function(s){
+        var t = (s.title || '').toLowerCase();
+        var d = (s.description || '').toLowerCase();
+        return t.indexOf(q) !== -1 || d.indexOf(q) !== -1;
+      });
+    }
     if(!list.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-images"></i><p>No slide lessons yet.</p></div>'; return; }
     var h = '';
     list.forEach(function(s){
@@ -2341,7 +2386,11 @@ ZT.loadSlidesList = async function(){
       h += '<div style="flex:1;min-width:0;"><div class="zt-tile-title">' + ZT.escape(s.title) + '</div>';
       h += '<div class="zt-tile-sub">' + ZT.timeAgo(s.created_at) + '</div></div>';
       if(isDone) h += '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:16px;margin-right:6px;"></i>';
-      h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></button>';
+      h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i>';
+      h += '</button>';
+      if(role === 'tutor' || role === 'admin' || role === 'owner'){
+        h += '<button onclick="ZT.openSlideMenu(\'' + ZT.escape(s.id) + '\',event)" style="background:transparent;border:none;color:#64748b;width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
+      }
     });
     host.innerHTML = h;
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
@@ -2355,6 +2404,22 @@ ZT.SLIDE_TEMPLATES = [
   { id:'sunset',  name:'Sunset',  icon:'fa-sun',   css:'linear-gradient(135deg,#a16262,#8b5cf6)' },
   { id:'forest',  name:'Forest',  icon:'fa-tree',  css:'linear-gradient(135deg,#065f46,#022c22)' }
 ];
+
+ZT.openSlideMenu = function(slideId, ev){
+  if(ev) ev.stopPropagation();
+  var html = '';
+  html += '<button onclick="ZT.deleteSlide(\'' + slideId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#c9a5a5;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;"><i class="fa-solid fa-trash" style="color:#a16262;font-size:15px;width:22px;text-align:center;"></i><span>Delete lesson</span></button>';
+  ZT.Modal.open({ title:'Slide options', icon:'fa-solid fa-ellipsis', body:html, footer:false });
+};
+
+ZT.deleteSlide = async function(slideId){
+  if(!confirm('Delete this slide lesson and all its items?')) return;
+  var c = sb(); if(!c) return;
+  var r = await c.from('tutor_slides').delete().eq('id', slideId);
+  if(r.error){ ZT.toast('Failed: ' + r.error.message, 'error'); return; }
+  ZT.toast('Lesson deleted.');
+  ZT.loadSlidesList();
+};
 
 ZT.openSlideBuilder = function(){
   var cir = ZT.State.currentCircle;
