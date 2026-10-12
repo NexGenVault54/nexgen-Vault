@@ -2132,7 +2132,8 @@ ZT.loadSlidesList = async function(){
     if(!list.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-images"></i><p>No slide lessons yet.</p></div>'; return; }
     var h = '';
     list.forEach(function(s){
-      h += '<button class="zt-tile" onclick="ZT.openSlidePlayer(\'' + ZT.escape(s.id) + '\')">';
+      var slideBg = s.banner_style ? ZT.gradientCss(s.banner_style) : '#111827';
+      h += '<button class="zt-tile" style="background:' + slideBg + ';border-color:rgba(255,255,255,.08);" onclick="ZT.openSlidePlayer(\'' + ZT.escape(s.id) + '\')">';
      
        var isDone = !!ZT.State.completedSlides[s.id];
       h += '<div class="zt-tile-icon" style="background:rgba(139,92,246,.12);color:#a78bfa;"><i class="fa-solid fa-images"></i></div>';
@@ -2145,23 +2146,44 @@ ZT.loadSlidesList = async function(){
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
 };
 
+ZT.SLIDE_TEMPLATES = [
+  { id:'classic', name:'Classic', icon:'fa-book', css:'' },
+  { id:'violet',  name:'Violet',  icon:'fa-star',  css:'linear-gradient(135deg,#8b5cf6,#4c1d95)' },
+  { id:'emerald', name:'Emerald', icon:'fa-leaf',  css:'linear-gradient(135deg,#10b981,#065f46)' },
+  { id:'ocean',   name:'Ocean',   icon:'fa-water', css:'linear-gradient(135deg,#3b82f6,#1e3a8a)' },
+  { id:'sunset',  name:'Sunset',  icon:'fa-sun',   css:'linear-gradient(135deg,#a16262,#8b5cf6)' },
+  { id:'forest',  name:'Forest',  icon:'fa-tree',  css:'linear-gradient(135deg,#065f46,#022c22)' }
+];
+
 ZT.openSlideBuilder = function(){
   var cir = ZT.State.currentCircle;
   var me = ZT.State.currentUser;
-  ZT._newSlide = { items: [] };
+  ZT._newSlide = { items: [], banner: 'classic', template: 'classic' };
+
+  var bannerHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Slide theme</div><div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.SLIDE_TEMPLATES.forEach(function(t){
+    var isActive = t.id === 'classic';
+    bannerHtml += '<div onclick="ZT.pickSlideTheme(\'' + t.id + '\')" data-slide-theme="' + t.id + '" style="flex-shrink:0;width:64px;height:56px;border-radius:12px;cursor:pointer;' + (t.css ? 'background:' + t.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:' + (t.css ? '#fff' : '#64748b') + ';">';
+    bannerHtml += '<i class="fa-solid ' + t.icon + '" style="font-size:14px;"></i>';
+    bannerHtml += '<div style="font-size:8.5px;font-weight:900;letter-spacing:.3px;">' + ZT.escape(t.name) + '</div>';
+    bannerHtml += '</div>';
+  });
+  bannerHtml += '</div>';
+
   var h = '';
   h += '<div class="zt-field"><label class="zt-label">Lesson title *</label><input id="zt-sl-title" class="zt-input" placeholder="e.g. Chapter 5 — Quadratic Equations"></div>';
   h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-sl-desc" class="zt-textarea" style="min-height:60px;" placeholder="Brief description"></textarea></div>';
+  h += bannerHtml;
   h += '<div class="zt-st" style="margin-top:6px;">Slides</div>';
   h += '<div id="zt-sl-items-host"></div>';
   h += '<button class="zt-btn secondary" id="zt-sl-add" type="button" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add slide</button>';
+
   ZT.Modal.open({
     title:'New Slide Lesson', icon:'fa-solid fa-images', submitLabel:'Save Lesson',
-    body: h,
-    onOpen: function(){
+    body:h,
+    onOpen:function(){
       ZT.paintSlideBuilderItems();
-      var addBtn = document.getElementById('zt-sl-add');
-      if(addBtn) addBtn.onclick = function(){
+      document.getElementById('zt-sl-add').onclick = function(){
         ZT._newSlide.items.push({ text:'', image_url:'', audio_url:'' });
         ZT.paintSlideBuilderItems();
       };
@@ -2172,24 +2194,33 @@ ZT.openSlideBuilder = function(){
       if(title.length < 2){ ZT.toast('Title required.', 'error'); return false; }
       if(!ZT._newSlide.items.length){ ZT.toast('Add at least one slide.', 'error'); return false; }
       var c = sb();
-      var sr = await c.from('tutor_slides').insert({ circle_id: cir.id, author_id: me.id, title: title, description: desc || null }).select().maybeSingle();
-      if(sr.error){ ZT.toast('Failed: ' + sr.error.message, 'error'); return false; }
+      var sr = await c.from('tutor_slides').insert({
+        circle_id:cir.id, author_id:me.id, title:title, description:desc || null,
+        banner_style: ZT._newSlide.banner !== 'classic' ? ZT._newSlide.banner : null
+      }).select().maybeSingle();
+      if(sr.error){ ZT.toast('Failed.', 'error'); return false; }
       var slideId = sr.data.id;
-      for(var i = 0; i < ZT._newSlide.items.length; i++){
+      for(var i=0;i<ZT._newSlide.items.length;i++){
         var it = ZT._newSlide.items[i];
-        var ir = await c.from('tutor_slide_items').insert({
-          slide_id: slideId,
-          order: i,
+        await c.from('tutor_slide_items').insert({
+          slide_id:slideId, order:i,
           text_content: it.text || null,
           image_url: it.image_url || null,
           audio_url: it.audio_url || null
         });
-        if(ir.error){ ZT.toast('Slide ' + (i+1) + ' failed.', 'error'); return false; }
       }
       ZT.toast('Lesson saved.');
       ZT.loadSlidesList();
       return true;
     }
+  });
+};
+
+ZT.pickSlideTheme = function(id){
+  ZT._newSlide.banner = id;
+  document.querySelectorAll('[data-slide-theme]').forEach(function(el){
+    var isActive = el.getAttribute('data-slide-theme') === id;
+    el.style.border = isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)';
   });
 };
 ZT.paintSlideBuilderItems = function(){
@@ -2335,6 +2366,8 @@ ZT.renderSlidePlayer = function(){
   h += '<div class="zt-circle-head"><button class="back" onclick="ZT.showView(\'slides\')"><i class="fa-solid fa-arrow-left"></i></button>';
   h += '<div style="flex:1;min-width:0;"><div class="nm">' + ZT.escape(s.title) + '</div><div class="sub">' + items.length + ' slides</div></div></div>';
   if(!items.length) return h + '<div class="zt-empty"><p>No slides in this lesson.</p></div>';
+    var slideBg = s.banner_style ? ZT.gradientCss(s.banner_style) : '';
+  h += '<div style="' + (slideBg ? 'background:' + slideBg + ';border-radius:14px;padding:14px;margin-bottom:12px;' : '') + '">';
   h += '<div class="zt-slide-progress" id="zt-slide-progress"></div>';
   h += '<div class="zt-slide-player" id="zt-slide-stage"></div>';
   h += '<div style="display:flex;gap:8px;margin-top:12px;">';
@@ -2347,6 +2380,7 @@ ZT.renderSlidePlayer = function(){
   }
   h += '<button class="zt-btn secondary" onclick="ZT.showView(\'slides\')" style="margin-top:8px;">Back to list</button>';
   setTimeout(function(){ ZT.paintSlidePlayer(); ZT.checkSlideComplete(); }, 30);
+    if(slideBg) h += '</div>';
   return h;
 };
 
@@ -2612,6 +2646,9 @@ ZT.renderAssignments = async function(){
 ZT.loadAssignments = async function(){
   var host = document.getElementById('zt-assign-host'); if(!host) return;
   var cir = ZT.State.currentCircle; if(!cir) return;
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var c = sb(); if(!c) return;
   try {
     var r = await c.from('tutor_assignments').select('*').eq('circle_id', cir.id).order('created_at', { ascending: false }).limit(60);
@@ -2619,34 +2656,106 @@ ZT.loadAssignments = async function(){
     var list = r.data || [];
     ZT.State.assignments = list;
     if(!list.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-clipboard-check"></i><p>No assignments yet.</p></div>'; return; }
-    var me = ZT.State.currentUser;
-    /* check my submissions */
     var mySubs = {};
     var sr = await c.from('tutor_submissions').select('assignment_id').eq('student_id', me.id);
     (sr.data || []).forEach(function(x){ mySubs[x.assignment_id] = true; });
+
     var h = '';
     list.forEach(function(a){
-      var role = ZT.State.myRoleInCircle || 'student';
-      var isTutor = role === 'tutor' || role === 'admin';
       var submitted = !!mySubs[a.id];
-      h += '<button class="zt-tile" onclick="ZT.openAssignment(\'' + ZT.escape(a.id) + '\')">';
-      h += '<div class="zt-tile-icon" style="background:rgba(16,185,129,.12);color:#10b981;"><i class="fa-solid fa-clipboard-check"></i></div>';
-      h += '<div style="flex:1;min-width:0;"><div class="zt-tile-title">' + ZT.escape(a.title) + '</div>';
-      h += '<div class="zt-tile-sub">' + (a.due_date ? 'Due ' + new Date(a.due_date).toLocaleDateString() : 'No due date') + ' · Max ' + (a.max_marks||100) + (submitted && !isTutor ? ' · ✓ Submitted' : '') + '</div></div>';
-      h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></button>';
+      var bg = a.banner_style ? ZT.gradientCss(a.banner_style) : '#111827';
+      var isBg = !!a.banner_style;
+      h += '<div style="background:' + bg + ';border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+      h += '<button onclick="ZT.openAssignment(\'' + ZT.escape(a.id) + '\')" style="flex:1;background:transparent;border:none;padding:0;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;min-width:0;">';
+      h += '<div style="width:42px;height:42px;border-radius:12px;background:' + (isBg ? 'rgba(0,0,0,.25)' : 'rgba(16,185,129,.12)') + ';color:' + (isBg ? '#fff' : '#10b981') + ';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i class="fa-solid fa-clipboard-check"></i></div>';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:14px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' + (isBg ? 'text-shadow:0 1px 3px rgba(0,0,0,.5);' : '') + '">' + ZT.escape(a.title) + '</div>';
+      h += '<div style="font-size:11px;color:' + (isBg ? 'rgba(255,255,255,.85)' : '#94a3b8') + ';margin-top:2px;">' + (a.due_date ? 'Due ' + new Date(a.due_date).toLocaleDateString() : 'No due date') + ' · Max ' + (a.max_marks||100) + (submitted && !isTutor ? ' · ✓ Submitted' : '') + '</div>';
+      h += '</div></button>';
+      if(isTutor){
+        h += '<button onclick="ZT.openAssignmentMenu(\'' + ZT.escape(a.id) + '\',event)" style="background:rgba(0,0,0,.25);border:none;color:#fff;width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
+      }
+      h += '</div>';
     });
     host.innerHTML = h;
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
+};
+
+ZT.openAssignmentMenu = function(assignmentId, ev){
+  if(ev) ev.stopPropagation();
+  var html = '';
+  html += '<button onclick="ZT.editAssignment(\'' + assignmentId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#cbd5e1;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;"><i class="fa-solid fa-pen" style="color:#60a5fa;font-size:15px;width:22px;text-align:center;"></i><span>Edit assignment</span></button>';
+  html += '<button onclick="ZT.deleteAssignment(\'' + assignmentId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#c9a5a5;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;"><i class="fa-solid fa-trash" style="color:#a16262;font-size:15px;width:22px;text-align:center;"></i><span>Delete assignment</span></button>';
+  ZT.Modal.open({ title:'Assignment options', icon:'fa-solid fa-ellipsis', body:html, footer:false });
+};
+
+ZT.deleteAssignment = async function(id){
+  if(!confirm('Delete this assignment and all submissions?')) return;
+  var c = sb(); if(!c) return;
+  var r = await c.from('tutor_assignments').delete().eq('id', id);
+  if(r.error){ ZT.toast('Failed.', 'error'); return; }
+  ZT.toast('Assignment deleted.');
+  ZT.loadAssignments();
+};
+
+ZT.editAssignment = async function(id){
+  var c = sb(); if(!c) return;
+  var a = await c.from('tutor_assignments').select('*').eq('id', id).maybeSingle();
+  if(a.error || !a.data){ ZT.toast('Not found.', 'error'); return; }
+  var data = a.data;
+  ZT._composerBanner = data.banner_style || 'none';
+  var bannersHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Banner</div><div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.COMPOSER_BANNERS.forEach(function(b){
+    var isActive = b.id === ZT._composerBanner;
+    bannersHtml += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:52px;height:52px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">' + (b.id === 'none' ? '<i class="fa-solid fa-font" style="color:#64748b;font-size:14px;"></i>' : '') + '</div>';
+  });
+  bannersHtml += '</div>';
+
+  var dueVal = data.due_date ? new Date(data.due_date).toISOString().slice(0, 16) : '';
+  var h = '';
+  h += '<div class="zt-field"><label class="zt-label">Title *</label><input id="zt-as-title" class="zt-input" value="' + ZT.escape(data.title) + '"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-as-desc" class="zt-textarea" style="min-height:80px;">' + ZT.escape(data.description || '') + '</textarea></div>';
+  h += '<div class="zt-field"><label class="zt-label">Due date</label><input id="zt-as-due" type="datetime-local" class="zt-input" value="' + dueVal + '"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Max marks</label><input id="zt-as-max" type="number" class="zt-input" value="' + (data.max_marks||100) + '" min="1"></div>';
+  h += bannersHtml;
+  ZT.Modal.open({
+    title:'Edit Assignment', icon:'fa-solid fa-clipboard-check', submitLabel:'Save Changes',
+    body:h,
+    onSubmit: async function(){
+      var title = (document.getElementById('zt-as-title').value || '').trim();
+      if(title.length < 2){ ZT.toast('Title required.', 'error'); return false; }
+      var due = (document.getElementById('zt-as-due').value || '') || null;
+      var r = await c.from('tutor_assignments').update({
+        title: title,
+        description: (document.getElementById('zt-as-desc').value || '').trim() || null,
+        due_date: due ? new Date(due).toISOString() : null,
+        max_marks: parseInt(document.getElementById('zt-as-max').value)||100,
+        banner_style: (ZT._composerBanner && ZT._composerBanner !== 'none') ? ZT._composerBanner : null
+      }).eq('id', id);
+      if(r.error){ ZT.toast('Failed.', 'error'); return false; }
+      ZT.toast('Updated.');
+      ZT.loadAssignments();
+      return true;
+    }
+  });
 };
 
 ZT.openCreateAssignment = function(){
   var cir = ZT.State.currentCircle;
   var me = ZT.State.currentUser;
   var h = '';
+  ZT._composerBanner = 'none';
+  var bannersHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Banner</div><div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.COMPOSER_BANNERS.forEach(function(b){
+    var isActive = b.id === 'none';
+    bannersHtml += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:52px;height:52px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">' + (b.id === 'none' ? '<i class="fa-solid fa-font" style="color:#64748b;font-size:14px;"></i>' : '') + '</div>';
+  });
+  bannersHtml += '</div>';
   h += '<div class="zt-field"><label class="zt-label">Title *</label><input id="zt-as-title" class="zt-input" placeholder="e.g. Exercise 5.2 — Questions 1-10"></div>';
   h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-as-desc" class="zt-textarea" placeholder="Instructions" style="min-height:80px;"></textarea></div>';
   h += '<div class="zt-field"><label class="zt-label">Due date</label><input id="zt-as-due" type="datetime-local" class="zt-input"></div>';
   h += '<div class="zt-field"><label class="zt-label">Max marks</label><input id="zt-as-max" type="number" class="zt-input" value="100" min="1"></div>';
+  h += bannersHtml;
   ZT.Modal.open({
     title:'New Assignment', icon:'fa-solid fa-clipboard-check', submitLabel:'Create',
     body: h,
@@ -2659,7 +2768,8 @@ ZT.openCreateAssignment = function(){
         circle_id: cir.id, author_id: me.id, title: title,
         description: (document.getElementById('zt-as-desc').value || '').trim() || null,
         due_date: due ? new Date(due).toISOString() : null,
-        max_marks: parseInt(document.getElementById('zt-as-max').value)||100
+        max_marks: parseInt(document.getElementById('zt-as-max').value)||100,
+        banner_style: (ZT._composerBanner && ZT._composerBanner !== 'none') ? ZT._composerBanner : null
       });
       if(r.error){ ZT.toast('Failed.', 'error'); return false; }
       ZT.toast('Assignment created.');
@@ -2804,7 +2914,7 @@ ZT.openGradeSheet = function(subId, currentMarks){
 ZT.renderQuizzes = async function(){
   var cir = ZT.State.currentCircle;
   var role = ZT.State.myRoleInCircle || 'student';
-  var isTutor = role === 'tutor' || role === 'admin';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var h = '';
   h += '<div class="zt-circle-head"><button class="back" onclick="ZT.showView(\'more\')"><i class="fa-solid fa-arrow-left"></i></button>';
   h += '<div style="flex:1;min-width:0;"><div class="nm">Quizzes</div><div class="sub">' + ZT.escape(cir.name) + '</div></div></div>';
@@ -2819,27 +2929,133 @@ ZT.renderQuizzes = async function(){
 ZT.loadQuizzes = async function(){
   var host = document.getElementById('zt-quiz-host'); if(!host) return;
   var cir = ZT.State.currentCircle; if(!cir) return;
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var c = sb(); if(!c) return;
   try {
     var r = await c.from('tutor_quizzes').select('*').eq('circle_id', cir.id).order('created_at', { ascending: false }).limit(60);
     if(r.error){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; return; }
     var list = r.data || [];
     if(!list.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-list-check"></i><p>No quizzes yet.</p></div>'; return; }
-    var me = ZT.State.currentUser;
-    var att = await c.from('tutor_quiz_attempts').select('quiz_id,score,total').eq('student_id', me.id);
+
+    var att = await c.from('tutor_quiz_attempts').select('quiz_id,score,total,attempt_number').eq('student_id', me.id);
     var attMap = {};
-    (att.data||[]).forEach(function(x){ attMap[x.quiz_id] = x; });
+    (att.data || []).forEach(function(x){
+      if(!attMap[x.quiz_id] || x.attempt_number > attMap[x.quiz_id].attempt_number){
+        attMap[x.quiz_id] = x;
+      }
+    });
+
     var h = '';
     list.forEach(function(q){
       var myAtt = attMap[q.id];
-      h += '<button class="zt-tile" onclick="ZT.openQuiz(\'' + ZT.escape(q.id) + '\')">';
-      h += '<div class="zt-tile-icon" style="background:rgba(96,165,250,.12);color:#60a5fa;"><i class="fa-solid fa-list-check"></i></div>';
-      h += '<div style="flex:1;min-width:0;"><div class="zt-tile-title">' + ZT.escape(q.title) + '</div>';
-      h += '<div class="zt-tile-sub">' + (q.time_limit_min||15) + ' min' + (myAtt ? (' · Score ' + myAtt.score + '/' + myAtt.total) : '') + '</div></div>';
-      h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></button>';
+      var bg = q.banner_style ? 'background:' + ZT.gradientCss(q.banner_style) + ';' : '';
+      var textColor = q.banner_style ? '#fff' : '#fff';
+      h += '<div style="position:relative;background:' + (q.banner_style ? ZT.gradientCss(q.banner_style) : '#111827') + ';border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+      h += '<button onclick="ZT.openQuiz(\'' + ZT.escape(q.id) + '\')" style="flex:1;background:transparent;border:none;padding:0;display:flex;gap:12px;align-items:center;text-align:left;cursor:pointer;min-width:0;">';
+      h += '<div style="width:42px;height:42px;border-radius:12px;background:' + (q.banner_style ? 'rgba(0,0,0,.25)' : 'rgba(96,165,250,.12)') + ';color:' + (q.banner_style ? '#fff' : '#60a5fa') + ';display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i class="fa-solid fa-list-check"></i></div>';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:14px;font-weight:800;color:' + textColor + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' + (q.banner_style ? 'text-shadow:0 1px 3px rgba(0,0,0,.5);' : '') + '">' + ZT.escape(q.title) + '</div>';
+      h += '<div style="font-size:11px;color:' + (q.banner_style ? 'rgba(255,255,255,.85)' : '#94a3b8') + ';margin-top:2px;">' + (q.time_limit_min||15) + ' min';
+      if(myAtt) h += ' · Score ' + myAtt.score + '/' + myAtt.total + ' · Attempt ' + (myAtt.attempt_number||1) + '/3';
+      h += '</div></div>';
+      h += '</button>';
+      if(isTutor){
+        h += '<button onclick="ZT.openQuizMenu(\'' + ZT.escape(q.id) + '\',event)" style="background:rgba(0,0,0,.25);border:none;color:' + textColor + ';width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
+      }
+      h += '</div>';
     });
     host.innerHTML = h;
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
+};
+
+ZT.openQuizMenu = function(quizId, ev){
+  if(ev) ev.stopPropagation();
+  var html = '';
+  html += '<button onclick="ZT.editQuiz(\'' + quizId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#cbd5e1;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;">';
+  html += '<i class="fa-solid fa-pen" style="color:#60a5fa;font-size:15px;width:22px;text-align:center;"></i><span>Edit quiz</span></button>';
+  html += '<button onclick="ZT.deleteQuiz(\'' + quizId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#c9a5a5;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;">';
+  html += '<i class="fa-solid fa-trash" style="color:#a16262;font-size:15px;width:22px;text-align:center;"></i><span>Delete quiz</span></button>';
+  ZT.Modal.open({ title:'Quiz options', icon:'fa-solid fa-ellipsis', body:html, footer:false });
+};
+
+ZT.deleteQuiz = async function(quizId){
+  if(!confirm('Delete this quiz and all its attempts?')) return;
+  var c = sb(); if(!c) return;
+  var r = await c.from('tutor_quizzes').delete().eq('id', quizId);
+  if(r.error){ ZT.toast('Failed.', 'error'); return; }
+  ZT.toast('Quiz deleted.');
+  ZT.loadQuizzes();
+};
+
+ZT.editQuiz = async function(quizId){
+  var c = sb(); if(!c) return;
+  var q = await c.from('tutor_quizzes').select('*').eq('id', quizId).maybeSingle();
+  if(q.error || !q.data){ ZT.toast('Not found.', 'error'); return; }
+  var qs = await c.from('tutor_quiz_questions').select('*').eq('quiz_id', quizId).order('order', { ascending: true });
+  var questions = (qs.data || []).map(function(x){
+    return { question: x.question, options: x.options || ['','','',''], correct_index: x.correct_index || 0 };
+  });
+  ZT._editQuizId = quizId;
+  ZT._newQuiz = { questions: questions };
+  ZT._composerBanner = q.data.banner_style || 'none';
+
+  var bannersHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Banner</div><div id="zt-banner-picker" style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.COMPOSER_BANNERS.forEach(function(b){
+    var isActive = b.id === ZT._composerBanner;
+    bannersHtml += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:52px;height:52px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">' + (b.id === 'none' ? '<i class="fa-solid fa-font" style="color:#64748b;font-size:14px;"></i>' : '') + '</div>';
+  });
+  bannersHtml += '</div>';
+
+  var h = '';
+  h += '<div class="zt-field"><label class="zt-label">Quiz title *</label><input id="zt-qz-title" class="zt-input" value="' + ZT.escape(q.data.title) + '"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Time limit (min)</label><input id="zt-qz-time" type="number" class="zt-input" value="' + (q.data.time_limit_min||15) + '" min="1"></div>';
+  h += bannersHtml;
+  h += '<div class="zt-st">Questions (' + ZT._newQuiz.questions.length + ')</div>';
+  h += '<div id="zt-qz-host"></div>';
+  h += '<button class="zt-btn secondary" id="zt-qz-add" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add MCQ</button>';
+
+  ZT.Modal.open({
+    title:'Edit Quiz', icon:'fa-solid fa-list-check', submitLabel:'Save Changes',
+    body:h,
+    onOpen:function(){
+      ZT.paintQuizBuilder();
+      document.getElementById('zt-qz-add').addEventListener('click', function(){
+        ZT._newQuiz.questions.push({ question:'', options:['','','',''], correct_index:0 });
+        ZT.paintQuizBuilder();
+      });
+    },
+    onSubmit: async function(){
+      var title = (document.getElementById('zt-qz-title').value || '').trim();
+      if(title.length < 2){ ZT.toast('Title required.', 'error'); return false; }
+      for(var i=0;i<ZT._newQuiz.questions.length;i++){
+        var qq = ZT._newQuiz.questions[i];
+        if(!qq.question.trim()){ ZT.toast('Q'+(i+1)+' empty.', 'error'); return false; }
+        var filled = qq.options.filter(function(o){ return (o||'').trim(); });
+        if(filled.length < 2){ ZT.toast('Q'+(i+1)+': 2 options needed.', 'error'); return false; }
+      }
+      var c = sb();
+      await c.from('tutor_quizzes').update({
+        title:title,
+        time_limit_min: parseInt(document.getElementById('zt-qz-time').value)||15,
+        banner_style: (ZT._composerBanner && ZT._composerBanner !== 'none') ? ZT._composerBanner : null
+      }).eq('id', quizId);
+      await c.from('tutor_quiz_questions').delete().eq('quiz_id', quizId);
+      for(var j=0;j<ZT._newQuiz.questions.length;j++){
+        var qq2 = ZT._newQuiz.questions[j];
+        var opts = qq2.options.filter(function(o){ return (o||'').trim(); });
+        var correctIdx = 0;
+        var orig = qq2.correct_index;
+        for(var k=0;k<orig;k++){ if(!(qq2.options[k]||'').trim()) correctIdx--; }
+        correctIdx = Math.max(0, Math.min(correctIdx, opts.length-1));
+        await c.from('tutor_quiz_questions').insert({ quiz_id:quizId, order:j, question:qq2.question, options:opts, correct_index:correctIdx });
+      }
+      ZT.toast('Quiz updated.');
+      ZT.loadQuizzes();
+      return true;
+    }
+  });
 };
 
 ZT.openCreateQuiz = function(){
@@ -2847,8 +3063,17 @@ ZT.openCreateQuiz = function(){
   var me = ZT.State.currentUser;
   ZT._newQuiz = { questions: [] };
   var h = '';
+  ZT._composerBanner = 'none';
+  var bannersHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Banner</div><div id="zt-banner-picker" style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.COMPOSER_BANNERS.forEach(function(b){
+    var isActive = b.id === 'none';
+    bannersHtml += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:52px;height:52px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">' + (b.id === 'none' ? '<i class="fa-solid fa-font" style="color:#64748b;font-size:14px;"></i>' : '') + '</div>';
+  });
+  bannersHtml += '</div>';
+
   h += '<div class="zt-field"><label class="zt-label">Quiz title *</label><input id="zt-qz-title" class="zt-input" placeholder="e.g. Chapter 5 Quiz"></div>';
   h += '<div class="zt-field"><label class="zt-label">Time limit (min)</label><input id="zt-qz-time" type="number" class="zt-input" value="15" min="1"></div>';
+  h += bannersHtml;
   h += '<div class="zt-st">Questions (' + ZT._newQuiz.questions.length + ')</div>';
   h += '<div id="zt-qz-host"></div>';
   h += '<button class="zt-btn secondary" id="zt-qz-add" style="margin-top:6px;"><i class="fa-solid fa-plus"></i> Add MCQ</button>';
@@ -2873,7 +3098,13 @@ ZT.openCreateQuiz = function(){
         if(filled.length < 2){ ZT.toast('Q' + (i+1) + ': at least 2 options.', 'error'); return false; }
       }
       var c = sb();
-      var qr = await c.from('tutor_quizzes').insert({ circle_id: cir.id, author_id: me.id, title: title, time_limit_min: parseInt(document.getElementById('zt-qz-time').value)||15 }).select().maybeSingle();
+      var qr = await c.from('tutor_quizzes').insert({
+        circle_id: cir.id,
+        author_id: me.id,
+        title: title,
+        time_limit_min: parseInt(document.getElementById('zt-qz-time').value)||15,
+        banner_style: (ZT._composerBanner && ZT._composerBanner !== 'none') ? ZT._composerBanner : null
+      }).select().maybeSingle();
       if(qr.error){ ZT.toast('Failed.', 'error'); return false; }
       var qid = qr.data.id;
       for(var j = 0; j < ZT._newQuiz.questions.length; j++){
@@ -2927,53 +3158,127 @@ ZT.openQuiz = async function(quizId){
   ZT.State.currentQuizQuestions = qq.data || [];
   ZT.State.quizAnswers = {};
   ZT.State.quizIndex = 0;
-  /* check attempt */
-  var att = await c.from('tutor_quiz_attempts').select('*').eq('quiz_id', quizId).eq('student_id', ZT.State.currentUser.id).maybeSingle();
-  ZT.State.currentQuizAttempt = att.data || null;
+  var att = await c.from('tutor_quiz_attempts').select('*').eq('quiz_id', quizId).eq('student_id', ZT.State.currentUser.id).order('attempt_number', { ascending: false });
+  var list = att.data || [];
+  ZT.State.currentQuizAttempt = list.length ? list[0] : null;
+  ZT.State.quizAttemptCount = list.length;
+  ZT.State.quizAllAttempts = list;
   ZT.showView('quiz-detail', quizId);
 };
 
 ZT.renderQuizDetail = function(){
   var q = ZT.State.currentQuiz; if(!q) return '<div class="zt-empty"><p>Not found.</p></div>';
   var role = ZT.State.myRoleInCircle || 'student';
-  var isTutor = role === 'tutor' || role === 'admin';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var att = ZT.State.currentQuizAttempt;
+  var attemptCount = ZT.State.quizAttemptCount || 0;
   var questions = ZT.State.currentQuizQuestions;
+  var bannerCss = q.banner_style ? ZT.gradientCss(q.banner_style) : '';
+
   var h = '';
-  h += '<div class="zt-circle-head"><button class="back" onclick="ZT.showView(\'quizzes\')"><i class="fa-solid fa-arrow-left"></i></button>';
-  h += '<div style="flex:1;min-width:0;"><div class="nm">' + ZT.escape(q.title) + '</div>';
-  h += '<div class="sub">' + questions.length + ' questions · ' + (q.time_limit_min||15) + ' min</div></div></div>';
+  h += '<div style="' + (bannerCss ? 'background:' + bannerCss + ';border-radius:14px;padding:20px 14px;margin-bottom:14px;' : '') + 'display:flex;align-items:center;gap:10px;">';
+  h += '<button onclick="ZT.showView(\'quizzes\')" style="background:' + (bannerCss ? 'rgba(0,0,0,.25)' : 'rgba(139,92,246,.1)') + ';border:1px solid ' + (bannerCss ? 'rgba(255,255,255,.3)' : 'rgba(139,92,246,.4)') + ';color:' + (bannerCss ? '#fff' : '#a78bfa') + ';width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:13px;flex-shrink:0;"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div style="font-size:16px;font-weight:900;color:#fff;' + (bannerCss ? 'text-shadow:0 1px 4px rgba(0,0,0,.5);' : '') + '">' + ZT.escape(q.title) + '</div>';
+  h += '<div style="font-size:11px;color:' + (bannerCss ? 'rgba(255,255,255,.85)' : '#94a3b8') + ';margin-top:2px;">' + questions.length + ' questions · ' + (q.time_limit_min||15) + ' min</div>';
+  h += '</div></div>';
+
   if(isTutor){
-    h += '<div class="zt-card"><div class="zt-st" style="margin-top:0;">Answer key</div>';
-    questions.forEach(function(qq, i){
-      h += '<div style="padding:10px 0;border-bottom:1px solid #1e293b;font-size:12px;color:#cbd5e1;"><b style="color:#a78bfa;">Q' + (i+1) + '.</b> ' + ZT.escape(qq.question) + '<br>';
-      h += '<span style="color:#10b981;">✓ ' + ZT.escape((qq.options||[])[qq.correct_index] || '') + '</span></div>';
-    });
-    h += '</div>';
-    return h;
-  }
-  if(att){
-    h += '<div class="zt-card" style="text-align:center;">';
-    h += '<div style="font-size:12px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">YOUR SCORE</div>';
-    h += '<div style="font-size:42px;font-weight:900;color:#10b981;margin-top:6px;">' + att.score + ' / ' + att.total + '</div>';
-    h += '<div style="font-size:11px;color:#64748b;margin-top:6px;">Submitted ' + ZT.timeAgo(att.submitted_at) + '</div></div>';
-    h += '<div class="zt-st">Answers</div>';
+    h += '<div class="zt-st">Answer key</div>';
     questions.forEach(function(qq, i){
       h += '<div class="zt-card" style="padding:12px;">';
-      h += '<div style="font-size:12px;font-weight:800;color:#fff;margin-bottom:8px;">Q' + (i+1) + '. ' + ZT.escape(qq.question) + '</div>';
-      (qq.options||[]).forEach(function(opt, j){
-        var cls = '';
-        if(j === qq.correct_index) cls = 'correct';
+      h += '<div style="font-size:12px;font-weight:800;color:#fff;margin-bottom:6px;">Q' + (i+1) + '. ' + ZT.escape(qq.question) + '</div>';
+      (qq.options || []).forEach(function(opt, j){
+        var cls = j === qq.correct_index ? 'correct' : '';
         h += '<div class="zt-q-opt ' + cls + '" style="cursor:default;">' + ZT.escape(opt) + '</div>';
       });
       h += '</div>';
     });
+
+    /* Student attempts summary */
+    h += '<div class="zt-st" style="margin-top:14px;">Student attempts</div>';
+    var c = sb();
+    c.from('tutor_quiz_attempts').select('student_id,score,total,attempt_number').eq('quiz_id', q.id).then(async function(res){
+      var list = res.data || [];
+      var byStudent = {};
+      list.forEach(function(x){
+        if(!byStudent[x.student_id]) byStudent[x.student_id] = { count: 0, best: 0, total: x.total, final: null };
+        byStudent[x.student_id].count++;
+        if(x.score > byStudent[x.student_id].best) byStudent[x.student_id].best = x.score;
+        if(x.attempt_number === 3 || x.is_final) byStudent[x.student_id].final = x;
+      });
+      var ids = Object.keys(byStudent);
+      var host = document.getElementById('zt-quiz-attempts-host');
+      if(!host) return;
+      if(!ids.length){ host.innerHTML = '<div class="zt-card" style="text-align:center;color:#94a3b8;font-size:12px;">No attempts yet.</div>'; return; }
+      var pr = await c.from('profiles').select('id,name,username,avatar').in('id', ids);
+      (pr.data || []).forEach(function(p){ ZT.State.profileCache[p.id] = p; });
+      var ih = '';
+      ids.forEach(function(sid){
+        var info = byStudent[sid];
+        var p = ZT.profileOf(sid);
+        ih += '<div class="zt-card" style="padding:12px;display:flex;gap:10px;align-items:center;">';
+        ih += '<img src="' + ZT.escape(ZT.safeAvatar(p)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+        ih += '<div style="flex:1;min-width:0;">';
+        ih += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'Student') + '</div>';
+        ih += '<div style="font-size:10.5px;color:#94a3b8;">Attempts: ' + info.count + '/3' + (info.final ? ' · Final: ' + info.final.score + '/' + info.final.total : ' · In progress') + '</div>';
+        ih += '</div></div>';
+      });
+      host.innerHTML = ih;
+    });
+    h += '<div id="zt-quiz-attempts-host"><div style="text-align:center;color:#64748b;padding:10px;font-size:12px;">Loading…</div></div>';
     return h;
   }
-  /* Quiz take flow */
+
+  /* STUDENT */
+  var maxAttempts = 3;
+  var canRetry = attemptCount < maxAttempts;
+  var showAnswers = attemptCount >= maxAttempts;
+
+  if(attemptCount > 0){
+    h += '<div class="zt-card" style="text-align:center;">';
+    h += '<div style="font-size:11px;color:#94a3b8;font-weight:900;letter-spacing:.5px;">ATTEMPT ' + attemptCount + '/' + maxAttempts + '</div>';
+    h += '<div style="font-size:42px;font-weight:900;color:#10b981;margin-top:6px;">' + att.score + ' / ' + att.total + '</div>';
+    if(attemptCount < maxAttempts){
+      h += '<div style="font-size:11px;color:#94a3b8;margin-top:8px;">You have ' + (maxAttempts - attemptCount) + ' attempt' + ((maxAttempts - attemptCount) > 1 ? 's' : '') + ' left. Real answers unlock after 3rd attempt.</div>';
+    } else {
+      h += '<div style="font-size:11px;color:#10b981;margin-top:8px;font-weight:800;">All attempts used. Real answers below.</div>';
+    }
+    h += '</div>';
+
+    if(canRetry){
+      h += '<button class="zt-btn" onclick="ZT.startNewQuizAttempt()" style="margin-bottom:12px;"><i class="fa-solid fa-rotate-right"></i> Retry Quiz</button>';
+    }
+
+    if(showAnswers){
+      h += '<div class="zt-st">Correct answers</div>';
+      questions.forEach(function(qq, i){
+        h += '<div class="zt-card" style="padding:12px;">';
+        h += '<div style="font-size:12px;font-weight:800;color:#fff;margin-bottom:8px;">Q' + (i+1) + '. ' + ZT.escape(qq.question) + '</div>';
+        (qq.options || []).forEach(function(opt, j){
+          var cls = j === qq.correct_index ? 'correct' : '';
+          h += '<div class="zt-q-opt ' + cls + '" style="cursor:default;">' + ZT.escape(opt) + '</div>';
+        });
+        h += '</div>';
+      });
+    }
+    return h;
+  }
+
   h += '<div id="zt-quiz-take-host"></div>';
   setTimeout(ZT.paintQuizTake, 30);
   return h;
+};
+
+ZT.startNewQuizAttempt = function(){
+  ZT.State.quizAnswers = {};
+  ZT.State.quizIndex = 0;
+  ZT.State.currentQuizAttempt = null;
+  var h = '<div id="zt-quiz-take-host"></div>';
+  var host = document.querySelector('.zt-circle-head');
+  var container = document.getElementById('zt-app');
+  container.innerHTML = '<div class="zt-circle-head"><button class="back" onclick="ZT.showView(\'quizzes\')"><i class="fa-solid fa-arrow-left"></i></button><div style="flex:1;min-width:0;"><div class="nm">Quiz</div><div class="sub">Attempt ' + ((ZT.State.quizAttemptCount||0) + 1) + '/3</div></div></div><div id="zt-quiz-take-host"></div>';
+  ZT.paintQuizTake();
 };
 
 ZT.paintQuizTake = function(){
@@ -3008,20 +3313,26 @@ ZT.paintQuizTake = function(){
 
 ZT.submitQuizAttempt = async function(){
   var qs = ZT.State.currentQuizQuestions;
-  for(var i = 0; i < qs.length; i++){
+  for(var i=0;i<qs.length;i++){
     if(ZT.State.quizAnswers[i] == null){ ZT.toast('Answer Q' + (i+1) + ' first.', 'warning'); return; }
   }
   var score = 0;
   qs.forEach(function(q, i){ if(ZT.State.quizAnswers[i] === q.correct_index) score++; });
   var c = sb();
+  var nextAttempt = (ZT.State.quizAttemptCount || 0) + 1;
   try {
     var r = await c.from('tutor_quiz_attempts').insert({
-      quiz_id: ZT.State.currentQuiz.id, student_id: ZT.State.currentUser.id,
-      score: score, total: qs.length
+      quiz_id: ZT.State.currentQuiz.id,
+      student_id: ZT.State.currentUser.id,
+      score: score,
+      total: qs.length,
+      attempt_number: nextAttempt,
+      is_final: nextAttempt >= 3
     }).select().maybeSingle();
     if(r.error) throw r.error;
     ZT.State.currentQuizAttempt = r.data;
-    ZT.toast('Submitted! Score: ' + score + '/' + qs.length);
+    ZT.State.quizAttemptCount = nextAttempt;
+    ZT.toast('Submitted! Score: ' + score + '/' + qs.length + ' (Attempt ' + nextAttempt + '/3)');
     ZT.haptic(15);
     ZT.showView('quiz-detail', ZT.State.currentQuiz.id);
   } catch(e){ ZT.toast('Submit failed.', 'error'); }
