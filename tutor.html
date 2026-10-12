@@ -2409,8 +2409,63 @@ ZT.SLIDE_TEMPLATES = [
 ZT.openSlideMenu = function(slideId, ev){
   if(ev) ev.stopPropagation();
   var html = '';
+  html += '<button onclick="ZT.editSlide(\'' + slideId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#cbd5e1;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;"><i class="fa-solid fa-pen" style="color:#60a5fa;font-size:15px;width:22px;text-align:center;"></i><span>Edit lesson</span></button>';
   html += '<button onclick="ZT.deleteSlide(\'' + slideId + '\'); ZT.Modal.close();" style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#c9a5a5;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;"><i class="fa-solid fa-trash" style="color:#a16262;font-size:15px;width:22px;text-align:center;"></i><span>Delete lesson</span></button>';
   ZT.Modal.open({ title:'Slide options', icon:'fa-solid fa-ellipsis', body:html, footer:false });
+};
+
+ZT.editSlide = async function(slideId){
+  var c = sb(); if(!c) return;
+  var r = await c.from('tutor_slides').select('*').eq('id', slideId).maybeSingle();
+  if(r.error || !r.data){ ZT.toast('Not found.', 'error'); return; }
+  var data = r.data;
+  ZT._editSlideId = slideId;
+  ZT._editSlideBanner = data.banner_style || 'classic';
+
+  var bannersHtml = '<div class="zt-st" style="margin:0;padding:0 4px;">Slide theme</div><div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;">';
+  ZT.SLIDE_TEMPLATES.forEach(function(t){
+    var isActive = t.id === ZT._editSlideBanner;
+    bannersHtml += '<div onclick="ZT.pickEditSlideTheme(\'' + t.id + '\')" data-edit-slide-theme="' + t.id + '" style="flex-shrink:0;width:64px;height:56px;border-radius:12px;cursor:pointer;' + (t.css ? 'background:' + t.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:' + (t.css ? '#fff' : '#64748b') + ';">';
+    bannersHtml += '<i class="fa-solid ' + t.icon + '" style="font-size:14px;"></i>';
+    bannersHtml += '<div style="font-size:8.5px;font-weight:900;letter-spacing:.3px;">' + ZT.escape(t.name) + '</div>';
+    bannersHtml += '</div>';
+  });
+  bannersHtml += '</div>';
+
+  var h = '';
+  h += '<div class="zt-field"><label class="zt-label">Lesson title *</label><input id="zt-sl-edit-title" class="zt-input" value="' + ZT.escape(data.title) + '"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-sl-edit-desc" class="zt-textarea" style="min-height:60px;">' + ZT.escape(data.description || '') + '</textarea></div>';
+  h += bannersHtml;
+  h += '<div style="font-size:11px;color:#94a3b8;line-height:1.6;">To edit individual slides (text, images, audio), delete this lesson and create a new one.</div>';
+
+  ZT.Modal.open({
+    title:'Edit Slide Lesson', icon:'fa-solid fa-images', submitLabel:'Save Changes',
+    body:h,
+    onSubmit: async function(){
+      var title = (document.getElementById('zt-sl-edit-title').value || '').trim();
+      var desc = (document.getElementById('zt-sl-edit-desc').value || '').trim();
+      if(title.length < 2){ ZT.toast('Title required.', 'error'); return false; }
+      var c = sb();
+      var r = await c.from('tutor_slides').update({
+        title: title,
+        description: desc || null,
+        banner_style: ZT._editSlideBanner !== 'classic' ? ZT._editSlideBanner : null,
+        updated_at: new Date().toISOString()
+      }).eq('id', slideId);
+      if(r.error){ ZT.toast('Failed.', 'error'); return false; }
+      ZT.toast('Lesson updated.');
+      ZT.loadSlidesList();
+      return true;
+    }
+  });
+};
+
+ZT.pickEditSlideTheme = function(id){
+  ZT._editSlideBanner = id;
+  document.querySelectorAll('[data-edit-slide-theme]').forEach(function(el){
+    var isActive = el.getAttribute('data-edit-slide-theme') === id;
+    el.style.border = isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)';
+  });
 };
 
 ZT.deleteSlide = async function(slideId){
