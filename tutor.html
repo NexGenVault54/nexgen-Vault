@@ -2325,6 +2325,9 @@ ZT.renderSlidesList = async function(){
   if(isTutor){
     h += '<button class="zt-btn" style="margin-bottom:14px;" onclick="ZT.openSlideBuilder()"><i class="fa-solid fa-plus"></i> New slide lesson</button>';
   }
+  if(isTutor){
+    h += '<button class="zt-btn secondary" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(139,92,246,.12),rgba(59,130,246,.10));border-color:rgba(139,92,246,.4);color:#a78bfa;" onclick="ZT.openSlideAIGenerator()"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Generate Lesson</button>';
+  }
   h += '<div class="zt-search" style="margin-bottom:14px;">';
   h += '<input id="zt-slides-search" type="text" placeholder="Search slides by title or description…" autocomplete="off" style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:12px 42px 12px 14px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">';
   h += '<i class="fa-solid fa-magnifying-glass" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#64748b;font-size:13px;pointer-events:none;"></i>';
@@ -2375,7 +2378,8 @@ ZT.loadSlidesList = async function(){
         return t.indexOf(q) !== -1 || d.indexOf(q) !== -1;
       });
     }
-    if(!list.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-images"></i><p>No slide lessons yet.</p></div>'; return; }
+    var pendingSlides = (ZT.State.pendingAIGens || []).filter(function(j){ return j.kind === 'slide'; });
+    if(!list.length && !pendingSlides.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-images"></i><p>No slide lessons yet.</p></div>'; return; }
     var h = '';
     list.forEach(function(s){
       var slideBg = s.banner_style ? ZT.gradientCss(s.banner_style) : '#111827';
@@ -2393,7 +2397,22 @@ ZT.loadSlidesList = async function(){
       }
       h += '</div>';
     });
-    host.innerHTML = h;
+    var pendingHtml = '';
+    pendingSlides.forEach(function(job){
+      if(job.status === 'generating'){
+        pendingHtml += '<div style="background:linear-gradient(135deg,rgba(139,92,246,.12),rgba(59,130,246,.08));border:1px solid rgba(139,92,246,.4);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+        pendingHtml += '<div style="width:42px;height:42px;border-radius:12px;background:rgba(139,92,246,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#a78bfa;font-size:16px;"></i></div>';
+        pendingHtml += '<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:800;color:#fff;">' + ZT.escape(job.title) + '</div>';
+        pendingHtml += '<div style="font-size:11px;color:#a78bfa;margin-top:2px;">⏳ AI is generating slides…</div></div></div>';
+      } else if(job.status === 'error'){
+        pendingHtml += '<div style="background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.4);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+        pendingHtml += '<div style="width:42px;height:42px;border-radius:12px;background:rgba(161,98,98,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-triangle-exclamation" style="color:#a16262;font-size:16px;"></i></div>';
+        pendingHtml += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#c9a5a5;">' + ZT.escape(job.title) + ' — failed</div>';
+        pendingHtml += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;word-break:break-word;">' + ZT.escape(job.error || 'Unknown') + '</div></div>';
+        pendingHtml += '<button onclick="ZT.dismissSlideAI(\'' + job.id + '\')" style="background:rgba(161,98,98,.2);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-xmark"></i></button></div>';
+      }
+    });
+    host.innerHTML = pendingHtml + h;
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
 };
 
@@ -2513,6 +2532,91 @@ ZT.deleteSlide = async function(slideId){
   var r = await c.from('tutor_slides').delete().eq('id', slideId);
   if(r.error){ ZT.toast('Failed: ' + r.error.message, 'error'); return; }
   ZT.toast('Lesson deleted.');
+  ZT.loadSlidesList();
+};
+
+ZT.openSlideAIGenerator = function(){
+  var html = '';
+  html += '<div class="zt-field"><label class="zt-label">Lesson title *</label><input id="zt-sai-title" class="zt-input" placeholder="e.g. Chapter 5 — Photosynthesis"></div>';
+  html += '<div class="zt-field"><label class="zt-label">Paste lesson text *</label><textarea id="zt-sai-text" class="zt-textarea" placeholder="Paste chapter text or notes (min 30, max 3,000 chars)..." style="min-height:150px;"></textarea></div>';
+  html += '<div class="zt-field"><label class="zt-label">How many slides?</label><select id="zt-sai-count" class="zt-select">';
+  html += '<option value="3">3 slides</option><option value="5" selected>5 slides</option><option value="8">8 slides</option><option value="10">10 slides</option>';
+  html += '</select></div>';
+  html += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.6;">Slides will be generated in background. Auto-saves when done.</div>';
+
+  ZT.Modal.open({
+    title:'AI Generate Slide Lesson', icon:'fa-solid fa-wand-magic-sparkles',
+    submitLabel:'Generate',
+    body: html,
+    onSubmit: function(){
+      var title = (document.getElementById('zt-sai-title').value || '').trim();
+      var text = (document.getElementById('zt-sai-text').value || '').trim();
+      var count = parseInt(document.getElementById('zt-sai-count').value) || 5;
+      if(title.length < 2){ ZT.toast('Title required.', 'error'); return false; }
+      if(text.length < 30){ ZT.toast('Please paste at least 30 characters.', 'error'); return false; }
+      if(text.length > 3000){ ZT.toast('Text too long. Max 3,000 chars.', 'error'); return false; }
+      ZT.Modal.close();
+      ZT.startSlideAIGeneration({ title: title, text: text, count: count });
+      ZT.toast('AI generating lesson "' + title + '"…');
+      return true;
+    }
+  });
+};
+
+ZT.startSlideAIGeneration = async function(data){
+  var jobId = ZT.uuid();
+  ZT.State.pendingAIGens = ZT.State.pendingAIGens || [];
+  ZT.State.pendingAIGens.push({ id: jobId, kind: 'slide', title: data.title, status: 'generating', error: null });
+  ZT.loadSlidesList();
+
+  try {
+    var res = await fetch(ZT.TOKEN_SERVER + 'ai/generate-slides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: data.text, count: data.count })
+    });
+    var out = await res.json();
+    if(!res.ok || !out.ok){
+      var m = out.error || 'AI failed';
+      if(out.detail) m += ' — ' + String(out.detail).slice(0, 120);
+      throw new Error(m);
+    }
+
+    var c = sb();
+    var sr = await c.from('tutor_slides').insert({
+      circle_id: ZT.State.currentCircle.id,
+      author_id: ZT.State.currentUser.id,
+      title: data.title,
+      description: null,
+      banner_style: null
+    }).select().maybeSingle();
+    if(sr.error) throw sr.error;
+
+    var slideId = sr.data.id;
+    for(var i = 0; i < out.slides.length; i++){
+      var s = out.slides[i];
+      await c.from('tutor_slide_items').insert({
+        slide_id: slideId,
+        order: i,
+        text_content: (s.title ? s.title + '\n\n' : '') + (s.content || ''),
+        image_url: null,
+        audio_url: null
+      });
+    }
+
+    ZT.State.pendingAIGens = ZT.State.pendingAIGens.filter(function(j){ return j.id !== jobId; });
+    ZT.toast('✅ Lesson "' + data.title + '" created!');
+    ZT.haptic(20);
+    ZT.loadSlidesList();
+  } catch(e){
+    var j = ZT.State.pendingAIGens.find(function(x){ return x.id === jobId; });
+    if(j){ j.status = 'error'; j.error = (e && e.message) || 'Failed'; }
+    ZT.loadSlidesList();
+  }
+};
+
+ZT.dismissSlideAI = function(jobId){
+  ZT.State.pendingAIGens = (ZT.State.pendingAIGens || []).filter(function(j){ return j.id !== jobId; });
   ZT.loadSlidesList();
 };
 
@@ -2999,6 +3103,9 @@ ZT.renderAssignments = async function(){
   if(isTutor){
     h += '<button class="zt-btn" style="margin-bottom:14px;" onclick="ZT.openCreateAssignment()"><i class="fa-solid fa-plus"></i> New assignment</button>';
   }
+  if(isTutor){
+    h += '<button class="zt-btn secondary" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(139,92,246,.12),rgba(59,130,246,.10));border-color:rgba(139,92,246,.4);color:#a78bfa;" onclick="ZT.openAssignmentAIGenerator()"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Generate Assignment</button>';
+  }
   h += '<div id="zt-assign-host"><div style="padding:30px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
   setTimeout(function(){ ZT.loadAssignments(); }, 30);
   return h;
@@ -3016,7 +3123,8 @@ ZT.loadAssignments = async function(){
     if(r.error){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; return; }
     var list = r.data || [];
     ZT.State.assignments = list;
-    if(!list.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-clipboard-check"></i><p>No assignments yet.</p></div>'; return; }
+    var pendingAssigns = (ZT.State.pendingAIGens || []).filter(function(j){ return j.kind === 'assignment'; });
+    if(!list.length && !pendingAssigns.length){ host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-clipboard-check"></i><p>No assignments yet.</p></div>'; return; }
     var mySubs = {};
     var sr = await c.from('tutor_submissions').select('assignment_id').eq('student_id', me.id);
     (sr.data || []).forEach(function(x){ mySubs[x.assignment_id] = true; });
@@ -3038,7 +3146,22 @@ ZT.loadAssignments = async function(){
       }
       h += '</div>';
     });
-    host.innerHTML = h;
+    var pendingHtmlA = '';
+    pendingAssigns.forEach(function(job){
+      if(job.status === 'generating'){
+        pendingHtmlA += '<div style="background:linear-gradient(135deg,rgba(139,92,246,.12),rgba(59,130,246,.08));border:1px solid rgba(139,92,246,.4);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+        pendingHtmlA += '<div style="width:42px;height:42px;border-radius:12px;background:rgba(139,92,246,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#a78bfa;font-size:16px;"></i></div>';
+        pendingHtmlA += '<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:800;color:#fff;">' + ZT.escape(job.title) + '</div>';
+        pendingHtmlA += '<div style="font-size:11px;color:#a78bfa;margin-top:2px;">⏳ AI is generating assignment…</div></div></div>';
+      } else if(job.status === 'error'){
+        pendingHtmlA += '<div style="background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.4);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;">';
+        pendingHtmlA += '<div style="width:42px;height:42px;border-radius:12px;background:rgba(161,98,98,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-triangle-exclamation" style="color:#a16262;font-size:16px;"></i></div>';
+        pendingHtmlA += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#c9a5a5;">' + ZT.escape(job.title) + ' — failed</div>';
+        pendingHtmlA += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;word-break:break-word;">' + ZT.escape(job.error || 'Unknown') + '</div></div>';
+        pendingHtmlA += '<button onclick="ZT.dismissAssignmentAI(\'' + job.id + '\')" style="background:rgba(161,98,98,.2);border:1px solid rgba(161,98,98,.4);color:#c9a5a5;width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-xmark"></i></button></div>';
+      }
+    });
+    host.innerHTML = pendingHtmlA + h;
   } catch(e){ host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
 };
 
@@ -3099,6 +3222,79 @@ ZT.editAssignment = async function(id){
       return true;
     }
   });
+};
+
+ZT.openAssignmentAIGenerator = function(){
+  var html = '';
+  html += '<div class="zt-field"><label class="zt-label">Topic *</label><input id="zt-aai-topic" class="zt-input" placeholder="e.g. Photosynthesis for Class 8"></div>';
+  html += '<div class="zt-field"><label class="zt-label">Class level (optional)</label><input id="zt-aai-class" class="zt-input" placeholder="e.g. Class 8, Grade 10"></div>';
+  html += '<div class="zt-field"><label class="zt-label">Max marks</label><input id="zt-aai-marks" type="number" class="zt-input" value="100" min="1"></div>';
+  html += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.6;">AI will generate title + description. Auto-saves when done.</div>';
+
+  ZT.Modal.open({
+    title:'AI Generate Assignment', icon:'fa-solid fa-wand-magic-sparkles',
+    submitLabel:'Generate',
+    body: html,
+    onSubmit: function(){
+      var topic = (document.getElementById('zt-aai-topic').value || '').trim();
+      var cls = (document.getElementById('zt-aai-class').value || '').trim();
+      var marks = parseInt(document.getElementById('zt-aai-marks').value) || 100;
+      if(topic.length < 3){ ZT.toast('Please enter a topic.', 'error'); return false; }
+      ZT.Modal.close();
+      ZT.startAssignmentAIGeneration({ topic: topic, className: cls, marks: marks });
+      ZT.toast('AI generating assignment…');
+      return true;
+    }
+  });
+};
+
+ZT.startAssignmentAIGeneration = async function(data){
+  var jobId = ZT.uuid();
+  ZT.State.pendingAIGens = ZT.State.pendingAIGens || [];
+  ZT.State.pendingAIGens.push({ id: jobId, kind: 'assignment', title: data.topic, status: 'generating', error: null });
+  ZT.loadAssignments();
+
+  try {
+    var res = await fetch(ZT.TOKEN_SERVER + 'ai/generate-assignment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: data.topic, className: data.className })
+    });
+    var out = await res.json();
+    if(!res.ok || !out.ok){
+      var m = out.error || 'AI failed';
+      if(out.detail) m += ' — ' + String(out.detail).slice(0, 120);
+      throw new Error(m);
+    }
+
+    var a = out.assignment;
+    var c = sb();
+    var dueDate = new Date(Date.now() + (parseInt(a.days) || 7) * 86400000).toISOString();
+    var r = await c.from('tutor_assignments').insert({
+      circle_id: ZT.State.currentCircle.id,
+      author_id: ZT.State.currentUser.id,
+      title: a.title,
+      description: a.description || null,
+      due_date: dueDate,
+      max_marks: data.marks,
+      banner_style: null
+    }).select().maybeSingle();
+    if(r.error) throw r.error;
+
+    ZT.State.pendingAIGens = ZT.State.pendingAIGens.filter(function(j){ return j.id !== jobId; });
+    ZT.toast('✅ Assignment "' + a.title + '" created!');
+    ZT.haptic(20);
+    ZT.loadAssignments();
+  } catch(e){
+    var j = ZT.State.pendingAIGens.find(function(x){ return x.id === jobId; });
+    if(j){ j.status = 'error'; j.error = (e && e.message) || 'Failed'; }
+    ZT.loadAssignments();
+  }
+};
+
+ZT.dismissAssignmentAI = function(jobId){
+  ZT.State.pendingAIGens = (ZT.State.pendingAIGens || []).filter(function(j){ return j.id !== jobId; });
+  ZT.loadAssignments();
 };
 
 ZT.openCreateAssignment = function(){
