@@ -539,6 +539,7 @@ ZT.renderView = async function(view){
   if(view === 'slides')        return ZT.State.currentCircle ? await ZT.renderSlidesList() : ZT.renderNoCircleMessage('Slides');
   if(view === 'more')          return ZT.renderMore();
   if(view === 'tsf-spf-guide') return ZT.renderTSFSPFGuide();
+  if(view === 'leaderboard')   return await ZT.renderLeaderboard();
   return await ZT.renderLanding();
 };
 
@@ -833,7 +834,26 @@ ZT.showProUpgradeModal = function(){
 
   ZT.Modal.open({ title:'', icon:'fa-solid fa-crown', body:html, footer:false });
 };
-
+ZT.showProUpgradeForRecording = function(){
+  ZT.Modal.open({
+    title: 'Unlock Recording', icon: 'fa-solid fa-crown',
+    footer: false,
+    body: '<div style="text-align:center;padding:10px 0 20px;">' +
+        '<div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#a18554,#f0c975);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;"><i class="fa-solid fa-crown" style="font-size:32px;color:#000;"></i></div>' +
+        '<div style="font-size:18px;font-weight:900;color:#fff;margin-bottom:8px;">Recording is a Pro feature</div>' +
+        '<div style="font-size:12.5px;color:#94a3b8;line-height:1.6;">Unlock unlimited recordings for $25/month. Auto-stop, 500 GB storage, 1-year retention.</div>' +
+      '</div>' +
+      '<div style="padding:14px;border-radius:12px;background:rgba(161,133,84,.08);border:1px solid rgba(161,133,84,.4);margin-bottom:14px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+          '<span style="font-size:12px;color:#94a3b8;">Pro Plan</span>' +
+          '<span style="font-size:18px;font-weight:900;color:#fff;">$25<span style="font-size:11px;color:#64748b;">/mo</span></span>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#cbd5e1;line-height:1.6;">✅ Unlimited live class duration<br>✅ Unlimited participants<br>✅ Unlimited recordings (500 GB soft cap)<br>✅ 1-year cloud retention<br>✅ Priority support</div>' +
+      '</div>' +
+      '<button onclick="ZT.Modal.close();window.location.href=\'index.html#tiers\';" style="width:100%;background:linear-gradient(135deg,#a18554,#f0c975);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;">Upgrade to Pro</button>' +
+      '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Later</button>'
+  });
+};
 ZT.openProApplication = async function(){
   var me = ZT.State.currentUser;
   if(!me){ ZT.toast('Log in first.', 'error'); return; }
@@ -1792,7 +1812,16 @@ ZT.renderLive = function(){
   if(isTutor){
     /* Pending joins button */
     h += '<button id="zt-live-pending" onclick="ZT.showPendingJoins()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-user-clock"></i><span id="zt-pending-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#3b82f6;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
-    h += '<button id="zt-live-rec" onclick="ZT.toggleLiveRecording()" title="Record" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-circle"></i></button>';
+    var _hasPro = !!(ZT.State.currentUser && 
+                    (ZT.State.currentUser.pro_plan === 'pro' || 
+                     ZT.State.currentUser.pro_plan === 'elite' || 
+                     ZT.State.currentUser.pro_plan === 'business' ||
+                     ZT.State.currentUser.is_tutor_approved === true));
+    if(_hasPro){
+      h += '<button id="zt-live-rec" onclick="ZT.toggleLiveRecording()" title="Record (Pro)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-circle" style="color:#a16262;"></i></button>';
+    } else {
+      h += '<button id="zt-live-rec-locked" onclick="ZT.showProUpgradeForRecording()" title="Recording is a Pro feature" style="background:rgba(161,133,84,.15);border:1px solid rgba(161,133,84,.45);color:#a18554;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-lock"></i></button>';
+    }
     /* Raised hands button */
     h += '<button id="zt-live-hands" onclick="ZT.showRaisedHands()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-hand"></i><span id="zt-hands-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#a16262;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
   }
@@ -2309,7 +2338,33 @@ ZT.paintLiveGrid = function(){
 ZT.toggleLiveRecording = async function(){
   if(!ZT._lk.room || !ZT._lk.isTutor) return;
   var me = ZT.State.currentUser;
-  if(!me || !me.is_tutor_approved){ ZT.toast('Recording is a Pro feature.', 'warning'); return; }
+  /* Pro check — same logic as P8.1 */
+  var _hasPro = !!(me && (
+    me.pro_plan === 'pro' || 
+    me.pro_plan === 'elite' || 
+    me.pro_plan === 'business' ||
+    me.is_tutor_approved === true
+  ));
+  if(!_hasPro){
+    ZT.toast('Recording is a Pro feature.', 'warning');
+    return;
+  }
+  /* Soft cap: 500 GB per month per tutor */
+  try {
+    var _monthStart = new Date();
+    _monthStart.setDate(1); _monthStart.setHours(0,0,0,0);
+    var _usageR = await ZT.sb().from('tutor_r2_usage')
+      .select('size_bytes')
+      .eq('user_id', me.id)
+      .gte('created_at', _monthStart.toISOString());
+    var _totalBytes = 0;
+    (_usageR.data || []).forEach(function(row){ _totalBytes += Number(row.size_bytes) || 0; });
+    var _totalGB = _totalBytes / (1024*1024*1024);
+    if(_totalGB >= 500){
+      ZT.toast('Monthly 500 GB storage cap reached. Oldest recordings will be deleted automatically.', 'warning');
+      return;
+    }
+  } catch(e){ /* continue anyway */ }
 
   if(ZT._lk.recording){
     ZT._lk.recording = false;
@@ -2363,11 +2418,41 @@ ZT.toggleLiveRecording = async function(){
       var ss = String(s % 60).padStart(2, '0');
       var b = document.getElementById('zt-live-rec');
       if(b) b.innerHTML = '<i class="fa-solid fa-circle"></i><span style="position:absolute;bottom:1px;left:50%;transform:translateX(-50%);font-size:8px;font-weight:900;color:#fff;white-space:nowrap;">' + mm + ':' + ss + '</span>';
+      /* Storage cap check — every hour (no time cap, unlimited recording) */
+      if(s > 0 && s % 3600 === 0){
+        ZT._checkStorageCapAsync();
+      }
     }, 1000);
   } catch(e){
     console.error('[rec start]', e);
     ZT.toast('Start failed: ' + ((e && e.message) || ''), 'error');
   }
+};
+ZT._checkStorageCapAsync = async function(){
+  var me = ZT.State.currentUser;
+  if(!me) return;
+  try {
+    var monthStart = new Date();
+    monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+    var r = await ZT.sb().from('tutor_r2_usage')
+      .select('size_bytes')
+      .eq('user_id', me.id)
+      .gte('created_at', monthStart.toISOString());
+    var total = 0;
+    (r.data || []).forEach(function(row){ total += Number(row.size_bytes) || 0; });
+    var totalGB = total / (1024*1024*1024);
+    
+    if(totalGB >= 1024){
+      /* Hard cap reached */
+      ZT.toast('Monthly 1 TB storage cap reached. Recording stopped. Resets on 1st of month.', 'error');
+      ZT.toggleLiveRecording();
+      return;
+    }
+    if(totalGB >= 500){
+      /* Soft cap — warn */
+      ZT.toast('Storage at ' + totalGB.toFixed(0) + ' GB. Old recordings (30+ days) will be auto-deleted.', 'warning');
+    }
+  } catch(e){}
 };
 
 ZT.saveRecordingEntry = async function(durSec){
@@ -3191,6 +3276,7 @@ ZT.renderMore = function(){
   }
   tiles.push(
     { icon:'fa-solid fa-hand-holding-dollar', color:'#10b981', title:'TSF & SPF Guide', sub:'How Tutor + Student earn', fn:'ZT.showView(\'tsf-spf-guide\')' },
+    { icon:'fa-solid fa-trophy', color:'#fbbf24', title:'Leaderboard', sub:'Monthly · SPF routing', fn:'ZT.showView(\'leaderboard\')' },
     { icon:'fa-solid fa-users', color:'#6ee7b7', title:'Members', sub:'See everyone in this circle', fn:'ZT.showMembers()' },
     { icon:'fa-solid fa-clipboard-check', color:'#10b981', title:'Assignments', sub:'Create · submit · grade', fn:'ZT.showView(\'assignments\')' },
     { icon:'fa-solid fa-list-check', color:'#60a5fa', title:'Quizzes', sub:'MCQ · auto-grade', fn:'ZT.showView(\'quizzes\')' },
@@ -3211,6 +3297,86 @@ ZT.renderMore = function(){
   return h;
 };
 
+/* ============================================================
+   MONTHLY LEADERBOARD + SPF ROUTING
+   ============================================================ */
+ZT.renderLeaderboard = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return ZT.renderNoCircleMessage('Leaderboard');
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = (role === 'tutor' || role === 'admin' || role === 'owner');
+  var c = ZT.sb();
+  if(!c) return '<div class="zt-empty"><p>Not connected.</p></div>';
+
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:20px;">';
+
+  h += '<div class="zt-circle-head">';
+  h += '<button class="back" onclick="ZT.showView(\'more\')"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div class="nm">Monthly Leaderboard</div>';
+  h += '<div class="sub">' + ZT.escape(cir.name) + '</div>';
+  h += '</div></div>';
+
+  /* Share link card — single link for the circle */
+  var shareLink = location.origin + location.pathname + '?join=' + cir.id;
+  h += '<div style="padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">SHARE THIS LINK</div>';
+  h += '<div style="font-size:11px;color:#cbd5e1;margin-top:6px;line-height:1.6;">' + (isTutor ? 'Share this link with your students. Every join counts toward your leaderboard.' : 'Share this circle with friends. Every join counts toward the leaderboard.') + '</div>';
+  h += '<div style="display:flex;gap:8px;margin-top:10px;">';
+  h += '<div style="flex:1;min-width:0;background:rgba(0,0,0,.3);border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11px;color:#6ee7b7;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(shareLink) + '</div>';
+  h += '<button onclick="navigator.clipboard.writeText(\'' + ZT.escape(shareLink) + '\');ZT.toast(\'Link copied\');" style="background:#10b981;border:none;color:#000;font-weight:900;padding:10px 14px;border-radius:8px;font-size:11px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-copy"></i> Copy</button>';
+  h += '</div></div>';
+
+  /* Rules card */
+  h += '<div style="padding:14px;border-radius:14px;background:#111827;border:1px solid #1e293b;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#fff;margin-bottom:8px;">How SPF Works</div>';
+  h += '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.7;">';
+  h += '• Monthly points from attendance, quiz scores, and helpfulness<br>';
+  h += '• <b style="color:#10b981;">50%+ of top scorer = SPF eligible</b><br>';
+  h += '• Pool = $0.20 × active subscribers<br>';
+  h += '• Split proportional to points among eligible students<br>';
+  h += '• Below 50% = no SPF, no affiliate earnings this month';
+  h += '</div></div>';
+
+  /* Leaderboard data host */
+  h += '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">THIS MONTH</div>';
+  h += '<div id="zt-leaderboard-host"><div style="padding:30px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  h += '</div>';
+
+  setTimeout(async function(){
+    var host = document.getElementById('zt-leaderboard-host');
+    if(!host) return;
+    try {
+      var r = await c.rpc('tutor_get_monthly_leaderboard', { p_circle_id: cir.id });
+      if(r.error || !r.data || !r.data.length){
+        host.innerHTML = '<div class="zt-empty"><p>No leaderboard data yet this month.</p></div>';
+        return;
+      }
+      var rows = r.data;
+      var maxScore = 0;
+      rows.forEach(function(row){ maxScore = Math.max(maxScore, Number(row.total_score) || 0); });
+      var threshold = maxScore * 0.5;
+      var lh = '';
+      rows.forEach(function(row, i){
+        var isEligible = Number(row.total_score) >= threshold;
+        var color = isEligible ? '#10b981' : '#64748b';
+        lh += '<div style="padding:12px;border-radius:10px;background:#111827;border:1px solid ' + (isEligible ? 'rgba(16,185,129,.4)' : '#1e293b') + ';margin-bottom:8px;display:flex;gap:12px;align-items:center;">';
+        lh += '<div style="width:34px;height:34px;border-radius:50%;background:' + color + '22;color:' + color + ';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;">' + (i+1) + '</div>';
+        lh += '<div style="flex:1;min-width:0;">';
+        lh += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(row.student_name || 'Student') + '</div>';
+        lh += '<div style="font-size:10.5px;color:' + color + ';margin-top:2px;font-weight:800;">' + (row.total_score || 0) + ' pts · ' + (isEligible ? '✓ SPF eligible' : '✗ Below 50%') + '</div>';
+        lh += '</div>';
+        lh += '<div style="font-size:13px;font-weight:900;color:' + color + ';">$' + Number(row.payout || 0).toFixed(2) + '</div>';
+        lh += '</div>';
+      });
+      host.innerHTML = lh;
+    } catch(e){
+      host.innerHTML = '<div class="zt-empty"><p>Could not load leaderboard.</p></div>';
+    }
+  }, 40);
+
+  return h;
+};
 /* ============================================================
    TSF + SPF GUIDE (P7) — Corrected · English
    ============================================================ */
@@ -3369,9 +3535,9 @@ ZT.showPlanInfo = function(){
     title:'Plan', icon:'fa-solid fa-crown', footer:false,
     body:'<div style="font-size:12.5px;color:#cbd5e1;line-height:1.8;">' +
       '<div style="padding:12px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);margin-bottom:12px;">' +
-      '<b style="color:#10b981;">Current: Free</b><br>1 group · 50 members · 30 min recording</div>' +
-      '<div style="padding:12px;border-radius:10px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(16,185,129,.08));border:1px solid rgba(16,185,129,.4);">' +
-      '<b style="color:#6ee7b7;">Premium · $10/mo</b><br>Unlimited groups · 500 members · Unlimited recording · Breakout rooms · AI quiz · Analytics · Custom branding</div>' +
+      '<b style="color:#10b981;">Current: Free</b><br>1 Circle · Unlimited members · Unlimited Live Cam · No recording · Ad-free live</div>' +
+      '<div style="padding:12px;border-radius:10px;background:linear-gradient(135deg,rgba(161,133,84,.15),rgba(240,201,117,.10));border:1px solid rgba(161,133,84,.45);">' +
+      '<b style="color:#f0c975;">Pro · $25/month</b><br>Unlimited Circles · Unlimited members · Unlimited Live Cam · Unlimited Recording (500 GB storage) · 1-year cloud retention · Breakout rooms · AI Quiz · Analytics · Custom branding</div>' +
       '</div>'
   });
 };
@@ -3382,11 +3548,12 @@ ZT.showGuide = function(){
     body:'<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;">' +
       '<b style="color:#6ee7b7;">Feed</b> — Post text, images, videos, announcements. Students react, comment, mark as learned.<br><br>' +
       '<b style="color:#6ee7b7;">Chat</b> — Group chat with voice notes and text. Polling every 8 seconds.<br><br>' +
-      '<b style="color:#6ee7b7;">Live</b> — LiveKit-based classroom (setup required).<br><br>' +
+      '<b style="color:#6ee7b7;">Live</b> — LiveKit-based classroom. Free live cam unlimited. Pro unlocks recording.<br><br>' +
       '<b style="color:#6ee7b7;">Slides</b> — Lesson slides with image + audio per slide. Auto-advance on audio end.<br><br>' +
       '<b style="color:#6ee7b7;">Assignments</b> — Create, submit, grade with marks + feedback.<br><br>' +
       '<b style="color:#6ee7b7;">Quizzes</b> — MCQ with auto-grading.<br><br>' +
-      '<b style="color:#6ee7b7;">Premium</b> — Upgrade for unlimited groups, 500 members, unlimited recording, breakout rooms, and more.' +
+      '<b style="color:#6ee7b7;">TSF & SPF</b> — Tutor earns $0.50/sub, students earn SPF from monthly leaderboard.<br><br>' +
+      '<b style="color:#6ee7b7;">Pro ($25/month)</b> — Unlimited Circles, members, and recordings with 500 GB storage. Breakout rooms, AI Quiz, Analytics, Custom branding.' +
       '</div>'
   });
 };
