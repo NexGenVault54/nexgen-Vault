@@ -747,16 +747,48 @@ ZT.reloadCircles = async function(){
 /* ============================================================
    CREATE / ENTER CIRCLE
    ============================================================ */
-ZT.openCreateCircle = function(){
+
+ZT.openCreateCircle = async function(){
   var me = ZT.State.currentUser;
   if(!me){ ZT.toast('Please log in.', 'error'); return; }
 
-  /* Pro gating */
-  if(!me.is_tutor_approved){
-    ZT.showProUpgradeModal();
+  /* Circle limit check (trial = 2, free = 1, pro = unlimited) */
+  var limit = await ZT.checkCircleLimit();
+  if(!limit.allowed){
+    if(limit.trial){
+      ZT.Modal.open({
+        title: 'Trial Limit Reached', icon: 'fa-solid fa-crown', footer: false,
+        body: '<div style="text-align:center;padding:10px 0;">' +
+          '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:8px;">Trial mein 2 Circles max</div>' +
+          '<div style="font-size:12.5px;color:#94a3b8;line-height:1.6;margin-bottom:16px;">Free trial mein aap max 2 Circles bana sakte ho. Unlimited Circles ke liye Pro upgrade karo.</div>' +
+          '<button onclick="ZT.Modal.close();ZT.showProUpgradeModal();" style="width:100%;background:linear-gradient(135deg,#a18554,#f0c975);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;">Upgrade to Pro · $25/mo</button>' +
+          '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Later</button>' +
+        '</div>'
+      });
+      return;
+    }
+    if(limit.free){
+      ZT.Modal.open({
+        title: 'Upgrade Required', icon: 'fa-solid fa-crown', footer: false,
+        body: '<div style="text-align:center;padding:10px 0;">' +
+          '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:8px;">Free tier mein 1 Circle max</div>' +
+          '<div style="font-size:12.5px;color:#94a3b8;line-height:1.6;margin-bottom:16px;">Pro upgrade karo — unlimited Circles, unlimited recording, aur bahut kuch.</div>' +
+          '<button onclick="ZT.Modal.close();ZT.showProUpgradeModal();" style="width:100%;background:linear-gradient(135deg,#a18554,#f0c975);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;">Upgrade to Pro · $25/mo</button>' +
+          '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Later</button>' +
+        '</div>'
+      });
+      return;
+    }
+    ZT.toast(limit.reason, 'warning');
     return;
   }
 
+  /* Continue with circle creation (existing logic) */
+  ZT._doOpenCreateCircle();
+};
+
+/* Original creation logic moved here */
+ZT._doOpenCreateCircle = function(){
   var gradients = ['emerald','ocean','violet','teal','slate','forest','midnight','deep'];
   var gradHtml = '<div class="zt-gradient-pick">';
   gradients.forEach(function(g, i){
@@ -774,7 +806,7 @@ ZT.openCreateCircle = function(){
       var name = (document.getElementById('zt-cc-name').value || '').trim();
       var desc = (document.getElementById('zt-cc-desc').value || '').trim();
       if(name.length < 2){ ZT.toast('Name required.', 'error'); return false; }
-      var c = sb(); if(!c) return false;
+      var c = ZT.sb(); if(!c) return false;
       try {
         var r = await c.rpc('tutor_create_circle', {
           p_name: name, p_description: desc || null,
@@ -854,6 +886,74 @@ ZT.showProUpgradeForRecording = function(){
       '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Later</button>'
   });
 };
+
+/* ============================================================
+   TRIAL + CIRCLE LIMIT CHECK
+   Returns { allowed: bool, reason: string, max: number, current: number }
+   ============================================================ */
+ZT.checkCircleLimit = async function(){
+  var me = ZT.State.currentUser;
+  if(!me) return { allowed: false, reason: 'Not logged in', max: 0, current: 0 };
+
+  var c = ZT.sb();
+  if(!c) return { allowed: false, reason: 'Not connected', max: 0, current: 0 };
+
+  /* Count how many circles user owns */
+  var current = 0;
+  try {
+    var r = await c.from('tutor_circles')
+      .select('id', { count: 'exact', head: true })
+      .eq('owner_id', me.id);
+    current = r.count || 0;
+  } catch(e){
+    return { allowed: false, reason: 'Could not verify', max: 0, current: 0 };
+  }
+
+  /* Determine tier / trial status */
+  var plan = me.pro_plan || 'free';
+  var isBusiness = plan === 'business';
+  var isPro = plan === 'pro' || plan === 'elite' || isBusiness;
+  var trialEnds = me.trial_ends_at ? new Date(me.trial_ends_at) : null;
+  var inTrial = trialEnds && trialEnds > new Date();
+
+  /* Free trial = 15 days after signup if not paid */
+  if(!trialEnds && me.created_at){
+    var signupMs = new Date(me.created_at).getTime();
+    var fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+    var trialEndsMs = signupMs + fifteenDaysMs;
+    if(Date.now() < trialEndsMs){
+      inTrial = true;
+      trialEnds = new Date(trialEndsMs);
+    }
+  }
+
+  if(isBusiness){
+    return { allowed: true, reason: 'Business unlimited', max: 999, current: current };
+  }
+  if(isPro){
+    return { allowed: true, reason: 'Pro unlimited', max: 999, current: current };
+  }
+  if(inTrial){
+    var trialMax = 2;
+    return {
+      allowed: current < trialMax,
+      reason: current < trialMax ? 'Trial: ' + current + '/' + trialMax : 'Trial limit: 2 Circles max',
+      max: trialMax,
+      current: current,
+      trial: true
+    };
+  }
+  /* Free tier */
+  var freeMax = 1;
+  return {
+    allowed: current < freeMax,
+    reason: current < freeMax ? 'Free: ' + current + '/' + freeMax : 'Free tier: 1 Circle max',
+    max: freeMax,
+    current: current,
+    free: true
+  };
+};
+
 ZT.openProApplication = async function(){
   var me = ZT.State.currentUser;
   if(!me){ ZT.toast('Log in first.', 'error'); return; }
@@ -1812,11 +1912,10 @@ ZT.renderLive = function(){
   if(isTutor){
     /* Pending joins button */
     h += '<button id="zt-live-pending" onclick="ZT.showPendingJoins()" style="position:relative;background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-user-clock"></i><span id="zt-pending-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#3b82f6;color:#fff;font-size:9px;font-weight:900;padding:2px 6px;border-radius:10px;min-width:16px;text-align:center;">0</span></button>';
-    var _hasPro = !!(ZT.State.currentUser && 
-                    (ZT.State.currentUser.pro_plan === 'pro' || 
-                     ZT.State.currentUser.pro_plan === 'elite' || 
-                     ZT.State.currentUser.pro_plan === 'business' ||
-                     ZT.State.currentUser.is_tutor_approved === true));
+    /* Recording: only paid Pro/Elite/Business — NOT trial */
+    var _me = ZT.State.currentUser;
+    var _plan = (_me && _me.pro_plan) || 'free';
+    var _hasPro = !!( _plan === 'pro' || _plan === 'elite' || _plan === 'business' );
     if(_hasPro){
       h += '<button id="zt-live-rec" onclick="ZT.toggleLiveRecording()" title="Record (Pro)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-size:14px;flex-shrink:0;"><i class="fa-solid fa-circle" style="color:#a16262;"></i></button>';
     } else {
@@ -2338,15 +2437,11 @@ ZT.paintLiveGrid = function(){
 ZT.toggleLiveRecording = async function(){
   if(!ZT._lk.room || !ZT._lk.isTutor) return;
   var me = ZT.State.currentUser;
-  /* Pro check — same logic as P8.1 */
-  var _hasPro = !!(me && (
-    me.pro_plan === 'pro' || 
-    me.pro_plan === 'elite' || 
-    me.pro_plan === 'business' ||
-    me.is_tutor_approved === true
-  ));
+  /* Recording: only paid Pro/Elite/Business — NOT trial */
+  var _plan = (me && me.pro_plan) || 'free';
+  var _hasPro = !!( _plan === 'pro' || _plan === 'elite' || _plan === 'business' );
   if(!_hasPro){
-    ZT.toast('Recording is a Pro feature.', 'warning');
+    ZT.toast('Recording is a Pro feature. Trial includes Live Cam only.', 'warning');
     return;
   }
   /* Soft cap: 500 GB per month per tutor */
@@ -3281,7 +3376,8 @@ ZT.renderMore = function(){
     { icon:'fa-solid fa-clipboard-check', color:'#10b981', title:'Assignments', sub:'Create · submit · grade', fn:'ZT.showView(\'assignments\')' },
     { icon:'fa-solid fa-list-check', color:'#60a5fa', title:'Quizzes', sub:'MCQ · auto-grade', fn:'ZT.showView(\'quizzes\')' },
     { icon:'fa-solid fa-crown', color:'#f0c975', title:'Plan · ' + (me && me.is_tutor_approved ? 'Pro' : 'Free'), sub: (me && me.is_tutor_approved ? 'Pro plan active' : 'Upgrade to Premium $25/mo'), fn:'ZT.showPlanInfo()' },
-    { icon:'fa-solid fa-book-open', color:'#a18554', title:'Tutor Guide', sub:'How everything works', fn:'ZT.showGuide()' }
+    { icon:'fa-solid fa-book-open', color:'#a18554', title:'Tutor Guide', sub:'Free · Trial · Pro · TSF', fn:'ZT.showGuide()' },
+    { icon:'fa-solid fa-user-graduate', color:'#60a5fa', title:'Student Guide', sub:'Joining · SPF · Leaderboard', fn:'ZT.showStudentGuide()' }
   );
   if(isTutor){
     tiles.push({ icon:'fa-solid fa-trash', color:'#a16262', title:'Delete Circle', sub:'Permanently remove this circle', fn:'ZT.deleteCircleConfirm()' });
@@ -3531,13 +3627,128 @@ ZT.showMembers = async function(){
 };
 
 ZT.showPlanInfo = function(){
+  var me = ZT.State.currentUser;
+  var plan = (me && me.pro_plan) || 'free';
+  var inTrial = false;
+  var trialDaysLeft = 0;
+  if(me && me.created_at && plan === 'free'){
+    var signupMs = new Date(me.created_at).getTime();
+    var fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+    var trialEndsMs = signupMs + fifteenDaysMs;
+    if(Date.now() < trialEndsMs){
+      inTrial = true;
+      trialDaysLeft = Math.ceil((trialEndsMs - Date.now()) / (24 * 60 * 60 * 1000));
+    }
+  }
+  var planLabel = inTrial ? 'Free Trial · ' + trialDaysLeft + ' days left'
+                 : plan === 'pro' ? 'Pro'
+                 : plan === 'elite' ? 'Elite'
+                 : plan === 'business' ? 'Business'
+                 : 'Free';
+
+  var body = '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.8;">';
+
+  /* Current plan */
+  body += '<div style="padding:14px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);margin-bottom:12px;">';
+  body += '<b style="color:#10b981;font-size:13px;">Current: ' + ZT.escape(planLabel) + '</b><br>';
+  if(inTrial){
+    body += '<span style="font-size:11.5px;">2 Circles max · Unlimited members · Unlimited Live Cam · No recording (upgrade to Pro)</span>';
+  } else if(plan === 'free'){
+    body += '<span style="font-size:11.5px;">1 Circle · Unlimited members · Unlimited Live Cam · No recording</span>';
+  } else {
+    body += '<span style="font-size:11.5px;">Unlimited Circles · Unlimited members · Unlimited Live Cam · Unlimited Recording · 500 GB storage · 1-year retention</span>';
+  }
+  body += '</div>';
+
+  /* Pro plan */
+  body += '<div style="padding:14px;border-radius:10px;background:linear-gradient(135deg,rgba(161,133,84,.15),rgba(240,201,117,.10));border:1px solid rgba(161,133,84,.5);margin-bottom:12px;">';
+  body += '<b style="color:#f0c975;font-size:14px;">Pro · $25/month</b><br>';
+  body += '<span style="font-size:11.5px;line-height:1.7;">' +
+    '✅ Unlimited Circles<br>' +
+    '✅ Unlimited members<br>' +
+    '✅ Unlimited Live Cam<br>' +
+    '✅ Unlimited Recording (500 GB)<br>' +
+    '✅ 1-year cloud retention<br>' +
+    '✅ Breakout rooms<br>' +
+    '✅ AI Quiz generation<br>' +
+    '✅ Analytics<br>' +
+    '✅ Custom branding<br>' +
+    '✅ Priority support' +
+  '</span></div>';
+
+  /* Business plan */
+  body += '<div style="padding:14px;border-radius:10px;background:linear-gradient(135deg,rgba(59,130,246,.15),rgba(139,92,246,.10));border:1px solid rgba(59,130,246,.4);">';
+  body += '<b style="color:#60a5fa;font-size:14px;">Business · $349/month</b><br>';
+  body += '<span style="font-size:11.5px;line-height:1.7;">' +
+    '✅ Everything in Pro<br>' +
+    '✅ Team accounts<br>' +
+    '✅ API access<br>' +
+    '✅ Dedicated manager<br>' +
+    '✅ Active User exemption' +
+  '</span></div>';
+
+  body += '</div>';
+
   ZT.Modal.open({
-    title:'Plan', icon:'fa-solid fa-crown', footer:false,
-    body:'<div style="font-size:12.5px;color:#cbd5e1;line-height:1.8;">' +
-      '<div style="padding:12px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.35);margin-bottom:12px;">' +
-      '<b style="color:#10b981;">Current: Free</b><br>1 Circle · Unlimited members · Unlimited Live Cam · No recording · Ad-free live</div>' +
-      '<div style="padding:12px;border-radius:10px;background:linear-gradient(135deg,rgba(161,133,84,.15),rgba(240,201,117,.10));border:1px solid rgba(161,133,84,.45);">' +
-      '<b style="color:#f0c975;">Pro · $25/month</b><br>Unlimited Circles · Unlimited members · Unlimited Live Cam · Unlimited Recording (500 GB storage) · 1-year cloud retention · Breakout rooms · AI Quiz · Analytics · Custom branding</div>' +
+    title:'Plan & Pricing', icon:'fa-solid fa-crown', footer:false,
+    body: body
+  });
+};
+
+/* ============================================================
+   STUDENT GUIDE
+   ============================================================ */
+ZT.showStudentGuide = function(){
+  ZT.Modal.open({
+    title:'Student Guide', icon:'fa-solid fa-user-graduate', footer:false,
+    body:
+      '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;">' +
+
+      '<div style="padding:12px;border-radius:10px;background:linear-gradient(135deg,rgba(59,130,246,.15),rgba(139,92,246,.10));border:1px solid rgba(59,130,246,.4);margin-bottom:12px;">' +
+        '<b style="color:#60a5fa;font-size:13px;">Welcome to ZYNIX Tutor</b><br>' +
+        'Join a Circle, learn, and earn SPF rewards every month.' +
+      '</div>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">1. JOINING A CIRCLE ($3)</b><br>' +
+      'One-time joining fee of $3 per Circle. Uske baad koi monthly fee nahi.<br>' +
+      'Split: $1 to Tutor · $1 to Platform · $1 to SPF Pool<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">2. HOW YOU EARN (SPF)</b><br>' +
+      'SPF (Students Participation Fund) rewards active students.<br>' +
+      '• Monthly point system<br>' +
+      '• Sirf 50%+ scorers ko payout<br>' +
+      '• Pool = $0.20 × active students + joining fees<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">3. LEADERBOARD CATEGORIES</b><br>' +
+      'Points teen tarah se milte hain:<br>' +
+      '• Attendance — kitni live classes join ki<br>' +
+      '• Quiz Score — highest marks<br>' +
+      '• Helpfulness — chat mein sabse zyada help<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">4. AFFILIATE EARNINGS</b><br>' +
+      'Score 50%+ → har naye subscriber par $0.50 milega jo aapke share link se aaye.<br>' +
+      'Below 50% → this month koi affiliate earnings nahi.<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">5. FIVE WAYS TO SCORE HIGH</b><br>' +
+      '• Har live class join karo (attendance > 90%)<br>' +
+      '• Sab quizzes attempt karo<br>' +
+      '• Chat mein doosre students ki help karo<br>' +
+      '• Slides aur assignments complete karo<br>' +
+      '• Monthly active raho<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">6. TIMELINE</b><br>' +
+      '• Points reset: 1st of every month<br>' +
+      '• Leaderboard: last day of month<br>' +
+      '• Payout: 5th of next month<br>' +
+      '• Minimum withdrawal: $20 across all earnings<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">7. PRIVACY</b><br>' +
+      '• Phone number never shared publicly<br>' +
+      '• Points visible only inside the Circle<br>' +
+      '• Ratings always anonymous<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">8. REPORTING</b><br>' +
+      'Abuse ya spam dekha? Report button use karo. Committee 72 hours mein review karti hai.' +
       '</div>'
   });
 };
@@ -3545,15 +3756,61 @@ ZT.showPlanInfo = function(){
 ZT.showGuide = function(){
   ZT.Modal.open({
     title:'Tutor Guide', icon:'fa-solid fa-book-open', footer:false,
-    body:'<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;">' +
-      '<b style="color:#6ee7b7;">Feed</b> — Post text, images, videos, announcements. Students react, comment, mark as learned.<br><br>' +
-      '<b style="color:#6ee7b7;">Chat</b> — Group chat with voice notes and text. Polling every 8 seconds.<br><br>' +
-      '<b style="color:#6ee7b7;">Live</b> — LiveKit-based classroom. Free live cam unlimited. Pro unlocks recording.<br><br>' +
-      '<b style="color:#6ee7b7;">Slides</b> — Lesson slides with image + audio per slide. Auto-advance on audio end.<br><br>' +
-      '<b style="color:#6ee7b7;">Assignments</b> — Create, submit, grade with marks + feedback.<br><br>' +
-      '<b style="color:#6ee7b7;">Quizzes</b> — MCQ with auto-grading.<br><br>' +
-      '<b style="color:#6ee7b7;">TSF & SPF</b> — Tutor earns $0.50/sub, students earn SPF from monthly leaderboard.<br><br>' +
-      '<b style="color:#6ee7b7;">Pro ($25/month)</b> — Unlimited Circles, members, and recordings with 500 GB storage. Breakout rooms, AI Quiz, Analytics, Custom branding.' +
+    body:
+      '<div style="font-size:12.5px;color:#cbd5e1;line-height:1.75;">' +
+
+      '<div style="padding:12px;border-radius:10px;background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(59,130,246,.10));border:1px solid rgba(16,185,129,.4);margin-bottom:12px;">' +
+        '<b style="color:#10b981;font-size:13px;">Welcome to ZYNIX Tutor</b><br>' +
+        'Teach, learn, and earn — all in one Circle.' +
+      '</div>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">1. FREE vs TRIAL vs PRO</b><br>' +
+      '<b style="color:#fff;">Free:</b> 1 Circle · Unlimited members · Unlimited Live Cam · No recording<br>' +
+      '<b style="color:#fff;">15-Day Trial:</b> 2 Circles · Unlimited members · Unlimited Live Cam · No recording · All other Pro features free<br>' +
+      '<b style="color:#fff;">Pro ($25/mo):</b> Unlimited Circles · Unlimited members · Unlimited Live Cam · Unlimited Recording (500 GB) · All features<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">2. 15-DAY FREE TRIAL</b><br>' +
+      'New tutors get 15 days of trial access free. Trial includes 2 Circles max, unlimited Live Cam, and all Pro features EXCEPT recording.<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">3. HOW YOU EARN (TSF)</b><br>' +
+      'Har active student par aap ko monthly milta hai:<br>' +
+      '• $0.30 → Cash wallet<br>' +
+      '• $0.20 → Ad Budget (ring-fenced for Ad TV)<br>' +
+      '• Total: $0.50 per student per month<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">4. STUDENT JOINING FEE ($3)</b><br>' +
+      'Har naya student ek baar $3 deta hai. Split:<br>' +
+      '• $1 → aap (instant, on top of TSF)<br>' +
+      '• $1 → platform<br>' +
+      '• $1 → aapke Circle ka SPF pool<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">5. RECORDING (Pro only)</b><br>' +
+      '• Not available in Free or Trial<br>' +
+      '• Pro: Unlimited duration · 500 GB monthly soft cap<br>' +
+      '• 1-year cloud retention<br>' +
+      '• 1 concurrent recording per tutor<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">6. LEADERBOARD & SPF</b><br>' +
+      'Students SPF earn karte hain — aapko kuch nahi karna:<br>' +
+      '• Monthly points (attendance, quiz, helpfulness)<br>' +
+      '• Sirf 50%+ scorers ko payout<br>' +
+      '• Pool = $0.20 × active students + $1 × har join<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">7. SINGLE SHARE LINK</b><br>' +
+      'Har Circle ka ek share link hota hai. Share karo — har join aapki leaderboard aur TSF mein count karta hai.<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">8. TSF & SPF GUIDE</b><br>' +
+      'More menu → "TSF & SPF Guide" tile — full breakdown.<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">9. PRIVACY</b><br>' +
+      '• Phone numbers Bond tak hidden<br>' +
+      '• 18+ content gate-protected<br>' +
+      '• Committee-based report system<br><br>' +
+
+      '<b style="color:#6ee7b7;font-size:13px;">10. SUPPORT</b><br>' +
+      '• Dashboard → Pool Health Meter<br>' +
+      '• Dashboard → Analytics<br>' +
+      '• More → TSF & SPF Guide' +
       '</div>'
   });
 };
