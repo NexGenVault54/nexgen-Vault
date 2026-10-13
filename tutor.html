@@ -128,10 +128,10 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .zt-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .zt-circle-card{background:#111827;border:1px solid #1e293b;border-radius:14px;overflow:hidden;cursor:pointer;text-align:left;padding:0;display:flex;flex-direction:column;position:relative}
 .zt-circle-card:hover{border-color:rgba(16,185,129,.55)}
-.zt-circle-banner{height:80px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:12px;}
-.zt-circle-banner-title{font-size:14px;font-weight:900;color:#fff;text-align:center;text-shadow:0 2px 8px rgba(0,0,0,.5);line-height:1.3;max-width:90%;word-break:break-word;}
-.zt-circle-banner-desc{font-size:10.5px;color:rgba(255,255,255,.85);text-align:center;margin-top:4px;line-height:1.4;max-width:90%;word-break:break-word;}
-.zt-circle-av{width:52px;height:52px;border-radius:50%;object-fit:cover;border:3px solid #111827;position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);background:#0f172a;z-index:3}
+.zt-circle-banner{min-height:130px;position:relative;overflow:hidden;padding:16px 14px;display:flex;flex-direction:column;justify-content:center;border-radius:14px 14px 0 0}
+.zt-circle-banner-title{font-size:15px;font-weight:900;color:#fff;line-height:1.3;text-shadow:0 2px 8px rgba(0,0,0,.55);word-break:break-word;text-align:center}
+.zt-circle-banner-desc{font-size:11px;color:rgba(255,255,255,.88);line-height:1.5;margin-top:6px;text-shadow:0 1px 6px rgba(0,0,0,.5);word-break:break-word;text-align:center;display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+
 .zt-circle-body{padding:30px 12px 12px;display:flex;flex-direction:column;gap:6px;flex:1}
 .zt-circle-name{font-size:13px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;line-height:1.2}
 .zt-circle-meta{font-size:10px;color:#94a3b8;text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
@@ -399,11 +399,13 @@ ZT.profileOf = function(id){
   if(!id) return { id:'', name:'User', username:'user', avatar:'https://ui-avatars.com/api/?name=U&background=111827&color=a78bfa' };
   return ZT.State.profileCache[id] || { id:id, name:'User', username:'user', avatar:'https://ui-avatars.com/api/?name=U&background=111827&color=a78bfa' };
 };
+/* Match index.html behaviour exactly */
 ZT.safeAvatar = function(p){
   if(p && p.avatar) return p.avatar;
   var n = (p && (p.name || p.username)) || 'U';
-  return 'https://ui-avatars.com/api/?name=' + encodeURIComponent(n) + '&background=111827&color=a78bfa';
+  return 'https://ui-avatars.com/api/?name=' + encodeURIComponent(n) + '&background=111827&color=34d399';
 };
+ZT.displayName = function(p){ return p ? (p.name || p.username || 'User') : 'User'; };
 
 ZT.GRADIENTS = {
   emerald:  'linear-gradient(135deg,#10b981,#065f46)',
@@ -545,7 +547,13 @@ ZT.renderNoCircleMessage = function(name){
 
 ZT.goHome = function(){ ZT.State.currentCircle = null; ZT.State.myRoleInCircle = null; ZT.showView('feed'); };
 ZT.goBackToPlatform = function(){ window.location.href = 'index.html'; };
-
+ZT.goToMySpace = function(){
+  /* Same as index.html behaviour: opens own space page */
+  var me = ZT.State.currentUser;
+  if(!me){ ZT.openAuthModal('login'); return; }
+  /* Navigate to main index.html own space page */
+  window.location.href = 'index.html#space-' + me.id;
+};
 /* ============================================================
    HEADER ACTIONS — Theme, Notifications, Wallet, Avatar
    ============================================================ */
@@ -612,8 +620,17 @@ ZT._paintHeaderWallet = async function(){
   var bEl = document.getElementById('zt-wallet-bounty');
   if(cEl) cEl.textContent = '$' + cash.toFixed(0);
   if(bEl) bEl.textContent = '$' + bounty.toFixed(0);
-  var av = document.getElementById('zt-header-avatar');
-  if(av) av.src = ZT.safeAvatar(me);
+
+      var av = document.getElementById('zt-header-avatar');
+    if(av){
+      av.src = ZT.safeAvatar(me);
+      av.onclick = function(){
+        /* Match index.html: open own space page */
+        ZT.goToMySpace();
+      };
+      av.style.cursor = 'pointer';
+    }
+
 };
 ZT.goBackToCircles = function(){
   window.location.href = 'index.html?go=circles';
@@ -701,25 +718,23 @@ ZT.reloadCircles = async function(){
     var h = '<div class="zt-grid">';
     list.forEach(function(cir){
       var grad = ZT.gradientCss(cir.banner_gradient);
-      var av = cir.avatar_url || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(cir.name) + '&background=111827&color=a78bfa&bold=true');
+
       var label = cir.is_owner ? 'Owner' : (cir.is_member ? 'Enter' : 'Join');
       var cls = cir.is_owner ? 'owner' : (cir.is_member ? 'enter' : '');
       h += '<div class="zt-circle-card" onclick="ZT.enterCircle(\'' + ZT.escape(cir.id) + '\')">';
       if(cir.is_owner) h += '<span class="zt-owner-badge"><i class="fa-solid fa-crown"></i> YOURS</span>';
+      /* FULL BANNER — title + description inside */
       h += '<div class="zt-circle-banner" style="background:' + grad + ';">';
-      h += '<div style="position:relative;z-index:2;">';
       h += '<div class="zt-circle-banner-title">' + ZT.escape(cir.name) + '</div>';
       if(cir.description){
-        var descShort = cir.description.length > 80 ? cir.description.substring(0,80) + '…' : cir.description;
-        h += '<div class="zt-circle-banner-desc">' + ZT.escape(descShort) + '</div>';
+        h += '<div class="zt-circle-banner-desc">' + ZT.escape(cir.description) + '</div>';
       }
       h += '</div>';
-      h += '<img class="zt-circle-av" src="' + ZT.escape(av) + '" alt="" style="position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);"></div>';
-      h += '<div class="zt-circle-body">';
-      h += '<div class="zt-circle-name" title="' + ZT.escape(cir.name) + '">' + ZT.escape(cir.name) + '</div>';
-      h += '<div class="zt-circle-meta"><span><i class="fa-solid fa-users"></i> ' + (cir.member_count||0) + '</span>';
+      /* Card body — only meta + action button (no avatar, no plain name) */
+      h += '<div class="zt-circle-body" style="padding:12px 12px 12px;text-align:center;">';
+      h += '<div class="zt-circle-meta" style="justify-content:center;"><span><i class="fa-solid fa-users"></i> ' + (cir.member_count||0) + '</span>';
       h += '<span><i class="fa-regular fa-newspaper"></i> ' + (cir.post_count||0) + '</span></div>';
-      h += '<div class="zt-circle-action ' + cls + '">' + label + '</div>';
+      h += '<div class="zt-circle-action ' + cls + '" style="margin-top:8px;">' + label + '</div>';
       h += '</div></div>';
     });
     h += '</div>';
@@ -3191,6 +3206,84 @@ ZT.renderMore = function(){
     h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></button>';
   });
   h += '<button class="zt-btn secondary" style="margin-top:10px;" onclick="ZT.exitCircle()">Leave Circle</button>';
+  return h;
+};
+
+/* ============================================================
+   TSF + SPF GUIDE (P7)
+   ============================================================ */
+ZT.TSF_SPF_GUIDE = {
+  tsf: {
+    title: 'Tutor Support Fund (TSF)',
+    icon: 'fa-solid fa-chalkboard-user',
+    color: '#10b981',
+    sections: [
+      { h: 'What is TSF?', p: 'TSF ek monthly payout hai jo har Tutor ko unke students ke engagement ke hisaab se milta hai. Aap ke har active subscriber pe $0.50/month aap ko milta hai.' },
+      { h: 'How you earn', p: 'For every active subscriber:\n• $0.30 to your Cash wallet\n• $0.20 to your Ad Budget (ring-fenced for Ad TV only)\n• Total per subscriber: $0.50/month' },
+      { h: 'Eligibility criteria', p: '• 500+ active students\n• Aggregate rating ≥ 7.0\n• 5+ Live Classes per month\n• 60+ slides/assignments per month\n• 90-day account age\n• No active abuse flags' },
+      { h: 'Metrics weighting', p: '• Live Class Hours → 30%\n• Slides Completion Rate → 25%\n• Student Ratings → 25%\n• Aggregate Performance → 20%' },
+      { h: 'Payment', p: 'Monthly on the 5th. Minimum $20. Withdrawal unlocks only when you are Active. 20% withdrawal fee applies once at cash-out.' }
+    ]
+  },
+  spf: {
+    title: 'Students Participation Fund (SPF)',
+    icon: 'fa-solid fa-user-graduate',
+    color: '#3b82f6',
+    sections: [
+      { h: 'What is SPF?', p: 'SPF top students ko reward karta hai jo weekly leaderboard mein aate hain. Tutor ke subscribers se generate hota hai.' },
+      { h: 'Leaderboard categories', p: '• Attendance — kitni classes join ki\n• Quiz Score — highest marks\n• Helpfulness — chat mein sabse zyada help' },
+      { h: 'Weekly rewards', p: '• 1st place: $1.00\n• 2nd place: $0.50\n• 3rd place: $0.25\n\nMonthly top 10: additional bonus' },
+      { h: 'Referral income', p: 'Agar student kisi doosre student ko refer kare, usse 10% commission milta hai naye student ke first-month earnings se.' },
+      { h: 'Payment', p: 'SPF weekly credited to Bounty wallet. Monthly payout schedule on the 5th. Minimum $20 across all earnings.' }
+    ]
+  }
+};
+
+ZT.renderTSFSPFGuide = function(){
+  var guide = ZT.TSF_SPF_GUIDE;
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = (role === 'tutor' || role === 'admin' || role === 'owner');
+
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:20px;">';
+
+  h += '<div class="zt-circle-head">';
+  h += '<button class="back" onclick="ZT.showView(\'more\')"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div class="nm">TSF & SPF Guide</div>';
+  h += '<div class="sub">Earning funds · ' + ZT.escape(ZT.State.currentCircle ? ZT.State.currentCircle.name : 'Circle') + '</div>';
+  h += '</div></div>';
+
+  h += '<div style="padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:1px;">HOW YOU EARN</div>';
+  h += '<div style="font-size:16px;font-weight:900;color:#fff;margin-top:6px;">Two funds. One platform.</div>';
+  h += '<div style="font-size:11.5px;color:#cbd5e1;margin-top:8px;line-height:1.6;">Tutor ko monthly support. Students ko weekly rewards. Dono ek doosre se judde.</div>';
+  h += '</div>';
+
+  [guide.tsf, guide.spf].forEach(function(fund){
+    h += '<div style="padding:16px;border-radius:14px;background:#111827;border:1px solid ' + fund.color + '55;border-left:3px solid ' + fund.color + ';">';
+    h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">';
+    h += '<div style="width:38px;height:38px;border-radius:10px;background:' + fund.color + '22;display:flex;align-items:center;justify-content:center;"><i class="' + fund.icon + '" style="color:' + fund.color + ';font-size:16px;"></i></div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:14px;font-weight:900;color:#fff;">' + ZT.escape(fund.title) + '</div>';
+    h += '</div></div>';
+
+    fund.sections.forEach(function(sec){
+      h += '<div style="padding:10px 0;border-top:1px solid rgba(255,255,255,.05);">';
+      h += '<div style="font-size:12px;font-weight:900;color:' + fund.color + ';margin-bottom:6px;">' + ZT.escape(sec.h) + '</div>';
+      h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.75;white-space:pre-wrap;">' + ZT.escape(sec.p) + '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+  });
+
+  if(isTutor){
+    h += '<button onclick="ZT.showView(\'more\')" style="width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-gauge-high"></i> Open Dashboard</button>';
+  } else {
+    h += '<button onclick="ZT.showView(\'more\')" style="width:100%;padding:14px;border-radius:12px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-trophy"></i> View Leaderboard</button>';
+  }
+
+  h += '</div>';
   return h;
 };
 
