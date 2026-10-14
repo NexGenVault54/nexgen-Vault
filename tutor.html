@@ -540,6 +540,7 @@ ZT.renderView = async function(view){
   if(view === 'more')          return ZT.renderMore();
   if(view === 'tsf-spf-guide') return ZT.renderTSFSPFGuide();
   if(view === 'leaderboard')   return await ZT.renderLeaderboard();
+  if(view === 'pending-payments') return await ZT.renderPendingPayments();
   return await ZT.renderLanding();
 };
 
@@ -3826,6 +3827,7 @@ ZT.renderMore = function(){
   var tiles = [];
   if(isTutor){
     tiles.push({ icon:'fa-solid fa-gear', color:'#6ee7b7', title:'Circle Settings', sub:'Edit name, description, banner', fn:'ZT.openCircleSettings()' });
+    tiles.push({ icon:'fa-solid fa-hourglass-half', color:'#a18554', title:'Pending Payments', sub:'Trial + monthly-pending members', fn:'ZT.showView(\'pending-payments\')' });
   }
   tiles.push(
     { icon:'fa-solid fa-hand-holding-dollar', color:'#10b981', title:'TSF & SPF Guide', sub:'How Tutor + Student earn', fn:'ZT.showView(\'tsf-spf-guide\')' },
@@ -4016,6 +4018,220 @@ ZT.renderTSFSPFGuide = function(){
   h += '</div>';
   return h;
 };
+
+/* ============================================================
+   PENDING PAYMENTS (E3) — tutor view
+   List of trial + pending_payment members. Tutor can:
+     · Report Abuse → moderation toast (placeholder)
+     · Remove with Reason → min 9 words, server validates
+   System auto-manages payment removal.
+   ============================================================ */
+ZT.renderPendingPayments = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return ZT.renderNoCircleMessage('Pending Payments');
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = (role === 'tutor' || role === 'admin' || role === 'owner');
+  if(!isTutor){ return '<div class="zt-empty"><p>Tutor access only.</p></div>'; }
+
+  var joinFee = Number(cir.join_fee) || 4;
+
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:20px;">';
+
+  h += '<div class="zt-circle-head">';
+  h += '<button class="back" onclick="ZT.showView(\'more\')"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div class="nm">Pending Payments</div>';
+  h += '<div class="sub">' + ZT.escape(cir.name) + '</div>';
+  h += '</div></div>';
+
+  h += '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.65;">';
+  h += '<b style="color:#60a5fa;"><i class="fa-solid fa-circle-info"></i> System auto-manages payments</b><br>';
+  h += '· Trial: 7 days free · Day 8 auto-deduct $' + joinFee.toFixed(2) + '<br>';
+  h += '· Monthly: 1st of month · 10 days grace · Day 11 auto-remove<br>';
+  h += '<b style="color:#a18554;">Removal for non-payment is handled by the system. Use Remove below only for abuse or rule violations.</b>';
+  h += '</div>';
+
+  h += '<div id="zt-pending-host"><div style="padding:40px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:22px;"></i></div></div>';
+  h += '</div>';
+
+  setTimeout(async function(){
+    var host = document.getElementById('zt-pending-host');
+    if(!host) return;
+    var c = sb(); if(!c) return;
+    try {
+      var r = await c.from('tutor_members')
+        .select('id, user_id, payment_status, trial_ends_at, grace_started_at, is_active')
+        .eq('circle_id', cir.id)
+        .eq('is_active', true)
+        .in('payment_status', ['trial', 'pending_payment'])
+        .order('trial_ends_at', { ascending: true });
+
+      var rows = r.data || [];
+      if(!rows.length){
+        host.innerHTML = '<div style="padding:30px;border-radius:12px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">No pending members. Everyone is paid up.</div>';
+        return;
+      }
+
+      var ids = rows.map(function(x){ return x.user_id; });
+      var pr = await c.from('profiles').select('id,name,username,avatar').in('id', ids);
+      (pr.data || []).forEach(function(p){ ZT.State.profileCache[p.id] = p; });
+
+      var hh = '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">' + rows.length + ' PENDING</div>';
+
+      rows.forEach(function(m){
+        var p = ZT.profileOf(m.user_id);
+        var statusColor = m.payment_status === 'pending_payment' ? '#a16262' : '#a18554';
+        var statusLabel = '';
+        if(m.payment_status === 'trial' && m.trial_ends_at){
+          var msL = new Date(m.trial_ends_at).getTime() - Date.now();
+          var dL = Math.max(0, Math.ceil(msL / (24*60*60*1000)));
+          statusLabel = 'Trial · ' + dL + ' day' + (dL === 1 ? '' : 's') + ' left';
+        } else if(m.payment_status === 'pending_payment' && m.grace_started_at){
+          var gEnd = new Date(m.grace_started_at).getTime() + (10*24*60*60*1000);
+          var gL = Math.max(0, Math.ceil((gEnd - Date.now()) / (24*60*60*1000)));
+          statusLabel = 'Monthly pending · ' + gL + ' day' + (gL === 1 ? '' : 's') + ' grace left';
+        } else {
+          statusLabel = 'Pending';
+        }
+
+        hh += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid ' + statusColor + '44;margin-bottom:10px;">';
+        hh += '<div style="display:flex;gap:10px;align-items:center;">';
+        hh += '<img src="' + ZT.escape(ZT.safeAvatar(p)) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+        hh += '<div style="flex:1;min-width:0;">';
+        hh += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'User') + '</div>';
+        hh += '<div style="font-size:10.5px;color:' + statusColor + ';font-weight:800;margin-top:2px;">' + statusLabel + '</div>';
+        hh += '</div></div>';
+        hh += '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">';
+        hh += '<button data-zt-pending-report="' + ZT.escape(m.user_id) + '" style="flex:1;min-width:90px;padding:9px;border-radius:8px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:800;font-size:11px;cursor:pointer;">Report Abuse</button>';
+        hh += '<button data-zt-pending-remove="' + ZT.escape(m.id) + '" style="flex:1;min-width:90px;padding:9px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;">Remove with Reason</button>';
+        hh += '</div></div>';
+      });
+
+      host.innerHTML = hh;
+
+      host.querySelectorAll('[data-zt-pending-report]').forEach(function(b){
+        b.addEventListener('click', function(){
+          var uid = this.getAttribute('data-zt-pending-report');
+          ZT._pendingReportMember(uid);
+        });
+      });
+
+      host.querySelectorAll('[data-zt-pending-remove]').forEach(function(b){
+        b.addEventListener('click', function(){
+          var mid = this.getAttribute('data-zt-pending-remove');
+          ZT._pendingRemoveWithReason(mid, cir.id);
+        });
+      });
+
+    } catch(e){
+      host.innerHTML = '<div class="zt-empty"><p>Could not load.</p></div>';
+    }
+  }, 40);
+
+  return h;
+};
+
+/* Report Abuse — simple modal (placeholder for now) */
+ZT._pendingReportMember = function(userId){
+  var body = '';
+  body += '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);margin-bottom:14px;font-size:11.5px;color:#cbd5e1;line-height:1.6;">';
+  body += 'Your report goes to the moderation team. The member is not automatically removed — the team reviews first.';
+  body += '</div>';
+  body += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.6;">';
+  body += '<b style="color:#fff;">To submit a full report, use the member list.</b><br>';
+  body += 'Go to Members → tap this user → Report. Full reason form available there.';
+  body += '</div>';
+
+  ZT.Modal.open({
+    title: 'Report Member',
+    icon: 'fa-solid fa-flag',
+    footer: false,
+    body: body
+  });
+
+  setTimeout(function(){
+    var modal = document.querySelector('#zt-modal-host .zt-modal');
+    if(!modal) return;
+    var footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;gap:8px;margin-top:14px;';
+    footer.innerHTML =
+      '<button onclick="ZT.Modal.close()" style="flex:1;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Close</button>' +
+      '<button onclick="ZT.Modal.close();ZT.showMembers();" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Open Members</button>';
+    modal.appendChild(footer);
+  }, 60);
+};
+
+/* Remove with Reason — min 9 words, live counter, server validation */
+ZT._pendingRemoveWithReason = function(memberId, circleId){
+  var body = '';
+
+  body += '<div style="padding:12px;border-radius:10px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);margin-bottom:14px;">';
+  body += '<div style="font-size:11.5px;font-weight:900;color:#a18554;margin-bottom:6px;"><i class="fa-solid fa-triangle-exclamation"></i> Removal is permanent</div>';
+  body += '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;">';
+  body += 'The member will be removed and notified with your reason.<br>';
+  body += '<b style="color:#a16262;">Do NOT use this for non-payment.</b> System auto-handles unpaid members.';
+  body += '</div></div>';
+
+  body += '<label class="zt-label">Reason (min 9 words)</label>';
+  body += '<textarea id="zt-remove-reason" class="zt-textarea" placeholder="Explain briefly why this member is being removed. Example: Repeated violation of circle rules after two warnings from the tutor." style="min-height:90px;"></textarea>';
+  body += '<div id="zt-remove-word-count" style="font-size:10.5px;color:#64748b;margin-top:6px;font-weight:800;">0 words · 9 minimum</div>';
+
+  ZT.Modal.open({
+    title: 'Remove Member',
+    icon: 'fa-solid fa-user-minus',
+    submitLabel: 'Remove',
+    body: body,
+    onOpen: function(){
+      setTimeout(function(){
+        var ta = document.getElementById('zt-remove-reason');
+        var cnt = document.getElementById('zt-remove-word-count');
+        if(!ta || !cnt) return;
+        ta.addEventListener('input', function(){
+          var words = ta.value.trim().split(/\s+/).filter(function(w){ return w.length > 0; });
+          var n = words.length;
+          cnt.textContent = n + ' word' + (n === 1 ? '' : 's') + ' · ' + (n >= 9 ? 'OK ✓' : (9 - n) + ' more needed');
+          cnt.style.color = n >= 9 ? '#10b981' : '#64748b';
+        });
+        ta.focus();
+      }, 20);
+    },
+    onSubmit: async function(){
+      var ta = document.getElementById('zt-remove-reason');
+      var reason = (ta && ta.value || '').trim();
+      var words = reason.split(/\s+/).filter(function(w){ return w.length > 0; });
+      if(words.length < 9){
+        ZT.toast('Reason must be at least 9 words.', 'error');
+        return false;
+      }
+      var c = sb(); if(!c){ ZT.toast('Not connected.', 'error'); return false; }
+      try {
+        var r = await c.rpc('tutor_remove_member', {
+          p_member_id: memberId,
+          p_circle_id: circleId,
+          p_reason: reason
+        });
+        if(r.error) throw r.error;
+        if(r.data && r.data.ok === false){
+          var errCode = r.data.error;
+          if(errCode === 'reason_too_short') ZT.toast('Reason must be at least 9 words.', 'error');
+          else if(errCode === 'not_owner') ZT.toast('Only the tutor can remove.', 'error');
+          else if(errCode === 'reason_required') ZT.toast('Reason required.', 'error');
+          else if(errCode === 'member_not_found') ZT.toast('Member not found.', 'error');
+          else ZT.toast('Failed: ' + errCode, 'error');
+          return false;
+        }
+        ZT.toast('Member removed.');
+        ZT.haptic(15);
+        setTimeout(function(){ ZT.showView('pending-payments'); }, 200);
+        return true;
+      } catch(e){
+        ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+        return false;
+      }
+    }
+  });
+};
+
 /* ============================================================
    CIRCLE SETTINGS
    ============================================================ */
