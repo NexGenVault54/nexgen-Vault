@@ -1199,12 +1199,12 @@ ZT.enterCircle = async function(circleId){
             '</div>' +
             '<div style="margin-top:16px;padding:16px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
               '<div style="font-size:22px;font-weight:900;color:#10b981;">' + trialDays + ' days free</div>' +
-              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Then $' + joinFee.toFixed(2) + ' on the 1st of every month</div>' +
+              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Then $' + joinFee.toFixed(2) + ' auto-deducted on day ' + (trialDays + 1) + ', then $' + joinFee.toFixed(2) + ' on the 1st of every month after that</div>' +
             '</div>' +
             '<div style="margin-top:14px;font-size:11.5px;color:#94a3b8;line-height:1.9;text-align:left;">' +
               '✓ Full access for ' + trialDays + ' days<br>' +
               '✓ Auto-deduct $' + joinFee.toFixed(2) + ' on day ' + (trialDays + 1) + ' from your wallet<br>' +
-              '✓ No grace period — pay on time or access ends<br>' +
+              '✓ Pay on time or access ends<br>' +
               '✓ Rejoin anytime by paying' +
             '</div>' +
           '</div>' +
@@ -1382,6 +1382,37 @@ ZT.renderCircleFeed = async function(){
     h += '<button onclick="ZT.openCircleSettings()" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;width:42px;height:42px;border-radius:10px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;"><i class="fa-solid fa-gear"></i></button>';
   }
   h += '</div>';
+
+  /* Trial / pending payment banner — only for paid-mode circles, non-paid members (D1) */
+  if(me && !isTutor && cir.payment_mode !== 'free'){
+    try {
+      var _memRow = ZT.State.memberRow || null;
+
+      /* Fetch once per visit — non-blocking */
+      if(!_memRow){
+        var _sc = sb();
+        if(_sc){
+          _sc.from('tutor_members')
+            .select('payment_status, trial_ends_at, grace_started_at')
+            .eq('circle_id', cir.id)
+            .eq('user_id', me.id)
+            .maybeSingle()
+            .then(function(r){
+              if(r && r.data){
+                ZT.State.memberRow = r.data;
+                /* Repaint banner once data arrives */
+                if(document.getElementById('zt-trial-banner-host')){
+                  ZT._paintTrialBanner();
+                }
+              }
+            });
+        }
+      }
+
+      h += '<div id="zt-trial-banner-host"></div>';
+    } catch(e){}
+  }
+
   if(isTutor && me){
     h += '<div class="zt-composer" onclick="ZT.openComposer()">';
     h += '<img src="' + ZT.escape(ZT.safeAvatar(me)) + '">';
@@ -1395,6 +1426,8 @@ ZT.renderCircleFeed = async function(){
   h += '<button id="zt-scroll-top" onclick="window.scrollTo({top:0,behavior:\'smooth\'})" style="position:fixed;bottom:88px;right:16px;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-size:16px;cursor:pointer;box-shadow:0 8px 24px rgba(16,185,129,.4);z-index:100;display:none;align-items:center;justify-content:center;"><i class="fa-solid fa-arrow-up"></i></button>';
   setTimeout(function(){
     ZT.loadCirclePosts();
+    /* Paint trial banner (D3) — uses cached or fetches fresh */
+    ZT._paintTrialBanner();
     /* Scroll listener */
     if(!ZT._feedScrollWired){
       ZT._feedScrollWired = true;
@@ -1404,7 +1437,100 @@ ZT.renderCircleFeed = async function(){
       }, { passive: true });
     }
   }, 30);
+  /* Reset member row cache for next circle visit */
+  ZT.State.memberRow = null;
   return h;
+};
+
+
+/* ============================================================
+   Trial / Pending banner painter (D2)
+   Free circles: never shows. Owner: never shows.
+   ============================================================ */
+ZT._paintTrialBanner = function(){
+  var host = document.getElementById('zt-trial-banner-host');
+  if(!host) return;
+  var cir = ZT.State.currentCircle;
+  var mem = ZT.State.memberRow;
+  if(!cir || !mem){ host.innerHTML = ''; return; }
+  if(cir.payment_mode === 'free'){ host.innerHTML = ''; return; }
+  if(mem.payment_status === 'paid'){ host.innerHTML = ''; return; }
+
+  var joinFee = Number(cir.join_fee) || 4.00;
+  var h = '';
+
+  if(mem.payment_status === 'trial' && mem.trial_ends_at){
+    var msLeft = new Date(mem.trial_ends_at).getTime() - Date.now();
+    if(msLeft > 0){
+      var daysLeft = Math.ceil(msLeft / (24*60*60*1000));
+      var col = daysLeft > 3 ? '#10b981' : '#a18554';
+      var msg = 'Trial: ' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' left';
+      h += '<div id="zt-trial-banner" style="padding:12px 14px;border-radius:12px;background:' + col + '18;border:1px solid ' + col + '55;margin-bottom:12px;display:flex;align-items:center;gap:10px;">';
+      h += '<i class="fa-solid fa-hourglass-half" style="color:' + col + ';font-size:16px;"></i>';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:12.5px;font-weight:900;color:' + col + ';">' + msg + '</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">$' + joinFee.toFixed(2) + ' auto-deducts on day 8</div>';
+      h += '</div>';
+      h += '<button onclick="ZT._payAfterTrial(\'' + ZT.escape(cir.id) + '\')" style="padding:8px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;flex-shrink:0;">Pay Now</button>';
+      h += '</div>';
+    } else {
+      /* Trial ended but still marked trial (cron hasn't run yet) */
+      h += '<div id="zt-trial-banner" style="padding:12px 14px;border-radius:12px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.45);margin-bottom:12px;display:flex;align-items:center;gap:10px;">';
+      h += '<i class="fa-solid fa-triangle-exclamation" style="color:#a16262;font-size:16px;"></i>';
+      h += '<div style="flex:1;min-width:0;">';
+      h += '<div style="font-size:12.5px;font-weight:900;color:#a16262;">Trial ended · Pay now or access ends</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">System will auto-deduct $' + joinFee.toFixed(2) + ' within 24 hours</div>';
+      h += '</div>';
+      h += '<button onclick="ZT._payAfterTrial(\'' + ZT.escape(cir.id) + '\')" style="padding:8px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;flex-shrink:0;">Pay Now</button>';
+      h += '</div>';
+    }
+  } else if(mem.payment_status === 'pending_payment' && mem.grace_started_at){
+    var graceMs = new Date(mem.grace_started_at).getTime() + (10 * 24 * 60 * 60 * 1000);
+    var graceLeft = Math.max(0, Math.ceil((graceMs - Date.now()) / (24*60*60*1000)));
+    h += '<div id="zt-trial-banner" style="padding:12px 14px;border-radius:12px;background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.45);margin-bottom:12px;display:flex;align-items:center;gap:10px;">';
+    h += '<i class="fa-solid fa-triangle-exclamation" style="color:#a16262;font-size:16px;"></i>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:12.5px;font-weight:900;color:#a16262;">Monthly payment pending</div>';
+    h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">' + (graceLeft > 0 ? ('Pay within ' + graceLeft + ' day' + (graceLeft === 1 ? '' : 's') + ' or access ends') : 'Access ends today') + '</div>';
+    h += '</div>';
+    h += '<button onclick="ZT._payAfterTrial(\'' + ZT.escape(cir.id) + '\')" style="padding:8px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;flex-shrink:0;">Pay $' + joinFee.toFixed(2) + '</button>';
+    h += '</div>';
+  }
+
+  host.innerHTML = h;
+};
+
+/* Student clicks banner's "Pay Now" (D2) */
+ZT._payAfterTrial = async function(circleId){
+  var c = sb(); if(!c) return;
+  var me = ZT.State.currentUser; if(!me) return;
+  try {
+    var r = await c.rpc('tutor_pay_after_trial', { p_circle_id: circleId });
+    if(r.error) throw r.error;
+    if(r.data && r.data.ok === false){
+      var code = r.data.error;
+      if(code === 'insufficient_funds') ZT.toast('Not enough balance. Top up wallet first.', 'error');
+      else if(code === 'already_paid') ZT.toast('Already paid.', 'info');
+      else if(code === 'owner_no_pay') ZT.toast('Owner does not pay.', 'info');
+      else ZT.toast('Payment failed.', 'error');
+      return;
+    }
+    ZT.toast('Paid! Full access confirmed.');
+    ZT.haptic(15);
+    ZT.State.memberRow = null;
+    try {
+      var p = await c.from('profiles')
+        .select('wallet_cash,wallet_bounty')
+        .eq('id', me.id).maybeSingle();
+      if(p.data){
+        ZT.State.currentUser.wallet_cash = p.data.wallet_cash;
+        ZT.State.currentUser.wallet_bounty = p.data.wallet_bounty;
+      }
+    } catch(e){}
+    ZT.showView('feed');
+  } catch(e){
+    ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+  }
 };
 
 ZT.postsSkeleton = function(){
@@ -4041,7 +4167,7 @@ ZT._confirmPaymentModeChange = function(cir, oldMode, newMode, pendingFields){
     ? 'New members will join for <b style="color:#10b981;">free</b>. No payment will be required from them — ever.'
     : 'New members will be charged <b style="color:#10b981;">$4 on the 1st of every month</b>. ' +
       (newMode === 'trial'
-        ? 'First 7 days are free trial, then auto-deduct on day 8. No grace period.'
+        ? 'First 7 days are free trial, then auto-deduct on day 8.'
         : 'Payment required immediately on join.');
 
   var body = '';
