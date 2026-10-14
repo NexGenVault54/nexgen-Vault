@@ -1299,10 +1299,14 @@ async function _tutorDoJoin(circleId, status, trialEndsAt){
       .select('id, is_active')
       .eq('circle_id', circleId).eq('user_id', me.id).maybeSingle();
 
+    /* 'free' mode has no payment_status value in DB — use 'paid' (user owes nothing) */
+    var _dbStatus = (status === 'free') ? 'paid' : status;
+
     if(existing.data){
-      var patch = { is_active: true, payment_status: status };
+      var patch = { is_active: true, payment_status: _dbStatus };
       if(trialEndsAt) patch.trial_ends_at = trialEndsAt;
-      if(status === 'paid'){
+      if(_dbStatus === 'paid'){
+        patch.trial_ends_at = null;
         patch.last_payment_at = new Date().toISOString();
         patch.grace_started_at = null;
         patch.removal_reason = null;
@@ -1318,9 +1322,9 @@ async function _tutorDoJoin(circleId, status, trialEndsAt){
         ZT.Modal.close();
         return;
       }
-      var patch2 = { payment_status: status };
+      var patch2 = { payment_status: _dbStatus };
       if(trialEndsAt) patch2.trial_ends_at = trialEndsAt;
-      if(status === 'paid') patch2.last_payment_at = new Date().toISOString();
+      if(_dbStatus === 'paid') patch2.last_payment_at = new Date().toISOString();
       try {
         await c.from('tutor_members').update(patch2)
           .eq('circle_id', circleId).eq('user_id', me.id);
