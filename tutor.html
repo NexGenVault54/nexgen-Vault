@@ -1084,142 +1084,276 @@ ZT.enterCircle = async function(circleId){
   if(!me){ ZT.openAuthModal('login'); return; }
 
   try {
-    /* Step 1: Already a member? */
+    /* Step 1: Membership + circle info */
     var mem = await c.from('tutor_members')
-      .select('role')
+      .select('role, payment_status, trial_ends_at, is_active')
       .eq('circle_id', circleId)
       .eq('user_id', me.id)
       .maybeSingle();
 
-    /* Step 2: Circle info */
     var cr = await c.from('tutor_circles').select('*').eq('id', circleId).maybeSingle();
     if(cr.error || !cr.data){ ZT.toast('Not found.', 'error'); return; }
 
     var isOwner = (cr.data.owner_id === me.id);
-    var isMember = !!mem.data;
+    var isMember = !!mem.data && mem.data.is_active !== false;
+    var wasRemoved = !!mem.data && mem.data.is_active === false && mem.data.payment_status === 'removed';
+    var mode = cr.data.payment_mode || 'trial';
+    var trialDays = Number(cr.data.trial_days) || 7;
+    var joinFee = Number(cr.data.join_fee) || 4.00;
 
-    /* Step 3: New join → show fee confirmation */
-    if(!isMember && !isOwner){
-      var balance = Number(me.wallet_cash || 0) + Number(me.wallet_bounty || 0);
+    /* Step 2: Owner → direct enter (15-day owner trial already handled separately) */
+    if(isOwner){
+      ZT.State.currentCircle = cr.data;
+      var roleOwner = await c.rpc('tutor_my_role', { p_circle_id: circleId });
+      ZT.State.myRoleInCircle = (!roleOwner.error && roleOwner.data) ? roleOwner.data : 'owner';
+      ZT.haptic(12);
+      ZT.showView('feed');
+      return;
+    }
 
-      if(balance < 4){
-        /* Not enough balance */
-        ZT.Modal.open({
-          title: 'Joining Fee Required', icon: 'fa-solid fa-wallet',
-          footer: false,
-          body:
-            '<div style="text-align:center;padding:10px 0 16px;">' +
-              '<div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">' +
-                '<i class="fa-solid fa-wallet" style="font-size:26px;color:#000;"></i>' +
-              '</div>' +
-              '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:8px;">Joining fee: $4.00</div>' +
-              '<div style="font-size:12.5px;color:#94a3b8;line-height:1.6;">' +
-                'Your current balance: <b style="color:#fff;">$' + balance.toFixed(2) + '</b><br>' +
-                'Please top up your wallet first.' +
-              '</div>' +
-            '</div>' +
-            '<button onclick="ZT.Modal.close();ZT.showView(\'wallet\');" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;">' +
-              '<i class="fa-solid fa-plus"></i> Top Up Wallet' +
-            '</button>' +
-            '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>'
-        });
-        return;
-      }
+    /* Step 3: Active member → direct enter */
+    if(isMember){
+      ZT.State.currentCircle = cr.data;
+      var role2 = await c.rpc('tutor_my_role', { p_circle_id: circleId });
+      ZT.State.myRoleInCircle = (!role2.error && role2.data) ? role2.data : 'student';
+      ZT.haptic(12);
+      ZT.showView('feed');
+      return;
+    }
 
-      /* Confirm join */
+    /* Step 4: Removed member (non-free mode) → pay to rejoin */
+    if(wasRemoved && mode !== 'free'){
+      var balance4 = Number(me.wallet_cash || 0) + Number(me.wallet_bounty || 0);
       ZT.Modal.open({
-        title: 'Confirm Join', icon: 'fa-solid fa-handshake',
+        title: 'Rejoin Required', icon: 'fa-solid fa-rotate-right',
         footer: false,
         body:
           '<div style="text-align:center;padding:10px 0 16px;">' +
             '<div style="font-size:14px;color:#cbd5e1;line-height:1.7;">' +
-              'You are joining <b style="color:#fff;">' + ZT.escape(cr.data.name) + '</b>' +
+              'You were removed from <b style="color:#fff;">' + ZT.escape(cr.data.name) + '</b>' +
             '</div>' +
             '<div style="margin-top:16px;padding:16px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
-              '<div style="font-size:24px;font-weight:900;color:#10b981;">$4.00</div>' +
-              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">One-time joining fee</div>' +
+              '<div style="font-size:24px;font-weight:900;color:#10b981;">$' + joinFee.toFixed(2) + '</div>' +
+              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Payment required to rejoin</div>' +
             '</div>' +
             '<div style="margin-top:14px;font-size:11.5px;color:#94a3b8;line-height:1.6;">' +
-              'One-time charge. No monthly fee after joining.' +
+              'Your balance: <b style="color:#fff;">$' + balance4.toFixed(2) + '</b>' +
             '</div>' +
           '</div>' +
-          '<button id="zt-join-confirm" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;">' +
-            '<i class="fa-solid fa-check"></i> Pay $4 & Join' +
-          '</button>' +
+          (balance4 >= joinFee
+            ? '<button id="zt-rejoin-confirm" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-check"></i> Pay $' + joinFee.toFixed(2) + ' & Rejoin</button>'
+            : '<button onclick="ZT.Modal.close();ZT.showView(\'wallet\');" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-plus"></i> Top Up Wallet</button>'
+          ) +
           '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>'
       });
 
+      if(balance4 >= joinFee){
+        setTimeout(function(){
+          var btn = document.getElementById('zt-rejoin-confirm');
+          if(!btn) return;
+          btn.addEventListener('click', async function(){
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Processing…';
+            try {
+              var payR = await c.rpc('tutor_pay_after_trial', { p_circle_id: circleId });
+              if(payR.error) throw payR.error;
+              if(payR.data && payR.data.ok === false){
+                if(payR.data.error === 'insufficient_funds'){
+                  ZT.toast('Not enough balance.', 'error');
+                } else {
+                  throw new Error(payR.data.error || 'Payment failed');
+                }
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> Pay $' + joinFee.toFixed(2) + ' & Rejoin';
+                return;
+              }
+              await _tutorDoJoin(circleId, 'paid', null);
+              ZT.toast('Rejoined! $' + joinFee.toFixed(2) + ' paid.');
+            } catch(e){
+              ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+              btn.disabled = false;
+              btn.innerHTML = '<i class="fa-solid fa-check"></i> Pay $' + joinFee.toFixed(2) + ' & Rejoin';
+            }
+          });
+        }, 60);
+      }
+      return;
+    }
+
+    /* Step 5: Free mode → instant join */
+    if(mode === 'free'){
+      await _tutorDoJoin(circleId, 'free', null);
+      return;
+    }
+
+    /* Step 6: Trial mode → 7-day free trial modal */
+    if(mode === 'trial'){
+      var trialEnd = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+      ZT.Modal.open({
+        title: 'Start Free Trial', icon: 'fa-solid fa-hourglass-half',
+        footer: false,
+        body:
+          '<div style="text-align:center;padding:10px 0 16px;">' +
+            '<div style="font-size:14px;color:#cbd5e1;line-height:1.7;">' +
+              'Joining <b style="color:#fff;">' + ZT.escape(cr.data.name) + '</b>' +
+            '</div>' +
+            '<div style="margin-top:16px;padding:16px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
+              '<div style="font-size:22px;font-weight:900;color:#10b981;">' + trialDays + ' days free</div>' +
+              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Then $' + joinFee.toFixed(2) + ' on the 1st of every month</div>' +
+            '</div>' +
+            '<div style="margin-top:14px;font-size:11.5px;color:#94a3b8;line-height:1.9;text-align:left;">' +
+              '✓ Full access for ' + trialDays + ' days<br>' +
+              '✓ Auto-deduct $' + joinFee.toFixed(2) + ' on day ' + (trialDays + 1) + ' from your wallet<br>' +
+              '✓ No grace period — pay on time or access ends<br>' +
+              '✓ Rejoin anytime by paying' +
+            '</div>' +
+          '</div>' +
+          '<button id="zt-trial-start" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;">' +
+            '<i class="fa-solid fa-rocket"></i> Start Free Trial' +
+          '</button>' +
+          '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>'
+      });
       setTimeout(function(){
-        var btn = document.getElementById('zt-join-confirm');
+        var btn = document.getElementById('zt-trial-start');
         if(!btn) return;
         btn.addEventListener('click', async function(){
           btn.disabled = true;
-          btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Processing…';
-
-          try {
-            /* Wallet deduction */
-            var deductR = await c.rpc('tutor_deduct_join_fee', {
-              p_circle_id: circleId,
-              p_student_id: me.id,
-              p_amount: 4.00
-            });
-            if(deductR.error) throw deductR.error;
-            if(deductR.data && deductR.data.ok === false){
-              throw new Error(deductR.data.error || 'Payment failed');
-            }
-
-            /* Join circle */
-            var j = await c.rpc('tutor_join_circle', { p_circle_id: circleId });
-            if(j.error){
-              var m = j.error.message || '';
-              if(m.indexOf('circle_full') !== -1) ZT.toast('Circle is full.', 'error');
-              else ZT.toast('Could not join.', 'error');
-              btn.disabled = false;
-              btn.innerHTML = '<i class="fa-solid fa-check"></i> Pay $4 & Join';
-              return;
-            }
-
-            ZT.Modal.close();
-            ZT.toast('Joined! $4 paid.');
-            ZT.haptic(20);
-
-            /* Refresh wallet */
-            try {
-              var profR = await c.from('profiles')
-                .select('wallet_cash,wallet_bounty')
-                .eq('id', me.id)
-                .maybeSingle();
-              if(profR.data){
-                ZT.State.currentUser.wallet_cash = profR.data.wallet_cash;
-                ZT.State.currentUser.wallet_bounty = profR.data.wallet_bounty;
-              }
-            } catch(e){}
-
-            /* Enter circle */
-            ZT.State.currentCircle = cr.data;
-            var role = await c.rpc('tutor_my_role', { p_circle_id: circleId });
-            ZT.State.myRoleInCircle = (!role.error && role.data) ? role.data : 'student';
-            ZT.showView('feed');
-
-          } catch(e){
-            ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-check"></i> Pay $4 & Join';
-          }
+          btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Starting…';
+          await _tutorDoJoin(circleId, 'trial', trialEnd.toISOString());
         });
       }, 60);
       return;
     }
 
-    /* Step 4: Owner or existing member → no charge, enter */
-    ZT.State.currentCircle = cr.data;
-    var role2 = await c.rpc('tutor_my_role', { p_circle_id: circleId });
-    ZT.State.myRoleInCircle = (!role2.error && role2.data) ? role2.data : (isOwner ? 'owner' : 'student');
-    ZT.haptic(12);
-    ZT.showView('feed');
+    /* Step 7: pay_first mode → $4 immediate */
+    var balance2 = Number(me.wallet_cash || 0) + Number(me.wallet_bounty || 0);
+    if(balance2 < joinFee){
+      ZT.Modal.open({
+        title: 'Joining Fee Required', icon: 'fa-solid fa-wallet',
+        footer: false,
+        body:
+          '<div style="text-align:center;padding:10px 0 16px;">' +
+            '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:8px;">Joining fee: $' + joinFee.toFixed(2) + '</div>' +
+            '<div style="font-size:12.5px;color:#94a3b8;line-height:1.6;">Balance: <b style="color:#fff;">$' + balance2.toFixed(2) + '</b></div>' +
+          '</div>' +
+          '<button onclick="ZT.Modal.close();ZT.showView(\'wallet\');" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-plus"></i> Top Up Wallet</button>' +
+          '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>'
+      });
+      return;
+    }
+
+    ZT.Modal.open({
+      title: 'Confirm Join', icon: 'fa-solid fa-handshake',
+      footer: false,
+      body:
+        '<div style="text-align:center;padding:10px 0 16px;">' +
+          '<div style="font-size:14px;color:#cbd5e1;line-height:1.7;">Joining <b style="color:#fff;">' + ZT.escape(cr.data.name) + '</b></div>' +
+          '<div style="margin-top:16px;padding:16px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
+            '<div style="font-size:24px;font-weight:900;color:#10b981;">$' + joinFee.toFixed(2) + '</div>' +
+            '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Charged now, then $' + joinFee.toFixed(2) + ' on the 1st of every month</div>' +
+          '</div>' +
+        '</div>' +
+        '<button id="zt-join-confirm" style="width:100%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:14px;border-radius:10px;font-size:13px;cursor:pointer;"><i class="fa-solid fa-check"></i> Pay $' + joinFee.toFixed(2) + ' & Join</button>' +
+        '<button onclick="ZT.Modal.close()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>'
+    });
+
+    setTimeout(function(){
+      var btn = document.getElementById('zt-join-confirm');
+      if(!btn) return;
+      btn.addEventListener('click', async function(){
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Processing…';
+        try {
+          var payR = await c.rpc('tutor_pay_after_trial', { p_circle_id: circleId });
+          if(payR.error) throw payR.error;
+          if(payR.data && payR.data.ok === false){
+            if(payR.data.error === 'insufficient_funds'){
+              ZT.toast('Not enough balance.', 'error');
+            } else {
+              throw new Error(payR.data.error || 'Payment failed');
+            }
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> Pay $' + joinFee.toFixed(2) + ' & Join';
+            return;
+          }
+          await _tutorDoJoin(circleId, 'paid', null);
+          ZT.toast('Joined! $' + joinFee.toFixed(2) + ' paid.');
+        } catch(e){
+          ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fa-solid fa-check"></i> Pay $' + joinFee.toFixed(2) + ' & Join';
+        }
+      });
+    }, 60);
 
   } catch(e){ ZT.toast('Failed.', 'error'); }
 };
+
+/* Helper: join + set payment state (reactivates if previously removed) */
+async function _tutorDoJoin(circleId, status, trialEndsAt){
+  var c = sb(); if(!c) return;
+  var me = ZT.State.currentUser; if(!me) return;
+  try {
+    var existing = await c.from('tutor_members')
+      .select('id, is_active')
+      .eq('circle_id', circleId).eq('user_id', me.id).maybeSingle();
+
+    if(existing.data){
+      var patch = { is_active: true, payment_status: status };
+      if(trialEndsAt) patch.trial_ends_at = trialEndsAt;
+      if(status === 'paid'){
+        patch.last_payment_at = new Date().toISOString();
+        patch.grace_started_at = null;
+        patch.removal_reason = null;
+        patch.removed_by = null;
+      }
+      await c.from('tutor_members').update(patch).eq('id', existing.data.id);
+    } else {
+      var j = await c.rpc('tutor_join_circle', { p_circle_id: circleId });
+      if(j.error){
+        var m = j.error.message || '';
+        if(m.indexOf('circle_full') !== -1) ZT.toast('Circle is full.', 'error');
+        else ZT.toast('Could not join.', 'error');
+        ZT.Modal.close();
+        return;
+      }
+      var patch2 = { payment_status: status };
+      if(trialEndsAt) patch2.trial_ends_at = trialEndsAt;
+      if(status === 'paid') patch2.last_payment_at = new Date().toISOString();
+      try {
+        await c.from('tutor_members').update(patch2)
+          .eq('circle_id', circleId).eq('user_id', me.id);
+      } catch(e){}
+    }
+
+    /* Refresh wallet */
+    try {
+      var profR = await c.from('profiles')
+        .select('wallet_cash,wallet_bounty')
+        .eq('id', me.id).maybeSingle();
+      if(profR.data){
+        ZT.State.currentUser.wallet_cash = profR.data.wallet_cash;
+        ZT.State.currentUser.wallet_bounty = profR.data.wallet_bounty;
+      }
+    } catch(e){}
+
+    /* Enter circle */
+    var cr = await c.from('tutor_circles').select('*').eq('id', circleId).maybeSingle();
+    if(cr.data) ZT.State.currentCircle = cr.data;
+    var role = await c.rpc('tutor_my_role', { p_circle_id: circleId });
+    ZT.State.myRoleInCircle = (!role.error && role.data) ? role.data : 'student';
+
+    ZT.Modal.close();
+    ZT.haptic(20);
+    if(status === 'trial') ZT.toast('Trial started! ' + 7 + ' days free.');
+    else if(status === 'free') ZT.toast('Joined!');
+    else ZT.toast('Joined! Payment confirmed.');
+    ZT.showView('feed');
+  } catch(e){
+    ZT.toast('Failed.', 'error');
+    ZT.Modal.close();
+  }
+}
 
 ZT.exitCircle = function(){
   ZT.State.currentCircle = null;
