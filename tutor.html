@@ -573,7 +573,7 @@ ZT.renderView = async function(view){
   if(view === 'more')          return ZT.renderMore();
   if(view === 'gaf-gmf-guide') return ZT.renderGAFGMFGuide();
   if(view === 'leaderboard')   return await ZT.renderLeaderboard();
-  if(view === 'pending-payments') return await ZT.renderPendingPayments();
+  if(view === 'members')       return ZT.renderMembersPage();
   return await ZT.renderLanding();
 };
 
@@ -3864,12 +3864,11 @@ ZT.renderMore = function(){
   var tiles = [];
   if(isTutor){
     tiles.push({ icon:'fa-solid fa-gear', color:'#6ee7b7', title:'Circle Settings', sub:'Edit name, description, banner', fn:'ZT.openCircleSettings()' });
-    tiles.push({ icon:'fa-solid fa-hourglass-half', color:'#a18554', title:'Pending Payments', sub:'Trial + monthly-pending members', fn:'ZT.showView(\'pending-payments\')' });
   }
   tiles.push(
     { icon:'fa-solid fa-hand-holding-dollar', color:'#10b981', title:'GAF & GMF Guide', sub:'How Owners + Members earn', fn:'ZT.showView(\'gaf-gmf-guide\')' },
     { icon:'fa-solid fa-trophy', color:'#fbbf24', title:'Leaderboard', sub:'Monthly · GMF routing', fn:'ZT.showView(\'leaderboard\')' },
-    { icon:'fa-solid fa-users', color:'#6ee7b7', title:'Members', sub:'See everyone in this circle', fn:'ZT.showMembers()' },
+    { icon:'fa-solid fa-users', color:'#6ee7b7', title:'Members', sub:'See everyone in this circle', fn:'ZT.showView(\'members\')' },
     { icon:'fa-solid fa-clipboard-check', color:'#10b981', title:'Assignments', sub:'Create · submit · grade', fn:'ZT.showView(\'assignments\')' },
     { icon:'fa-solid fa-list-check', color:'#60a5fa', title:'Quizzes', sub:'MCQ · auto-grade', fn:'ZT.showView(\'quizzes\')' },
     { icon:'fa-solid fa-crown', color:'#f0c975', title:'Plan · ' + (me && me.is_tutor_approved ? 'Pro' : 'Free'), sub: (me && me.is_tutor_approved ? 'Pro plan active' : 'Upgrade to Premium $25/mo'), fn:'ZT.showPlanInfo()' },
@@ -4066,117 +4065,6 @@ ZT.renderGAFGMFGuide = function(){
   return h;
 };
 
-/* ============================================================
-   PENDING PAYMENTS (E3) — tutor view
-   List of trial + pending_payment members. Tutor can:
-     · Report Abuse → moderation toast (placeholder)
-     · Remove with Reason → min 9 words, server validates
-   System auto-manages payment removal.
-   ============================================================ */
-ZT.renderPendingPayments = async function(){
-  var cir = ZT.State.currentCircle;
-  if(!cir) return ZT.renderNoCircleMessage('Pending Payments');
-  var role = ZT.State.myRoleInCircle || 'student';
-  var isTutor = (role === 'tutor' || role === 'admin' || role === 'owner');
-  if(!isTutor){ return '<div class="zt-empty"><p>Tutor access only.</p></div>'; }
-
-  var joinFee = Number(cir.join_fee) || 4;
-
-  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:20px;">';
-
-  h += '<div class="zt-circle-head">';
-  h += '<button class="back" onclick="ZT.showView(\'more\')"><i class="fa-solid fa-arrow-left"></i></button>';
-  h += '<div style="flex:1;min-width:0;">';
-  h += '<div class="nm">Pending Payments</div>';
-  h += '<div class="sub">' + ZT.escape(cir.name) + '</div>';
-  h += '</div></div>';
-
-  h += '<div style="padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);font-size:11.5px;color:#cbd5e1;line-height:1.65;">';
-  h += '<b style="color:#60a5fa;"><i class="fa-solid fa-circle-info"></i> System auto-manages payments</b><br>';
-  h += '· Trial: 7 days free · Day 8 auto-deduct $' + joinFee.toFixed(2) + '<br>';
-  h += '· Monthly: 1st of month · 10 days grace · Day 11 auto-remove<br>';
-  h += '<b style="color:#a18554;">Removal for non-payment is handled by the system. Use Remove below only for abuse or rule violations.</b>';
-  h += '</div>';
-
-  h += '<div id="zt-pending-host"><div style="padding:40px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:22px;"></i></div></div>';
-  h += '</div>';
-
-  setTimeout(async function(){
-    var host = document.getElementById('zt-pending-host');
-    if(!host) return;
-    var c = sb(); if(!c) return;
-    try {
-      var r = await c.from('tutor_members')
-        .select('id, user_id, payment_status, trial_ends_at, grace_started_at, is_active')
-        .eq('circle_id', cir.id)
-        .eq('is_active', true)
-        .in('payment_status', ['trial', 'pending_payment'])
-        .order('trial_ends_at', { ascending: true });
-
-      var rows = r.data || [];
-      if(!rows.length){
-        host.innerHTML = '<div style="padding:30px;border-radius:12px;background:#111827;border:1px dashed #1e293b;text-align:center;color:#94a3b8;font-size:12px;">No pending members. Everyone is paid up.</div>';
-        return;
-      }
-
-      var ids = rows.map(function(x){ return x.user_id; });
-      var pr = await c.from('profiles').select('id,name,username,avatar').in('id', ids);
-      (pr.data || []).forEach(function(p){ ZT.State.profileCache[p.id] = p; });
-
-      var hh = '<div style="font-size:11px;font-weight:900;color:#e2e8f0;padding:0 4px;">' + rows.length + ' PENDING</div>';
-
-      rows.forEach(function(m){
-        var p = ZT.profileOf(m.user_id);
-        var statusColor = m.payment_status === 'pending_payment' ? '#a16262' : '#a18554';
-        var statusLabel = '';
-        if(m.payment_status === 'trial' && m.trial_ends_at){
-          var msL = new Date(m.trial_ends_at).getTime() - Date.now();
-          var dL = Math.max(0, Math.ceil(msL / (24*60*60*1000)));
-          statusLabel = 'Trial · ' + dL + ' day' + (dL === 1 ? '' : 's') + ' left';
-        } else if(m.payment_status === 'pending_payment' && m.grace_started_at){
-          var gEnd = new Date(m.grace_started_at).getTime() + (10*24*60*60*1000);
-          var gL = Math.max(0, Math.ceil((gEnd - Date.now()) / (24*60*60*1000)));
-          statusLabel = 'Monthly pending · ' + gL + ' day' + (gL === 1 ? '' : 's') + ' grace left';
-        } else {
-          statusLabel = 'Pending';
-        }
-
-        hh += '<div style="padding:14px;border-radius:12px;background:#111827;border:1px solid ' + statusColor + '44;margin-bottom:10px;">';
-        hh += '<div style="display:flex;gap:10px;align-items:center;">';
-        hh += '<img src="' + ZT.escape(ZT.safeAvatar(p)) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
-        hh += '<div style="flex:1;min-width:0;">';
-        hh += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'User') + '</div>';
-        hh += '<div style="font-size:10.5px;color:' + statusColor + ';font-weight:800;margin-top:2px;">' + statusLabel + '</div>';
-        hh += '</div></div>';
-        hh += '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">';
-        hh += '<button data-zt-pending-report="' + ZT.escape(m.user_id) + '" style="flex:1;min-width:90px;padding:9px;border-radius:8px;border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.08);color:#60a5fa;font-weight:800;font-size:11px;cursor:pointer;">Report Abuse</button>';
-        hh += '<button data-zt-pending-remove="' + ZT.escape(m.id) + '" style="flex:1;min-width:90px;padding:9px;border-radius:8px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-weight:800;font-size:11px;cursor:pointer;">Remove with Reason</button>';
-        hh += '</div></div>';
-      });
-
-      host.innerHTML = hh;
-
-      host.querySelectorAll('[data-zt-pending-report]').forEach(function(b){
-        b.addEventListener('click', function(){
-          var uid = this.getAttribute('data-zt-pending-report');
-          ZT._pendingReportMember(uid);
-        });
-      });
-
-      host.querySelectorAll('[data-zt-pending-remove]').forEach(function(b){
-        b.addEventListener('click', function(){
-          var mid = this.getAttribute('data-zt-pending-remove');
-          ZT._pendingRemoveWithReason(mid, cir.id);
-        });
-      });
-
-    } catch(e){
-      host.innerHTML = '<div class="zt-empty"><p>Could not load.</p></div>';
-    }
-  }, 40);
-
-  return h;
-};
 
 /* Report Abuse — simple modal (placeholder for now) */
 ZT._pendingReportMember = function(userId){
@@ -4203,7 +4091,7 @@ ZT._pendingReportMember = function(userId){
     footer.style.cssText = 'display:flex;gap:8px;margin-top:14px;';
     footer.innerHTML =
       '<button onclick="ZT.Modal.close()" style="flex:1;padding:12px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Close</button>' +
-      '<button onclick="ZT.Modal.close();ZT.showMembers();" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Open Members</button>';
+      '<button onclick="ZT.Modal.close();ZT.showView(\'members\');" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:12px;cursor:pointer;">Open Members</button>';
     modal.appendChild(footer);
   }, 60);
 };
@@ -4269,7 +4157,7 @@ ZT._pendingRemoveWithReason = function(memberId, circleId){
         }
         ZT.toast('Member removed.');
         ZT.haptic(15);
-        setTimeout(function(){ ZT.showView('pending-payments'); }, 200);
+        setTimeout(function(){ ZT.showView('members'); }, 200);
         return true;
       } catch(e){
         ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
@@ -4539,25 +4427,166 @@ ZT._confirmPaymentModeChange = function(cir, oldMode, newMode, pendingFields){
   }, 60);
 };
 
-ZT.showMembers = async function(){
-  var c = sb(); if(!c) return;
-  var r = await c.from('tutor_members').select('user_id,role,joined_at').eq('circle_id', ZT.State.currentCircle.id).eq('is_active', true).order('joined_at', { ascending: true }).limit(200);
-  if(r.error){ ZT.toast('Failed.', 'error'); return; }
-  var list = r.data || [];
-  var ids = list.map(function(x){ return x.user_id; });
-  if(ids.length){
-    var pr = await c.from('profiles').select('id,name,username,avatar').in('id', ids);
-    (pr.data || []).forEach(function(p){ ZT.State.profileCache[p.id] = p; });
-  }
-  var html = '';
-  list.forEach(function(m){
-    var p = ZT.profileOf(m.user_id);
-    html += '<button onclick="ZT.openUserProfile(\'' + ZT.escape(m.user_id) + '\')" style="width:100%;display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #1e293b;background:transparent;border-left:0;border-right:0;border-top:0;cursor:pointer;text-align:left;">';
-    html += '<img src="' + ZT.escape(ZT.safeAvatar(p)) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">';
-    html += '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'User') + '</div>';
-        html += '<div style="font-size:10.5px;color:#94a3b8;">@' + ZT.escape(p.username || 'user') + ' · ' + ZT.escape(m.role) + '</div></div></button>';
+/* ============================================================
+   MEMBERS — Full page directory with payment status + filters
+   ============================================================ */
+ZT._memFilter = 'all';
+ZT._memData = [];
+
+ZT.renderMembersPage = function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return ZT.renderNoCircleMessage('Members');
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isOwner = (role === 'tutor' || role === 'admin' || role === 'owner');
+
+  var h = '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div class="zt-circle-head">';
+  h += '<button class="back" onclick="ZT.showView(\'more\')"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div class="nm">Members</div>';
+  h += '<div class="sub">' + ZT.escape(cir.name) + '</div>';
+  h += '</div></div>';
+
+  h += '<div id="zt-members-filters" style="display:flex;gap:6px;flex-wrap:wrap;">';
+  [
+    { k:'all',    l:'All'    },
+    { k:'unpaid', l:'Unpaid' },
+    { k:'paid',   l:'Paid'   },
+    { k:'online', l:'Online' },
+    { k:'recent', l:'Recent' }
+  ].forEach(function(f){
+    var active = ZT._memFilter === f.k;
+    h += '<button data-mem-filter="' + f.k + '" onclick="ZT._memFilter=\'' + f.k + '\';ZT.loadMembersList();" ' +
+         'style="padding:6px 12px;border-radius:16px;border:1px solid ' + (active ? '#10b981' : '#1e293b') + ';' +
+         'background:' + (active ? 'rgba(16,185,129,.12)' : '#0f172a') + ';' +
+         'color:' + (active ? '#10b981' : '#cbd5e1') + ';font-weight:800;font-size:11px;cursor:pointer;">' + f.l + '</button>';
   });
-  ZT.Modal.open({ title:'Members (' + list.length + ')', icon:'fa-solid fa-users', body: html || '<div class="zt-empty"><p>No members.</p></div>', footer:false });
+  h += '</div>';
+
+  h += '<div id="zt-members-host"><div style="padding:40px;text-align:center;color:#64748b;">' +
+       '<i class="fa-solid fa-circle-notch fa-spin" style="color:#10b981;font-size:22px;"></i></div></div>';
+  h += '</div>';
+
+  setTimeout(ZT.loadMembersList, 40);
+  return h;
+};
+
+ZT.loadMembersList = async function(){
+  var host = document.getElementById('zt-members-host');
+  if(!host) return;
+  var c = sb(); if(!c) return;
+  var cir = ZT.State.currentCircle; if(!cir) return;
+
+  /* Repaint filter chips */
+  document.querySelectorAll('[data-mem-filter]').forEach(function(b){
+    var active = b.getAttribute('data-mem-filter') === ZT._memFilter;
+    b.style.borderColor = active ? '#10b981' : '#1e293b';
+    b.style.background  = active ? 'rgba(16,185,129,.12)' : '#0f172a';
+    b.style.color       = active ? '#10b981' : '#cbd5e1';
+  });
+
+  try {
+    var r = await c.from('tutor_members')
+      .select('id, user_id, role, is_active, payment_status, trial_ends_at, grace_started_at, joined_at')
+      .eq('circle_id', cir.id)
+      .order('joined_at', { ascending: true })
+      .limit(500);
+
+    var rows = r.data || [];
+    var ids = rows.map(function(x){ return x.user_id; });
+    var profiles = {};
+    if(ids.length){
+      var pr = await c.from('profiles').select('id, name, username, avatar, last_seen_at').in('id', ids);
+      (pr.data || []).forEach(function(p){ profiles[p.id] = p; });
+    }
+    rows.forEach(function(m){
+      m._profile = profiles[m.user_id] || { id: m.user_id, name:'User', username:'user', avatar:null, last_seen_at:null };
+    });
+
+    var filter = ZT._memFilter || 'all';
+    var filtered = rows.filter(function(m){
+      var st = m.payment_status || 'trial';
+      if(filter === 'unpaid') return (st === 'trial' || st === 'pending_payment' || st === 'removed');
+      if(filter === 'paid')   return (st === 'paid');
+      if(filter === 'online'){
+        var ls = m._profile.last_seen_at;
+        return ls && (Date.now() - new Date(ls).getTime() < 5*60*1000);
+      }
+      if(filter === 'recent'){
+        return m.joined_at && (Date.now() - new Date(m.joined_at).getTime() < 30*24*60*60*1000);
+      }
+      return true;
+    });
+
+    filtered.sort(function(a, b){
+      var aUnpaid = (a.payment_status === 'trial' || a.payment_status === 'pending_payment' || a.payment_status === 'removed') ? 0 : 1;
+      var bUnpaid = (b.payment_status === 'trial' || b.payment_status === 'pending_payment' || b.payment_status === 'removed') ? 0 : 1;
+      if(aUnpaid !== bUnpaid) return aUnpaid - bUnpaid;
+      var an = (a._profile.name || a._profile.username || '').toLowerCase();
+      var bn = (b._profile.name || b._profile.username || '').toLowerCase();
+      return an.localeCompare(bn);
+    });
+
+    ZT._memData = filtered;
+
+    if(!filtered.length){
+      host.innerHTML = '<div class="zt-empty"><i class="fa-solid fa-users"></i><p>No members to show.</p></div>';
+      return;
+    }
+
+    function statusIcon(st){
+      if(st === 'paid')            return '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:13px;"></i>';
+      if(st === 'trial')           return '<i class="fa-solid fa-hourglass-half" style="color:#a18554;font-size:13px;"></i>';
+      if(st === 'pending_payment') return '<i class="fa-solid fa-triangle-exclamation" style="color:#a18554;font-size:13px;"></i>';
+      if(st === 'removed')         return '<i class="fa-solid fa-circle-xmark" style="color:#a16262;font-size:13px;"></i>';
+      return '<i class="fa-solid fa-circle" style="color:#64748b;font-size:13px;"></i>';
+    }
+
+    var role = ZT.State.myRoleInCircle || 'student';
+    var isOwner = (role === 'tutor' || role === 'admin' || role === 'owner');
+
+    var h = '<div style="font-size:11px;color:#64748b;font-weight:800;padding:0 4px;text-transform:uppercase;letter-spacing:.5px;">' + filtered.length + ' member' + (filtered.length === 1 ? '' : 's') + '</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">';
+
+    filtered.forEach(function(m){
+      var p = m._profile;
+      var online = p.last_seen_at && (Date.now() - new Date(p.last_seen_at).getTime() < 5*60*1000);
+      var dot = online ? '<span style="position:absolute;bottom:2px;right:2px;width:11px;height:11px;border-radius:50%;background:#10b981;border:2px solid #0f172a;"></span>' : '';
+      var av = p.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name || 'U') + '&background=111827&color=34d399');
+
+      h += '<div style="padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;align-items:center;gap:12px;">';
+      h += '<div onclick="ZT.openUserProfile(\'' + ZT.escape(m.user_id) + '\')" style="position:relative;width:44px;height:44px;flex-shrink:0;cursor:pointer;">';
+      h += '<img src="' + ZT.escape(av) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+      h += dot + '</div>';
+      h += '<div onclick="ZT.openUserProfile(\'' + ZT.escape(m.user_id) + '\')" style="flex:1;min-width:0;cursor:pointer;">';
+      h += '<div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(p.name || 'User') + ' ' + statusIcon(m.payment_status) + '</div>';
+      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">@' + ZT.escape(p.username || 'user') + ' · ' + ZT.escape(m.role || 'student') + '</div>';
+      h += '</div>';
+      if(isOwner){
+        h += '<button onclick="ZT._memberMenu(\'' + ZT.escape(m.id) + '\',\'' + ZT.escape(m.user_id) + '\')" ' +
+             'style="background:transparent;border:none;color:#64748b;cursor:pointer;width:32px;height:32px;border-radius:8px;font-size:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">' +
+             '<i class="fa-solid fa-ellipsis-vertical"></i></button>';
+      }
+      h += '</div>';
+    });
+
+    h += '</div>';
+    host.innerHTML = h;
+  } catch(e){
+    host.innerHTML = '<div class="zt-empty"><p>Could not load members.</p></div>';
+  }
+};
+
+ZT._memberMenu = function(memberId, userId){
+  var h = '';
+  h += '<button onclick="ZT.Modal.close();setTimeout(function(){ZT._pendingReportMember(\'' + ZT.escape(userId) + '\');},150)" ' +
+       'style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#60a5fa;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;">' +
+       '<i class="fa-solid fa-flag" style="width:20px;text-align:center;"></i><span>Report Abuse</span></button>';
+  h += '<button onclick="ZT.Modal.close();setTimeout(function(){ZT._pendingRemoveWithReason(\'' + ZT.escape(memberId) + '\',\'' + ZT.escape(ZT.State.currentCircle.id) + '\');},150)" ' +
+       'style="width:100%;text-align:left;background:transparent;border:none;padding:14px 12px;display:flex;align-items:center;gap:12px;color:#c9a5a5;font-size:13px;font-weight:700;cursor:pointer;border-radius:10px;">' +
+       '<i class="fa-solid fa-user-minus" style="width:20px;text-align:center;color:#a16262;"></i><span>Remove with Reason</span></button>';
+  ZT.Modal.open({ title:'Member options', icon:'fa-solid fa-ellipsis', body:h, footer:false });
 };
 
 ZT.showPlanInfo = function(){
