@@ -510,10 +510,12 @@ ZT.showView = function(view, param){
   }
   document.body.classList.toggle('zt-in-circle', !!ZT.State.currentCircle);
 
-    document.querySelectorAll('#zt-footer button').forEach(function(b){
-    b.classList.toggle('active', b.getAttribute('data-nav') === view);
-  });
-  if(typeof ZT._syncNavActive === 'function') ZT._syncNavActive(view);
+    /* Update ALL nav buttons (footer, sidebar, hamburger drawer) */
+    document.querySelectorAll('[data-nav]').forEach(function(b){
+      var isActive = b.getAttribute('data-nav') === view;
+      if(isActive) b.classList.add('active');
+      else b.classList.remove('active');
+    });
 
   
   var container = document.getElementById('zt-app');
@@ -1126,7 +1128,7 @@ ZT.renderCircleFeed = async function(){
   h += '<div style="flex:1;min-width:0;"><div class="nm">' + ZT.escape(cir.name) + '</div>';
   h += '<div class="sub">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div></div>';
   if(isTutor){
-    h += '<button onclick="ZT.openCircleSettings()" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-gear"></i></button>';
+    h += '<button onclick="ZT.openCircleSettings()" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;width:42px;height:42px;border-radius:10px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;"><i class="fa-solid fa-gear"></i></button>';
   }
   h += '</div>';
   if(isTutor && me){
@@ -3659,6 +3661,46 @@ ZT.openCircleSettings = function(){
   body += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-cs-desc" class="zt-textarea" maxlength="300" style="min-height:80px;">' + ZT.escape(cir.description || '') + '</textarea></div>';
   body += '<div class="zt-field"><label class="zt-label">Banner color</label>' + gradHtml + '</div>';
 
+  /* Circle-level default Share Bounty for all new posts */
+  body += '<div class="zt-st" style="margin-top:6px;">Circle Share Bounty (default for new posts)</div>';
+  body += '<div class="zt-field"><label class="zt-label">Reward per share</label>';
+  body += '<select id="zt-cs-share-bounty" class="zt-select">';
+  [0, 0.01, 0.02, 0.03, 0.04, 0.05].map(function(v){
+    var cur = Number(cir.default_share_bounty || 0);
+    return '<option value="' + v + '" ' + (Math.abs(cur - v) < 0.001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (off)' : '') + '</option>';
+  });
+  body += '</select></div>';
+  body += '<div class="zt-field"><label class="zt-label">Total share budget (0 = no cap)</label>';
+  body += '<select id="zt-cs-share-budget" class="zt-select">';
+  [0, 0.5, 1, 5, 10, 25, 50, 100].map(function(v){
+    var cur = Number(cir.default_share_budget_cap || 0);
+    return '<option value="' + v + '" ' + (Math.abs(cur - v) < 0.001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (no cap)' : '') + '</option>';
+  });
+  body += '</select></div>';
+  body += '<div style="font-size:10.5px;color:#64748b;margin-top:4px;line-height:1.5;margin-bottom:12px;">' +
+    'New posts in this circle will use these default bounty settings. Students and visitors earn this amount when they share posts.' +
+  '</div>';
+
+  /* Member Bounties — Tutor offers rewards to students */
+  body += '<div class="zt-st" style="margin-top:6px;">Member Bounties</div>';
+  body += '<div class="zt-field"><label class="zt-label">New member joining bounty</label>';
+  body += '<select id="zt-cs-join-bounty" class="zt-select">';
+  [0, 0.10, 0.25, 0.50, 1.00].map(function(v){
+    var cur = Number(cir.join_bounty || 0);
+    return '<option value="' + v + '" ' + (Math.abs(cur - v) < 0.001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (off)' : '') + '</option>';
+  });
+  body += '</select></div>';
+  body += '<div class="zt-field"><label class="zt-label">Milestone bounty (top scorer)</label>';
+  body += '<select id="zt-cs-milestone-bounty" class="zt-select">';
+  [0, 0.25, 0.50, 1.00, 2.00].map(function(v){
+    var cur = Number(cir.milestone_bounty || 0);
+    return '<option value="' + v + '" ' + (Math.abs(cur - v) < 0.001 ? 'selected' : '') + '>$' + v.toFixed(2) + (v === 0 ? ' (off)' : '') + '</option>';
+  });
+  body += '</select></div>';
+  body += '<div style="font-size:10.5px;color:#64748b;margin-bottom:14px;line-height:1.5;">' +
+    'Debited from your Cash wallet when a member qualifies.' +
+  '</div>';
+
   ZT.Modal.open({
     title:'Circle Settings', icon:'fa-solid fa-gear', submitLabel:'Save Changes',
     body: body,
@@ -3668,10 +3710,18 @@ ZT.openCircleSettings = function(){
       if(name.length < 2){ ZT.toast('Name required.', 'error'); return false; }
       var c = sb(); if(!c) return false;
       try {
+        var shareBounty = parseFloat((document.getElementById('zt-cs-share-bounty')||{}).value || '0') || 0;
+        var shareBudget = parseFloat((document.getElementById('zt-cs-share-budget')||{}).value || '0') || 0;
+        var joinBounty = parseFloat((document.getElementById('zt-cs-join-bounty')||{}).value || '0') || 0;
+        var milestoneBounty = parseFloat((document.getElementById('zt-cs-milestone-bounty')||{}).value || '0') || 0;
         var r = await c.from('tutor_circles').update({
           name: name,
           description: desc || null,
-          banner_gradient: ZT._createGradient || 'emerald'
+          banner_gradient: ZT._createGradient || 'emerald',
+          default_share_bounty: shareBounty,
+          default_share_budget_cap: shareBudget,
+          join_bounty: joinBounty,
+          milestone_bounty: milestoneBounty
         }).eq('id', cir.id).select().maybeSingle();
         if(r.error) throw r.error;
         ZT.State.currentCircle = r.data;
@@ -3892,15 +3942,66 @@ ZT.showGuide = function(){
   });
 };
 
-ZT.deleteCircleConfirm = async function(){
-  if(!confirm('Permanently delete this circle and all its content?')) return;
-  if(!confirm('Are you absolutely sure? This cannot be undone.')) return;
-  var c = sb(); if(!c) return;
-  var r = await c.from('tutor_circles').delete().eq('id', ZT.State.currentCircle.id);
-  if(r.error){ ZT.toast('Delete failed.', 'error'); return; }
-  ZT.toast('Circle deleted.');
-  ZT.State.currentCircle = null; ZT.State.myRoleInCircle = null;
-  ZT.showView('feed');
+ZT.deleteCircleConfirm = function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir){ ZT.toast('No circle open.', 'error'); return; }
+
+  ZT.Modal.open({
+    title: 'Delete Circle', icon: 'fa-solid fa-triangle-exclamation',
+    footer: false,
+    body:
+      '<div style="padding:14px;border-radius:10px;background:rgba(161,98,98,.08);border:1px solid rgba(161,98,98,.4);margin-bottom:14px;">' +
+        '<div style="font-size:13px;font-weight:900;color:#c9a5a5;margin-bottom:6px;">' +
+          '<i class="fa-solid fa-triangle-exclamation"></i> This action is permanent' +
+        '</div>' +
+        '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.6;">' +
+          'All posts, members, chat history, slides, assignments, and recordings will be deleted. ' +
+          'This cannot be undone.' +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:#94a3b8;line-height:1.6;margin-bottom:14px;">' +
+        'Type the circle name to confirm: <b style="color:#fff;">' + ZT.escape(cir.name) + '</b>' +
+      '</div>' +
+      '<input id="zt-del-circle-name" type="text" placeholder="Circle name" autocomplete="off" ' +
+        'style="width:100%;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:11px;color:#fff;font-size:13px;outline:none;box-sizing:border-box;">' +
+      '<div style="display:flex;gap:8px;margin-top:14px;">' +
+        '<button onclick="ZT.Modal.close()" style="flex:0 0 auto;padding:12px 18px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>' +
+        '<button id="zt-del-circle-submit" disabled style="flex:1;padding:12px;border-radius:10px;border:none;background:rgba(161,98,98,.2);color:#c9a5a5;font-weight:900;font-size:13px;cursor:not-allowed;opacity:.5;">Delete Forever</button>' +
+      '</div>'
+  });
+
+  setTimeout(function(){
+    var inp = document.getElementById('zt-del-circle-name');
+    var btn = document.getElementById('zt-del-circle-submit');
+    if(!inp || !btn) return;
+    inp.addEventListener('input', function(){
+      var matches = (this.value || '').trim() === cir.name;
+      btn.disabled = !matches;
+      btn.style.opacity = matches ? '1' : '.5';
+      btn.style.cursor = matches ? 'pointer' : 'not-allowed';
+      btn.style.background = matches ? 'rgba(161,98,98,.4)' : 'rgba(161,98,98,.2)';
+      btn.style.color = matches ? '#fff' : '#c9a5a5';
+    });
+    btn.addEventListener('click', async function(){
+      if(this.disabled) return;
+      this.disabled = true;
+      this.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Deleting…';
+      var c = ZT.sb(); if(!c) return;
+      var r = await c.from('tutor_circles').delete().eq('id', cir.id);
+      if(r.error){
+        ZT.toast('Delete failed.', 'error');
+        this.disabled = false;
+        this.textContent = 'Delete Forever';
+        return;
+      }
+      ZT.Modal.close();
+      ZT.toast('Circle deleted.');
+      ZT.haptic(20);
+      ZT.State.currentCircle = null;
+      ZT.State.myRoleInCircle = null;
+      ZT.showView('feed');
+    });
+  }, 60);
 };
 
 /* ============================================================
