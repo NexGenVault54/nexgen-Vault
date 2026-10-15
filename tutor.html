@@ -414,6 +414,39 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 @media (prefers-reduced-motion: reduce){
   .zv3-card,.zv3-qab,.zv3-tool{transition:none;}
 }
+
+/* ────────────────────────────────────────────────────────────
+   P8 Block 6 — Member Rating CSS
+   ──────────────────────────────────────────────────────────── */
+.zt-rating-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:5px 11px;border-radius:14px;
+  font-size:11px;font-weight:900;
+  cursor:pointer;transition:all .15s;
+  border:1px solid;
+}
+.zt-rating-chip:hover{transform:translateY(-1px);}
+.zt-rating-chip.high   {background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.4);color:#10b981;}
+.zt-rating-chip.mid    {background:rgba(161,133,84,.12);border-color:rgba(161,133,84,.4);color:#a18554;}
+.zt-rating-chip.low    {background:rgba(161,98,98,.12);border-color:rgba(161,98,98,.4);color:#a16262;}
+.zt-rating-chip.empty  {background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.3);color:#94a3b8;cursor:pointer;}
+.zt-rating-chip.readonly{cursor:default;}
+.zt-rating-chip.readonly:hover{transform:none;}
+
+.zt-star-row{display:flex;justify-content:center;gap:6px;padding:10px 0;flex-wrap:wrap;}
+.zt-star-btn{
+  width:36px;height:36px;border-radius:10px;
+  border:1px solid #1e293b;background:#0f172a;color:#64748b;
+  font-size:14px;font-weight:900;cursor:pointer;
+  transition:all .15s;display:inline-flex;align-items:center;justify-content:center;
+  padding:0;
+}
+.zt-star-btn:hover{border-color:rgba(251,191,36,.5);color:#fbbf24;}
+.zt-star-btn.active{
+  background:linear-gradient(135deg,#fbbf24,#f59e0b);
+  border-color:#fbbf24;color:#000;transform:scale(1.08);
+  box-shadow:0 4px 12px rgba(251,191,36,.3);
+}
 </style>
 </head>
 <body>
@@ -692,6 +725,7 @@ ZT.renderView = async function(view){
   if(view === 'live')          return ZT.State.currentCircle ? ZT.renderLive() : ZT.renderNoCircleMessage('Live');
   if(view === 'slides')        return ZT.State.currentCircle ? await ZT.renderSlidesList() : ZT.renderNoCircleMessage('Slides');
   if(view === 'dashboard' || view === 'more') return ZT.renderCircleDashboard();
+  if(view === 'member-profile')                return await ZT.renderMemberProfile();
   if(view === 'gaf-gmf-guide') return ZT.renderGAFGMFGuide();
   if(view === 'leaderboard')   return await ZT.renderLeaderboard();
   if(view === 'members')       return ZT.renderMembersPage();
@@ -4801,6 +4835,380 @@ ZT.renderMore = function(){
 };
 
 /* ============================================================
+   P8 Block 6 — MEMBER PROFILE PAGE
+   Opens when tapping a member in the directory.
+   Includes rating chip + rating sheet for the owner.
+   ============================================================ */
+ZT.renderMemberProfile = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir){ return ZT.renderNoCircleMessage('Member Profile'); }
+
+  var memberId = ZT.State.currentParam;
+  if(!memberId){ return ZT.renderNoCircleMessage('Member Profile'); }
+
+  var me    = ZT.State.currentUser;
+  var role  = ZT.State.myRoleInCircle || 'student';
+  var isOwner = (role === 'tutor' || role === 'admin' || role === 'owner');
+
+  /* Fetch member row + profile */
+  var c = sb(); if(!c){ return ZT.renderNoCircleMessage('Member Profile'); }
+
+  var memRow = null;
+  try {
+    var r1 = await c.from('tutor_members')
+      .select('id, user_id, role, is_active, payment_status, trial_ends_at, joined_at')
+      .eq('circle_id', cir.id)
+      .eq('user_id', memberId)
+      .maybeSingle();
+    memRow = r1.data || null;
+  } catch(e){}
+
+  var profile = ZT.State.profileCache[memberId];
+  if(!profile){
+    try {
+      var r2 = await c.from('profiles')
+        .select('id, name, username, avatar, profession, bio, last_seen_at')
+        .eq('id', memberId)
+        .maybeSingle();
+      if(r2.data){
+        profile = r2.data;
+        ZT.State.profileCache[memberId] = r2.data;
+      }
+    } catch(e){}
+  }
+  if(!profile){
+    profile = { id: memberId, name: 'Member', username: 'user' };
+  }
+
+  /* Fetch owner's latest rating of this member (for this month) */
+  var myRating = null;
+  try {
+    var month = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); })();
+    var r3 = await c.from('tutor_member_ratings')
+      .select('id, rating, comment, month')
+      .eq('circle_id', cir.id)
+      .eq('member_id', memberId)
+      .eq('rater_id', me.id)
+      .eq('month', month)
+      .maybeSingle();
+    myRating = r3.data || null;
+  } catch(e){}
+
+  var online = profile.last_seen_at && (Date.now() - new Date(profile.last_seen_at).getTime() < 5*60*1000);
+  var av = ZT.safeAvatar(profile);
+
+  var h = '';
+  h += '<div class="zv3-root">';
+
+  /* Header */
+  h += '<div class="zv3-hdr">';
+  h += '<button class="zv3-back" onclick="ZT.goBack()" title="Back"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<img class="zv3-av" src="' + ZT.escape(av) + '" alt="">';
+  h += '<div class="zv3-id">';
+  h += '<div class="zv3-nm">' + ZT.escape(profile.name || profile.username || 'Member') + '</div>';
+  h += '<div class="zv3-hd">@' + ZT.escape(profile.username || 'user') + (online ? ' · <span style="color:#10b981;">Online</span>' : '') + '</div>';
+  h += '</div>';
+  h += '</div>';
+
+  /* Info card */
+  h += '<div style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;display:flex;flex-direction:column;gap:8px;">';
+  if(profile.profession){
+    h += '<div style="font-size:12px;color:#cbd5e1;font-weight:800;">' + ZT.escape(profile.profession) + '</div>';
+  }
+  if(profile.bio){
+    h += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.5;">' + ZT.escape(profile.bio) + '</div>';
+  }
+  h += '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:#64748b;font-weight:800;">';
+  h += '<span><i class="fa-solid fa-user-tag"></i> ' + ZT.escape(memRow ? memRow.role : 'member') + '</span>';
+  if(memRow && memRow.joined_at){
+    var d = new Date(memRow.joined_at);
+    h += '<span><i class="fa-regular fa-calendar"></i> Joined ' + d.toLocaleDateString() + '</span>';
+  }
+  if(memRow && memRow.payment_status){
+    var ps = memRow.payment_status;
+    var pcol = ps === 'paid' ? '#10b981' : ps === 'trial' ? '#a18554' : ps === 'removed' ? '#a16262' : '#94a3b8';
+    h += '<span style="color:' + pcol + ';"><i class="fa-solid fa-circle" style="font-size:7px;"></i> ' + ZT.escape(ps) + '</span>';
+  }
+  h += '</div>';
+  h += '</div>';
+
+  /* Rating section */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-star" style="color:#fbbf24;"></i><span>Rating</span><div class="ln"></div></div>';
+  h += '<div style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;">';
+
+  if(myRating){
+    var col = myRating.rating >= 8 ? 'high' : myRating.rating >= 5 ? 'mid' : 'low';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">';
+    h += '<div>';
+    h += '<div style="font-size:11px;color:#94a3b8;font-weight:800;text-transform:uppercase;letter-spacing:.5px;">Your rating this month</div>';
+    h += '<div class="zt-rating-chip ' + col + (isOwner ? '' : ' readonly') + '" style="margin-top:8px;"' + (isOwner ? ' onclick="ZT.openMemberRatingSheet(\'' + ZT.escape(memberId) + '\')"' : '') + '>';
+    h += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + myRating.rating + ' / 10';
+    h += '</div>';
+    if(myRating.comment){
+      h += '<div style="font-size:11px;color:#cbd5e1;margin-top:10px;line-height:1.5;font-style:italic;">"' + ZT.escape(myRating.comment) + '"</div>';
+    }
+    h += '</div>';
+    h += '</div>';
+    if(isOwner){
+      h += '<button onclick="ZT.openMemberRatingSheet(\'' + ZT.escape(memberId) + '\')" style="width:100%;margin-top:12px;padding:11px;border-radius:10px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fbbf24;font-weight:900;font-size:12px;cursor:pointer;">';
+      h += '<i class="fa-solid fa-pen"></i> Update rating</button>';
+    }
+  } else {
+    if(isOwner){
+      h += '<div style="font-size:12px;color:#94a3b8;line-height:1.5;margin-bottom:10px;">You have not rated this member yet this month. Rating awards them points toward the leaderboard.</div>';
+      h += '<button onclick="ZT.openMemberRatingSheet(\'' + ZT.escape(memberId) + '\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;font-weight:900;font-size:12px;cursor:pointer;">';
+      h += '<i class="fa-solid fa-star"></i> Rate this member</button>';
+    } else {
+      h += '<div style="font-size:12px;color:#94a3b8;text-align:center;padding:10px 0;">No rating yet this month.</div>';
+    }
+  }
+  h += '</div>';
+
+  /* Other ratings (from members, read-only display) */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-users" style="color:#60a5fa;"></i><span>Community Ratings</span><div class="ln"></div></div>';
+  h += '<div id="zt-mp-community-ratings" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;min-height:60px;">';
+  h += '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">Loading…</div>';
+  h += '</div>';
+
+  /* Actions */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-bolt" style="color:#10b981;"></i><span>Actions</span><div class="ln"></div></div>';
+  h += '<div class="zv3-tools">';
+
+  h += '<button class="zv3-tool" onclick="ZT.openUserProfile(\'' + ZT.escape(memberId) + '\')">';
+  h += '<div class="zv3-tool-ic" style="background:rgba(16,185,129,.14);color:#10b981;"><i class="fa-solid fa-id-card"></i></div>';
+  h += '<span class="zv3-tool-t">Full Profile</span></button>';
+
+  if(isOwner){
+    h += '<button class="zv3-tool" onclick="ZT._memberMenu(\'' + ZT.escape(memRow ? memRow.id : memberId) + '\',\'' + ZT.escape(memberId) + '\')">';
+    h += '<div class="zv3-tool-ic" style="background:rgba(161,98,98,.14);color:#a16262;"><i class="fa-solid fa-ellipsis"></i></div>';
+    h += '<span class="zv3-tool-t">More Options</span></button>';
+  }
+
+  h += '</div>';
+
+  h += '</div>';
+
+  /* Load community ratings async */
+  setTimeout(function(){ ZT._loadCommunityRatings(memberId); }, 60);
+
+  return h;
+};
+
+/* ────────────────────────────────────────────────────────────
+   Load community ratings for member profile
+   ──────────────────────────────────────────────────────────── */
+ZT._loadCommunityRatings = async function(memberId){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return;
+  var c = sb(); if(!c) return;
+  var host = document.getElementById('zt-mp-community-ratings');
+  if(!host) return;
+
+  try {
+    var r = await c.from('tutor_member_ratings')
+      .select('rating, comment, month, rater_role, created_at')
+      .eq('circle_id', cir.id)
+      .eq('member_id', memberId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    var rows = r.data || [];
+    /* Hide the current user's own rating — already shown above */
+    var me = ZT.State.currentUser;
+    rows = rows.filter(function(x){ return true; });
+
+    if(!rows.length){
+      host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">No ratings from community yet.</div>';
+      return;
+    }
+
+    /* Compute average of owner ratings only (for display) */
+    var ownerRows = rows.filter(function(x){ return x.rater_role === 'owner'; });
+    var avg = 0;
+    if(ownerRows.length){
+      var sum = 0;
+      ownerRows.forEach(function(x){ sum += Number(x.rating) || 0; });
+      avg = sum / ownerRows.length;
+    }
+
+    var h = '';
+    if(ownerRows.length){
+      h += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px;">';
+      h += '<div style="font-size:24px;font-weight:900;color:#fbbf24;">' + avg.toFixed(1) + '</div>';
+      h += '<div style="font-size:12px;color:#94a3b8;font-weight:700;">/ 10 · ' + ownerRows.length + ' rating' + (ownerRows.length === 1 ? '' : 's') + ' from owner</div>';
+      h += '</div>';
+    }
+
+    var shown = rows.slice(0, 5);
+    shown.forEach(function(x){
+      var rating = Number(x.rating) || 0;
+      var color = rating >= 8 ? '#10b981' : rating >= 5 ? '#fbbf24' : '#a16262';
+      h += '<div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04);">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+      h += '<div style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:10px;background:' + color + '22;color:' + color + ';font-size:12px;font-weight:900;">';
+      h += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + rating + ' / 10';
+      h += '</div>';
+      h += '<div style="font-size:9.5px;color:#64748b;font-weight:800;">' + ZT.escape(x.month || '') + '</div>';
+      h += '</div>';
+      if(x.comment){
+        h += '<div style="font-size:11.5px;color:#cbd5e1;margin-top:6px;line-height:1.5;font-style:italic;">"' + ZT.escape(x.comment) + '"</div>';
+      }
+      h += '</div>';
+    });
+
+    host.innerHTML = h;
+  } catch(e){
+    console.warn('[community ratings]', e);
+    host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">Could not load.</div>';
+  }
+};
+
+/* ────────────────────────────────────────────────────────────
+   Rating sheet — owner gives rating (1-10) + comment
+   Saves to tutor_member_ratings, SQL trigger awards points
+   ──────────────────────────────────────────────────────────── */
+ZT.openMemberRatingSheet = async function(memberId){
+  var cir = ZT.State.currentCircle;
+  var me  = ZT.State.currentUser;
+  if(!cir || !me){ ZT.toast('Not ready.', 'error'); return; }
+  var role = ZT.State.myRoleInCircle || 'student';
+  if(!(role === 'tutor' || role === 'admin' || role === 'owner')){
+    ZT.toast('Only the owner can rate members.', 'error');
+    return;
+  }
+
+  var c = sb(); if(!c) return;
+  var profile = ZT.State.profileCache[memberId] || { name: 'Member', username: 'user' };
+
+  /* Fetch existing rating for pre-fill */
+  var existing = null;
+  var month = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); })();
+  try {
+    var r = await c.from('tutor_member_ratings')
+      .select('rating, comment')
+      .eq('circle_id', cir.id)
+      .eq('member_id', memberId)
+      .eq('rater_id', me.id)
+      .eq('month', month)
+      .maybeSingle();
+    existing = r.data || null;
+  } catch(e){}
+
+  var h = '';
+  h += '<div class="zt-overlay" onclick="if(event.target===this)ZT.Modal.close()">';
+  h += '<div class="zt-modal" style="max-width:460px;">';
+  h += '<div class="zt-mhead">';
+  h += '<div class="zt-mtitle"><i class="fa-solid fa-star" style="color:#fbbf24;"></i> Rate ' + ZT.escape(profile.name || profile.username || 'Member') + '</div>';
+  h += '<button class="zt-mclose" onclick="ZT.Modal.close()"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+
+  h += '<div style="padding:10px 0 6px;text-align:center;font-size:11.5px;color:#94a3b8;line-height:1.5;">';
+  h += 'Rating gives points to this member — up to <b style="color:#fbbf24;">50 points</b> at 10/10.';
+  h += '</div>';
+
+  /* Star buttons 1-10 */
+  h += '<div class="zt-star-row" id="zt-rate-stars">';
+  for(var i = 1; i <= 10; i++){
+    var active = existing && existing.rating >= i ? ' active' : '';
+    h += '<button type="button" class="zt-star-btn' + active + '" data-rate="' + i + '">' + i + '</button>';
+  }
+  h += '</div>';
+
+  /* Comment */
+  h += '<label class="zt-label" style="margin-top:14px;">Comment (optional)</label>';
+  h += '<textarea id="zt-rate-comment" class="zt-textarea" maxlength="300" placeholder="Brief note about this member\'s contribution.">' + ZT.escape(existing && existing.comment ? existing.comment : '') + '</textarea>';
+
+  /* Submit */
+  h += '<div style="display:flex;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #1e293b;">';
+  h += '<button type="button" onclick="ZT.Modal.close()" style="flex:0 0 auto;min-width:100px;padding:13px 18px;border-radius:10px;font-size:12.5px;font-weight:900;background:rgba(30,41,59,.9);border:1px solid #334155;color:#cbd5e1;cursor:pointer;">Cancel</button>';
+  h += '<button type="button" id="zt-rate-submit" style="flex:1;padding:13px 18px;border-radius:10px;font-size:13px;font-weight:900;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;border:none;cursor:pointer;">';
+  h += '<i class="fa-solid fa-check"></i> ' + (existing ? 'Update Rating' : 'Save Rating');
+  h += '</button>';
+  h += '</div>';
+
+  h += '</div></div>';
+
+  ZT.Modal.open({ title:'', icon:'fa-solid fa-star', body: h, footer: false });
+
+  /* Wire star buttons */
+  setTimeout(function(){
+    var selected = existing ? existing.rating : 0;
+    var stars = document.querySelectorAll('#zt-rate-stars .zt-star-btn');
+    stars.forEach(function(btn){
+      btn.addEventListener('click', function(){
+        selected = parseInt(this.getAttribute('data-rate'), 10);
+        stars.forEach(function(s){
+          var v = parseInt(s.getAttribute('data-rate'), 10);
+          if(v <= selected) s.classList.add('active');
+          else s.classList.remove('active');
+        });
+      });
+    });
+
+    var submit = document.getElementById('zt-rate-submit');
+    if(!submit) return;
+    submit.addEventListener('click', async function(){
+      if(!selected || selected < 1 || selected > 10){
+        ZT.toast('Please pick a rating 1-10.', 'error');
+        return;
+      }
+      var comment = (document.getElementById('zt-rate-comment') || {}).value || '';
+      comment = comment.trim();
+
+      submit.disabled = true;
+      submit.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Saving…';
+
+      try {
+        if(existing){
+          /* Update */
+          var upd = await c.from('tutor_member_ratings')
+            .update({
+              rating: selected,
+              comment: comment || null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('circle_id', cir.id)
+            .eq('member_id', memberId)
+            .eq('rater_id', me.id)
+            .eq('month', month);
+          if(upd.error) throw upd.error;
+        } else {
+          /* Insert */
+          var ins = await c.from('tutor_member_ratings')
+            .insert({
+              circle_id: cir.id,
+              member_id: memberId,
+              rater_id: me.id,
+              rater_role: 'owner',
+              rating: selected,
+              comment: comment || null,
+              month: month
+            });
+          if(ins.error) throw ins.error;
+        }
+
+        ZT.toast('Rating saved · ' + (selected * 5) + ' points awarded');
+        ZT.Modal.close();
+
+        /* Re-render page */
+        ZT.showView('member-profile', memberId);
+
+        /* Refresh leaderboard if open elsewhere */
+        if(ZT.State.currentView === 'leaderboard'){
+          setTimeout(function(){ ZT.showView('leaderboard'); }, 300);
+        }
+      } catch(e){
+        console.warn('[rate submit]', e);
+        ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+        submit.disabled = false;
+        submit.innerHTML = '<i class="fa-solid fa-check"></i> ' + (existing ? 'Update Rating' : 'Save Rating');
+      }
+    });
+  }, 60);
+};
+
+
+/* ============================================================
    MONTHLY LEADERBOARD + SPF ROUTING
    ============================================================ */
 ZT.renderLeaderboard = async function(){
@@ -5495,10 +5903,10 @@ ZT.loadMembersList = async function(){
       var av = p.avatar || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name || 'U') + '&background=111827&color=34d399');
 
       h += '<div style="padding:12px;border-radius:12px;background:#111827;border:1px solid #1e293b;display:flex;align-items:center;gap:12px;">';
-      h += '<div onclick="ZT.openUserProfile(\'' + ZT.escape(m.user_id) + '\')" style="position:relative;width:44px;height:44px;flex-shrink:0;cursor:pointer;">';
+      h += '<div onclick="ZT.showView(\'member-profile\',\'' + ZT.escape(m.user_id) + '\')" style="position:relative;width:44px;height:44px;flex-shrink:0;cursor:pointer;">';
       h += '<img src="' + ZT.escape(av) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
       h += dot + '</div>';
-      h += '<div onclick="ZT.openUserProfile(\'' + ZT.escape(m.user_id) + '\')" style="flex:1;min-width:0;cursor:pointer;">';
+      h += '<div onclick="ZT.showView(\'member-profile\',\'' + ZT.escape(m.user_id) + '\')" style="flex:1;min-width:0;cursor:pointer;">';
       h += '<div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(p.name || 'User') + ' ' + statusIcon(m._display_status) + '</div>';
       h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">@' + ZT.escape(p.username || 'user') + ' · ' + ZT.escape(m.role || 'student') + '</div>';
       h += '</div>';
