@@ -612,25 +612,25 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .co-act:hover{transform:translateY(-1px);}
 
 /* ════════════════════════════════════════════════════════════
-   P9 Block 3 — FEED TOP GRID (avatar tile + banner tile)
-   Same scale and aspect as trending grid on public spark page.
+   P9 Block 3 — FEED TOP GRID
+   SPACE card logic (2:3 portrait). Grid capped at 480px.
    ════════════════════════════════════════════════════════════ */
 .zt-feed-topgrid{
   display:grid;
   grid-template-columns:repeat(3,1fr);
   gap:8px;
-  margin-bottom:14px;
+  max-width:480px;
+  width:100%;
+  margin:0 auto 14px;
 }
-
-/* Tile 1 — Owner avatar (portrait 3:4) */
 .zt-feed-avtile{
-  aspect-ratio:3/4;
+  aspect-ratio:2/3;
   border-radius:14px;
   overflow:hidden;
   position:relative;
-  background:#0f172a;
+  background:#131c30;
   cursor:pointer;
-  border:1px solid rgba(16,185,129,.35);
+  border:1px solid #1e293b;
   transition:transform .15s;
 }
 .zt-feed-avtile:active{transform:scale(.97);}
@@ -646,11 +646,8 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
   color:#fbbf24;font-size:8px;font-weight:900;
   letter-spacing:.5px;text-transform:uppercase;
 }
-
-/* Tile 2+3 — Banner (landscape 3:2, spans 2 cols, same height) */
 .zt-feed-bantile{
   grid-column:span 2;
-  aspect-ratio:3/2;
   border-radius:14px;
   overflow:hidden;
   position:relative;
@@ -714,10 +711,72 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 .zt-feed-bantile-rating i{font-size:9px;}
 
 /* ════════════════════════════════════════════════════════════
-   P9 Block 3 — Circle Identity editor reuse
+   P9 Block 3 — Dashboard CIRCLE card (2:3, naam + description)
    ════════════════════════════════════════════════════════════ */
-.zt-ci-row{padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05);}
-.zt-ci-row:last-child{border-bottom:none;}
+.zt-cicard{
+  aspect-ratio:2/3;
+  max-width:220px;
+  width:100%;
+  margin:0 auto;
+  border-radius:16px;
+  overflow:hidden;
+  position:relative;
+  cursor:pointer;
+  border:1px solid rgba(16,185,129,.35);
+  background:#131c30;
+  transition:all .15s;
+}
+.zt-cicard:hover{border-color:rgba(16,185,129,.6);}
+.zt-cicard:active{transform:scale(.99);}
+.zt-cicard-media{
+  position:absolute;inset:0;
+  background-size:cover;
+  background-position:center;
+}
+.zt-cicard-grad{
+  position:absolute;inset:0;
+  background:linear-gradient(to top,rgba(0,0,0,.88) 0%,rgba(0,0,0,.35) 45%,rgba(0,0,0,.05) 75%);
+  pointer-events:none;
+}
+.zt-cicard-badge{
+  position:absolute;top:10px;left:10px;
+  padding:4px 10px;border-radius:8px;
+  background:rgba(0,0,0,.62);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  font-size:8.5px;font-weight:900;color:#10b981;
+  letter-spacing:.5px;text-transform:uppercase;
+  display:inline-flex;align-items:center;gap:5px;
+  z-index:3;
+}
+.zt-cicard-badge i{font-size:9px;}
+.zt-cicard-edit{
+  position:absolute;top:10px;right:10px;
+  width:32px;height:32px;border-radius:50%;
+  background:rgba(0,0,0,.62);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  border:1px solid rgba(255,255,255,.18);
+  color:#fff;font-size:12px;cursor:pointer;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  z-index:3;
+}
+.zt-cicard-edit:hover{background:rgba(0,0,0,.8);border-color:rgba(255,255,255,.35);}
+.zt-cicard-body{
+  position:absolute;left:0;right:0;bottom:0;
+  padding:14px 16px;z-index:2;color:#fff;
+}
+.zt-cicard-title{
+  font-size:15px;font-weight:900;color:#fff;
+  text-shadow:0 2px 8px rgba(0,0,0,.7);
+  line-height:1.15;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.zt-cicard-sub{
+  font-size:10.5px;color:rgba(255,255,255,.85);
+  margin-top:4px;line-height:1.5;
+  display:-webkit-box;-webkit-line-clamp:3;
+  -webkit-box-orient:vertical;overflow:hidden;
+  text-shadow:0 1px 4px rgba(0,0,0,.6);
+}
 </style>
 </head>
 <body>
@@ -1878,19 +1937,31 @@ ZT.renderCircleFeed = async function(){
   var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var av = cir.avatar_url || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(cir.name) + '&background=111827&color=a78bfa&bold=true');
   var bannerCss = ZT.gradientCss(cir.banner_gradient || 'emerald');
+
+  /* Fetch owner profile separately — NEVER fallback to currentUser */
+  var ownerProfile = ZT.State.profileCache[cir.owner_id];
+  if(!ownerProfile || !ownerProfile.id || ownerProfile.id !== cir.owner_id){
+    try {
+      var _rp = await sb().from('profiles')
+        .select('id,name,username,avatar')
+        .eq('id', cir.owner_id).maybeSingle();
+      if(_rp.data){ ownerProfile = _rp.data; ZT.State.profileCache[cir.owner_id] = _rp.data; }
+    } catch(e){}
+  }
   var ownerMeta = ZT.State.circleOwnerMeta || {};
-  var ownerProfile = ZT.State.profileCache[cir.owner_id] || ZT.State.currentUser;
-  var ownerAv = ownerMeta.avatar || (ownerProfile ? ZT.safeAvatar(ownerProfile) : 'https://ui-avatars.com/api/?name=O&background=111827&color=34d399');
+  var ownerAv = (ownerMeta && ownerMeta.avatar) ||
+    (ownerProfile ? ZT.safeAvatar(ownerProfile) : 'https://ui-avatars.com/api/?name=O&background=111827&color=34d399');
+
   var h = '';
   h += '<div class="zt-feed-topgrid">';
 
-  /* Tile 1 — Owner avatar */
+  /* Tile 1 — Owner About (avatar only) */
   h += '<div class="zt-feed-avtile" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')">';
   h += '<img src="' + ZT.escape(ownerAv) + '" alt="">';
   h += '<span class="owner-badge">Owner</span>';
   h += '</div>';
 
-  /* Tile 2+3 — Banner */
+  /* Tile 2-3 — Banner */
   h += '<div class="zt-feed-bantile" style="background:' + bannerCss + ';" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')">';
   h += '<div class="zt-feed-bantile-overlay"></div>';
   h += '<div class="zt-feed-bantile-actions">';
@@ -1904,7 +1975,7 @@ ZT.renderCircleFeed = async function(){
   h += '<div class="zt-feed-bantile-content">';
   h += '<div class="zt-feed-bantile-name">' + ZT.escape(cir.name) + '</div>';
   h += '<div class="zt-feed-bantile-meta">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div>';
-  h += '<span id="zt-feed-rating-chip" class="zt-feed-bantile-rating" style="display:none;" onclick="event.stopPropagation();ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')"></span>';
+  h += '<span id="zt-feed-rating-chip" class="zt-feed-bantile-rating" style="display:none;" onclick="event.stopPropagation();ZT._scrollFeedToOwnerRating()"></span>';
   h += '</div>';
   h += '</div>';
 
@@ -1997,6 +2068,21 @@ ZT._feedLoadRatingChip = async function(ownerId){
   } catch(e){
     console.warn('[feed rating chip]', e);
   }
+};
+
+/* Chip click → owner profile, scroll to ratings block only */
+ZT._scrollFeedToOwnerRating = function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return;
+  ZT.showView('circle-owner-profile', cir.owner_id);
+  setTimeout(function(){
+    var host = document.getElementById('co-ratings-host');
+    if(host) host.scrollIntoView({ behavior:'smooth', block:'start' });
+  }, 700);
+  setTimeout(function(){
+    var host = document.getElementById('co-ratings-host');
+    if(host) host.scrollIntoView({ behavior:'smooth', block:'start' });
+  }, 1400);
 };
 
 
@@ -4917,6 +5003,7 @@ ZT._dashLoadActivity = async function(){
 /* ────────────────────────────────────────────────────────────
    Circle Identity — loader + editor
    ──────────────────────────────────────────────────────────── */
+
 ZT._dashLoadCircleIdentity = async function(){
   var cir = ZT.State.currentCircle;
   if(!cir) return;
@@ -4924,45 +5011,41 @@ ZT._dashLoadCircleIdentity = async function(){
   var host = document.getElementById('zt-ci-host');
   if(!host) return;
 
-  var meta = {};
+  /* Also pre-load owner meta for feed grid — cheap call */
   try {
-    var r = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
-    if(!r.error && r.data) meta = r.data || {};
-    ZT.State.circleOwnerMeta = meta;
+    var rm = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
+    if(!rm.error && rm.data) ZT.State.circleOwnerMeta = rm.data || {};
   } catch(e){}
 
-  var me = ZT.State.currentUser;
-  var ownerAv = meta.avatar || (me ? ZT.safeAvatar(me) : 'https://ui-avatars.com/api/?name=O&background=111827&color=34d399');
-  var hasData = meta.qualification || meta.experience || meta.bio || meta.philosophy ||
-                (Array.isArray(meta.expertise) && meta.expertise.length > 0);
+  /* Circle card: use circle avatar as thumbnail, else banner gradient */
+  var circleAv = cir.avatar_url || null;
+  var cardBg;
+  if(circleAv){
+    cardBg = 'background-image:url(' + ZT.escape(circleAv) + '), ' + ZT.gradientCss(cir.banner_gradient || 'emerald') + ';';
+  } else {
+    cardBg = 'background:' + ZT.gradientCss(cir.banner_gradient || 'emerald') + ';';
+  }
 
   var h = '';
-  h += '<div style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;">';
-  h += '<div style="display:flex;gap:14px;align-items:center;">';
-  h += '<img src="' + ZT.escape(ownerAv) + '" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid rgba(16,185,129,.45);flex-shrink:0;">';
-  h += '<div style="flex:1;min-width:0;">';
-  if(hasData){
-    h += '<div style="font-size:13px;font-weight:900;color:#fff;">' + ZT.escape((me && me.name) || 'You') + '</div>';
-    if(meta.qualification){
-      h += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(meta.qualification) + '</div>';
-    }
-    if(meta.experience){
-      h += '<div style="font-size:11px;color:#94a3b8;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(meta.experience) + '</div>';
-    }
-  } else {
-    h += '<div style="font-size:13px;font-weight:900;color:#fff;">Set up your Owner profile</div>';
-    h += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;line-height:1.5;">Members see this when they tap your Circle banner or avatar.</div>';
-  }
-  h += '</div>';
-  h += '<button onclick="ZT.openCircleIdentityEditor()" style="padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;flex-shrink:0;">';
-  h += '<i class="fa-solid ' + (hasData ? 'fa-pen' : 'fa-plus') + '"></i> ' + (hasData ? 'Edit' : 'Set Up');
-  h += '</button>';
+  h += '<div class="zt-cicard" onclick="ZT.openCircleSettings()">';
+  h += '<div class="zt-cicard-media" style="' + cardBg + '"></div>';
+  h += '<div class="zt-cicard-grad"></div>';
+  h += '<div class="zt-cicard-badge"><i class="fa-solid fa-circle"></i> Circle</div>';
+  h += '<button class="zt-cicard-edit" onclick="event.stopPropagation();ZT.openCircleSettings()" title="Edit Circle"><i class="fa-solid fa-gear"></i></button>';
+  h += '<div class="zt-cicard-body">';
+  h += '<div class="zt-cicard-title">' + ZT.escape(cir.name || 'Circle') + '</div>';
+  h += '<div class="zt-cicard-sub">' + ZT.escape(cir.description || 'No description yet. Tap to add.') + '</div>';
   h += '</div>';
   h += '</div>';
+
+  /* Owner About edit button below the card */
+  h += '<button onclick="ZT.openOwnerAboutEditor()" style="width:100%;max-width:220px;margin:10px auto 0;display:block;padding:10px;border-radius:10px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fbbf24;font-weight:900;font-size:11.5px;cursor:pointer;">';
+  h += '<i class="fa-solid fa-user-pen"></i> Edit Owner About</button>';
+
   host.innerHTML = h;
 };
 
-ZT.openCircleIdentityEditor = async function(){
+ZT.openOwnerAboutEditor = async function(){
   var cir = ZT.State.currentCircle;
   if(!cir) return;
   var role = ZT.State.myRoleInCircle || 'student';
@@ -5011,8 +5094,8 @@ ZT.openCircleIdentityEditor = async function(){
   body += '<textarea id="zi-phil" class="zt-textarea" maxlength="300" placeholder="What is your approach to teaching?" style="min-height:70px;">' + ZT.escape(phil) + '</textarea>';
 
   ZT.Modal.open({
-    title: 'Circle Identity',
-    icon: 'fa-solid fa-id-card',
+    title: 'Owner About',
+    icon: 'fa-solid fa-user-pen',
     body: body,
     submitLabel: 'Save',
     onOpen: function(){
@@ -5071,7 +5154,7 @@ ZT.openCircleIdentityEditor = async function(){
         }
         ZT._identityAvatarFile = null;
         ZT.State.circleOwnerMeta = newMeta;
-        ZT.toast('Circle identity saved.');
+        ZT.toast('Owner About saved.');
         ZT.showView('dashboard');
         return true;
       } catch(e){
@@ -5081,6 +5164,9 @@ ZT.openCircleIdentityEditor = async function(){
     }
   });
 };
+
+/* Old name kept as alias — kuch jagah se call ho sakta hai */
+ZT.openCircleIdentityEditor = ZT.openOwnerAboutEditor;
 
 /* ────────────────────────────────────────────────────────────
    MEMBER DASHBOARD — full version
@@ -5794,6 +5880,9 @@ ZT.renderCircleOwnerProfile = async function(){
   h += '<div class="co-banner-overlay"></div>';
   h += '<button class="co-back" onclick="ZT.goBack()" title="Back"><i class="fa-solid fa-arrow-left"></i></button>';
   h += '<button class="co-share" onclick="ZT._copyOwnerProfileLink(\'' + ZT.escape(ownerId) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
+  if(me && me.id === ownerId){
+    h += '<button class="co-share" onclick="ZT.openOwnerAboutEditor()" title="Edit Owner About" style="right:58px;"><i class="fa-solid fa-pen"></i></button>';
+  }
   h += '</div>';
 
   /* ── Avatar + Name ── */
