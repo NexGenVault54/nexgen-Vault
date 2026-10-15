@@ -4208,24 +4208,24 @@ ZT._dashLoadMoneyBar = async function(){
     monthStart.setHours(0,0,0,0);
     var monthISO = monthStart.toISOString();
 
-    /* This month's owner share — try tutor_share from join fees */
+    /* This month: SUM(amount_paid) * 0.25 (owner share) */
     var r1 = await c.from('tutor_student_join_fees')
-      .select('tutor_share')
+      .select('amount_paid')
       .eq('circle_id', cir.id)
-      .gte('created_at', monthISO);
+      .gte('paid_at', monthISO);
     var monthSum = 0;
-    (r1.data || []).forEach(function(x){ monthSum += Number(x.tutor_share) || 0; });
+    (r1.data || []).forEach(function(x){ monthSum += Number(x.amount_paid) || 0; });
     var el1 = document.getElementById('zt-dash-rev-month');
-    if(el1) el1.textContent = '$' + monthSum.toFixed(2);
+    if(el1) el1.textContent = '$' + (monthSum * 0.25).toFixed(2);
 
-    /* All-time owner share */
+    /* All time: SUM(amount_paid) * 0.25 */
     var r2 = await c.from('tutor_student_join_fees')
-      .select('tutor_share')
+      .select('amount_paid')
       .eq('circle_id', cir.id);
     var allSum = 0;
-    (r2.data || []).forEach(function(x){ allSum += Number(x.tutor_share) || 0; });
+    (r2.data || []).forEach(function(x){ allSum += Number(x.amount_paid) || 0; });
     var el2 = document.getElementById('zt-dash-rev-all');
-    if(el2) el2.textContent = '$' + allSum.toFixed(2);
+    if(el2) el2.textContent = '$' + (allSum * 0.25).toFixed(2);
 
     /* Active members */
     var r3 = await c.from('tutor_members')
@@ -4400,19 +4400,10 @@ ZT._dashLoadGmf = async function(){
     monthStart.setDate(1);
     monthStart.setHours(0,0,0,0);
 
-    /* Try gmf_share column first */
-    var q = c.from('tutor_student_join_fees')
+    var r1 = await c.from('tutor_student_join_fees')
       .select('gmf_share, student_id')
-      .eq('circle_id', cir.id);
-
-    /* Only apply month filter if there's a timestamp column —
-       try 'paid_at' as a safe guess; if error, retry without filter */
-    var r1 = await q.gte('paid_at', monthStart.toISOString());
-    if(r1.error){
-      r1 = await c.from('tutor_student_join_fees')
-        .select('gmf_share, student_id')
-        .eq('circle_id', cir.id);
-    }
+      .eq('circle_id', cir.id)
+      .gte('paid_at', monthStart.toISOString());
 
     var rows = r1.data || [];
     var sum = 0;
@@ -4424,11 +4415,6 @@ ZT._dashLoadGmf = async function(){
 
     if(el1) el1.textContent = '$' + sum.toFixed(2);
     if(el2) el2.textContent = String(Object.keys(uniq).length);
-
-    if(!rows.length){
-      if(el1) el1.textContent = '$0.00';
-      if(el2) el2.textContent = '0';
-    }
   } catch(e){
     console.warn('[dash gmf]', e);
     if(el1) el1.textContent = '$0.00';
@@ -4526,21 +4512,244 @@ ZT._dashLoadActivity = async function(){
 };
 
 /* ────────────────────────────────────────────────────────────
-   MEMBER DASHBOARD — skeleton (sections added in Block 3)
+   MEMBER DASHBOARD — full version
+   Aligned with Owner Dashboard (zv3-* classes)
    ──────────────────────────────────────────────────────────── */
 ZT.renderMemberDashboard = function(){
   var cir = ZT.State.currentCircle;
   if(!cir){ return ZT.renderNoCircleMessage('Dashboard'); }
+  var me = ZT.State.currentUser;
   var av = cir.avatar_url || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(cir.name) + '&background=111827&color=34d399&bold=true');
+  var memberLine = me ? (me.name || me.username || 'Member') : 'Member';
+
   var h = '';
-  h += '<div class="zt-circle-head">';
-  h += '<button class="back" onclick="ZT.showView(\'feed\')"><i class="fa-solid fa-arrow-left"></i></button>';
-  h += '<img class="av" src="' + ZT.escape(av) + '" alt="">';
-  h += '<div style="flex:1;min-width:0;"><div class="nm">' + ZT.escape(cir.name) + '</div>';
-  h += '<div class="sub">My Dashboard</div></div>';
+  h += '<div class="zv3-root">';
+
+  /* ── Header ── */
+  h += '<div class="zv3-hdr">';
+  h += '<button class="zv3-back" onclick="ZT.showView(\'feed\')" title="Back to feed"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<img class="zv3-av" src="' + ZT.escape(av) + '" alt="">';
+  h += '<div class="zv3-id">';
+  h += '<div class="zv3-nm">' + ZT.escape(cir.name) + '</div>';
+  h += '<div class="zv3-hd">Member Dashboard · ' + ZT.escape(memberLine) + '</div>';
   h += '</div>';
-  h += '<div class="zt-empty"><i class="fa-solid fa-gauge-high"></i><p>Member Dashboard building…</p></div>';
+  h += '</div>';
+
+  /* ── My Points (hero) ── */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-star" style="color:#10b981;"></i><span>My Points · This Month</span><div class="ln"></div></div>';
+  h += '<div style="padding:18px;border-radius:16px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);position:relative;overflow:hidden;">';
+  h += '<div style="position:absolute;top:-30%;right:-10%;width:180px;height:180px;background:radial-gradient(circle,rgba(16,185,129,.22),transparent 60%);pointer-events:none;"></div>';
+  h += '<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:14px;position:relative;z-index:1;">';
+  h += '<div>';
+  h += '<div style="font-size:9.5px;color:#94a3b8;font-weight:900;letter-spacing:.5px;text-transform:uppercase;">Total Points</div>';
+  h += '<div id="zt-mem-points" style="font-size:36px;font-weight:900;color:#fff;line-height:1;margin-top:6px;font-variant-numeric:tabular-nums;">—</div>';
+  h += '</div>';
+  h += '<div style="text-align:right;">';
+  h += '<div style="font-size:9.5px;color:#94a3b8;font-weight:900;letter-spacing:.5px;text-transform:uppercase;">My Rank</div>';
+  h += '<div id="zt-mem-rank" style="font-size:22px;font-weight:900;color:#fbbf24;line-height:1;margin-top:6px;">—</div>';
+  h += '<div id="zt-mem-rank-sub" style="font-size:9.5px;color:#64748b;margin-top:3px;">of —</div>';
+  h += '</div>';
+  h += '</div>';
+  h += '</div>';
+
+  /* ── Points Breakdown ── */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-chart-simple" style="color:#60a5fa;"></i><span>Breakdown</span><div class="ln"></div></div>';
+  h += '<div id="zt-mem-breakdown" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;display:flex;flex-direction:column;gap:10px;">';
+  h += '<div style="text-align:center;color:#64748b;font-size:11.5px;">Loading…</div>';
+  h += '</div>';
+
+  /* ── Share Link ── */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-link" style="color:#10b981;"></i><span>My Share Link</span><div class="ln"></div></div>';
+  h += '<div style="padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(59,130,246,.08),#131c30);border:1px solid rgba(59,130,246,.32);">';
+  h += '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.55;margin-bottom:10px;">Every share counts. <b style="color:#fff;">$1 fixed</b> per referral who joins through your link.</div>';
+  h += '<div style="display:flex;gap:8px;">';
+  h += '<input id="zt-mem-share" type="text" readonly value="" style="flex:1;background:#0b1220;border:1px solid #1e293b;border-radius:8px;padding:9px 11px;font-size:11px;color:#6ee7b7;font-family:monospace;outline:none;box-sizing:border-box;min-width:0;">';
+  h += '<button id="zt-mem-copy" style="background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-weight:900;padding:9px 14px;border-radius:8px;font-size:11px;cursor:pointer;flex-shrink:0;"><i class="fa-solid fa-copy"></i> Copy</button>';
+  h += '</div>';
+  h += '</div>';
+
+  /* ── My Ratings (from owner) ── */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-star-half-stroke" style="color:#fbbf24;"></i><span>My Ratings</span><div class="ln"></div></div>';
+  h += '<div id="zt-mem-ratings" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;min-height:60px;">';
+  h += '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">Loading…</div>';
+  h += '</div>';
+
+  /* ── Quick Links ── */
+  h += '<div class="zv3-sec"><i class="fa-solid fa-toolbox" style="color:#a78bfa;"></i><span>Quick Links</span><div class="ln"></div></div>';
+  h += '<div class="zv3-tools">';
+  var links = [
+    { ic:'fa-solid fa-trophy',              c:'#fbbf24', l:'Leaderboard',    fn:'ZT.showView(\'leaderboard\')' },
+    { ic:'fa-solid fa-users',               c:'#6ee7b7', l:'Members',        fn:'ZT.showView(\'members\')' },
+    { ic:'fa-solid fa-hand-holding-dollar', c:'#10b981', l:'GAF & GMF Guide',fn:'ZT.showView(\'gaf-gmf-guide\')' },
+    { ic:'fa-solid fa-images',              c:'#60a5fa', l:'Slides',         fn:'ZT.showView(\'slides\')' },
+    { ic:'fa-solid fa-list-check',          c:'#60a5fa', l:'Quizzes',        fn:'ZT.showView(\'quizzes\')' },
+    { ic:'fa-solid fa-clipboard-check',     c:'#10b981', l:'Assignments',    fn:'ZT.showView(\'assignments\')' },
+    { ic:'fa-solid fa-video',               c:'#a78bfa', l:'Live Class',     fn:'ZT.showView(\'live\')' },
+    { ic:'fa-solid fa-user-graduate',       c:'#60a5fa', l:'Member Guide',   fn:'ZT.showStudentGuide()' }
+  ];
+  links.forEach(function(t){
+    h += '<button class="zv3-tool" onclick="' + t.fn + '">';
+    h += '<div class="zv3-tool-ic" style="background:' + t.c + '22;color:' + t.c + ';">';
+    h += '<i class="' + t.ic + '"></i></div>';
+    h += '<span class="zv3-tool-t">' + ZT.escape(t.l) + '</span>';
+    h += '</button>';
+  });
+  h += '</div>';
+
+  h += '</div>';
+
+  /* Kick off async loaders */
+  setTimeout(function(){ ZT._memLoadPoints();     }, 50);
+  setTimeout(function(){ ZT._memLoadShareLink();  }, 80);
+  setTimeout(function(){ ZT._memLoadRatings();    }, 110);
+
   return h;
+};
+
+/* ────────────────────────────────────────────────────────────
+   Member Dashboard — Loaders
+   ──────────────────────────────────────────────────────────── */
+
+/* Points + rank via tutor_get_my_points RPC (Block 2 SQL) */
+ZT._memLoadPoints = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return;
+  var c = sb(); if(!c) return;
+
+  try {
+    var r = await c.rpc('tutor_get_my_points', { p_circle_id: cir.id });
+    if(r.error){
+      console.warn('[mem points]', r.error);
+      var el0 = document.getElementById('zt-mem-points');
+      if(el0) el0.textContent = '0';
+      return;
+    }
+    var d = Array.isArray(r.data) ? r.data[0] : r.data;
+    d = d || {};
+
+    var totalPts = Number(d.monthly_points) || 0;
+    var myRank   = Number(d.my_rank) || 0;
+    var totalMem = Number(d.total_members) || 0;
+
+    var elP = document.getElementById('zt-mem-points');
+    if(elP) elP.textContent = String(totalPts);
+
+    var elR = document.getElementById('zt-mem-rank');
+    if(elR){
+      elR.textContent = myRank > 0 ? ('#' + myRank) : '—';
+      elR.style.color = myRank === 1 ? '#fbbf24' :
+                        myRank === 2 ? '#cbd5e1' :
+                        myRank === 3 ? '#a18554' : '#60a5fa';
+    }
+    var elS = document.getElementById('zt-mem-rank-sub');
+    if(elS) elS.textContent = totalMem > 0 ? ('of ' + totalMem) : 'of —';
+
+    /* Breakdown */
+    var bdHost = document.getElementById('zt-mem-breakdown');
+    if(!bdHost) return;
+
+    var cats = [
+      { key:'attendance_points',  label:'Attendance',   icon:'fa-solid fa-calendar-check', color:'#10b981' },
+      { key:'quiz_points',        label:'Quizzes',      icon:'fa-solid fa-list-check',     color:'#60a5fa' },
+      { key:'helpfulness_points', label:'Helpfulness',  icon:'fa-solid fa-heart',          color:'#ec4899' },
+      { key:'content_points',     label:'Content',      icon:'fa-solid fa-pen',            color:'#a78bfa' },
+      { key:'rating_points',      label:'Owner Rating', icon:'fa-solid fa-star',           color:'#fbbf24' }
+    ];
+    var maxVal = 1;
+    cats.forEach(function(cc){ maxVal = Math.max(maxVal, Number(d[cc.key]) || 0); });
+
+    var bh = '';
+    cats.forEach(function(cc){
+      var v = Number(d[cc.key]) || 0;
+      var pct = Math.min(100, Math.round((v / maxVal) * 100));
+      bh += '<div>';
+      bh += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">';
+      bh += '<span style="font-size:11px;color:#cbd5e1;font-weight:800;display:inline-flex;align-items:center;gap:6px;">';
+      bh += '<i class="' + cc.icon + '" style="color:' + cc.color + ';font-size:10px;"></i> ' + cc.label + '</span>';
+      bh += '<span style="font-size:12px;font-weight:900;color:' + cc.color + ';">' + v + '</span>';
+      bh += '</div>';
+      bh += '<div style="height:6px;border-radius:3px;background:rgba(0,0,0,.35);overflow:hidden;">';
+      bh += '<div style="height:100%;width:' + pct + '%;background:' + cc.color + ';transition:width .6s;"></div>';
+      bh += '</div>';
+      bh += '</div>';
+    });
+    bdHost.innerHTML = bh;
+  } catch(e){
+    console.warn('[mem points]', e);
+  }
+};
+
+/* Share link — unique per member + circle */
+ZT._memLoadShareLink = async function(){
+  var cir = ZT.State.currentCircle;
+  var me  = ZT.State.currentUser;
+  if(!cir || !me) return;
+  var input = document.getElementById('zt-mem-share');
+  var btn   = document.getElementById('zt-mem-copy');
+  if(!input || !btn) return;
+
+  var link = location.origin + location.pathname + '?join=' + cir.id + '&ref=' + me.id;
+  input.value = link;
+
+  btn.onclick = function(){
+    try {
+      navigator.clipboard.writeText(link);
+      ZT.toast('Link copied');
+    } catch(e){
+      input.select();
+      try { document.execCommand('copy'); ZT.toast('Link copied'); }
+      catch(e2){ ZT.toast('Copy failed — select manually', 'error'); }
+    }
+  };
+};
+
+/* Ratings received from owner */
+ZT._memLoadRatings = async function(){
+  var cir = ZT.State.currentCircle;
+  var me  = ZT.State.currentUser;
+  if(!cir || !me) return;
+  var c = sb(); if(!c) return;
+  var host = document.getElementById('zt-mem-ratings');
+  if(!host) return;
+
+  try {
+    var r = await c.from('tutor_member_ratings')
+      .select('rating, comment, month, rater_role, created_at')
+      .eq('circle_id', cir.id)
+      .eq('member_id', me.id)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    var rows = r.data || [];
+    if(!rows.length){
+      host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">No ratings yet.</div>';
+      return;
+    }
+
+    var h = '';
+    rows.forEach(function(x){
+      var rating = Number(x.rating) || 0;
+      var color = rating >= 8 ? '#10b981' : rating >= 5 ? '#fbbf24' : '#a16262';
+      h += '<div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04);">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">';
+      h += '<div style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:10px;background:' + color + '22;color:' + color + ';font-size:12px;font-weight:900;">';
+      h += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + rating + ' / 10';
+      h += '</div>';
+      h += '<div style="font-size:9.5px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.4px;">';
+      h += x.rater_role === 'owner' ? 'From Owner' : 'From Member';
+      h += ' · ' + ZT.escape(x.month || '');
+      h += '</div>';
+      h += '</div>';
+      if(x.comment){
+        h += '<div style="font-size:11.5px;color:#cbd5e1;margin-top:8px;line-height:1.55;font-style:italic;">"' + ZT.escape(x.comment) + '"</div>';
+      }
+      h += '</div>';
+    });
+    host.innerHTML = h;
+  } catch(e){
+    console.warn('[mem ratings]', e);
+    host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">Could not load ratings.</div>';
+  }
 };
 
 
