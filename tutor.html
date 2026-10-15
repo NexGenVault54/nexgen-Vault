@@ -619,7 +619,6 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
   display:grid;
   grid-template-columns:repeat(3,1fr);
   gap:8px;
-  max-width:480px;
   width:100%;
   margin:0 auto 14px;
 }
@@ -639,12 +638,26 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 }
 .zt-feed-avtile .owner-badge{
   position:absolute;
-  bottom:6px;left:6px;
+  top:6px;left:6px;
   padding:3px 8px;border-radius:8px;
   background:rgba(0,0,0,.7);
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-  color:#fbbf24;font-size:8px;font-weight:900;
+  color:#10b981;font-size:8px;font-weight:900;
   letter-spacing:.5px;text-transform:uppercase;
+  z-index:2;
+}
+.zt-feed-avtile .owner-about-desc{
+  position:absolute;
+  left:0;right:0;bottom:0;
+  padding:8px 8px 10px;
+  background:linear-gradient(to top,rgba(0,0,0,.92) 0%,rgba(0,0,0,.55) 60%,transparent 100%);
+  color:rgba(255,255,255,.92);
+  font-size:10px;font-weight:700;line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:3;
+  -webkit-box-orient:vertical;overflow:hidden;
+  text-shadow:0 1px 3px rgba(0,0,0,.8);
+  z-index:2;
+  pointer-events:none;
 }
 .zt-feed-bantile{
   grid-column:span 2;
@@ -1955,10 +1968,18 @@ ZT.renderCircleFeed = async function(){
   var h = '';
   h += '<div class="zt-feed-topgrid">';
 
-  /* Tile 1 — Owner About (avatar only) */
-  h += '<div class="zt-feed-avtile" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')">';
+  /* Tile 1 — About card */
+  var aboutDesc = (cir.description || '').trim();
+  var aboutShort = aboutDesc.length > 80 ? (aboutDesc.slice(0, 80) + '…') : aboutDesc;
+  var aboutClick = isTutor
+    ? 'ZT.openOwnerAboutEditor()'
+    : 'ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')';
+  h += '<div class="zt-feed-avtile" onclick="' + aboutClick + '">';
   h += '<img src="' + ZT.escape(ownerAv) + '" alt="">';
-  h += '<span class="owner-badge">Owner</span>';
+  h += '<span class="owner-badge">About</span>';
+  if(aboutShort){
+    h += '<div class="owner-about-desc">' + ZT.escape(aboutShort) + '</div>';
+  }
   h += '</div>';
 
   /* Tile 2-3 — Banner */
@@ -1975,7 +1996,7 @@ ZT.renderCircleFeed = async function(){
   h += '<div class="zt-feed-bantile-content">';
   h += '<div class="zt-feed-bantile-name">' + ZT.escape(cir.name) + '</div>';
   h += '<div class="zt-feed-bantile-meta">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div>';
-  h += '<span id="zt-feed-rating-chip" class="zt-feed-bantile-rating" style="display:none;" onclick="event.stopPropagation();ZT._scrollFeedToOwnerRating()"></span>';
+  h += '<span id="zt-feed-rating-chip" class="zt-feed-bantile-rating" style="display:none;" onclick="event.stopPropagation();ZT.openOwnerRatingsSheet(\'' + ZT.escape(cir.owner_id) + '\')"></span>';
   h += '</div>';
   h += '</div>';
 
@@ -2070,19 +2091,146 @@ ZT._feedLoadRatingChip = async function(ownerId){
   }
 };
 
-/* Chip click → owner profile, scroll to ratings block only */
+
+/* ────────────────────────────────────────────────────────────
+   Owner ratings bottom-sheet (main index SPACE rating jaisa)
+   ──────────────────────────────────────────────────────────── */
+ZT.openOwnerRatingsSheet = async function(ownerId){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return;
+  var c = sb(); if(!c) return;
+
+  /* Fetch aggregate */
+  var agg = { avg_score:0, rating_count:0, band_top:0, band_high:0, band_mid:0, band_low:0 };
+  try {
+    var r = await c.rpc('tutor_get_owner_rating', { p_circle_id: cir.id });
+    if(!r.error && r.data && r.data[0]) agg = r.data[0];
+  } catch(e){}
+
+  var rc = Number(agg.rating_count) || 0;
+  var avg = Number(agg.avg_score) || 0;
+  var col = avg >= 8 ? '#10b981' : avg >= 5 ? '#fbbf24' : '#a16262';
+
+  var h = '<div class="modal-overlay" style="background:rgba(0,0,0,.75);align-items:flex-end;padding:0;z-index:10002;" onclick="if(event.target===this)ZT.Modal.close()">';
+  h += '<div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:85vh;">';
+  h += '<div class="sheet-handle"></div>';
+  h += '<div class="sheet-header"><h3 style="font-size:14px;font-weight:900;">Owner Ratings</h3>';
+  h += '<button onclick="ZT.Modal.close()" style="background:transparent;border:none;color:#94a3b8;font-size:20px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="sheet-body" style="padding:14px;overflow-y:auto;">';
+
+  if(rc === 0){
+    h += '<div style="text-align:center;padding:30px 20px;color:#94a3b8;font-size:12px;">No ratings yet.</div>';
+  } else {
+    /* Big avg */
+    h += '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:14px;">';
+    h += '<div style="font-size:36px;font-weight:900;color:' + col + ';">' + avg.toFixed(1) + '</div>';
+    h += '<div style="font-size:13px;color:#94a3b8;font-weight:700;">/ 10</div>';
+    h += '<div style="margin-left:auto;font-size:11px;color:#64748b;">' + rc + ' rating' + (rc === 1 ? '' : 's') + '</div>';
+    h += '</div>';
+
+    /* Bands */
+    var tot = Math.max(1, (Number(agg.band_top)||0) + (Number(agg.band_high)||0) + (Number(agg.band_mid)||0) + (Number(agg.band_low)||0));
+    function bandRow(key, label, cnt, color){
+      var pct = tot > 0 ? Math.round((cnt / tot) * 100) : 0;
+      return '<button class="co-band" data-ors-band="' + key + '">' +
+        '<div class="co-band-lbl">' + label + '</div>' +
+        '<div class="co-band-bar"><div class="co-band-fill" style="width:' + pct + '%;background:' + color + ';"></div></div>' +
+        '<div class="co-band-cnt" style="color:' + color + ';">' + cnt + '</div></button>';
+    }
+    h += bandRow('top',  '9 – 10', Number(agg.band_top)||0,  '#10b981');
+    h += bandRow('high', '7 – 8',  Number(agg.band_high)||0, '#a18554');
+    h += bandRow('mid',  '4 – 6',  Number(agg.band_mid)||0,  '#a18554');
+    h += bandRow('low',  '1 – 3',  Number(agg.band_low)||0,  '#a16262');
+    h += '<div id="ors-clear"></div>';
+    h += '<div id="ors-list" style="margin-top:14px;padding-top:10px;border-top:1px solid #1e293b;"><div style="text-align:center;color:#64748b;font-size:11.5px;padding:10px 0;">Loading reviews…</div></div>';
+  }
+
+  h += '</div></div></div>';
+  ZT.openSheet(h);
+
+  if(rc > 0){
+    setTimeout(function(){
+      ZT._orsLoad(ownerId, null);
+      ZT._orsWireBands(ownerId);
+    }, 40);
+  }
+};
+
+ZT._orsLoad = async function(ownerId, band){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return;
+  var c = sb(); if(!c) return;
+  var host = document.getElementById('ors-list');
+  if(!host) return;
+  try {
+    var r = await c.rpc('tutor_list_owner_ratings', {
+      p_circle_id: cir.id,
+      p_band: band || null,
+      p_limit: 50,
+      p_offset: 0
+    });
+    var rows = r.data || [];
+    if(!rows.length){
+      host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:10px 0;">' +
+        (band ? 'No reviews in this band.' : 'No reviews yet.') + '</div>';
+      return;
+    }
+    var h = '';
+    rows.forEach(function(x){
+      var rating = Number(x.rating) || 0;
+      var color = rating >= 8 ? '#10b981' : rating >= 4 ? '#a18554' : '#a16262';
+      h += '<div class="co-review">';
+      h += '<div class="co-review-head">';
+      h += '<span class="co-review-score" style="background:' + color + '22;color:' + color + ';">';
+      h += '<i class="fa-solid fa-star" style="font-size:10px;"></i> ' + rating + ' / 10</span>';
+      h += '<span class="co-review-time">' + ZT.timeAgo(new Date(x.created_at).getTime()) + '</span>';
+      h += '</div>';
+      if(x.comment) h += '<div class="co-review-cmt">"' + ZT.escape(x.comment) + '"</div>';
+      h += '</div>';
+    });
+    h += '<div style="text-align:center;padding:10px 0;font-size:10px;color:#64748b;line-height:1.5;">All ratings are anonymous.</div>';
+    host.innerHTML = h;
+  } catch(e){
+    host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:10px 0;">Could not load.</div>';
+  }
+};
+
+ZT._orsWireBands = function(ownerId){
+  var bands = document.querySelectorAll('[data-ors-band]');
+  bands.forEach(function(b){
+    if(b._orsHooked) return; b._orsHooked = true;
+    b.addEventListener('click', function(){
+      var key = this.getAttribute('data-ors-band');
+      var isActive = this.getAttribute('data-active') === '1';
+      bands.forEach(function(x){ x.removeAttribute('data-active'); });
+      var newBand = isActive ? null : key;
+      if(newBand) this.setAttribute('data-active','1');
+      var clearHost = document.getElementById('ors-clear');
+      if(clearHost){
+        if(newBand){
+          var lbl = newBand === 'top' ? '9 – 10' : newBand === 'high' ? '7 – 8' : newBand === 'mid' ? '4 – 6' : '1 – 3';
+          clearHost.innerHTML = '<button id="ors-clear-btn" style="width:100%;padding:8px;border-radius:8px;border:1px solid #1e293b;background:#0f172a;color:#94a3b8;font-weight:800;font-size:11px;cursor:pointer;margin-top:8px;">Showing ' + lbl + ' only · Clear filter</button>';
+          setTimeout(function(){
+            var cb = document.getElementById('ors-clear-btn');
+            if(cb) cb.addEventListener('click', function(){
+              bands.forEach(function(x){ x.removeAttribute('data-active'); });
+              clearHost.innerHTML = '';
+              ZT._orsLoad(ownerId, null);
+            });
+          }, 20);
+        } else {
+          clearHost.innerHTML = '';
+        }
+      }
+      ZT._orsLoad(ownerId, newBand);
+    });
+  });
+};
+
 ZT._scrollFeedToOwnerRating = function(){
   var cir = ZT.State.currentCircle;
   if(!cir) return;
-  ZT.showView('circle-owner-profile', cir.owner_id);
-  setTimeout(function(){
-    var host = document.getElementById('co-ratings-host');
-    if(host) host.scrollIntoView({ behavior:'smooth', block:'start' });
-  }, 700);
-  setTimeout(function(){
-    var host = document.getElementById('co-ratings-host');
-    if(host) host.scrollIntoView({ behavior:'smooth', block:'start' });
-  }, 1400);
+  ZT.openOwnerRatingsSheet(cir.owner_id);
 };
 
 
@@ -4520,10 +4668,6 @@ ZT.renderOwnerDashboard = function(){
   h += '<button class="zv3-help" onclick="ZT.openCircleSettings()" title="Circle Settings"><i class="fa-solid fa-gear"></i></button>';
   h += '</div>';
 
-  /* ── Circle Identity ── */
-  h += '<div class="zv3-sec"><i class="fa-solid fa-id-card" style="color:#10b981;"></i><span>Circle Identity</span><div class="ln"></div></div>';
-  h += '<div id="zt-ci-host"><div style="text-align:center;padding:20px;color:#64748b;font-size:11.5px;">Loading…</div></div>';
-
   /* ── Money Bar ── */
   h += '<div class="zv3-sec"><i class="fa-solid fa-coins" style="color:#fbbf24;"></i><span>At a glance</span><div class="ln"></div></div>';
   h += '<div class="zv3-money">';
@@ -4671,7 +4815,6 @@ ZT.renderOwnerDashboard = function(){
   h += '</div>';
 
   /* Kick off async loaders after paint */
-  setTimeout(function(){ ZT._dashLoadCircleIdentity(); }, 30);
   setTimeout(function(){ ZT._dashLoadMoneyBar(); },     50);
   setTimeout(function(){ ZT._dashLoadPendingCount(); }, 80);
   setTimeout(function(){ ZT._dashLoadLeaderboardTop(); }, 110);
