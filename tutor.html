@@ -2249,6 +2249,7 @@ ZT._lk = {
   audioEls: [],
   handRaised: false,
   approved: false,
+  attendanceMarked: false,
   pendingJoins: [],
   raisedHands: [],
   handLog: [],
@@ -2489,6 +2490,37 @@ ZT._resumeBackgroundActivity = function(){
   ZT._isLiveActive = false;
 };
 
+/* ────────────────────────────────────────────────────────────
+   P7 — Live attendance recorder
+   Called when a member is approved/promoted into the live room.
+   Inserts one row into tutor_live_attendance. Trigger awards
+   +5 points (deduped per day per circle server-side).
+   ──────────────────────────────────────────────────────────── */
+ZT._recordLiveAttendance = async function(){
+  if(ZT._lk.attendanceMarked) return;
+  var cir = ZT.State.currentCircle;
+  var me  = ZT.State.currentUser;
+  if(!cir || !me) return;
+  var role = ZT.State.myRoleInCircle;
+  if(role === 'tutor' || role === 'admin' || role === 'owner') return;
+  var c = sb(); if(!c) return;
+  try {
+    var r = await c.from('tutor_live_attendance').insert({
+      circle_id: cir.id,
+      user_id:   me.id,
+      joined_at: new Date().toISOString()
+    });
+    if(r.error){
+      console.warn('[live attendance]', r.error);
+      return;
+    }
+    ZT._lk.attendanceMarked = true;
+  } catch(e){
+    console.warn('[live attendance]', e);
+  }
+};
+
+
 ZT.joinLiveRoom = async function(){
   ZT._pauseAllBackgroundActivity();
 
@@ -2601,6 +2633,7 @@ ZT.joinLiveRoom = async function(){
           if(banner) banner.remove();
           ZT.toast('✅ Host approved! You can now interact.', 'success');
           ZT.haptic(20);
+          ZT._recordLiveAttendance();
           return;
         }
 
@@ -2643,6 +2676,7 @@ ZT.joinLiveRoom = async function(){
           ZT._lk.approved = true;
           ZT.toast('🎤 Host allowed you to speak. Camera ON', 'success');
           ZT.haptic(20);
+          ZT._recordLiveAttendance();
           try {
            
           if(ZT._lk.room && ZT._lk.room.localParticipant){
@@ -3202,6 +3236,7 @@ ZT.leaveLiveRoom = async function(){
   ZT._lk.room = null;
   ZT._lk.connected = false;
   ZT._lk.handRaised = false;
+  ZT._lk.attendanceMarked = false;
   ZT.showView('live');
 };
 ZT.toggleFullscreen = function(){
