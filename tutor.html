@@ -4511,11 +4511,29 @@ ZT.loadMembersList = async function(){
       m._profile = profiles[m.user_id] || { id: m.user_id, name:'User', username:'user', avatar:null, last_seen_at:null };
     });
 
+    var circleMode = cir.payment_mode || 'trial';
+    var isFreeCircle = (circleMode === 'free');
+
+    rows.forEach(function(m){
+      if(isFreeCircle){
+        /* Free circle: only 'removed' shows an icon, everything else is silent */
+        m._display_status = (m.payment_status === 'removed') ? 'removed' : null;
+      } else {
+        m._display_status = m.payment_status || 'trial';
+      }
+    });
+
     var filter = ZT._memFilter || 'all';
     var filtered = rows.filter(function(m){
-      var st = m.payment_status || 'trial';
-      if(filter === 'unpaid') return (st === 'trial' || st === 'pending_payment' || st === 'removed');
-      if(filter === 'paid')   return (st === 'paid');
+      var st = m._display_status;
+      if(filter === 'unpaid'){
+        if(isFreeCircle) return false;
+        return (st === 'trial' || st === 'pending_payment' || st === 'removed');
+      }
+      if(filter === 'paid'){
+        if(isFreeCircle) return (st !== 'removed');
+        return (st === 'paid');
+      }
       if(filter === 'online'){
         var ls = m._profile.last_seen_at;
         return ls && (Date.now() - new Date(ls).getTime() < 5*60*1000);
@@ -4527,9 +4545,11 @@ ZT.loadMembersList = async function(){
     });
 
     filtered.sort(function(a, b){
-      var aUnpaid = (a.payment_status === 'trial' || a.payment_status === 'pending_payment' || a.payment_status === 'removed') ? 0 : 1;
-      var bUnpaid = (b.payment_status === 'trial' || b.payment_status === 'pending_payment' || b.payment_status === 'removed') ? 0 : 1;
-      if(aUnpaid !== bUnpaid) return aUnpaid - bUnpaid;
+      if(!isFreeCircle){
+        var aUnpaid = (a._display_status === 'trial' || a._display_status === 'pending_payment' || a._display_status === 'removed') ? 0 : 1;
+        var bUnpaid = (b._display_status === 'trial' || b._display_status === 'pending_payment' || b._display_status === 'removed') ? 0 : 1;
+        if(aUnpaid !== bUnpaid) return aUnpaid - bUnpaid;
+      }
       var an = (a._profile.name || a._profile.username || '').toLowerCase();
       var bn = (b._profile.name || b._profile.username || '').toLowerCase();
       return an.localeCompare(bn);
@@ -4543,6 +4563,7 @@ ZT.loadMembersList = async function(){
     }
 
     function statusIcon(st){
+      if(!st)                      return '';
       if(st === 'paid')            return '<i class="fa-solid fa-circle-check" style="color:#10b981;font-size:13px;"></i>';
       if(st === 'trial')           return '<i class="fa-solid fa-hourglass-half" style="color:#a18554;font-size:13px;"></i>';
       if(st === 'pending_payment') return '<i class="fa-solid fa-triangle-exclamation" style="color:#a18554;font-size:13px;"></i>';
@@ -4567,7 +4588,7 @@ ZT.loadMembersList = async function(){
       h += '<img src="' + ZT.escape(av) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
       h += dot + '</div>';
       h += '<div onclick="ZT.openUserProfile(\'' + ZT.escape(m.user_id) + '\')" style="flex:1;min-width:0;cursor:pointer;">';
-      h += '<div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(p.name || 'User') + ' ' + statusIcon(m.payment_status) + '</div>';
+      h += '<div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(p.name || 'User') + ' ' + statusIcon(m._display_status) + '</div>';
       h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">@' + ZT.escape(p.username || 'user') + ' · ' + ZT.escape(m.role || 'student') + '</div>';
       h += '</div>';
       if(isOwner){
@@ -5662,7 +5683,7 @@ ZT.renderQuizDetail = function(){
         ih += '<img src="' + ZT.escape(ZT.safeAvatar(p)) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
         ih += '<div style="flex:1;min-width:0;">';
         
-          ih += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'Student') + '</div>';
+          ih += '<div style="font-size:13px;font-weight:800;color:#fff;">' + ZT.escape(p.name || 'Member') + '</div>';
         ih += '<div style="font-size:10.5px;color:#94a3b8;">Attempts: ' + info.count + '/3' + (info.final ? ' · Final: ' + info.final.score + '/' + info.final.total : ' · In progress') + '</div>';
         ih += '</div></div>';
       });
