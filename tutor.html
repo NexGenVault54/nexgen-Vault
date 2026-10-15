@@ -610,6 +610,71 @@ body{background:#090d16;color:#f8fafc;font-family:system-ui,-apple-system,'Segoe
 }
 .co-act.secondary:hover{border-color:#334155;}
 .co-act:hover{transform:translateY(-1px);}
+
+/* ════════════════════════════════════════════════════════════
+   P9 Block 1 — FEED BANNER (replaces circle header box)
+   ════════════════════════════════════════════════════════════ */
+.zt-feed-banner{
+  position:relative;width:100%;
+  height:500px;
+  border-radius:16px;overflow:hidden;
+  margin-bottom:14px;cursor:pointer;
+  transition:transform .15s;
+}
+.zt-feed-banner:active{transform:scale(.995);}
+.zt-feed-banner-overlay{
+  position:absolute;inset:0;
+  background:linear-gradient(to bottom,rgba(0,0,0,.15) 0%,rgba(0,0,0,.35) 50%,rgba(0,0,0,.7) 100%);
+  pointer-events:none;
+}
+.zt-feed-banner-actions{
+  position:absolute;top:12px;left:12px;right:12px;
+  display:flex;justify-content:space-between;align-items:flex-start;
+  z-index:3;pointer-events:none;
+}
+.zt-feed-banner-actions > button{pointer-events:auto;}
+.zt-feed-banner-btn{
+  width:38px;height:38px;border-radius:50%;
+  background:rgba(0,0,0,.55);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.18);color:#fff;
+  font-size:14px;cursor:pointer;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:all .15s;
+}
+.zt-feed-banner-btn:hover{background:rgba(0,0,0,.75);border-color:rgba(255,255,255,.3);}
+.zt-feed-banner-content{
+  position:absolute;left:0;right:0;bottom:0;
+  padding:16px;z-index:2;
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+}
+.zt-feed-banner-name{
+  font-size:clamp(18px,3.2vw,24px);
+  font-weight:900;color:#fff;
+  text-shadow:0 2px 10px rgba(0,0,0,.7);
+  line-height:1.15;text-align:center;
+  word-break:break-word;max-width:100%;
+}
+.zt-feed-banner-meta{
+  font-size:11.5px;color:rgba(255,255,255,.9);
+  font-weight:800;
+  text-shadow:0 1px 4px rgba(0,0,0,.6);
+  text-align:center;
+}
+.zt-feed-banner-rating{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 14px;border-radius:20px;
+  background:rgba(0,0,0,.55);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid rgba(251,191,36,.55);
+  color:#fbbf24;font-size:12px;font-weight:900;
+  transition:all .15s;cursor:pointer;
+}
+.zt-feed-banner-rating:hover{background:rgba(0,0,0,.75);}
+.zt-feed-banner-rating.empty{
+  border-color:rgba(96,165,250,.55);color:#60a5fa;
+}
+.zt-feed-banner-rating i{font-size:11px;}
 </style>
 </head>
 <body>
@@ -880,6 +945,46 @@ ZT.showView = function(view, param){
     }
   }, 20);
   window.scrollTo(0,0);
+};
+
+/* ────────────────────────────────────────────────────────────
+   NAVIGATION — navStack tracking + ZT.goBack (universal)
+   Wraps showView to push previous state on every nav.
+   Every back button in the app uses ZT.goBack() — this
+   makes them all work: feed banner, owner profile, member
+   profile, dashboard sub-pages, analytics, wallet, etc.
+   ──────────────────────────────────────────────────────────── */
+ZT.State.navStack = ZT.State.navStack || [];
+(function(){
+  var _origShowView = ZT.showView;
+  var _goingBack = false;
+  ZT.showView = function(view, param){
+    var prevView  = ZT.State.currentView;
+    var prevParam = ZT.State.currentParam;
+    if(!_goingBack && prevView && prevView !== view){
+      ZT.State.navStack.push({ view: prevView, param: prevParam });
+      if(ZT.State.navStack.length > 40) ZT.State.navStack.shift();
+    }
+    _goingBack = false;
+    return _origShowView.apply(this, arguments);
+  };
+  ZT._markGoingBack = function(){ _goingBack = true; };
+})();
+
+ZT.goBack = function(){
+  var current = ZT.State.currentView;
+  var stack = ZT.State.navStack || [];
+  var target = null;
+  while(stack.length){
+    var top = stack.pop();
+    if(top && top.view !== current){ target = top; break; }
+  }
+  if(!target){
+    target = { view: 'feed', param: null };
+  }
+  ZT.State.navStack = stack;
+  if(ZT._markGoingBack) ZT._markGoingBack();
+  ZT.showView(target.view, target.param);
 };
 
 ZT.renderView = async function(view){
@@ -1729,15 +1834,23 @@ ZT.renderCircleFeed = async function(){
   var role = ZT.State.myRoleInCircle || 'student';
   var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
   var av = cir.avatar_url || ('https://ui-avatars.com/api/?name=' + encodeURIComponent(cir.name) + '&background=111827&color=a78bfa&bold=true');
+  var bannerCss = ZT.gradientCss(cir.banner_gradient || 'emerald');
   var h = '';
-  h += '<div class="zt-circle-head">';
-  h += '<button class="back" onclick="ZT.exitCircle()"><i class="fa-solid fa-arrow-left"></i></button>';
-  h += '<img class="av" src="' + ZT.escape(av) + '" alt="" style="cursor:pointer;" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')">';
-  h += '<div style="flex:1;min-width:0;cursor:pointer;" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')"><div class="nm">' + ZT.escape(cir.name) + '</div>';
-  h += '<div class="sub">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div></div>';
+  h += '<div class="zt-feed-banner" style="background:' + bannerCss + ';" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')">';
+  h += '<div class="zt-feed-banner-overlay"></div>';
+  h += '<div class="zt-feed-banner-actions">';
+  h += '<button class="zt-feed-banner-btn" onclick="event.stopPropagation();ZT.exitCircle();return false;" title="Back to Circles"><i class="fa-solid fa-arrow-left"></i></button>';
   if(isTutor){
-    h += '<button onclick="ZT.openCircleSettings()" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;width:42px;height:42px;border-radius:10px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;"><i class="fa-solid fa-gear"></i></button>';
+    h += '<button class="zt-feed-banner-btn" onclick="event.stopPropagation();ZT.openCircleSettings()" title="Circle Settings"><i class="fa-solid fa-gear"></i></button>';
+  } else {
+    h += '<span></span>';
   }
+  h += '</div>';
+  h += '<div class="zt-feed-banner-content">';
+  h += '<div class="zt-feed-banner-name">' + ZT.escape(cir.name) + '</div>';
+  h += '<div class="zt-feed-banner-meta">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div>';
+  h += '<span id="zt-feed-rating-chip" class="zt-feed-banner-rating" style="display:none;" onclick="event.stopPropagation();ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')"></span>';
+  h += '</div>';
   h += '</div>';
 
   /* Trial / pending payment banner — only for paid-mode circles, non-paid members (D1) */
@@ -1783,9 +1896,8 @@ ZT.renderCircleFeed = async function(){
   h += '<button id="zt-scroll-top" onclick="window.scrollTo({top:0,behavior:\'smooth\'})" style="position:fixed;bottom:88px;right:16px;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-size:16px;cursor:pointer;box-shadow:0 8px 24px rgba(16,185,129,.4);z-index:100;display:none;align-items:center;justify-content:center;"><i class="fa-solid fa-arrow-up"></i></button>';
   setTimeout(function(){
     ZT.loadCirclePosts();
-    /* Paint trial banner (D3) — uses cached or fetches fresh */
     ZT._paintTrialBanner();
-    /* Scroll listener */
+    ZT._feedLoadRatingChip(cir.owner_id);
     if(!ZT._feedScrollWired){
       ZT._feedScrollWired = true;
       window.addEventListener('scroll', function(){
@@ -1794,9 +1906,40 @@ ZT.renderCircleFeed = async function(){
       }, { passive: true });
     }
   }, 30);
-  /* Reset member row cache for next circle visit */
   ZT.State.memberRow = null;
   return h;
+};
+
+/* ────────────────────────────────────────────────────────────
+   Feed banner — load owner rating chip
+   ──────────────────────────────────────────────────────────── */
+ZT._feedLoadRatingChip = async function(ownerId){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return;
+  var chip = document.getElementById('zt-feed-rating-chip');
+  if(!chip) return;
+  var c = sb(); if(!c) return;
+  try {
+    var r = await c.rpc('tutor_get_owner_rating', { p_circle_id: cir.id });
+    if(r.error || !r.data || !r.data[0]) return;
+    var d = r.data[0];
+    var avg = Number(d.avg_score) || 0;
+    var cnt = Number(d.rating_count) || 0;
+    if(cnt > 0){
+      var col = avg >= 8 ? '#10b981' : avg >= 5 ? '#fbbf24' : '#a16262';
+      chip.style.borderColor = col + '88';
+      chip.style.color = col;
+      chip.innerHTML = '<i class="fa-solid fa-star"></i> ' + avg.toFixed(1) +
+        ' <span style="opacity:.75;font-weight:700;">· ' + cnt + ' rating' + (cnt === 1 ? '' : 's') + '</span>';
+      chip.style.display = 'inline-flex';
+    } else {
+      chip.classList.add('empty');
+      chip.innerHTML = '<i class="fa-regular fa-star"></i> Be the first to rate';
+      chip.style.display = 'inline-flex';
+    }
+  } catch(e){
+    console.warn('[feed rating chip]', e);
+  }
 };
 
 
