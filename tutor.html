@@ -491,7 +491,6 @@ button,a,input,textarea,select,[onclick]{touch-action:manipulation}
   grid-template-columns:repeat(3,1fr);
   gap:8px;
   width:100%;
-  max-width:720px;
   margin:0 auto 14px;
 }
 .zt-feed-avtile{
@@ -1726,12 +1725,12 @@ ZT.enterCircle = async function(circleId){
               'Joining <b style="color:#fff;">' + ZT.escape(cr.data.name) + '</b>' +
             '</div>' +
             '<div style="margin-top:16px;padding:16px;border-radius:12px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);">' +
-              '<div style="font-size:22px;font-weight:900;color:#10b981;">' + trialDays + ' days free</div>' +
-              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Then $' + joinFee.toFixed(2) + ' auto-deducted on day ' + (trialDays + 1) + ', then $' + joinFee.toFixed(2) + ' on the 1st of every month after that</div>' +
+              '<div style="font-size:22px;font-weight:900;color:#10b981;">Free trial</div>' +
+              '<div style="font-size:11px;color:#94a3b8;margin-top:4px;">Then $' + joinFee.toFixed(2) + ' auto-deducted, then $' + joinFee.toFixed(2) + ' on the 1st of every month after that</div>' +
             '</div>' +
             '<div style="margin-top:14px;font-size:11.5px;color:#94a3b8;line-height:1.9;text-align:left;">' +
-              '✓ Full access for ' + trialDays + ' days<br>' +
-              '✓ Auto-deduct $' + joinFee.toFixed(2) + ' on day ' + (trialDays + 1) + ' from your wallet<br>' +
+              '✓ Full access during trial<br>' +
+              '✓ Auto-deduct $' + joinFee.toFixed(2) + ' from your wallet after trial<br>' +
               '✓ Pay on time or access ends<br>' +
               '✓ Rejoin anytime by paying' +
             '</div>' +
@@ -1877,7 +1876,7 @@ async function _tutorDoJoin(circleId, status, trialEndsAt){
 
     ZT.Modal.close();
     ZT.haptic(20);
-    if(status === 'trial') ZT.toast('Trial started! ' + 7 + ' days free.');
+    if(status === 'trial') ZT.toast('Trial started.');
     else if(status === 'free') ZT.toast('Joined!');
     else ZT.toast('Joined! Payment confirmed.');
     ZT.showView('feed');
@@ -2222,14 +2221,12 @@ ZT._paintTrialBanner = function(){
   if(mem.payment_status === 'trial' && mem.trial_ends_at){
     var msLeft = new Date(mem.trial_ends_at).getTime() - Date.now();
     if(msLeft > 0){
-      var daysLeft = Math.ceil(msLeft / (24*60*60*1000));
-      var col = daysLeft > 3 ? '#10b981' : '#a18554';
-      var msg = 'Trial: ' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' left';
+      var col = '#10b981';
+      var msg = 'Trial active';
       h += '<div id="zt-trial-banner" style="padding:12px 14px;border-radius:12px;background:' + col + '18;border:1px solid ' + col + '55;margin-bottom:12px;display:flex;align-items:center;gap:10px;">';
       h += '<i class="fa-solid fa-hourglass-half" style="color:' + col + ';font-size:16px;"></i>';
       h += '<div style="flex:1;min-width:0;">';
       h += '<div style="font-size:12.5px;font-weight:900;color:' + col + ';">' + msg + '</div>';
-      h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">$' + joinFee.toFixed(2) + ' auto-deducts on day 8</div>';
       h += '</div>';
       h += '<button onclick="ZT._payAfterTrial(\'' + ZT.escape(cir.id) + '\')" style="padding:8px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:11.5px;cursor:pointer;flex-shrink:0;">Pay Now</button>';
       h += '</div>';
@@ -5721,11 +5718,13 @@ ZT.renderMemberProfile = async function(){
   }
   h += '</div>';
 
-  /* Other ratings (from members, read-only display) */
-  h += '<div class="zv3-sec"><i class="fa-solid fa-users" style="color:#60a5fa;"></i><span>Community Ratings</span><div class="ln"></div></div>';
-  h += '<div id="zt-mp-community-ratings" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;min-height:60px;">';
-  h += '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">Loading…</div>';
-  h += '</div>';
+  /* Community Ratings — owner-only visibility (locked rule #6) */
+  if(isOwner){
+    h += '<div class="zv3-sec"><i class="fa-solid fa-users" style="color:#60a5fa;"></i><span>Community Ratings</span><div class="ln"></div></div>';
+    h += '<div id="zt-mp-community-ratings" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;min-height:60px;">';
+    h += '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">Loading…</div>';
+    h += '</div>';
+  }
 
   /* Actions */
   h += '<div class="zv3-sec"><i class="fa-solid fa-bolt" style="color:#10b981;"></i><span>Actions</span><div class="ln"></div></div>';
@@ -5745,8 +5744,10 @@ ZT.renderMemberProfile = async function(){
 
   h += '</div>';
 
-  /* Load community ratings async */
-  setTimeout(function(){ ZT._loadCommunityRatings(memberId); }, 60);
+  /* Load community ratings async — owner-only (locked rule #6) */
+  if(isOwner){
+    setTimeout(function(){ ZT._loadCommunityRatings(memberId); }, 60);
+  }
 
   return h;
 };
@@ -5771,13 +5772,16 @@ ZT._loadCommunityRatings = async function(memberId){
 
     var rows = r.data || [];
 
+    /* Locked rule #6 — Member → Member ratings NOT shown. Owner ratings only. */
+    rows = rows.filter(function(x){ return x.rater_role === 'owner'; });
+
     if(!rows.length){
-      host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">No ratings from community yet.</div>';
+      host.innerHTML = '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:14px 0;">No ratings from owner yet.</div>';
       return;
     }
 
-    /* Compute average of owner ratings only (for display) */
-    var ownerRows = rows.filter(function(x){ return x.rater_role === 'owner'; });
+    /* All remaining rows are owner ratings */
+    var ownerRows = rows;
     var avg = 0;
     if(ownerRows.length){
       var sum = 0;
@@ -6705,7 +6709,6 @@ ZT.openCircleSettings = function(){
   body += '<select id="zt-cs-payment-mode" style="' + _selectStyle + '">';
   [
     { id:'free',      label:'Free' },
-    { id:'trial',     label:'Trial then Pay' },
     { id:'pay_first', label:'Pay First' }
   ].forEach(function(m){
     body += '<option value="' + m.id + '"' + (_curMode === m.id ? ' selected' : '') + '>' + m.label + '</option>';
@@ -6812,16 +6815,13 @@ ZT.openCircleSettings = function(){
    Requires typed confirmation: 'free' or 'paid'
    ============================================================ */
 ZT._confirmPaymentModeChange = function(cir, oldMode, newMode, pendingFields){
-  var oldLabel = { free:'Free', trial:'Trial then Pay', pay_first:'Pay First' }[oldMode] || oldMode;
-  var newLabel = { free:'Free', trial:'Trial then Pay', pay_first:'Pay First' }[newMode] || newMode;
+  var oldLabel = { free:'Free', pay_first:'Pay First' }[oldMode] || oldMode;
+  var newLabel = { free:'Free', pay_first:'Pay First' }[newMode] || newMode;
   var isFree = (newMode === 'free');
   var requiredWord = isFree ? 'free' : 'paid';
   var effectText = isFree
     ? 'New members will join for <b style="color:#10b981;">free</b>. No payment will be required from them — ever.'
-    : 'New members will be charged <b style="color:#10b981;">$4 on the 1st of every month</b>. ' +
-      (newMode === 'trial'
-        ? 'First 7 days are free trial, then auto-deduct on day 8.'
-        : 'Payment required immediately on join.');
+    : 'New members will be charged <b style="color:#10b981;">$4 on the 1st of every month</b>. Payment required immediately on join.';
 
   var body = '';
   body += '<div style="padding:14px;border-radius:10px;background:rgba(161,133,84,.10);border:1px solid rgba(161,133,84,.4);margin-bottom:14px;">';
