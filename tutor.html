@@ -1171,6 +1171,9 @@ ZT.renderView = async function(view){
   if(view === 'dashboard' || view === 'more') return ZT.renderCircleDashboard();
   if(view === 'member-profile')                return await ZT.renderMemberProfile();
   if(view === 'circle-owner-profile')          return await ZT.renderCircleOwnerProfile();
+  if(view === 'circle-about')                  return await ZT.renderCircleAboutPage();
+  if(view === 'owner-about')                   return await ZT.renderOwnerAboutPage();
+  if(view === 'owner-about')                   return await ZT.renderOwnerAboutPage();
   if(view === 'gaf-gmf-guide') return ZT.renderGAFGMFGuide();
   if(view === 'leaderboard')   return await ZT.renderLeaderboard();
   if(view === 'members')       return ZT.renderMembersPage();
@@ -2043,7 +2046,7 @@ ZT.renderCircleFeed = async function(){
   var ownerLineShort = ownerLine.length > 80 ? (ownerLine.slice(0, 80) + '…') : ownerLine;
   var aboutClick = isTutor
     ? 'ZT.openOwnerAboutEditor()'
-    : 'ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')';
+    : 'ZT.showView(\'owner-about\',\'' + ZT.escape(cir.owner_id) + '\')';
   h += '<div class="zt-feed-avtile" onclick="' + aboutClick + '">';
   h += '<img src="' + ZT.escape(ownerAv) + '" alt="">';
   h += '<span class="owner-badge">About</span>';
@@ -2053,7 +2056,7 @@ ZT.renderCircleFeed = async function(){
   h += '</div>';
 
   /* Tile 2-3 — Banner */
-  h += '<div class="zt-feed-bantile" style="background:' + bannerCss + ';" onclick="ZT.showView(\'circle-owner-profile\',\'' + ZT.escape(cir.owner_id) + '\')">';
+  h += '<div class="zt-feed-bantile" style="background:' + bannerCss + ';" onclick="ZT.showView(\'circle-about\',\'' + ZT.escape(cir.id) + '\')">';
   h += '<div class="zt-feed-bantile-overlay"></div>';
   h += '<div class="zt-feed-bantile-actions">';
   h += '<button class="zt-feed-bantile-btn" onclick="event.stopPropagation();ZT.exitCircle();return false;" title="Back to Circles"><i class="fa-solid fa-arrow-left"></i></button>';
@@ -6036,6 +6039,143 @@ ZT.openMemberRatingSheet = async function(memberId){
    Tapping circle banner / owner name in feed opens this.
    Structure mirrors SPACE profile but circle-context.
    ════════════════════════════════════════════════════════════ */
+ZT.renderOwnerAboutPage = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir){ return ZT.renderNoCircleMessage('Owner About'); }
+
+  var ownerId = ZT.State.currentParam || cir.owner_id;
+  if(!ownerId){ return ZT.renderNoCircleMessage('Owner About'); }
+
+  var me = ZT.State.currentUser;
+  var isOwner = !!(me && me.id === ownerId);
+
+  var c = ZT.sb();
+  if(!c){ return ZT.renderNoCircleMessage('Owner About'); }
+
+  var profile = ZT.State.profileCache[ownerId];
+  if(!profile){
+    try {
+      var pr = await c.from('profiles').select('id,name,username,avatar,profession,bio,space_data').eq('id', ownerId).maybeSingle();
+      if(pr.data){ profile = pr.data; ZT.State.profileCache[ownerId] = pr.data; }
+    } catch(e){}
+  }
+  if(!profile){ return ZT.renderNoCircleMessage('Owner About'); }
+
+  var ownerMeta = {};
+  try {
+    var rm = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
+    if(!rm.error && rm.data) ownerMeta = rm.data || {};
+  } catch(e){}
+
+  var ownerAvatar = ownerMeta.avatar || profile.avatar || ZT.safeAvatar(profile);
+  var ownerName = profile.name || profile.username || 'Owner';
+  var qualification = (ownerMeta.qualification || '').trim();
+  var experience = (ownerMeta.experience || '').trim();
+  var bio = (ownerMeta.bio || profile.bio || '').trim();
+  var philosophy = (ownerMeta.philosophy || '').trim();
+  var expertise = Array.isArray(ownerMeta.expertise) ? ownerMeta.expertise : [];
+
+  var h = '';
+  h += '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div style="background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(59,130,246,.12));border:1px solid rgba(16,185,129,.35);border-radius:16px;padding:24px 20px;text-align:center;position:relative;">';
+  if(isOwner){
+    h += '<button onclick="ZT.openOwnerAboutEditor()" title="Edit" style="position:absolute;top:12px;right:12px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-pen"></i></button>';
+  }
+  h += '<button onclick="ZT.goBack()" title="Back" style="position:absolute;top:12px;left:12px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-arrow-left"></i></button>';
+  h += '<img src="' + ZT.escape(ownerAvatar) + '" style="width:96px;height:96px;border-radius:50%;object-fit:cover;border:3px solid rgba(16,185,129,.5);margin:8px auto 14px;display:block;">';
+  h += '<div style="font-size:20px;font-weight:900;color:#fff;line-height:1.25;">' + ZT.escape(ownerName) + '</div>';
+  if(qualification){
+    h += '<div style="font-size:13px;color:#6ee7b7;margin-top:6px;font-weight:700;">' + ZT.escape(qualification) + '</div>';
+  }
+  if(experience){
+    h += '<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">' + ZT.escape(experience) + '</div>';
+  }
+  h += '</div>';
+
+  if(bio){
+    h += '<div class="zt-card" style="padding:16px;">';
+    h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:8px;">BIO</div>';
+    h += '<div style="font-size:13px;color:#e2e8f0;line-height:1.7;white-space:pre-wrap;">' + ZT.escape(bio) + '</div>';
+    h += '</div>';
+  }
+
+  if(expertise.length){
+    h += '<div class="zt-card" style="padding:16px;">';
+    h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:10px;">AREAS OF EXPERTISE</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+    expertise.forEach(function(t){
+      h += '<span style="font-size:11px;font-weight:800;padding:5px 12px;border-radius:14px;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.35);color:#10b981;">' + ZT.escape(t) + '</span>';
+    });
+    h += '</div></div>';
+  }
+
+  if(philosophy){
+    h += '<div class="zt-card" style="padding:16px;">';
+    h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:8px;">TEACHING PHILOSOPHY</div>';
+    h += '<div style="font-size:13px;color:#e2e8f0;line-height:1.7;font-style:italic;white-space:pre-wrap;">' + ZT.escape(philosophy) + '</div>';
+    h += '</div>';
+  }
+
+  if(!bio && !expertise.length && !philosophy && !qualification && !experience){
+    h += '<div class="zt-card" style="padding:24px;text-align:center;color:#94a3b8;font-size:12px;">Owner has not added details yet.</div>';
+  }
+
+  h += '</div>';
+  return h;
+};
+
+ZT.renderCircleAboutPage = async function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir){ return ZT.renderNoCircleMessage('Circle About'); }
+
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isOwner = (role === 'tutor' || role === 'admin' || role === 'owner');
+
+  var bannerCss = ZT.gradientCss(cir.banner_gradient || 'emerald');
+  var circleName = cir.name || 'Circle';
+  var circleSubtitle = (cir.subtitle || '').trim();
+  var circleDesc = (cir.description || '').trim();
+
+  var h = '';
+  h += '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
+
+  h += '<div class="co-banner" style="background:' + bannerCss + ';margin-bottom:0;">';
+  h += '<div class="co-banner-overlay"></div>';
+  h += '<button class="co-back" onclick="ZT.goBack()"><i class="fa-solid fa-arrow-left"></i></button>';
+  if(isOwner){
+    h += '<button class="co-share" onclick="ZT.openCircleSettings()" title="Edit Circle"><i class="fa-solid fa-pen"></i></button>';
+  }
+  h += '</div>';
+
+  h += '<div style="padding:0 4px;text-align:center;">';
+  h += '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.25;">' + ZT.escape(circleName) + '</div>';
+  if(circleSubtitle){
+    h += '<div style="font-size:14px;color:#6ee7b7;font-style:italic;margin-top:6px;">' + ZT.escape(circleSubtitle) + '</div>';
+  }
+  if(circleDesc){
+    h += '<div style="font-size:13px;color:#cbd5e1;line-height:1.7;margin-top:14px;text-align:left;padding:14px;background:rgba(15,23,42,.5);border-radius:12px;">' + ZT.escape(circleDesc) + '</div>';
+  }
+  h += '<div style="display:flex;justify-content:center;gap:14px;margin-top:12px;font-size:12px;color:#94a3b8;font-weight:700;">';
+  h += '<span><i class="fa-solid fa-users"></i> ' + (cir.member_count||0) + ' members</span>';
+  h += '<span><i class="fa-regular fa-newspaper"></i> ' + (cir.post_count||0) + ' posts</span>';
+  h += '</div>';
+  h += '</div>';
+
+  h += '<div class="zt-st" style="margin-top:8px;">Ratings</div>';
+  h += '<div id="co-ratings-host" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;">';
+  h += '<div style="text-align:center;color:#64748b;font-size:12px;padding:14px 0;">Loading…</div>';
+  h += '</div>';
+
+  h += '</div>';
+
+  setTimeout(function(){ ZT._loadOwnerRatings(cir.owner_id, null); }, 100);
+  setTimeout(function(){ ZT._wireOwnerBandFilters(cir.owner_id); }, 200);
+
+  return h;
+};
+
 ZT.renderCircleOwnerProfile = async function(){
   var cir = ZT.State.currentCircle;
   if(!cir){ return ZT.renderNoCircleMessage('Owner Profile'); }
