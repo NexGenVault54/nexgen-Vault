@@ -1183,7 +1183,12 @@ ZT.renderNoCircleMessage = function(name){
   return '<div class="zt-empty"><i class="fa-solid fa-chalkboard-user"></i><p>Open a circle first to use ' + name + '.</p><button class="zt-btn small" style="width:auto;margin:0 auto;" onclick="ZT.goHome()">Browse Circles</button></div>';
 };
 
-ZT.goHome = function(){ ZT.State.currentCircle = null; ZT.State.myRoleInCircle = null; ZT.showView('feed'); };
+ZT.goHome = function(){
+  try { localStorage.removeItem('zynix_tutor_last_circle'); } catch(e){}
+  ZT.State.currentCircle = null;
+  ZT.State.myRoleInCircle = null;
+  ZT.showView('feed');
+};
 ZT.goBackToPlatform = function(){ window.location.href = 'index.html'; };
 ZT.goToMySpace = function(){
   /* Same as index.html behaviour: opens own space page */
@@ -1746,6 +1751,7 @@ ZT.enterCircle = async function(circleId){
 
     var cr = await c.from('tutor_circles').select('*').eq('id', circleId).maybeSingle();
     if(cr.error || !cr.data){ ZT.toast('Not found.', 'error'); return; }
+    try { localStorage.setItem('zynix_tutor_last_circle', circleId); } catch(e){}
 
     var isOwner = (cr.data.owner_id === me.id);
     var isMember = !!mem.data && mem.data.is_active !== false;
@@ -2013,6 +2019,7 @@ async function _tutorDoJoin(circleId, status, trialEndsAt){
 }
 
 ZT.exitCircle = function(){
+  try { localStorage.removeItem('zynix_tutor_last_circle'); } catch(e){}
   ZT.State.currentCircle = null;
   ZT.State.myRoleInCircle = null;
   ZT.State.circleOwnerMeta = {};
@@ -8491,7 +8498,14 @@ async function boot(){
   ZT._loadTutorTheme();
 ZT._paintHeaderWallet();
 setInterval(ZT._paintHeaderWallet, 30000);
-  ZT.showView('feed');
+  /* Restore last circle from localStorage (survives page refresh) */
+  var _lastCircleId = null;
+  try { _lastCircleId = localStorage.getItem('zynix_tutor_last_circle'); } catch(e){}
+  if(_lastCircleId && ZT.State.currentUser){
+    ZT.enterCircle(_lastCircleId);
+  } else {
+    ZT.showView('feed');
+  }
   console.log('[ZYNIX Tutor v3] booted · user=' + (ZT.State.currentUser ? ZT.State.currentUser.name : 'guest'));
 
   /* Trial + monthly auto-check safety net (Phase F) */
