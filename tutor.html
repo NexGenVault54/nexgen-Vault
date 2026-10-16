@@ -1170,7 +1170,7 @@ ZT.renderView = async function(view){
   if(view === 'slides')        return ZT.State.currentCircle ? await ZT.renderSlidesList() : ZT.renderNoCircleMessage('Slides');
   if(view === 'dashboard' || view === 'more') return ZT.renderCircleDashboard();
   if(view === 'member-profile')                return await ZT.renderMemberProfile();
-  if(view === 'circle-owner-profile')          return await ZT.renderCircleOwnerProfile();
+  if(view === 'circle-owner-profile')          return await ZT.renderOwnerAboutPage();
   if(view === 'circle-about')                  return await ZT.renderCircleAboutPage();
   if(view === 'owner-about')                   return await ZT.renderOwnerAboutPage();
   if(view === 'gaf-gmf-guide') return ZT.renderGAFGMFGuide();
@@ -1726,6 +1726,16 @@ ZT.enterCircle = async function(circleId){
   var me = ZT.State.currentUser;
   if(!me){ ZT.openAuthModal('login'); return; }
 
+  /* Reset circle-scoped state — prevents metadata leak across circles */
+  if(ZT.State.currentCircle && ZT.State.currentCircle.id !== circleId){
+    ZT.State.circleOwnerMeta = {};
+    ZT.State.memberRow = null;
+    ZT.State.posts = [];
+    ZT.State.reactions = {};
+    ZT.State.myReactions = {};
+    ZT.State.comments = {};
+  }
+
   try {
     /* Step 1: Membership + circle info */
     var mem = await c.from('tutor_members')
@@ -2005,6 +2015,8 @@ async function _tutorDoJoin(circleId, status, trialEndsAt){
 ZT.exitCircle = function(){
   ZT.State.currentCircle = null;
   ZT.State.myRoleInCircle = null;
+  ZT.State.circleOwnerMeta = {};
+  ZT.State.memberRow = null;
   ZT.State.posts = []; ZT.State.reactions = {}; ZT.State.myReactions = {}; ZT.State.comments = {};
   ZT.State.chatThreadId = null; ZT.State.chatMessages = [];
   ZT.showView('feed');
@@ -2031,7 +2043,16 @@ ZT.renderCircleFeed = async function(){
       if(_rp.data){ ownerProfile = _rp.data; ZT.State.profileCache[cir.owner_id] = _rp.data; }
     } catch(e){}
   }
-  var ownerMeta = ZT.State.circleOwnerMeta || {};
+  /* Fresh fetch for THIS circle — prevents cross-circle leak */
+  var ownerMeta = {};
+  try {
+    var _identRpc = await sb().rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
+    if(!_identRpc.error && _identRpc.data){
+      ownerMeta = _identRpc.data.metadata || _identRpc.data || {};
+      ZT.State.circleOwnerMeta = ownerMeta;
+    }
+  } catch(e){ ownerMeta = {}; }
+
   var ownerAv = (ownerMeta && ownerMeta.avatar) ||
     (ownerProfile ? ZT.safeAvatar(ownerProfile) : 'https://ui-avatars.com/api/?name=O&background=111827&color=34d399');
 
@@ -5227,48 +5248,6 @@ ZT._dashLoadActivity = async function(){
 /* ────────────────────────────────────────────────────────────
    Circle Identity — loader + editor
    ──────────────────────────────────────────────────────────── */
-
-ZT._dashLoadCircleIdentity = async function(){
-  var cir = ZT.State.currentCircle;
-  if(!cir) return;
-  var c = sb(); if(!c) return;
-  var host = document.getElementById('zt-ci-host');
-  if(!host) return;
-
-  /* Also pre-load owner meta for feed grid — cheap call */
-  try {
-    var rm = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
-    if(!rm.error && rm.data) ZT.State.circleOwnerMeta = rm.data || {};
-  } catch(e){}
-
-  /* Circle card: use circle avatar as thumbnail, else banner gradient */
-  var circleAv = cir.avatar_url || null;
-  var cardBg;
-  if(circleAv){
-    cardBg = 'background-image:url(' + ZT.escape(circleAv) + '), ' + ZT.gradientCss(cir.banner_gradient || 'emerald') + ';';
-  } else {
-    cardBg = 'background:' + ZT.gradientCss(cir.banner_gradient || 'emerald') + ';';
-  }
-
-  var h = '';
-  h += '<div class="zt-cicard" onclick="ZT.openCircleSettings()">';
-  h += '<div class="zt-cicard-media" style="' + cardBg + '"></div>';
-  h += '<div class="zt-cicard-grad"></div>';
-  h += '<div class="zt-cicard-badge"><i class="fa-solid fa-circle"></i> Circle</div>';
-  h += '<button class="zt-cicard-edit" onclick="event.stopPropagation();ZT.openCircleSettings()" title="Edit Circle"><i class="fa-solid fa-gear"></i></button>';
-  h += '<div class="zt-cicard-body">';
-  h += '<div class="zt-cicard-title">' + ZT.escape(cir.name || 'Circle') + '</div>';
-  h += '<div class="zt-cicard-sub">' + ZT.escape(cir.description || 'No description yet. Tap to add.') + '</div>';
-  h += '</div>';
-  h += '</div>';
-
-  /* Owner About edit button below the card */
-  h += '<button onclick="ZT.openOwnerAboutEditor()" style="width:100%;max-width:220px;margin:10px auto 0;display:block;padding:10px;border-radius:10px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fbbf24;font-weight:900;font-size:11.5px;cursor:pointer;">';
-  h += '<i class="fa-solid fa-user-pen"></i> Edit Owner About</button>';
-
-  host.innerHTML = h;
-};
-
 ZT._ownerImageFile = null;
 ZT._ownerImageRemove = false;
 ZT._ownerBannerGradient = null;
@@ -5276,7 +5255,8 @@ ZT._pickOwnerBannerGradient = function(g){
   ZT._ownerBannerGradient = g;
   document.querySelectorAll('.zi-grad-swatch').forEach(function(el){
     var isActive = el.getAttribute('data-grad') === g;
-    el.style.border = isActive ? '2px solid #10b981' : '2px solid transparent';
+    el.style.border = isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)';
+    el.style.boxShadow = isActive ? '0 0 0 3px rgba(16,185,129,.22)' : 'inset 0 0 0 1px rgba(0,0,0,.35)';
   });
 };
 
@@ -5290,52 +5270,34 @@ ZT.openOwnerAboutEditor = async function(){
   }
   var c = ZT.sb(); if(!c) return;
 
-  var meta = ZT.State.circleOwnerMeta || {};
-  var aboutTitle = meta.about_title || '';
-  var aboutSubtitle = meta.about_subtitle || '';
-  var desc = meta.bio || '';
+  /* Fresh fetch — never show stale data */
+  var meta = {};
+  try {
+    var fr = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
+    if(!fr.error && fr.data){
+      meta = fr.data.metadata || fr.data || {};
+      ZT.State.circleOwnerMeta = meta;
+    }
+  } catch(e){ meta = ZT.State.circleOwnerMeta || {}; }
+
   var qual = meta.qualification || '';
   var exp = meta.experience || '';
-  var chips = Array.isArray(meta.expertise) ? meta.expertise.join(', ') : '';
+  var bio = meta.bio || '';
   var phil = meta.philosophy || '';
+  var chips = Array.isArray(meta.expertise) ? meta.expertise.join(', ') : '';
   var currentImage = meta.avatar || '';
-  var currentGradient = meta.banner_gradient || 'emerald';
+  var currentGradient = meta.banner_gradient || '';
 
   ZT._ownerImageFile = null;
   ZT._ownerImageRemove = false;
   ZT._ownerBannerGradient = currentGradient;
 
-  var thumbPresets = [
-    { id: 'tech',      icon: 'fa-solid fa-laptop-code',    grad: 'linear-gradient(135deg,#3b82f6,#1e40af)' },
-    { id: 'creative',  icon: 'fa-solid fa-palette',        grad: 'linear-gradient(135deg,#8b5cf6,#4c1d95)' },
-    { id: 'business',  icon: 'fa-solid fa-briefcase',      grad: 'linear-gradient(135deg,#334155,#0f172a)' },
-    { id: 'health',    icon: 'fa-solid fa-heart-pulse',    grad: 'linear-gradient(135deg,#ec4899,#831843)' },
-    { id: 'education', icon: 'fa-solid fa-graduation-cap', grad: 'linear-gradient(135deg,#f59e0b,#78350f)' }
-  ];
-  var thumbHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">';
-  thumbPresets.forEach(function(t){
-    thumbHtml += '<button type="button" class="zi-thumb-preset" data-thumb="' + t.id + '" style="width:52px;height:52px;border-radius:12px;border:2px solid rgba(255,255,255,.08);background:' + t.grad + ';cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;"><i class="' + t.icon + '"></i></button>';
-  });
-  thumbHtml += '<button type="button" onclick="ZT.toast(\'Premium thumbnails - coming soon\')" style="width:52px;height:52px;border-radius:12px;border:2px dashed rgba(251,191,36,.5);background:rgba(251,191,36,.06);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fbbf24;font-size:8px;gap:2px;"><i class="fa-solid fa-crown" style="font-size:14px;"></i>Premium</button>';
-  thumbHtml += '</div>';
-
-  var gradKeys = ['emerald','ocean','violet','rose','amber','teal','slate','crimson'];
-  var gradMap = {
-    emerald: 'linear-gradient(135deg,#10b981,#065f46)',
-    ocean:   'linear-gradient(135deg,#3b82f6,#1e40af)',
-    violet:  'linear-gradient(135deg,#8b5cf6,#4c1d95)',
-    rose:    'linear-gradient(135deg,#ec4899,#831843)',
-    amber:   'linear-gradient(135deg,#f59e0b,#78350f)',
-    teal:    'linear-gradient(135deg,#0d9488,#0f766e)',
-    slate:   'linear-gradient(135deg,#334155,#0f172a)',
-    crimson: 'linear-gradient(135deg,#be123c,#7f1d1d)'
-  };
-  var gradHtml = '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+  var gradKeys = ['emerald','ocean','violet','teal','slate','forest','midnight','deep'];
+  var gradHtml = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">';
   gradKeys.forEach(function(g){
     var isActive = (currentGradient === g);
-    gradHtml += '<div class="zi-grad-swatch" data-grad="' + g + '" onclick="ZT._pickOwnerBannerGradient(\'' + g + '\')" style="width:40px;height:40px;border-radius:10px;cursor:pointer;background:' + gradMap[g] + ';border:2px solid ' + (isActive ? '#10b981' : 'transparent') + ';transition:all .15s;"></div>';
+    gradHtml += '<div class="zi-grad-swatch" data-grad="' + g + '" onclick="ZT._pickOwnerBannerGradient(\'' + g + '\')" style="aspect-ratio:1;border-radius:10px;cursor:pointer;background:' + ZT.gradientCss(g) + ';border:2px solid ' + (isActive ? '#10b981' : 'rgba(255,255,255,.06)') + ';box-shadow:' + (isActive ? '0 0 0 3px rgba(16,185,129,.22)' : 'inset 0 0 0 1px rgba(0,0,0,.35)') + ';"></div>';
   });
-  gradHtml += '<button type="button" onclick="ZT.toast(\'Premium banners - coming soon\')" style="width:40px;height:40px;border-radius:10px;cursor:pointer;background:rgba(251,191,36,.06);border:2px dashed rgba(251,191,36,.5);display:flex;align-items:center;justify-content:center;color:#fbbf24;font-size:14px;padding:0;"><i class="fa-solid fa-crown"></i></button>';
   gradHtml += '</div>';
 
   var h = '';
@@ -5343,123 +5305,138 @@ ZT.openOwnerAboutEditor = async function(){
   h += '<div class="zt-bsheet" onclick="event.stopPropagation()">';
   h += '<div class="zt-bsheet-handle"></div>';
   h += '<div class="zt-bsheet-header">';
-  h += '<h3>Edit Card</h3>';
+  h += '<h3>Owner About</h3>';
   h += '<button class="zt-bsheet-close" onclick="ZT.closeSheet()"><i class="fa-solid fa-xmark"></i></button>';
   h += '</div>';
   h += '<div class="zt-bsheet-body">';
 
-  h += '<label class="zt-label">TITLE</label>';
-  h += '<input id="zi-title" class="zt-input" maxlength="80" placeholder="Card title" value="' + ZT.escape(aboutTitle) + '">';
+  /* Bio data — UPAR */
+  h += '<label class="zt-label">Qualification</label>';
+  h += '<input id="zi-qual" class="zt-input" maxlength="120" placeholder="e.g. M.Sc. Physics · Punjab University" value="' + ZT.escape(qual) + '">';
 
-  h += '<label class="zt-label" style="margin-top:10px;">SUBTITLE</label>';
-  h += '<input id="zi-subtitle" class="zt-input" maxlength="120" placeholder="Short tagline" value="' + ZT.escape(aboutSubtitle) + '">';
+  h += '<label class="zt-label" style="margin-top:10px;">Experience</label>';
+  h += '<input id="zi-exp" class="zt-input" maxlength="120" placeholder="e.g. 10+ years teaching · 500+ students" value="' + ZT.escape(exp) + '">';
 
-  h += '<label class="zt-label" style="margin-top:10px;">DESCRIPTION</label>';
-  h += '<textarea id="zi-bio" class="zt-textarea" maxlength="500" placeholder="Short description shown on the banner" style="min-height:100px;">' + ZT.escape(desc) + '</textarea>';
+  h += '<label class="zt-label" style="margin-top:10px;">Short Bio</label>';
+  h += '<textarea id="zi-bio" class="zt-textarea" maxlength="300" placeholder="A brief introduction about yourself." style="min-height:70px;">' + ZT.escape(bio) + '</textarea>';
 
-  h += '<div style="height:1px;background:#1e293b;margin:18px 0 14px 0;"></div>';
-  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:10px;">OWNER BIODATA</div>';
+  h += '<label class="zt-label" style="margin-top:10px;">Areas of Expertise</label>';
+  h += '<input id="zi-chips" class="zt-input" maxlength="200" placeholder="Physics, Mathematics (comma separated)" value="' + ZT.escape(chips) + '">';
 
-  h += '<label class="zt-label">QUALIFICATION</label>';
-  h += '<input id="zi-qual" class="zt-input" maxlength="120" placeholder="e.g. M.Sc. Physics" value="' + ZT.escape(qual) + '">';
+  h += '<label class="zt-label" style="margin-top:10px;">Teaching Philosophy (optional)</label>';
+  h += '<textarea id="zi-phil" class="zt-textarea" maxlength="300" placeholder="What is your approach?" style="min-height:70px;">' + ZT.escape(phil) + '</textarea>';
 
-  h += '<label class="zt-label" style="margin-top:10px;">EXPERIENCE</label>';
-  h += '<input id="zi-exp" class="zt-input" maxlength="120" placeholder="e.g. 10+ years teaching" value="' + ZT.escape(exp) + '">';
+  /* Banner section — NEECHE */
+  h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #1e293b;">';
+  h += '<div style="font-size:12px;font-weight:900;color:#e2e8f0;letter-spacing:.4px;margin-bottom:10px;">IMAGE</div>';
 
-  h += '<label class="zt-label" style="margin-top:10px;">AREAS OF EXPERTISE</label>';
-  h += '<input id="zi-chips" class="zt-input" maxlength="200" placeholder="Physics, Math (comma separated)" value="' + ZT.escape(chips) + '">';
-
-  h += '<label class="zt-label" style="margin-top:10px;">TEACHING PHILOSOPHY (OPTIONAL)</label>';
-  h += '<textarea id="zi-phil" class="zt-textarea" maxlength="300" placeholder="Your approach to teaching" style="min-height:70px;">' + ZT.escape(phil) + '</textarea>';
-
-  h += '<div style="height:1px;background:#1e293b;margin:18px 0 14px 0;"></div>';
-  h += '<label class="zt-label">THUMBNAIL</label>';
-  h += thumbHtml;
-
-  h += '<div style="position:relative;width:100%;height:160px;border-radius:14px;overflow:hidden;margin-bottom:10px;border:1px solid #1e293b;background:#0f172a;">';
-  h += '<img id="zi-banner-preview" src="' + ZT.escape(currentImage) + '" style="width:100%;height:100%;object-fit:cover;display:' + (currentImage ? 'block' : 'none') + ';">';
-  h += '<div id="zi-banner-empty" style="position:absolute;inset:0;display:' + (currentImage ? 'none' : 'flex') + ';flex-direction:column;align-items:center;justify-content:center;color:#334155;font-size:11px;gap:6px;">';
-  h += '<i class="fa-solid fa-image" style="font-size:34px;"></i></div>';
+  /* Square 100px preview */
+  h += '<div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;">';
+  h += '<div style="position:relative;width:100px;height:100px;border-radius:12px;overflow:hidden;border:2px solid rgba(16,185,129,.35);background:#0f172a;flex-shrink:0;">';
+  h += '<img id="zi-image-preview" src="' + ZT.escape(currentImage) + '" style="width:100%;height:100%;object-fit:cover;display:' + (currentImage ? 'block' : 'none') + ';">';
+  h += '<div id="zi-image-empty" style="position:absolute;inset:0;display:' + (currentImage ? 'none' : 'flex') + ';flex-direction:column;align-items:center;justify-content:center;color:#64748b;font-size:9px;gap:4px;">';
+  h += '<i class="fa-solid fa-image" style="font-size:22px;"></i><span>No image</span></div>';
   h += '</div>';
-
-  h += '<input type="file" id="zi-banner-input" accept="image/*" style="display:none;">';
-  h += '<div style="display:flex;gap:8px;margin-bottom:4px;">';
-  h += '<button type="button" id="zi-banner-upload" style="flex:1;padding:11px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:12px;font-weight:800;cursor:pointer;">';
-  h += '<i class="fa-solid fa-cloud-arrow-up"></i> Upload</button>';
+  h += '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">';
+  h += '<input type="file" id="zi-image-input" accept="image/*" style="display:none;">';
+  h += '<button type="button" id="zi-image-upload" style="padding:10px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11.5px;font-weight:800;cursor:pointer;">';
+  h += '<i class="fa-solid fa-cloud-arrow-up"></i> ' + (currentImage ? 'Change image' : 'Upload image') + '</button>';
+  h += '<button type="button" id="zi-image-remove" style="padding:10px;border-radius:10px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.06);color:#c9a5a5;font-size:11.5px;font-weight:800;cursor:pointer;display:' + (currentImage ? 'block' : 'none') + ';">';
+  h += '<i class="fa-solid fa-trash"></i> Remove</button>';
   h += '</div>';
+  h += '</div>';
+  h += '<div style="font-size:10px;color:#64748b;margin-bottom:14px;">Under 5 MB. Square image recommended.</div>';
 
-  h += '<label class="zt-label" style="margin-top:14px;">BANNER COLOR</label>';
+  /* Gradient picker */
+  h += '<label class="zt-label">Fallback banner color (when no image)</label>';
   h += gradHtml;
 
-  h += '<div style="display:flex;gap:8px;margin-top:22px;">';
-  h += '<button type="button" id="zi-delete-btn" style="width:52px;height:52px;border-radius:12px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa-solid fa-trash"></i></button>';
-  h += '<button type="button" id="zi-save-btn" style="flex:1;padding:16px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">Save Changes</button>';
-  h += '</div>';
+  h += '</div>'; /* banner section end */
+  h += '</div>'; /* body end */
 
+  h += '<div class="zt-bsheet-footer">';
+  h += '<button type="button" id="zi-delete-btn" style="width:52px;height:52px;border-radius:12px;border:1px solid rgba(161,98,98,.4);background:rgba(161,98,98,.08);color:#c9a5a5;font-size:16px;cursor:pointer;flex-shrink:0;">';
+  h += '<i class="fa-solid fa-trash"></i></button>';
+  h += '<button type="button" id="zi-save-btn" style="flex:1;padding:16px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:14px;cursor:pointer;">';
+  h += 'Save Changes</button>';
   h += '</div>';
   h += '</div></div>';
 
   ZT.openSheet(h);
 
   setTimeout(function(){
-    document.querySelectorAll('.zi-thumb-preset').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        document.querySelectorAll('.zi-thumb-preset').forEach(function(b){
-          b.style.borderColor = 'rgba(255,255,255,.08)';
-        });
-        this.style.borderColor = '#10b981';
-      });
-    });
-  }, 40);
+    /* Upload wiring */
+    var upBtn = document.getElementById('zi-image-upload');
+    var upInput = document.getElementById('zi-image-input');
+    var rmBtn = document.getElementById('zi-image-remove');
 
-  setTimeout(function(){
-    var upBtn = document.getElementById('zi-banner-upload');
-    var upInput = document.getElementById('zi-banner-input');
     if(upBtn && upInput){
       upBtn.addEventListener('click', function(){ upInput.click(); });
       upInput.addEventListener('change', function(){
         var f = this.files && this.files[0];
         if(!f) return;
-        if(f.size > 5*1024*1024){ ZT.toast('Image under 5 MB.', 'error'); this.value=''; return; }
+        if(f.size > 5 * 1024 * 1024){
+          ZT.toast('Image under 5 MB.', 'error');
+          this.value = '';
+          return;
+        }
         ZT._ownerImageFile = f;
         ZT._ownerImageRemove = false;
         try {
           var url = URL.createObjectURL(f);
-          var prev = document.getElementById('zi-banner-preview');
+          var prev = document.getElementById('zi-image-preview');
           if(prev){ prev.src = url; prev.style.display = 'block'; }
-          var empty = document.getElementById('zi-banner-empty');
+          var empty = document.getElementById('zi-image-empty');
           if(empty) empty.style.display = 'none';
+          if(rmBtn) rmBtn.style.display = 'block';
         } catch(e){}
       });
     }
-    var delBtn = document.getElementById('zi-delete-btn');
-    if(delBtn) delBtn.addEventListener('click', function(){
-      if(!confirm('Clear all card content?')) return;
-      ZT._ownerImageFile = null;
-      ZT._ownerImageRemove = true;
-      ['zi-title','zi-subtitle','zi-bio','zi-qual','zi-exp','zi-chips','zi-phil'].forEach(function(id){
-        var el = document.getElementById(id);
-        if(el) el.value = '';
+
+    if(rmBtn){
+      rmBtn.addEventListener('click', function(){
+        ZT._ownerImageFile = null;
+        ZT._ownerImageRemove = true;
+        var prev = document.getElementById('zi-image-preview');
+        if(prev){ prev.src = ''; prev.style.display = 'none'; }
+        var empty = document.getElementById('zi-image-empty');
+        if(empty) empty.style.display = 'flex';
+        rmBtn.style.display = 'none';
       });
-      var prev = document.getElementById('zi-banner-preview');
-      if(prev){ prev.src = ''; prev.style.display = 'none'; }
-      var empty = document.getElementById('zi-banner-empty');
-      if(empty) empty.style.display = 'flex';
-      ZT.toast('Cleared. Press Save Changes.');
+    }
+
+    /* Delete all */
+    var delBtn = document.getElementById('zi-delete-btn');
+    if(delBtn) delBtn.addEventListener('click', async function(){
+      if(!confirm('Clear all Owner About content?')) return;
+      try {
+        var c2 = ZT.sb();
+        var r = await c2.rpc('tutor_save_circle_identity', {
+          p_circle_id: cir.id,
+          p_metadata: { avatar: null, banner_gradient: null, qualification: null, experience: null, bio: null, philosophy: null, expertise: [] }
+        });
+        if(r.error) throw r.error;
+        ZT.State.circleOwnerMeta = {};
+        ZT.closeSheet();
+        ZT.toast('Owner About cleared.');
+        if(ZT.State.currentView === 'feed'){ ZT.showView('feed'); }
+        else if(ZT.State.currentView === 'owner-about'){ ZT.showView('owner-about', cir.owner_id); }
+      } catch(e){
+        ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
+      }
     });
 
+    /* Save */
     var saveBtn = document.getElementById('zi-save-btn');
     if(saveBtn) saveBtn.addEventListener('click', async function(){
-      var tv = (document.getElementById('zi-title').value || '').trim();
-      var sv = (document.getElementById('zi-subtitle').value || '').trim();
-      var bv = (document.getElementById('zi-bio').value || '').trim();
       var qv = (document.getElementById('zi-qual').value || '').trim();
       var ev = (document.getElementById('zi-exp').value || '').trim();
+      var bv = (document.getElementById('zi-bio').value || '').trim();
       var cv = (document.getElementById('zi-chips').value || '').trim();
       var pv = (document.getElementById('zi-phil').value || '').trim();
 
       saveBtn.disabled = true;
-      saveBtn.textContent = 'Saving...';
+      saveBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Saving…';
 
       var imageUrl = ZT._ownerImageRemove ? null : (meta.avatar || null);
       if(ZT._ownerImageFile){
@@ -5468,7 +5445,7 @@ ZT.openOwnerAboutEditor = async function(){
         } catch(e){
           ZT.toast('Image upload failed: ' + ((e && e.message) || 'unknown'), 'error');
           saveBtn.disabled = false;
-          saveBtn.textContent = 'Save Changes';
+          saveBtn.innerHTML = 'Save Changes';
           return;
         }
       }
@@ -5476,8 +5453,6 @@ ZT.openOwnerAboutEditor = async function(){
       var newMeta = {
         avatar: imageUrl,
         banner_gradient: ZT._ownerBannerGradient || null,
-        about_title: tv || null,
-        about_subtitle: sv || null,
         qualification: qv || null,
         experience: ev || null,
         bio: bv || null,
@@ -5492,28 +5467,23 @@ ZT.openOwnerAboutEditor = async function(){
           p_metadata: newMeta
         });
         if(r.error) throw r.error;
-        if(r.data && r.data.ok === false){
-          throw new Error(r.data.error || 'unknown');
-        }
+        if(r.data && r.data.ok === false){ throw new Error(r.data.error || 'unknown'); }
         ZT._ownerImageFile = null;
         ZT._ownerImageRemove = false;
         ZT.State.circleOwnerMeta = newMeta;
         ZT.closeSheet();
-        ZT.toast('Card saved.');
+        ZT.toast('Owner About saved.');
         if(ZT.State.currentView === 'feed'){ ZT.showView('feed'); }
         else if(ZT.State.currentView === 'circle-about'){ ZT.showView('circle-about', cir.id); }
         else if(ZT.State.currentView === 'owner-about'){ ZT.showView('owner-about', cir.owner_id); }
       } catch(e){
         ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
         saveBtn.disabled = false;
-        saveBtn.textContent = 'Save Changes';
+        saveBtn.innerHTML = 'Save Changes';
       }
     });
   }, 60);
 };
-
-/* Old name kept as alias */
-ZT.openCircleIdentityEditor = ZT.openOwnerAboutEditor;
 
 /* ────────────────────────────────────────────────────────────
    MEMBER DASHBOARD — full version
@@ -6130,9 +6100,9 @@ ZT.openMemberRatingSheet = async function(memberId){
 };
 
 /* ════════════════════════════════════════════════════════════
-   P9 Block 1 — CIRCLE OWNER PROFILE PAGE
-   Tapping circle banner / owner name in feed opens this.
-   Structure mirrors SPACE profile but circle-context.
+   OWNER ABOUT — Circle Owner Profile
+   Shows owner details for current circle.
+   Fresh metadata fetch per circle (no cross-circle leak).
    ════════════════════════════════════════════════════════════ */
 ZT.renderOwnerAboutPage = async function(){
   var cir = ZT.State.currentCircle;
@@ -6156,15 +6126,15 @@ ZT.renderOwnerAboutPage = async function(){
   }
   if(!profile){ return ZT.renderNoCircleMessage('Owner About'); }
 
-  var ownerMeta = ZT.State.circleOwnerMeta || {};
+  /* Fresh fetch — never merge with stale state (prevents cross-circle leak) */
+  var ownerMeta = {};
   try {
     var rm = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
     if(!rm.error && rm.data){
-      var fetched = rm.data.metadata || rm.data || {};
-      ownerMeta = Object.assign({}, ownerMeta, fetched);
+      ownerMeta = rm.data.metadata || rm.data || {};
       ZT.State.circleOwnerMeta = ownerMeta;
     }
-  } catch(e){}
+  } catch(e){ ownerMeta = {}; }
 
   /* IMPORTANT: ownerImage sirf owner ki set ki hui image. Koi profile.avatar fallback NAHI */
   var ownerImage = ownerMeta.avatar || '';
@@ -6193,10 +6163,6 @@ ZT.renderOwnerAboutPage = async function(){
   h += '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.30),rgba(0,0,0,.60));pointer-events:none;"></div>';
 
   h += '<button onclick="ZT.goBack()" title="Back" style="position:absolute;top:14px;left:14px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:3;"><i class="fa-solid fa-arrow-left"></i></button>';
-
-  if(isOwner){
-    h += '<button onclick="ZT.openOwnerAboutEditor()" title="Edit" style="position:absolute;top:14px;right:14px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:3;"><i class="fa-solid fa-pen"></i></button>';
-  }
 
   h += '<div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;width:100%;max-width:640px;">';
 
@@ -6350,235 +6316,6 @@ ZT.renderCircleAboutPage = async function(){
   return h;
 };
 
-ZT.renderCircleOwnerProfile = async function(){
-  var cir = ZT.State.currentCircle;
-  if(!cir){ return ZT.renderNoCircleMessage('Owner Profile'); }
-
-  var ownerId = ZT.State.currentParam || cir.owner_id;
-  if(!ownerId){ return ZT.renderNoCircleMessage('Owner Profile'); }
-
-  var me  = ZT.State.currentUser;
-  var c   = sb(); if(!c) return ZT.renderNoCircleMessage('Owner Profile');
-
-  /* Fetch owner profile */
-  var profile = ZT.State.profileCache[ownerId];
-  if(!profile){
-    try {
-      var r1 = await c.from('profiles')
-        .select('id, name, username, avatar, profession, bio, space_data, created_at, last_seen_at')
-        .eq('id', ownerId)
-        .maybeSingle();
-      profile = r1.data || null;
-      if(profile) ZT.State.profileCache[ownerId] = profile;
-    } catch(e){}
-  }
-  if(!profile){ return ZT.renderNoCircleMessage('Owner Profile'); }
-
-  var sd = profile.space_data || {};
-
-  /* Fetch circle identity metadata */
-  var ownerMeta = {};
-  try {
-    var rm = await c.rpc('tutor_get_circle_identity', { p_circle_id: cir.id });
-    if(!rm.error && rm.data) ownerMeta = rm.data || {};
-  } catch(e){}
-
-  /* Owner avatar — prefer circle identity avatar */
-  var ownerAvatar = ownerMeta.avatar || profile.avatar;
-
-  /* Banner background: circle gradient */
-  var bannerCss = ZT.gradientCss(cir.banner_gradient || 'emerald');
-
-  /* Fetch ratings aggregate */
-  var rating = { avg_score:0, rating_count:0, band_top:0, band_high:0, band_mid:0, band_low:0 };
-  try {
-    var r2 = await c.rpc('tutor_get_owner_rating', { p_circle_id: cir.id });
-    if(!r2.error && r2.data && r2.data[0]) rating = r2.data[0];
-  } catch(e){}
-
-  /* Fetch my rating of owner (if I'm a member) */
-  var myRating = null;
-  var isOwnerViewing = (me && me.id === ownerId);
-  if(me && !isOwnerViewing){
-    try {
-      var r3 = await c.rpc('tutor_my_owner_rating', { p_circle_id: cir.id });
-      if(!r3.error && r3.data && r3.data[0]) myRating = r3.data[0];
-    } catch(e){}
-  }
-
-  /* Fetch stats: member count + content count */
-  var memberCount = 0, lessonCount = 0;
-  try {
-    var m1 = await c.from('tutor_members')
-      .select('id', { count: 'exact', head: true })
-      .eq('circle_id', cir.id).eq('is_active', true);
-    memberCount = m1.count || 0;
-  } catch(e){}
-  try {
-    var m2 = await c.from('tutor_slides')
-      .select('id', { count: 'exact', head: true })
-      .eq('circle_id', cir.id);
-    lessonCount = m2.count || 0;
-  } catch(e){}
-
-  var online = profile.last_seen_at && (Date.now() - new Date(profile.last_seen_at).getTime() < 5*60*1000);
-  var av = ownerAvatar || ZT.safeAvatar(profile);
-  var rc = Number(rating.rating_count) || 0;
-  var avg = Number(rating.avg_score) || 0;
-
-  /* Account age */
-  var ageDays = profile.created_at
-    ? Math.floor((Date.now() - new Date(profile.created_at).getTime()) / 86400000)
-    : 0;
-  var ageLabel = ageDays < 30 ? (ageDays + 'd')
-               : ageDays < 365 ? (Math.floor(ageDays/30) + 'mo')
-               : (Math.floor(ageDays/365) + 'y');
-
-  var h = '';
-  h += '<div class="zv3-root">';
-
-  /* ── Banner ── */
-  h += '<div class="co-banner" style="background:' + bannerCss + ';">';
-  h += '<div class="co-banner-overlay"></div>';
-  h += '<button class="co-back" onclick="ZT.goBack()" title="Back"><i class="fa-solid fa-arrow-left"></i></button>';
-  h += '<button class="co-share" onclick="ZT._copyOwnerProfileLink(\'' + ZT.escape(ownerId) + '\')" title="Share"><i class="fa-solid fa-share-nodes"></i></button>';
-  if(me && me.id === ownerId){
-    h += '<button class="co-share" onclick="ZT.openOwnerAboutEditor()" title="Edit Owner About" style="right:58px;"><i class="fa-solid fa-pen"></i></button>';
-  }
-  h += '</div>';
-
-  /* ── Avatar + Name ── */
-  h += '<div class="co-avatar-row">';
-  h += '<img class="co-avatar" src="' + ZT.escape(av) + '" alt="">';
-  h += '<div class="co-name-block">';
-  h += '<div class="co-name">' + ZT.escape(profile.name || profile.username || 'Owner') + '</div>';
-  h += '<div class="co-handle">@' + ZT.escape(profile.username || 'user') + (online ? ' · <span style="color:#10b981;">Online</span>' : '') + '</div>';
-  if(profile.profession){
-    h += '<div class="co-prof">' + ZT.escape(profile.profession) + '</div>';
-  }
-  h += '</div></div>';
-
-  /* ── Full-width Rating Chip ── */
-  if(rc > 0){
-    var scoreCol = avg >= 8 ? '#10b981' : avg >= 5 ? '#fbbf24' : '#a16262';
-    h += '<div class="co-rating-chip" onclick="ZT._openOwnerRatingsPanel(\'' + ZT.escape(ownerId) + '\')">';
-    h += '<div class="co-rc-left">';
-    h += '<div class="co-rc-score" style="color:' + scoreCol + ';">' + avg.toFixed(1) + '</div>';
-    h += '<div class="co-rc-info">';
-    h += '<div class="co-rc-label" style="color:' + scoreCol + ';">' + rc + ' rating' + (rc === 1 ? '' : 's') + '</div>';
-    h += '<div class="co-rc-sub">Tap to see all reviews</div>';
-    h += '</div></div>';
-    h += '<i class="fa-solid fa-chevron-right co-rc-arrow" style="color:' + scoreCol + ';"></i>';
-    h += '</div>';
-  } else if(me && !isOwnerViewing){
-    h += '<div class="co-rating-chip empty" onclick="ZT.openOwnerRatingSheet(\'' + ZT.escape(ownerId) + '\')">';
-    h += '<div class="co-rc-left">';
-    h += '<div class="co-rc-score" style="color:#60a5fa;font-size:22px;"><i class="fa-regular fa-star"></i></div>';
-    h += '<div class="co-rc-info">';
-    h += '<div class="co-rc-label" style="color:#60a5fa;">Be the first to rate</div>';
-    h += '<div class="co-rc-sub">Tap to rate this owner</div>';
-    h += '</div></div>';
-    h += '<i class="fa-solid fa-chevron-right co-rc-arrow"></i>';
-    h += '</div>';
-  }
-
-  /* ── Trust Strip ── */
-  h += '<div class="co-trust">';
-  h += '<div class="co-trust-cell"><div class="co-trust-lbl">Account Age</div><div class="co-trust-val">' + ageLabel + '</div></div>';
-  h += '<div class="co-trust-cell"><div class="co-trust-lbl">Members</div><div class="co-trust-val">' + memberCount + '</div></div>';
-  h += '<div class="co-trust-cell"><div class="co-trust-lbl">Lessons</div><div class="co-trust-val">' + lessonCount + '</div></div>';
-  h += '</div>';
-
-  /* ── About ── */
-  h += '<div class="zv3-sec"><i class="fa-solid fa-circle-info" style="color:#60a5fa;"></i><span>About</span><div class="ln"></div></div>';
-  h += '<div class="co-about-card">';
-
-  var qual = ownerMeta.qualification || '';
-  var exp  = ownerMeta.experience || '';
-  var phil = ownerMeta.philosophy || '';
-  var expertise = Array.isArray(ownerMeta.expertise) ? ownerMeta.expertise : [];
-
-  if(qual){
-    h += '<div class="co-about-row"><div class="co-about-lbl">Qualification</div><div class="co-about-val">' + ZT.escape(qual) + '</div></div>';
-  }
-  if(exp){
-    h += '<div class="co-about-row"><div class="co-about-lbl">Experience</div><div class="co-about-val">' + ZT.escape(exp) + '</div></div>';
-  }
-  var aboutBio = ownerMeta.bio || '';
-  if(aboutBio){
-    h += '<div class="co-about-row"><div class="co-about-lbl">Bio</div><div class="co-about-val">' + ZT.escape(aboutBio) + '</div></div>';
-  }
-  if(expertise.length){
-    h += '<div class="co-about-row"><div class="co-about-lbl">Areas of Expertise</div><div class="co-chip-row">';
-    expertise.forEach(function(t){ h += '<span class="co-chip">' + ZT.escape(t) + '</span>'; });
-    h += '</div></div>';
-  }
-  if(phil){
-    h += '<div class="co-about-row"><div class="co-about-lbl">Teaching Philosophy</div><div class="co-about-val" style="font-style:italic;">' + ZT.escape(phil) + '</div></div>';
-  }
-  if(!qual && !exp && !profile.bio && !expertise.length && !phil){
-    h += '<div style="text-align:center;color:#64748b;font-size:12px;padding:14px 0;">Owner has not added details yet.</div>';
-  }
-  h += '</div>';
-
-  /* ── Actions ── */
-  h += '<div class="zv3-sec"><i class="fa-solid fa-bolt" style="color:#10b981;"></i><span>Actions</span><div class="ln"></div></div>';
-  h += '<div class="co-actions">';
-  if(me && !isOwnerViewing){
-    if(myRating){
-      var col2 = myRating.rating >= 8 ? '#10b981' : myRating.rating >= 5 ? '#fbbf24' : '#a16262';
-      h += '<button class="co-act secondary" onclick="ZT.openOwnerRatingSheet(\'' + ZT.escape(ownerId) + '\')" style="border-color:' + col2 + '55;color:' + col2 + ';">';
-      h += '<i class="fa-solid fa-star"></i> ' + myRating.rating + '/10 · Update';
-      h += '</button>';
-    } else {
-      h += '<button class="co-act primary" onclick="ZT.openOwnerRatingSheet(\'' + ZT.escape(ownerId) + '\')">';
-      h += '<i class="fa-solid fa-star"></i> Rate this Owner';
-      h += '</button>';
-    }
-  }
-  h += '<button class="co-act secondary" onclick="ZT._messageOwner(\'' + ZT.escape(ownerId) + '\')">';
-  h += '<i class="fa-solid fa-comment"></i> Message';
-  h += '</button>';
-  h += '</div>';
-
-  /* ── Ratings distribution + comments ── */
-  h += '<div class="zv3-sec"><i class="fa-solid fa-star" style="color:#fbbf24;"></i><span>Ratings</span><div class="ln"></div></div>';
-  h += '<div id="co-ratings-host" style="padding:14px;border-radius:14px;background:#131c30;border:1px solid #1e293b;">';
-  if(rc === 0){
-    h += '<div style="text-align:center;color:#64748b;font-size:12px;padding:14px 0;">No ratings yet.</div>';
-  } else {
-    var tot = Math.max(1, (Number(rating.band_top)||0) + (Number(rating.band_high)||0) + (Number(rating.band_mid)||0) + (Number(rating.band_low)||0));
-    h += '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px;">';
-    h += '<div style="font-size:32px;font-weight:900;color:' + scoreCol + ';">' + avg.toFixed(1) + '</div>';
-    h += '<div style="font-size:13px;color:#94a3b8;font-weight:700;">/ 10</div>';
-    h += '<div style="margin-left:auto;font-size:11px;color:#64748b;">' + rc + ' rating' + (rc === 1 ? '' : 's') + '</div>';
-    h += '</div>';
-    function bandRow(key, label, cnt, color){
-      var pct = tot > 0 ? Math.round((cnt / tot) * 100) : 0;
-      return '<button class="co-band" data-co-band="' + key + '">' +
-        '<div class="co-band-lbl">' + label + '</div>' +
-        '<div class="co-band-bar"><div class="co-band-fill" style="width:' + pct + '%;background:' + color + ';"></div></div>' +
-        '<div class="co-band-cnt" style="color:' + color + ';">' + cnt + '</div></button>';
-    }
-    h += bandRow('top',  '9 – 10', Number(rating.band_top)||0,  '#10b981');
-    h += bandRow('high', '7 – 8',  Number(rating.band_high)||0, '#a18554');
-    h += bandRow('mid',  '4 – 6',  Number(rating.band_mid)||0,  '#a18554');
-    h += bandRow('low',  '1 – 3',  Number(rating.band_low)||0,  '#a16262');
-    h += '<div id="co-band-clear"></div>';
-    h += '<div id="co-comments-host" style="margin-top:14px;padding-top:10px;border-top:1px solid #1e293b;min-height:40px;">';
-    h += '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:10px 0;">Loading reviews…</div>';
-    h += '</div>';
-  }
-  h += '</div>';
-
-  h += '</div>';
-
-  /* Load comments async */
-  setTimeout(function(){ ZT._loadOwnerRatings(ownerId, null); }, 60);
-  setTimeout(function(){ ZT._wireOwnerBandFilters(ownerId); },  90);
-
-  return h;
-};
 
 /* ────────────────────────────────────────────────────────────
    Load owner ratings list (with optional band filter)
