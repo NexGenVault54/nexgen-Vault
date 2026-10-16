@@ -1513,10 +1513,12 @@ ZT._openCreateCircleModal = function(){
     title:'Create Circle', icon:'fa-solid fa-plus',
     submitLabel:'Create Circle',
     body:'<div class="zt-field"><label class="zt-label">Circle name *</label><input id="zt-cc-name" class="zt-input" placeholder="e.g. Physics with Sir Ahmed" maxlength="60"></div>' +
+      '<div class="zt-field"><label class="zt-label">Subtitle</label><input id="zt-cc-subtitle" class="zt-input" placeholder="e.g. Learn physics the easy way" maxlength="120"></div>' +
       '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-cc-desc" class="zt-textarea" placeholder="What will you teach? Who is this for?" maxlength="300" style="min-height:80px;"></textarea></div>' +
       '<div class="zt-field"><label class="zt-label">Banner color</label>' + gradHtml + '</div>',
     onSubmit: async function(){
       var name = (document.getElementById('zt-cc-name').value || '').trim();
+      var subtitle = (document.getElementById('zt-cc-subtitle').value || '').trim();
       var desc = (document.getElementById('zt-cc-desc').value || '').trim();
       if(name.length < 2){ ZT.toast('Name required.', 'error'); return false; }
       var c = ZT.sb(); if(!c) return false;
@@ -1527,6 +1529,11 @@ ZT._openCreateCircleModal = function(){
           p_is_public: true
         });
         if(r.error) throw r.error;
+        if(subtitle){
+          try {
+            await c.from('tutor_circles').update({ subtitle: subtitle }).eq('id', r.data.id);
+          } catch(e){ console.warn('subtitle save failed', e); }
+        }
         ZT.toast('Circle created!');
         ZT.haptic(15);
         await ZT.enterCircle(r.data.id);
@@ -2051,19 +2058,23 @@ ZT.renderCircleFeed = async function(){
   h += '<div class="zt-feed-bantile-actions">';
   h += '<button class="zt-feed-bantile-btn" onclick="event.stopPropagation();ZT.exitCircle();return false;" title="Back to Circles"><i class="fa-solid fa-arrow-left"></i></button>';
   if(isTutor){
-    h += '<button class="zt-feed-bantile-btn" onclick="event.stopPropagation();ZT.openCircleSettings()" title="Circle Settings"><i class="fa-solid fa-gear"></i></button>';
+    h += '<button class="zt-feed-bantile-btn" onclick="event.stopPropagation();ZT.openCircleSettings()" title="Edit Circle"><i class="fa-solid fa-pen"></i></button>';
   } else {
     h += '<span></span>';
   }
   h += '</div>';
+  var circleSubtitle = (cir.subtitle || '').trim();
   var circleDesc = (cir.description || '').trim();
   var circleDescShort = circleDesc.length > 100 ? (circleDesc.slice(0, 100) + '…') : circleDesc;
   h += '<div class="zt-feed-bantile-content">';
   h += '<div class="zt-feed-bantile-name">' + ZT.escape(cir.name) + '</div>';
-  h += '<div class="zt-feed-bantile-meta">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div>';
-  if(circleDescShort){
-    h += '<div style="font-size:10px;color:rgba(255,255,255,.8);text-align:center;line-height:1.35;margin-top:2px;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + ZT.escape(circleDescShort) + '</div>';
+  if(circleSubtitle){
+    h += '<div style="font-size:11.5px;color:rgba(255,255,255,.92);text-align:center;font-style:italic;line-height:1.3;margin-top:2px;max-width:100%;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;text-shadow:0 1px 4px rgba(0,0,0,.5);">' + ZT.escape(circleSubtitle) + '</div>';
   }
+  if(circleDescShort){
+    h += '<div style="font-size:10px;color:rgba(255,255,255,.8);text-align:center;line-height:1.35;margin-top:4px;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + ZT.escape(circleDescShort) + '</div>';
+  }
+  h += '<div class="zt-feed-bantile-meta" style="margin-top:4px;">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div>';
   h += '<span id="zt-feed-rating-chip" class="zt-feed-bantile-rating" style="display:none;" onclick="event.stopPropagation();ZT.openOwnerRatingsSheet(\'' + ZT.escape(cir.owner_id) + '\')"></span>';
   h += '</div>';
   h += '</div>';
@@ -6765,6 +6776,7 @@ ZT.openCircleSettings = function(){
 
   var body = '';
   body += '<div class="zt-field"><label class="zt-label">Circle name *</label><input id="zt-cs-name" class="zt-input" value="' + ZT.escape(cir.name) + '" maxlength="60"></div>';
+  body += '<div class="zt-field"><label class="zt-label">Subtitle</label><input id="zt-cs-subtitle" class="zt-input" value="' + ZT.escape(cir.subtitle || '') + '" maxlength="120" placeholder="One-line tagline"></div>';
   body += '<div class="zt-field"><label class="zt-label">Description</label><textarea id="zt-cs-desc" class="zt-textarea" maxlength="300" style="min-height:80px;">' + ZT.escape(cir.description || '') + '</textarea></div>';
   body += '<div class="zt-field"><label class="zt-label">Banner color</label>' + gradHtml + '</div>';
 
@@ -6837,6 +6849,7 @@ ZT.openCircleSettings = function(){
     body: body,
     onSubmit: async function(){
       var name = (document.getElementById('zt-cs-name').value || '').trim();
+      var subtitle = (document.getElementById('zt-cs-subtitle').value || '').trim();
       var desc = (document.getElementById('zt-cs-desc').value || '').trim();
       if(name.length < 2){ ZT.toast('Name required.', 'error'); return false; }
       var c = sb(); if(!c) return false;
@@ -6855,6 +6868,7 @@ ZT.openCircleSettings = function(){
           setTimeout(function(){
             ZT._confirmPaymentModeChange(cir, oldMode, newMode, {
               name: name,
+              subtitle: subtitle || null,
               description: desc || null,
               banner_gradient: ZT._createGradient || 'emerald',
               default_share_bounty: shareBounty,
@@ -6868,6 +6882,7 @@ ZT.openCircleSettings = function(){
 
         var r = await c.from('tutor_circles').update({
           name: name,
+          subtitle: subtitle || null,
           description: desc || null,
           banner_gradient: ZT._createGradient || 'emerald',
           default_share_bounty: shareBounty,
