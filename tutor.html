@@ -5271,6 +5271,18 @@ ZT._dashLoadCircleIdentity = async function(){
   host.innerHTML = h;
 };
 
+
+ZT._identityThumbFile = null;
+ZT._identityBannerGradient = null;
+ZT._pickOwnerBannerGradient = function(g){
+  ZT._identityBannerGradient = g;
+  document.querySelectorAll('.zi-grad-swatch').forEach(function(el){
+    var isActive = el.getAttribute('data-grad') === g;
+    el.style.border = isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)';
+    el.style.boxShadow = isActive ? '0 0 0 3px rgba(16,185,129,.22)' : 'inset 0 0 0 1px rgba(0,0,0,.35)';
+  });
+};
+
 ZT.openOwnerAboutEditor = async function(){
   var cir = ZT.State.currentCircle;
   if(!cir) return;
@@ -5279,19 +5291,30 @@ ZT.openOwnerAboutEditor = async function(){
     ZT.toast('Only the owner can edit.', 'error');
     return;
   }
-  var c = sb(); if(!c) return;
+  var c = ZT.sb(); if(!c) return;
 
   var meta = ZT.State.circleOwnerMeta || {};
   var me = ZT.State.currentUser;
-  var ownerAv = meta.avatar || (me ? ZT.safeAvatar(me) : '');
+  var ownerThumb = meta.avatar || (me ? ZT.safeAvatar(me) : '');
   var qual = meta.qualification || '';
   var exp = meta.experience || '';
   var bio = meta.bio || '';
   var phil = meta.philosophy || '';
   var chips = '';
   if(Array.isArray(meta.expertise)) chips = meta.expertise.join(', ');
+  var currentGradient = meta.banner_gradient || '';
 
-  ZT._identityAvatarFile = null;
+  ZT._identityThumbFile = null;
+  ZT._identityBannerGradient = currentGradient;
+
+  var gradKeys = ['emerald','ocean','violet','teal','slate','forest','midnight','deep'];
+  var gradHtml = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">';
+  gradKeys.forEach(function(g){
+    var isActive = (currentGradient === g);
+    gradHtml += '<div class="zi-grad-swatch" data-grad="' + g + '" onclick="ZT._pickOwnerBannerGradient(\'' + g + '\')" style="aspect-ratio:1;border-radius:10px;cursor:pointer;background:' + ZT.gradientCss(g) + ';border:2px solid ' + (isActive ? '#10b981' : 'rgba(255,255,255,.06)') + ';box-shadow:' + (isActive ? '0 0 0 3px rgba(16,185,129,.22)' : 'inset 0 0 0 1px rgba(0,0,0,.35)') + ';"></div>';
+  });
+  gradHtml += '<button type="button" onclick="ZT.toast(\'Premium banners — coming soon from Market.\')" title="Premium banner" style="aspect-ratio:1;border-radius:10px;cursor:pointer;background:rgba(251,191,36,.06);border:2px dashed rgba(251,191,36,.5);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fbbf24;font-size:8px;gap:2px;padding:0;"><i class="fa-solid fa-crown" style="font-size:14px;"></i>Premium</button>';
+  gradHtml += '</div>';
 
   var h = '';
   h += '<div class="zt-bsheet-overlay" onclick="if(event.target===this)ZT.closeSheet()">';
@@ -5303,19 +5326,21 @@ ZT.openOwnerAboutEditor = async function(){
   h += '</div>';
   h += '<div class="zt-bsheet-body">';
 
-  /* Avatar picker */
   h += '<div style="text-align:center;padding:4px 0 8px;">';
-  h += '<div style="width:96px;height:96px;border-radius:50%;overflow:hidden;margin:0 auto 12px;border:3px solid rgba(16,185,129,.45);background:#0f172a;">';
-  h += '<img id="zi-av-img" src="' + ZT.escape(ownerAv) + '" style="width:100%;height:100%;object-fit:cover;display:block;">';
+  h += '<div style="width:120px;height:120px;border-radius:16px;overflow:hidden;margin:0 auto 12px;border:2px solid rgba(16,185,129,.45);background:#0f172a;">';
+  h += '<img id="zi-av-img" src="' + ZT.escape(ownerThumb) + '" style="width:100%;height:100%;object-fit:cover;display:block;">';
   h += '</div>';
   h += '<input type="file" id="zi-av-input" accept="image/*" style="display:none;">';
   h += '<button type="button" id="zi-av-btn" style="padding:8px 14px;border-radius:10px;border:1px solid #1e293b;background:#0f172a;color:#cbd5e1;font-size:11.5px;font-weight:800;cursor:pointer;">';
-  h += '<i class="fa-solid fa-camera"></i> Change avatar</button>';
+  h += '<i class="fa-solid fa-image"></i> Change thumbnail</button>';
   h += '<div style="font-size:10px;color:#64748b;margin-top:6px;">Square image · under 3 MB.</div>';
   h += '</div>';
 
-  /* Fields */
-  h += '<label class="zt-label">Qualification</label>';
+  h += '<label class="zt-label" style="margin-top:8px;">About page banner</label>';
+  h += gradHtml;
+  h += '<div style="font-size:10px;color:#64748b;margin-top:6px;">Background color for the Owner About page header.</div>';
+
+  h += '<label class="zt-label" style="margin-top:14px;">Qualification</label>';
   h += '<input id="zi-qual" class="zt-input" maxlength="120" placeholder="e.g. M.Sc. Physics · Punjab University" value="' + ZT.escape(qual) + '">';
 
   h += '<label class="zt-label" style="margin-top:10px;">Experience</label>';
@@ -5341,7 +5366,6 @@ ZT.openOwnerAboutEditor = async function(){
   ZT.openSheet(h);
 
   setTimeout(function(){
-    /* Avatar button wire */
     var avBtn = document.getElementById('zi-av-btn');
     var avInput = document.getElementById('zi-av-input');
     if(avBtn && avInput){
@@ -5350,7 +5374,7 @@ ZT.openOwnerAboutEditor = async function(){
         var f = this.files && this.files[0];
         if(!f) return;
         if(f.size > 3*1024*1024){ ZT.toast('Image under 3 MB.', 'error'); this.value=''; return; }
-        ZT._identityAvatarFile = f;
+        ZT._identityThumbFile = f;
         try {
           var url = URL.createObjectURL(f);
           var img = document.getElementById('zi-av-img');
@@ -5359,7 +5383,6 @@ ZT.openOwnerAboutEditor = async function(){
       });
     }
 
-    /* Save wire */
     var saveBtn = document.getElementById('zi-save-btn');
     if(saveBtn) saveBtn.addEventListener('click', async function(){
       var qv = (document.getElementById('zi-qual').value || '').trim();
@@ -5371,12 +5394,12 @@ ZT.openOwnerAboutEditor = async function(){
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Saving…';
 
-      var avatarUrl = meta.avatar || null;
-      if(ZT._identityAvatarFile){
+      var thumbUrl = meta.avatar || null;
+      if(ZT._identityThumbFile){
         try {
-          avatarUrl = await ZT.storeMedia(ZT._identityAvatarFile);
+          thumbUrl = await ZT.storeMedia(ZT._identityThumbFile);
         } catch(e){
-          ZT.toast('Avatar upload failed: ' + ((e && e.message) || 'unknown'), 'error');
+          ZT.toast('Thumbnail upload failed: ' + ((e && e.message) || 'unknown'), 'error');
           saveBtn.disabled = false;
           saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save';
           return;
@@ -5384,7 +5407,8 @@ ZT.openOwnerAboutEditor = async function(){
       }
 
       var newMeta = {
-        avatar: avatarUrl,
+        avatar: thumbUrl,
+        banner_gradient: ZT._identityBannerGradient || null,
         qualification: qv || null,
         experience: ev || null,
         bio: bv || null,
@@ -5393,7 +5417,7 @@ ZT.openOwnerAboutEditor = async function(){
       };
 
       try {
-        var c2 = sb();
+        var c2 = ZT.sb();
         var r = await c2.rpc('tutor_save_circle_identity', {
           p_circle_id: cir.id,
           p_metadata: newMeta
@@ -5402,13 +5426,13 @@ ZT.openOwnerAboutEditor = async function(){
         if(r.data && r.data.ok === false){
           throw new Error(r.data.error || 'unknown');
         }
-        ZT._identityAvatarFile = null;
+        ZT._identityThumbFile = null;
         ZT.State.circleOwnerMeta = newMeta;
         ZT.closeSheet();
         ZT.toast('Owner About saved.');
-        /* Re-render feed or profile if visible */
         if(ZT.State.currentView === 'feed'){ ZT.showView('feed'); }
-        else if(ZT.State.currentView === 'circle-owner-profile'){ ZT.showView('circle-owner-profile', cir.owner_id); }
+        else if(ZT.State.currentView === 'circle-about'){ ZT.showView('circle-about', cir.id); }
+        else if(ZT.State.currentView === 'owner-about'){ ZT.showView('owner-about', cir.owner_id); }
       } catch(e){
         ZT.toast('Failed: ' + ((e && e.message) || 'unknown'), 'error');
         saveBtn.disabled = false;
@@ -6165,7 +6189,8 @@ ZT.renderOwnerAboutPage = async function(){
   var h = '';
   h += '<div style="display:flex;flex-direction:column;gap:14px;padding-bottom:24px;">';
 
-  h += '<div style="position:relative;background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(59,130,246,.12));border:1px solid rgba(16,185,129,.35);border-radius:16px;padding:60px 20px 24px;text-align:center;">';
+  var ownerHeaderBg = ownerMeta.banner_gradient ? ZT.gradientCss(ownerMeta.banner_gradient) : 'linear-gradient(135deg,rgba(16,185,129,.18),rgba(59,130,246,.12))';
+  h += '<div style="position:relative;background:' + ownerHeaderBg + ';border:1px solid rgba(16,185,129,.35);border-radius:16px;padding:60px 20px 24px;text-align:center;">';
   h += '<button onclick="ZT.goBack()" title="Back" style="position:absolute;top:12px;left:12px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-arrow-left"></i></button>';
   if(isOwner){
     h += '<button onclick="ZT.openOwnerAboutEditor()" title="Edit Owner About" style="position:absolute;top:12px;right:12px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;"><i class="fa-solid fa-pen"></i></button>';
