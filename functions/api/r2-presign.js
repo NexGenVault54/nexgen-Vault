@@ -1,32 +1,22 @@
-// api/r2-presign.js
-// Vercel serverless function. Signs R2 PUT/DELETE URLs.
+// functions/api/r2-presign.js
+// Cloudflare Pages Function. Signs R2 PUT/DELETE URLs.
 // Holds the R2 secret in env vars. Never returns the secret to the client.
 //
-// Security model:
+// Converted from Vercel serverless format to Cloudflare Pages Functions.
+// Logic is unchanged — only the runtime interface changed:
+//   - crypto: Node 'crypto' → Web Crypto API (async)
+//   - env:    process.env    → env (from context)
+//   - HTTP:   req/res        → request/Response
+//
+// Security model (unchanged):
 //   - Caller must be an authenticated Supabase user.
 //   - Path must live under the caller's own user folder.
 //   - PUT: extension and content-type allow-listed; content-type signed
 //     into the URL so R2 rejects mismatches.
 //   - DELETE: only signed if the file is not referenced by any row in
-//     posts / sparks / statuses / ads. Prevents accidental orphaning of
-//     media that is still in use.
+//     posts / sparks / statuses / ads.
 
-const crypto = require('crypto');
-
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
-const R2_BUCKET = process.env.R2_BUCKET;
-
-/* Public base URL of the R2 bucket. Must match Z.R2_PUBLIC_BASE in
-   index.html. Used to reconstruct full media URLs when checking whether
-   a file is still referenced by a database row. */
-const R2_PUBLIC_BASE = process.env.R2_PUBLIC_BASE || 'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev';
-
-const SUPABASE_URL = 'https://ipypwqajsfxrdzlxfnlr.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlweXB3cWFqc2Z4cmR6bHhmbmxyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2OTEzODUsImV4cCI6MjEwNDI2NzM4NX0.QW6tzaMxlNg9EYuRq0tCOlGipBlrjBuiV6lZuSr1Jj4';
-
-/* Allow-lists — must stay in sync with _ALLOWED_MEDIA_EXT in index.html */
+/* ---- Allow-lists (must stay in sync with _ALLOWED_MEDIA_EXT in index.html) ---- */
 const ALLOWED_EXTENSIONS = ['jpg','jpeg','png','webp','gif','mp4','webm','mov','m4v','3gp'];
 
 const ALLOWED_CONTENT_TYPES = [
@@ -61,31 +51,45 @@ const DEFAULT_MIME_BY_EXT = {
 };
 
 const MAX_PATH_LENGTH = 400;
+const SUPABASE_URL = 'https://ipypwqajsfxrdzlxfnlr.supabase.co';
 
-function hmac(key, data) {
-  return crypto.createHmac('sha256', key).update(data).digest();
+/* ---- Web Crypto helpers (replace Node's require('crypto')) ---- */
+const _enc = new TextEncoder();
+
+async function hmacSha256(keyBytes, dataBytes) {
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, dataBytes);
+  return new Uint8Array(sig);
 }
 
-function sha256hex(data) {
-  return crypto.createHash('sha256').update(data).digest('hex');
+async function sha256Hex(dataStr) {
+  const bytes = _enc.encode(dataStr);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hash))
+    .map(function(b){ return b.toString(16).padStart(2, '0'); })
+    .join('');
 }
 
-function getSignatureKey(secret, date, region, service) {
-  const kDate = hmac('AWS4' + secret, date);
-  const kRegion = hmac(kDate, region);
-  const kService = hmac(kRegion, service);
-  return hmac(kService, 'aws4_request');
+async function getSignatureKey(secret, date, region, service) {
+  let k = await hmacSha256(_enc.encode('AWS4' + secret), _enc.encode(date));
+  k = await hmacSha256(k, _enc.encode(region));
+  k = await hmacSha256(k, _enc.encode(service));
+  k = await hmacSha256(k, _enc.encode('aws4_request'));
+  return k;
 }
 
 function encodeRfc3986(str) {
-  return encodeURIComponent(str).replace(/[!'()*]/g, c =>
-    '%' + c.charCodeAt(0).toString(16).toUpperCase()
-  );
+  return encodeURIComponent(str).replace(/[!'()*]/g, function(c){
+    return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+  });
 }
 
-function presign(method, path, expires, extraHeaders) {
+/* ---- Presign — async because Web Crypto is async ---- */
+async function presign(method, path, expires, extraHeaders, env) {
   extraHeaders = extraHeaders || {};
-  const host = R2_ACCOUNT_ID + '.r2.cloudflarestorage.com';
+  const host = env.R2_ACCOUNT_ID + '.r2.cloudflarestorage.com';
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const dateStamp = amzDate.slice(0, 8);
@@ -93,7 +97,8 @@ function presign(method, path, expires, extraHeaders) {
   const service = 's3';
   const credentialScope = dateStamp + '/' + region + '/' + service + '/aws4_request';
 
-  const canonicalUri = '/' + R2_BUCKET + '/' + path.split('/').map(encodeRfc3986).join('/');
+  const canonicalUri = '/' + env.R2_BUCKET + '/' +
+    path.split('/').map(encodeRfc3986).join('/');
 
   const headersToSign = { host: host };
   Object.keys(extraHeaders).forEach(function (k) {
@@ -107,7 +112,7 @@ function presign(method, path, expires, extraHeaders) {
 
   const queryParams = {
     'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
-    'X-Amz-Credential': R2_ACCESS_KEY_ID + '/' + credentialScope,
+    'X-Amz-Credential': env.R2_ACCESS_KEY_ID + '/' + credentialScope,
     'X-Amz-Date': amzDate,
     'X-Amz-Expires': String(expires),
     'X-Amz-SignedHeaders': signedHeaders
@@ -115,7 +120,7 @@ function presign(method, path, expires, extraHeaders) {
 
   const canonicalQuery = Object.keys(queryParams)
     .sort()
-    .map(k => encodeRfc3986(k) + '=' + encodeRfc3986(queryParams[k]))
+    .map(function(k){ return encodeRfc3986(k) + '=' + encodeRfc3986(queryParams[k]); })
     .join('&');
 
   const payloadHash = 'UNSIGNED-PAYLOAD';
@@ -133,26 +138,31 @@ function presign(method, path, expires, extraHeaders) {
     'AWS4-HMAC-SHA256',
     amzDate,
     credentialScope,
-    sha256hex(canonicalRequest)
+    await sha256Hex(canonicalRequest)
   ].join('\n');
 
-  const signingKey = getSignatureKey(R2_SECRET_ACCESS_KEY, dateStamp, region, service);
-  const signature = crypto.createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+  const signingKey = await getSignatureKey(env.R2_SECRET_ACCESS_KEY, dateStamp, region, service);
+  const sigBytes = await hmacSha256(signingKey, _enc.encode(stringToSign));
+  const signature = Array.from(sigBytes)
+    .map(function(b){ return b.toString(16).padStart(2, '0'); })
+    .join('');
 
-  return 'https://' + host + canonicalUri + '?' + canonicalQuery + '&X-Amz-Signature=' + signature;
+  return 'https://' + host + canonicalUri + '?' + canonicalQuery +
+    '&X-Amz-Signature=' + signature;
 }
 
-async function verifyUser(authHeader) {
+/* ---- Auth (same logic, Web Fetch API) ---- */
+async function verifyUser(authHeader, env) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const token = authHeader.slice(7);
   const r = await fetch(SUPABASE_URL + '/auth/v1/user', {
     headers: {
-      'apikey': SUPABASE_ANON_KEY,
+      'apikey': env.SUPABASE_ANON_KEY,
       'Authorization': 'Bearer ' + token
     }
   });
   if (!r.ok) return null;
-  const user = await r.json().catch(() => null);
+  const user = await r.json().catch(function(){ return null; });
   if (!user || !user.id) return null;
   return user;
 }
@@ -165,11 +175,7 @@ function extFromPath(p) {
   return p.slice(dot + 1).toLowerCase();
 }
 
-/* Ask Supabase whether any row in {table} still points at {fullUrl} via
-   {urlColumn}. {excludeId} skips one row (the one currently being
-   deleted). On error we return true (assume referenced) — safer to
-   leave an orphan than to delete a file still in use. */
-async function findReference(table, urlColumn, fullUrl, excludeId, bearerToken) {
+async function findReference(table, urlColumn, fullUrl, excludeId, bearerToken, env) {
   try {
     const params = new URLSearchParams();
     params.set('select', 'id');
@@ -179,103 +185,151 @@ async function findReference(table, urlColumn, fullUrl, excludeId, bearerToken) 
 
     const r = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + params.toString(), {
       headers: {
-        'apikey': SUPABASE_ANON_KEY,
+        'apikey': env.SUPABASE_ANON_KEY,
         'Authorization': 'Bearer ' + bearerToken
       }
     });
     if (!r.ok) return true;
-    const data = await r.json().catch(function () { return []; });
+    const data = await r.json().catch(function(){ return []; });
     return Array.isArray(data) && data.length > 0;
   } catch (e) {
     return true;
   }
 }
 
-async function isReferenced(fullUrl, excludeId, bearerToken) {
+async function isReferenced(fullUrl, excludeId, bearerToken, env) {
   const checks = await Promise.all([
-    findReference('posts',    'media_url', fullUrl, excludeId, bearerToken),
-    findReference('sparks',   'video_url', fullUrl, excludeId, bearerToken),
-    findReference('statuses', 'media_url', fullUrl, null,      bearerToken),
-    findReference('ads',      'media_url', fullUrl, null,      bearerToken)
+    findReference('posts',    'media_url', fullUrl, excludeId, bearerToken, env),
+    findReference('sparks',   'video_url', fullUrl, excludeId, bearerToken, env),
+    findReference('statuses', 'media_url', fullUrl, null,      bearerToken, env),
+    findReference('ads',      'media_url', fullUrl, null,      bearerToken, env)
   ]);
   return checks.some(function (v) { return v; });
 }
 
-module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+/* ---- JSON response helper (replaces res.status().json()) ---- */
+function jsonResponse(body, status) {
+  return new Response(JSON.stringify(body), {
+    status: status || 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    }
+  });
+}
 
-  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
-    return res.status(500).json({ error: 'Server not configured' });
-  }
+/* ---- Main entry point ---- */
+export async function onRequest(context) {
+  try {
+    const { request, env } = context;
 
-  const user = await verifyUser(req.headers.authorization);
-  if (!user) {
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
-
-  const body = req.body || {};
-  const action = body.action;
-  const path = body.path;
-
-  if (!action || !path || typeof path !== 'string') {
-    return res.status(400).json({ error: 'Missing action or path' });
-  }
-  if (path.length > MAX_PATH_LENGTH) {
-    return res.status(400).json({ error: 'Path too long' });
-  }
-  if (path.indexOf('..') !== -1 || path.startsWith('/')) {
-    return res.status(400).json({ error: 'Invalid path' });
-  }
-  if (!path.startsWith(user.id + '/')) {
-    return res.status(403).json({ error: 'Path must be under your user folder' });
-  }
-  if (action !== 'put' && action !== 'delete') {
-    return res.status(400).json({ error: 'Invalid action' });
-  }
-
-  if (action === 'put') {
-    const ext = extFromPath(path);
-    if (!ext || ALLOWED_EXTENSIONS.indexOf(ext) === -1) {
-      return res.status(400).json({
-        error: 'Unsupported file extension',
-        allowed: ALLOWED_EXTENSIONS
+    // CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Max-Age': '86400'
+        }
       });
     }
 
-    let contentType = (body.contentType || '').toString().trim().toLowerCase();
-    if (!contentType) contentType = DEFAULT_MIME_BY_EXT[ext] || '';
-    if (ALLOWED_CONTENT_TYPES.indexOf(contentType) === -1) {
-      return res.status(400).json({
-        error: 'Unsupported content-type',
-        allowed: ALLOWED_CONTENT_TYPES
-      });
+    if (request.method !== 'POST') {
+      return jsonResponse({ error: 'Method not allowed' }, 405);
     }
 
-    const compatible = MIME_BY_EXT[ext] || [];
-    if (compatible.indexOf(contentType) === -1) {
-      return res.status(400).json({
-        error: 'Extension does not match content-type',
-        extension: ext,
-        allowedContentTypesForExtension: compatible
-      });
+    if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID ||
+        !env.R2_SECRET_ACCESS_KEY || !env.R2_BUCKET) {
+      return jsonResponse({ error: 'Server not configured (R2 env vars missing)' }, 500);
+    }
+    if (!env.SUPABASE_ANON_KEY) {
+      return jsonResponse({ error: 'Server not configured (SUPABASE_ANON_KEY missing)' }, 500);
     }
 
-    const url = presign('PUT', path, 3600, { 'content-type': contentType });
-    return res.status(200).json({ url: url, contentType: contentType });
+    const authHeader = request.headers.get('Authorization');
+    const user = await verifyUser(authHeader, env);
+    if (!user) {
+      return jsonResponse({ error: 'Not authenticated' }, 401);
+    }
+
+    let body;
+    try { body = await request.json(); }
+    catch (e) { return jsonResponse({ error: 'Invalid JSON body' }, 400); }
+
+    const action = body.action;
+    const path = body.path;
+
+    if (!action || !path || typeof path !== 'string') {
+      return jsonResponse({ error: 'Missing action or path' }, 400);
+    }
+    if (path.length > MAX_PATH_LENGTH) {
+      return jsonResponse({ error: 'Path too long' }, 400);
+    }
+    if (path.indexOf('..') !== -1 || path.startsWith('/')) {
+      return jsonResponse({ error: 'Invalid path' }, 400);
+    }
+    if (!path.startsWith(user.id + '/')) {
+      return jsonResponse({ error: 'Path must be under your user folder' }, 403);
+    }
+    if (action !== 'put' && action !== 'delete') {
+      return jsonResponse({ error: 'Invalid action' }, 400);
+    }
+
+    if (action === 'put') {
+      const ext = extFromPath(path);
+      if (!ext || ALLOWED_EXTENSIONS.indexOf(ext) === -1) {
+        return jsonResponse({
+          error: 'Unsupported file extension',
+          allowed: ALLOWED_EXTENSIONS
+        }, 400);
+      }
+
+      let contentType = (body.contentType || '').toString().trim().toLowerCase();
+      if (!contentType) contentType = DEFAULT_MIME_BY_EXT[ext] || '';
+      if (ALLOWED_CONTENT_TYPES.indexOf(contentType) === -1) {
+        return jsonResponse({
+          error: 'Unsupported content-type',
+          allowed: ALLOWED_CONTENT_TYPES
+        }, 400);
+      }
+
+      const compatible = MIME_BY_EXT[ext] || [];
+      if (compatible.indexOf(contentType) === -1) {
+        return jsonResponse({
+          error: 'Extension does not match content-type',
+          extension: ext,
+          allowedContentTypesForExtension: compatible
+        }, 400);
+      }
+
+      const url = await presign('PUT', path, 3600, { 'content-type': contentType }, env);
+      return jsonResponse({ url: url, contentType: contentType }, 200);
+    }
+
+    /* ---- DELETE ---- */
+    const publicBase = env.R2_PUBLIC_BASE ||
+      'https://pub-cd1b1d46d6d2450283f494cb457ca83e.r2.dev';
+    const fullUrl = publicBase + '/' + path;
+    const excludeId = (typeof body.excludeId === 'string' && body.excludeId)
+      ? body.excludeId : null;
+    const bearerToken = authHeader.slice(7);
+
+    const referenced = await isReferenced(fullUrl, excludeId, bearerToken, env);
+    if (referenced) {
+      return jsonResponse({ error: 'File still referenced by existing content' }, 409);
+    }
+
+    const url = await presign('DELETE', path, 3600, {}, env);
+    return jsonResponse({ url: url }, 200);
+
+  } catch (err) {
+    return jsonResponse({
+      error: 'Server error',
+      detail: (err && err.message) ? err.message : 'unknown'
+    }, 500);
   }
-
-  /* ---- DELETE ---- */
-  const fullUrl = R2_PUBLIC_BASE + '/' + path;
-  const excludeId = (typeof body.excludeId === 'string' && body.excludeId) ? body.excludeId : null;
-  const bearerToken = req.headers.authorization.slice(7);
-
-  const referenced = await isReferenced(fullUrl, excludeId, bearerToken);
-  if (referenced) {
-    return res.status(409).json({ error: 'File still referenced by existing content' });
-  }
-
-  const url = presign('DELETE', path, 3600);
-  return res.status(200).json({ url: url });
-};
+}
