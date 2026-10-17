@@ -1117,8 +1117,382 @@ ZT._paintRoomNavActive = function(key){
     b.classList.toggle('active', b.getAttribute('data-room-nav') === key);
   });
 };
+
+ZT.LEARN_TABS = [
+  { k:'feed',      l:'Feed',      i:'fa-solid fa-house' },
+  { k:'classes',   l:'Classes',   i:'fa-solid fa-chalkboard-user' },
+  { k:'chat',      l:'Chat',      i:'fa-solid fa-comment-dots' },
+  { k:'live',      l:'Live',      i:'fa-solid fa-video' },
+  { k:'slides',    l:'Slides',    i:'fa-solid fa-images' },
+  { k:'dashboard', l:'Dashboard', i:'fa-solid fa-gauge-high' }
+];
+
+ZT.CONNECT_TABS = [
+  { k:'feed',    l:'Feed',    i:'fa-solid fa-house' },
+  { k:'members', l:'Members', i:'fa-solid fa-users' },
+  { k:'media',   l:'Media',   i:'fa-solid fa-images' },
+  { k:'events',  l:'Events',  i:'fa-solid fa-calendar-check' },
+  { k:'live',    l:'Live',    i:'fa-solid fa-video' },
+  { k:'about',   l:'About',   i:'fa-solid fa-circle-info' }
+];
+
+ZT._setRoomNav = function(tabs){
+  var bottom = document.getElementById('zt-room-nav-bottom');
+  var side = document.getElementById('zt-room-nav-side');
+  if(!bottom || !side) return;
+  var html = '';
+  var validKeys = [];
+  tabs.forEach(function(t){
+    validKeys.push(t.k);
+    html += '<button class="zt-room-nav-item" data-room-nav="' + t.k + '" onclick="ZT.switchRoomTab(\'' + t.k + '\')"><i class="' + t.i + '"></i><span>' + t.l + '</span></button>';
+  });
+  bottom.innerHTML = html;
+  side.innerHTML = html;
+  if(validKeys.indexOf(ZT.State.roomTab) === -1){
+    ZT.State.roomTab = tabs[0].k;
+  }
+};
+
+ZT.renderConnectRoom = async function(){
+  ZT._setRoomNav(ZT.CONNECT_TABS);
+  var _tab = ZT.State.roomTab || 'feed';
+  ZT._paintRoomNavActive(_tab);
+  if(!ZT.State.connectPosts) ZT._initConnectSampleData();
+
+  var h = '';
+  h += '<div id="zt-ctx-header"></div>';
+  h += '<div id="zt-room-content"></div>';
+  h += '<button id="zt-scroll-top" onclick="window.scrollTo({top:0,behavior:\'smooth\'})" style="position:fixed;bottom:88px;right:16px;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);border:none;color:#000;font-size:16px;cursor:pointer;box-shadow:0 8px 24px rgba(16,185,129,.4);z-index:100;display:none;align-items:center;justify-content:center;"><i class="fa-solid fa-arrow-up"></i></button>';
+
+  setTimeout(async function(){
+    try {
+      var ctxHtml = await ZT.renderConnectContextHeader(_tab);
+      var ch = document.getElementById('zt-ctx-header');
+      if(ch) ch.innerHTML = ctxHtml || '';
+    } catch(e){ console.warn('[ctx]', e); }
+    var html = ZT.renderConnectTab(_tab);
+    var rhost = document.getElementById('zt-room-content');
+    if(rhost){
+      if(html && typeof html === 'string') rhost.innerHTML = html;
+      else if(html && typeof html.then === 'function'){ html.then(function(h2){ if(rhost) rhost.innerHTML = h2; }); }
+    }
+    ZT._paintRoomNavActive(_tab);
+  }, 30);
+
+  return h;
+};
+
+ZT.renderConnectContextHeader = function(tab){
+  if(tab !== 'feed') return '';
+  var cir = ZT.State.currentCircle;
+  if(!cir) return '';
+  var bannerCss = ZT.gradientCss(cir.banner_gradient || 'emerald');
+  var h = '';
+  h += '<div class="zt-feed-bantile" style="background:' + bannerCss + ';margin-bottom:12px;min-height:200px;">';
+  h += '<div class="zt-feed-bantile-overlay"></div>';
+  h += '<div class="zt-feed-bantile-content">';
+  h += '<div class="zt-feed-bantile-name">' + ZT.escape(cir.name) + '</div>';
+  h += '<div class="zt-feed-bantile-meta">' + (cir.member_count||0) + ' members · ' + (cir.post_count||0) + ' posts</div>';
+  h += '</div></div>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:12px;">';
+  h += '<button style="flex:1;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;" onclick="ZT.toast(\'Joined\')"><i class="fa-solid fa-check"></i> Joined</button>';
+  h += '<button style="width:44px;height:44px;border-radius:12px;border:1px solid #1e293b;background:#111827;color:#cbd5e1;cursor:pointer;font-size:15px;flex-shrink:0;" onclick="ZT.toast(\'Notifications enabled\')"><i class="fa-solid fa-bell"></i></button>';
+  h += '<button style="width:44px;height:44px;border-radius:12px;border:1px solid #1e293b;background:#111827;color:#cbd5e1;cursor:pointer;font-size:15px;flex-shrink:0;" onclick="ZT.toast(\'Share link copied\')"><i class="fa-solid fa-share-nodes"></i></button>';
+  h += '<button style="width:44px;height:44px;border-radius:12px;border:1px solid #1e293b;background:#111827;color:#cbd5e1;cursor:pointer;font-size:15px;flex-shrink:0;" onclick="ZT.toast(\'More options\')"><i class="fa-solid fa-ellipsis-vertical"></i></button>';
+  h += '</div>';
+  return h;
+};
+
+ZT.renderConnectTab = function(key){
+  if(key === 'feed')    return ZT.renderConnectTabFeed();
+  if(key === 'members') return ZT.renderConnectTabMembers();
+  if(key === 'media')   return ZT.renderConnectTabMedia();
+  if(key === 'events')  return ZT.renderConnectTabEvents();
+  if(key === 'live')    return ZT.renderConnectTabLive();
+  if(key === 'about')   return ZT.renderConnectTabAbout();
+  return '';
+};
+
+ZT._initConnectSampleData = function(){
+  ZT.State.connectPosts = [
+    { id:'cp1', name:'Sara Ahmed', handle:'@sara', time:'2m', isOwner:true, pinned:true,
+      content:'Welcome everyone! 🎉 This is our space to share opportunities and grow together. Introduce yourself below 👇',
+      reactions:{ love:42, flower:18, spark:23, clap:12, star:8, dislike:0 } },
+    { id:'cp2', name:'Bilal Khan', handle:'@bilal', time:'15m', isOwner:false, pinned:false,
+      content:'Just closed a $50K deal with a client from Dubai. AMA about how I found them and what worked.',
+      reactions:{ love:88, flower:34, spark:56, clap:24, star:12, dislike:0 } },
+    { id:'cp3', name:'Ayesha Malik', handle:'@ayesha', time:'1h', isOwner:false, pinned:false,
+      content:'Reminder: Weekly networking meetup is this Friday 7 PM at Dolmen Mall. Bring your business cards!',
+      reactions:{ love:34, flower:12, spark:19, clap:8, star:5, dislike:0 } }
+  ];
+  ZT.State.connectMyReactions = {};
+};
+
+ZT.renderConnectTabFeed = function(){
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+  var h = '';
+
+  if(isTutor && me){
+    h += '<div class="zt-composer" onclick="ZT.toast(\'Composer coming soon\')">';
+    h += '<img src="' + ZT.escape(ZT.safeAvatar(me)) + '">';
+    h += '<div class="zt-composer-input">Share something with the room…</div>';
+    h += '<i class="fa-solid fa-pen-to-square" style="color:#10b981;font-size:15px;"></i>';
+    h += '</div>';
+  }
+
+  var posts = ZT.State.connectPosts || [];
+  posts.forEach(function(p){ h += ZT._renderConnectPost(p); });
+  return h;
+};
+
+ZT._renderConnectPost = function(p){
+  var avatarUrl = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(p.name) + '&background=111827&color=34d399';
+  var myRx = (ZT.State.connectMyReactions && ZT.State.connectMyReactions[p.id]) || {};
+  var BOUNTIES = { love:0.05, flower:0.04, spark:0.03, clap:0.02, star:0.01, dislike:0 };
+  var SYMBOLS = { love:'❤️', flower:'🌹', spark:'🔥', clap:'👏', star:'⭐', dislike:'👎' };
+
+  var h = '';
+  h += '<div class="zt-post" data-post-id="' + p.id + '">';
+  h += '<div class="zt-post-author">';
+  h += '<img src="' + avatarUrl + '">';
+  h += '<div style="flex:1;min-width:0;">';
+  h += '<div class="pname">' + ZT.escape(p.name);
+  if(p.isOwner) h += ' <span class="zt-badge-author">OWNER</span>';
+  if(p.pinned) h += ' <span class="zt-badge-pinned"><i class="fa-solid fa-thumbtack"></i> PINNED</span>';
+  h += '</div>';
+  h += '<div class="phandle">' + ZT.escape(p.handle) + ' · ' + ZT.escape(p.time) + ' ago</div>';
+  h += '</div></div>';
+
+  h += '<div class="zt-post-content">' + ZT.escape(p.content) + '</div>';
+
+  h += '<div class="zt-post-reactions">';
+  ZT.ALL_REACTIONS.forEach(function(k){
+    var symbol = SYMBOLS[k];
+    var bounty = BOUNTIES[k];
+    var cnt = p.reactions[k] || 0;
+    var active = !!myRx[k];
+    var bountyStr = bounty > 0 ? '<span style="font-size:9px;color:#10b981;font-weight:700;margin-left:1px;">$' + bounty.toFixed(2) + '</span>' : '';
+    h += '<button class="zt-react-btn ' + (active ? 'active' : '') + '" onclick="ZT._connectToggleReaction(\'' + p.id + '\',\'' + k + '\')">' + symbol + ' <span class="count">' + cnt + '</span> ' + bountyStr + '</button>';
+  });
+  h += '</div>';
+
+  h += '<div class="zt-post-actions">';
+  h += '<button onclick="ZT._connectToggleComments(\'' + p.id + '\')"><i class="fa-regular fa-comment"></i> Comments</button>';
+  h += '<button onclick="ZT.toast(\'Share link copied\')"><i class="fa-solid fa-share-nodes"></i> Share</button>';
+  h += '</div>';
+
+  h += '<div class="zt-comments" id="zt-connect-comments-' + p.id + '">';
+  h += '<div style="text-align:center;color:#64748b;font-size:11.5px;padding:10px;">Comments coming soon</div>';
+  h += '</div>';
+
+  h += '</div>';
+  return h;
+};
+
+ZT._connectToggleReaction = function(postId, key){
+  if(!ZT.State.connectMyReactions) ZT.State.connectMyReactions = {};
+  if(!ZT.State.connectMyReactions[postId]) ZT.State.connectMyReactions[postId] = {};
+  var p = ZT.State.connectPosts.find(function(x){ return x.id === postId; });
+  if(!p) return;
+  var wasActive = !!ZT.State.connectMyReactions[postId][key];
+  if(wasActive){
+    ZT.State.connectMyReactions[postId][key] = false;
+    p.reactions[key] = Math.max(0, (p.reactions[key]||1) - 1);
+  } else {
+    ZT.State.connectMyReactions[postId][key] = true;
+    p.reactions[key] = (p.reactions[key]||0) + 1;
+  }
+  ZT.switchRoomTab('feed');
+};
+
+ZT._connectToggleComments = function(postId){
+  var el = document.getElementById('zt-connect-comments-' + postId);
+  if(el) el.classList.toggle('open');
+};
+
+ZT._initConnectSampleMembers = function(){
+  if(ZT.State.connectMembers) return;
+  ZT.State.connectMembers = [
+    { name:'Sara Ahmed', handle:'@sara', role:'Owner', initials:'SA', color:'#10b981', online:true },
+    { name:'Bilal Khan', handle:'@bilal', role:'Moderator', initials:'BK', color:'#3b82f6', online:true },
+    { name:'Ayesha Malik', handle:'@ayesha', role:'Member', initials:'AM', color:'#8b5cf6', online:false },
+    { name:'Hassan Raza', handle:'@hassan', role:'Member', initials:'HR', color:'#f59e0b', online:true },
+    { name:'Fatima Ali', handle:'@fatima', role:'Member', initials:'FA', color:'#ec4899', online:false },
+    { name:'Usman Tariq', handle:'@usman', role:'Member', initials:'UT', color:'#06b6d4', online:true }
+  ];
+};
+
+ZT._initConnectSampleMedia = function(){
+  if(ZT.State.connectMedia) return;
+  ZT.State.connectMedia = [
+    'https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=400&q=60',
+    'https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=400&q=60',
+    'https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=400&q=60',
+    'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=400&q=60',
+    'https://images.unsplash.com/photo-1499750310107-5fef28a66643?auto=format&fit=crop&w=400&q=60',
+    'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=400&q=60'
+  ];
+};
+
+ZT._initConnectSampleEvents = function(){
+  if(ZT.State.connectEvents) return;
+  ZT.State.connectEvents = [
+    { id:'ce1', day:'18', month:'OCT', title:'Weekly Networking Meetup', meta:'Friday, 7:00 PM · Dolmen Mall', going:45 },
+    { id:'ce2', day:'25', month:'OCT', title:'Startup Pitch Night', meta:'Friday, 8:00 PM · Online', going:120 }
+  ];
+};
+
+ZT.renderConnectTabMembers = function(){
+  ZT._initConnectSampleMembers();
+  var h = '';
+  h += '<div class="zt-search" style="margin-bottom:14px;">';
+  h += '<input type="text" id="zt-connect-members-search" placeholder="Search members..." oninput="ZT._connectFilterMembers(this.value)">';
+  h += '<i class="fa-solid fa-magnifying-glass"></i>';
+  h += '</div>';
+  h += '<div id="zt-connect-members-list" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+  ZT.State.connectMembers.forEach(function(m){ h += ZT._connectRenderMemberRow(m); });
+  h += '</div>';
+  return h;
+};
+
+ZT._connectRenderMemberRow = function(m){
+  return '<div style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px;">' +
+    '<div style="width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;position:relative;background:' + m.color + '22;color:' + m.color + ';">' +
+    m.initials + (m.online ? '<span style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:#10b981;border:2px solid #111827;"></span>' : '') +
+    '</div>' +
+    '<div style="flex:1;min-width:0;">' +
+    '<div style="font-size:12.5px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(m.name) + '</div>' +
+    '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">' + ZT.escape(m.role) + '</div>' +
+    '</div></div>';
+};
+
+ZT._connectFilterMembers = function(q){
+  q = (q||'').toLowerCase();
+  var host = document.getElementById('zt-connect-members-list');
+  if(!host) return;
+  var filtered = ZT.State.connectMembers.filter(function(m){
+    return m.name.toLowerCase().indexOf(q) !== -1 || m.handle.toLowerCase().indexOf(q) !== -1;
+  });
+  if(!filtered.length){
+    host.innerHTML = '<div style="grid-column:span 2;text-align:center;padding:40px;color:#94a3b8;font-size:12px;">No matches.</div>';
+    return;
+  }
+  host.innerHTML = filtered.map(ZT._connectRenderMemberRow).join('');
+};
+
+ZT.renderConnectTabMedia = function(){
+  ZT._initConnectSampleMedia();
+  var h = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
+  ZT.State.connectMedia.forEach(function(url){
+    h += '<div style="aspect-ratio:1;border-radius:10px;overflow:hidden;background:linear-gradient(135deg,#1e293b,#0f172a);cursor:pointer;"><img src="' + url + '" style="width:100%;height:100%;object-fit:cover;"></div>';
+  });
+  h += '</div>';
+  return h;
+};
+
+ZT.renderConnectTabEvents = function(){
+  ZT._initConnectSampleEvents();
+  var h = '';
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+  if(isTutor){
+    h += '<button class="zt-btn" style="margin-bottom:14px;" onclick="ZT._connectOpenEventSheet()"><i class="fa-solid fa-plus"></i> Create Event</button>';
+  }
+  var events = ZT.State.connectEvents || [];
+  if(!events.length){
+    h += '<div style="text-align:center;padding:60px;color:#64748b;font-size:12px;">No events yet.</div>';
+    return h;
+  }
+  events.forEach(function(e, i){
+    h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center;position:relative;">';
+    h += '<div style="width:54px;height:54px;border-radius:12px;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;line-height:1.1;">';
+    h += '<span style="font-size:19px;line-height:1;">' + e.day + '</span><span>' + e.month + '</span>';
+    h += '</div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:13.5px;font-weight:800;color:#fff;margin-bottom:3px;">' + ZT.escape(e.title) + '</div>';
+    h += '<div style="font-size:11px;color:#94a3b8;">' + ZT.escape(e.meta) + '</div>';
+    h += '<div style="font-size:11px;color:#10b981;font-weight:800;margin-top:4px;">' + e.going + ' going</div>';
+    h += '</div>';
+    if(isTutor){
+      h += '<button onclick="ZT._connectDeleteEvent(' + i + ')" style="background:transparent;border:none;color:#a16262;cursor:pointer;font-size:12px;padding:4px;"><i class="fa-solid fa-trash"></i></button>';
+    }
+    h += '</div>';
+  });
+  return h;
+};
+
+ZT.renderConnectTabLive = function(){
+  var h = '';
+  h += '<div style="background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06));border:1px solid rgba(16,185,129,.35);border-radius:16px;padding:20px;text-align:center;margin-bottom:12px;">';
+  h += '<div style="width:64px;height:64px;border-radius:50%;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;color:#10b981;font-size:26px;"><i class="fa-solid fa-satellite-dish"></i></div>';
+  h += '<div style="font-size:16px;font-weight:900;color:#fff;margin-bottom:6px;">🎥 Live Stream</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.65;margin-bottom:14px;">Broadcast to your members. They watch and chat in real time.<br><b style="color:#10b981;">Free for all owners.</b> Unlimited viewers.</div>';
+  h += '<button class="zt-btn" onclick="ZT.toast(\'Live stream — coming soon\')"><i class="fa-solid fa-video"></i> Start Live Stream</button>';
+  h += '</div>';
+  return h;
+};
+
+ZT.renderConnectTabAbout = function(){
+  var cir = ZT.State.currentCircle;
+  var h = '';
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:6px;">DESCRIPTION</div>';
+  h += '<div style="font-size:12.5px;color:#e2e8f0;line-height:1.65;">' + ZT.escape(cir.description || 'A community for people to connect, share, and grow together.') + '</div>';
+  h += '</div>';
+  return h;
+};
+
+ZT._connectOpenEventSheet = function(){
+  var h = '';
+  h += '<div class="zt-overlay" onclick="if(event.target===this)ZT.Modal.close()">';
+  h += '<div class="zt-modal">';
+  h += '<div class="zt-mhead"><div class="zt-mtitle"><i class="fa-solid fa-calendar-plus" style="color:#10b981;"></i> Create Event</div>';
+  h += '<button class="zt-mclose" onclick="ZT.Modal.close()"><i class="fa-solid fa-xmark"></i></button></div>';
+  h += '<div class="zt-field"><label class="zt-label">Event Title *</label><input id="zt-cev-title" class="zt-input" placeholder="e.g. Weekly Meetup"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Date &amp; Time</label><input id="zt-cev-date" class="zt-input" type="datetime-local"></div>';
+  h += '<div class="zt-field"><label class="zt-label">Location</label><input id="zt-cev-loc" class="zt-input" placeholder="e.g. Dolmen Mall or Online"></div>';
+  h += '<div style="display:flex;gap:8px;margin-top:14px;">';
+  h += '<button onclick="ZT.Modal.close()" style="flex:0 0 auto;padding:12px 18px;border-radius:10px;border:1px solid #1e293b;background:transparent;color:#cbd5e1;font-weight:800;font-size:12px;cursor:pointer;">Cancel</button>';
+  h += '<button onclick="ZT._connectSubmitEvent()" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;"><i class="fa-solid fa-check"></i> Create</button>';
+  h += '</div>';
+  h += '</div></div>';
+  ZT.Modal.open({ title:'', icon:'fa-solid fa-calendar-plus', body:h, footer:false });
+};
+
+ZT._connectSubmitEvent = function(){
+  var title = (document.getElementById('zt-cev-title').value || '').trim();
+  var dateVal = document.getElementById('zt-cev-date').value;
+  var loc = (document.getElementById('zt-cev-loc').value || '').trim();
+  if(!title){ ZT.toast('Title required.', 'error'); return; }
+  if(!dateVal){ ZT.toast('Date required.', 'error'); return; }
+  var d = new Date(dateVal);
+  ZT._initConnectSampleEvents();
+  ZT.State.connectEvents.push({
+    id: 'ce' + Date.now(),
+    day: String(d.getDate()).padStart(2,'0'),
+    month: d.toLocaleString('en', {month:'short'}).toUpperCase(),
+    title: title,
+    meta: d.toLocaleString('en', {weekday:'short', hour:'2-digit', minute:'2-digit'}) + (loc ? (' · ' + loc) : ''),
+    going: 1
+  });
+  ZT.Modal.close();
+  ZT.toast('Event created.');
+  ZT.switchRoomTab('events');
+};
+
+ZT._connectDeleteEvent = function(idx){
+  if(!confirm('Delete this event?')) return;
+  ZT.State.connectEvents.splice(idx, 1);
+  ZT.toast('Event deleted.');
+  ZT.switchRoomTab('events');
+};
 ZT._initCurrentRoomTab = function(key){
   if(!key) key = ZT.State.roomTab || 'feed';
+  var cir = ZT.State.currentCircle;
+  var type = (cir && cir.room_type) || 'learn';
+  if(type === 'connect') return;
   if(key === 'feed'){ ZT._paintTrialBanner(); ZT.loadCirclePosts(); }
   else if(key === 'classes'){ ZT.loadAssignments(); }
   else if(key === 'slides'){ ZT.loadSlidesList(); }
@@ -1148,6 +1522,9 @@ ZT._closeRoomOverflowOnce = function(e){
   if(m && !m.contains(e.target)) ZT._closeRoomOverflow();
 };
 ZT.renderRoomTab = function(key){
+  var cir = ZT.State.currentCircle;
+  var type = (cir && cir.room_type) || 'learn';
+  if(type === 'connect') return ZT.renderConnectTab(key);
   if(key === 'feed')      return ZT.renderRoomTabFeed();
   if(key === 'classes')   return ZT.renderRoomTabClasses();
   if(key === 'chat')      return ZT.renderRoomTabChat();
@@ -2024,6 +2401,8 @@ ZT.exitCircle = function(){
    ============================================================ */
 ZT.renderCircleFeed = async function(){
   var cir = ZT.State.currentCircle;
+  if(cir && cir.room_type === 'connect'){ return ZT.renderConnectRoom(); }
+  ZT._setRoomNav(ZT.LEARN_TABS);
   var role = ZT.State.myRoleInCircle || 'student';
   var _tab = ZT.State.roomTab || 'feed';
   var h = '';
@@ -2064,6 +2443,9 @@ ZT.renderCircleFeed = async function(){
 ZT.renderContextHeader = async function(tab){
   var cir = ZT.State.currentCircle;
   if(!cir) return '';
+  if((cir.room_type || 'learn') === 'connect'){
+    return ZT.renderConnectContextHeader(tab);
+  }
   var me = ZT.State.currentUser;
   var role = ZT.State.myRoleInCircle || 'student';
   var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
