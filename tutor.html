@@ -1161,14 +1161,7 @@ ZT.switchLCM = function(type){
   document.querySelectorAll('.zt-lcm-tab').forEach(function(b){
     b.classList.toggle('active', b.getAttribute('data-type') === type);
   });
-  /* Connect aur Meet abhi placeholder — Phase 3/4 me aayenge */
-  if(type === 'connect' || type === 'meet'){
-    ZT.toast((type === 'connect' ? 'Connect' : 'Meet') + ' room coming soon', 'info');
-    ZT.State.roomType = 'learn';
-    document.querySelectorAll('.zt-lcm-tab').forEach(function(b){
-      b.classList.toggle('active', b.getAttribute('data-type') === 'learn');
-    });
-  }
+  ZT.reloadCircles();
 };
 ZT.goHome = function(){
   try { localStorage.removeItem('zynix_tutor_last_circle'); } catch(e){}
@@ -1342,6 +1335,8 @@ ZT.reloadCircles = async function(){
     var r = await c.rpc('tutor_search_circles', { p_query: ZT.State.searchQuery || null, p_limit: 60, p_offset: 0 });
     if(r.error){ host.innerHTML = '<div class="zt-empty"><p>Could not load.</p></div>'; return; }
     var list = r.data || [];
+    var _rtype = ZT.State.roomType || 'learn';
+    list = list.filter(function(cir){ return (cir.room_type || 'learn') === _rtype; });
     ZT.State.circles = list;
     if(!list.length){
       var q = (ZT.State.searchQuery || '').trim();
@@ -1529,11 +1524,12 @@ ZT._openCreateCircleModal = function(){
           p_is_public: true
         });
         if(r.error) throw r.error;
-        if(subtitle){
-          try {
-            await c.from('tutor_circles').update({ subtitle: subtitle }).eq('id', r.data.id);
-          } catch(e){ console.warn('subtitle save failed', e); }
-        }
+        var _rtype = ZT.State.roomType || 'learn';
+        try {
+          var _upd = { room_type: _rtype };
+          if(subtitle) _upd.subtitle = subtitle;
+          await c.from('tutor_circles').update(_upd).eq('id', r.data.id);
+        } catch(e){ console.warn('post-create update failed', e); }
         ZT.toast('Circle created!');
         ZT.haptic(15);
         await ZT.enterCircle(r.data.id);
@@ -7097,6 +7093,24 @@ ZT.openCircleSettings = function(){
     return out;
   }
 
+  /* Room Type */
+  var _curRoomType = cir.room_type || 'learn';
+  body += '<div class="zt-st" style="margin-top:6px;">Room Type</div>';
+  body += '<div style="padding:10px 0;border-top:1px solid rgba(255,255,255,.04);">';
+  body += '<div style="' + _rowStyle + 'border-top:none;">';
+  body += '<div style="' + _labelStyle + '">Learn · Connect · Meet</div>';
+  body += '<select id="zt-cs-room-type" style="' + _selectStyle + '">';
+  [
+    { id:'learn', label:'Learn' },
+    { id:'connect', label:'Connect' },
+    { id:'meet', label:'Meet' }
+  ].forEach(function(m){
+    body += '<option value="' + m.id + '"' + (_curRoomType === m.id ? ' selected' : '') + '>' + m.label + '</option>';
+  });
+  body += '</select></div>';
+  body += '<div style="font-size:10.5px;color:#64748b;margin-top:6px;line-height:1.5;">Changing type swaps tabs and layout. Existing content stays.</div>';
+  body += '</div>';
+
   /* Payment Mode */
   var _curMode = cir.payment_mode || 'trial';
   body += '<div class="zt-st" style="margin-top:6px;">Payment Mode</div>';
@@ -7163,6 +7177,7 @@ ZT.openCircleSettings = function(){
 
         var newMode = (document.getElementById('zt-cs-payment-mode') || {}).value || 'trial';
         var oldMode = cir.payment_mode || 'trial';
+        var newRoomType = (document.getElementById('zt-cs-room-type') || {}).value || 'learn';
 
         if(newMode !== oldMode){
           /* Protection modal — in-app, typed confirmation */
@@ -7176,7 +7191,8 @@ ZT.openCircleSettings = function(){
               default_share_bounty: shareBounty,
               default_share_budget_cap: shareBudget,
               join_bounty: joinBounty,
-              milestone_bounty: milestoneBounty
+              milestone_bounty: milestoneBounty,
+              room_type: newRoomType
             });
           }, 200);
           return false;
@@ -7193,7 +7209,8 @@ ZT.openCircleSettings = function(){
           milestone_bounty: milestoneBounty,
           payment_mode: newMode,
           trial_days: 7,
-          join_fee: 4.00
+          join_fee: 4.00,
+          room_type: newRoomType
         }).eq('id', cir.id).select().maybeSingle();
         if(r.error) throw r.error;
         ZT.State.currentCircle = r.data;
