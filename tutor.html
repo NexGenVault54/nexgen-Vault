@@ -2088,6 +2088,84 @@ ZT.renderRoomTabClasses = function(){
   return h;
 };
 
+/* ─── Room Tab: Chat ─── */
+ZT.renderRoomTabChat = function(){
+  var cir = ZT.State.currentCircle;
+  var me = ZT.State.currentUser;
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+  var locked = !!cir.chat_locked;
+
+  var h = '';
+  if(locked){
+    h += '<div style="background:rgba(161,98,98,.10);border:1px solid rgba(161,98,98,.4);border-radius:12px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:8px;">';
+    h += '<i class="fa-solid fa-lock" style="color:#c9a5a5;font-size:14px;"></i>';
+    h += '<div style="font-size:12px;color:#c9a5a5;font-weight:800;flex:1;">Chat is locked by owner</div>';
+    if(isTutor){
+      h += '<button onclick="ZT.toggleChatLock()" style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;padding:5px 10px;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;"><i class="fa-solid fa-lock-open"></i> Unlock</button>';
+    }
+    h += '</div>';
+  } else if(isTutor){
+    h += '<div style="margin-bottom:10px;text-align:right;">';
+    h += '<button onclick="ZT.toggleChatLock()" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fa-solid fa-lock-open"></i> Lock chat</button>';
+    h += '</div>';
+  }
+
+  h += '<div class="zt-chat-wrap" id="zt-chat-wrap">';
+  h += '<div class="zt-chat-body" id="zt-chat-body"><div style="text-align:center;color:#64748b;padding:20px;"><i class="fa-solid fa-circle-notch fa-spin"></i></div></div>';
+  h += '<div class="zt-chat-input">';
+  if(locked && !isTutor){
+    h += '<div style="flex:1;text-align:center;color:#64748b;font-size:12px;padding:10px;">Chat locked — you cannot send messages</div>';
+  } else {
+    h += '<textarea id="zt-chat-input" rows="1" placeholder="Type a message..."></textarea>';
+    h += '<button class="send" id="zt-send-btn">Send</button>';
+  }
+  h += '</div></div>';
+
+  setTimeout(async function(){
+    var c = sb(); if(!c) return;
+    try {
+      var th = await c.rpc('tutor_get_group_thread', { p_circle_id: cir.id });
+      if(th.error){ console.warn('thread', th.error); ZT.toast('Chat unavailable.', 'error'); return; }
+      ZT.State.chatThreadId = th.data;
+      await ZT.loadChatMessages();
+      ZT.startChatPoll();
+      var inp = document.getElementById('zt-chat-input');
+      if(inp && !inp._roomWired){
+        inp._roomWired = true;
+        inp.addEventListener('input', function(){ this.style.height='auto'; this.style.height = Math.min(110, this.scrollHeight) + 'px'; });
+        inp.addEventListener('keydown', function(e){ if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ZT.sendChatText(); } });
+      }
+      var sb2 = document.getElementById('zt-send-btn');
+      if(sb2 && !sb2._roomWired){ sb2._roomWired = true; sb2.addEventListener('click', ZT.sendChatText); }
+    } catch(e){ console.warn(e); }
+  }, 30);
+
+  return h;
+};
+
+/* ─── Room Tab: Live ─── */
+ZT.renderRoomTabLive = function(){
+  return ZT.renderLive();
+};
+
+/* ─── Room Tab: Slides ─── */
+ZT.renderRoomTabSlides = function(){
+  var p = ZT.renderSlidesList();
+  if(p && typeof p.then === 'function'){
+    p.then(function(html){
+      var host = document.getElementById('zt-room-content');
+      if(host) host.innerHTML = html;
+    });
+  }
+  return '<div style="padding:30px;text-align:center;color:#64748b;"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
+};
+
+/* ─── Room Tab: Dashboard ─── */
+ZT.renderRoomTabDashboard = function(){
+  return ZT.renderCircleDashboard();
+};
+
 /* ────────────────────────────────────────────────────────────
    Feed banner — load owner rating chip
    ──────────────────────────────────────────────────────────── */
@@ -3008,7 +3086,11 @@ ZT.toggleChatLock = async function(){
     ZT.State.currentCircle = cir;
     ZT.toast(newVal ? 'Chat locked 🔒' : 'Chat unlocked 🔓');
     ZT.haptic(12);
-    ZT.showView('chat');
+    if(document.getElementById('zt-room-content') && ZT.State.roomTab === 'chat'){
+      ZT.switchRoomTab('chat');
+    } else {
+      ZT.showView('chat');
+    }
   } catch(e){
     console.warn('[chat lock]', e);
     ZT.toast('Failed: ' + ((e && e.message) || ''), 'error');
