@@ -1136,6 +1136,177 @@ ZT.CONNECT_TABS = [
   { k:'about',   l:'About',   i:'fa-solid fa-circle-info' }
 ];
 
+ZT.MEET_TABS = [
+  { k:'meeting', l:'Meeting', i:'fa-solid fa-video' },
+  { k:'chat',    l:'Chat',    i:'fa-solid fa-comment-dots' },
+  { k:'members', l:'Members', i:'fa-solid fa-users' },
+  { k:'about',   l:'About',   i:'fa-solid fa-circle-info' }
+];
+
+ZT.renderMeetRoom = async function(){
+  ZT._setRoomNav(ZT.MEET_TABS);
+  var _tab = ZT.State.roomTab || 'meeting';
+  ZT._paintRoomNavActive(_tab);
+  if(!ZT.State.meetMembers) ZT._initMeetSampleData();
+
+  var h = '';
+  h += '<div id="zt-ctx-header"></div>';
+  h += '<div id="zt-room-content"></div>';
+
+  setTimeout(async function(){
+    try {
+      var ctxHtml = ZT.renderMeetContextHeader(_tab);
+      var ch = document.getElementById('zt-ctx-header');
+      if(ch) ch.innerHTML = ctxHtml || '';
+    } catch(e){ console.warn('[meet ctx]', e); }
+    var html = ZT.renderMeetTab(_tab);
+    var rhost = document.getElementById('zt-room-content');
+    if(rhost){
+      if(html && typeof html === 'string') rhost.innerHTML = html;
+      else if(html && typeof html.then === 'function'){ html.then(function(h2){ if(rhost) rhost.innerHTML = h2; }); }
+    }
+    ZT._paintRoomNavActive(_tab);
+  }, 30);
+
+  return h;
+};
+
+ZT.renderMeetContextHeader = function(tab){
+  var cir = ZT.State.currentCircle;
+  if(!cir) return '';
+  var bannerCss = ZT.gradientCss(cir.banner_gradient || 'emerald');
+  var h = '';
+  /* Banner only — NO Join/Bell/Share/3-dots row (Meet per user request) */
+  h += '<div class="zt-feed-bantile" style="background:' + bannerCss + ';margin-bottom:12px;min-height:180px;">';
+  h += '<div class="zt-feed-bantile-overlay"></div>';
+  h += '<div class="zt-feed-bantile-content">';
+  h += '<div class="zt-feed-bantile-name">' + ZT.escape(cir.name) + '</div>';
+  h += '<div class="zt-feed-bantile-meta">' + (cir.member_count||0) + ' participants · Meeting room</div>';
+  h += '</div></div>';
+  return h;
+};
+
+ZT.renderMeetTab = function(key){
+  if(key === 'meeting') return ZT.renderMeetTabMeeting();
+  if(key === 'chat')    return ZT.renderMeetTabChat();
+  if(key === 'members') return ZT.renderMeetTabMembers();
+  if(key === 'about')   return ZT.renderMeetTabAbout();
+  return '';
+};
+
+ZT._initMeetSampleData = function(){
+  if(ZT.State.meetMembers) return;
+  ZT.State.meetMembers = [
+    { name:'Sara Ahmed', handle:'@sara', role:'Host', initials:'SA', color:'#10b981', online:true },
+    { name:'Bilal Khan', handle:'@bilal', role:'Participant', initials:'BK', color:'#3b82f6', online:true },
+    { name:'Ayesha Malik', handle:'@ayesha', role:'Participant', initials:'AM', color:'#8b5cf6', online:true },
+    { name:'Hassan Raza', handle:'@hassan', role:'Participant', initials:'HR', color:'#f59e0b', online:true }
+  ];
+  ZT.State.meetChatMessages = [
+    { name:'Bilal', text:'Are we starting soon?', color:'light-blue', mine:false },
+    { name:'You',   text:'Yes! Joining now.', color:'light-green', mine:true },
+    { name:'Ayesha', text:'Give me 2 min.', color:'light-yellow', mine:false }
+  ];
+};
+
+ZT.renderMeetTabMeeting = function(){
+  if(ZT._lk && ZT._lk.connected) return ZT.renderLive();
+  var role = ZT.State.myRoleInCircle || 'student';
+  var isTutor = role === 'tutor' || role === 'admin' || role === 'owner';
+
+  var h = '';
+  h += '<div style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(59,130,246,.08));border:1px solid rgba(16,185,129,.35);border-radius:16px;padding:24px;text-align:center;margin-bottom:14px;">';
+  h += '<div style="width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,#10b981,#3b82f6);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;color:#000;font-size:32px;"><i class="fa-solid fa-video"></i></div>';
+  h += '<div style="font-size:18px;font-weight:900;color:#fff;margin-bottom:6px;">Ready to join the meeting?</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.6;margin-bottom:16px;">' + (isTutor ? 'You are the host. Camera and mic will turn on.' : 'Camera and mic will turn on when host approves.') + '</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">';
+  h += '<button style="flex:1;min-width:140px;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#000;font-weight:900;font-size:13px;cursor:pointer;" onclick="ZT.joinLiveRoom()"><i class="fa-solid fa-video"></i> ' + (isTutor ? 'Start Meeting' : 'Join Meeting') + '</button>';
+  h += '<button style="flex:1;min-width:140px;padding:14px;border-radius:12px;border:1px solid #1e293b;background:#111827;color:#cbd5e1;font-weight:900;font-size:13px;cursor:pointer;" onclick="ZT.toast(\'Audio only mode coming soon\')"><i class="fa-solid fa-microphone"></i> Audio Only</button>';
+  h += '</div></div>';
+
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-bottom:12px;">';
+  h += '<div style="font-size:11.5px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:10px;">UPCOMING MEETINGS</div>';
+  h += '<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #1e293b;">';
+  h += '<div style="width:40px;height:40px;border-radius:10px;background:rgba(16,185,129,.15);color:#10b981;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:12px;">2PM</div>';
+  h += '<div style="flex:1;"><div style="font-size:13px;font-weight:800;color:#fff;">Q4 Strategy Review</div><div style="font-size:11px;color:#94a3b8;">Today · 6 participants</div></div>';
+  h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></div>';
+  h += '<div style="display:flex;gap:10px;align-items:center;padding:10px 0 0;">';
+  h += '<div style="width:40px;height:40px;border-radius:10px;background:rgba(59,130,246,.15);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:12px;">4PM</div>';
+  h += '<div style="flex:1;"><div style="font-size:13px;font-weight:800;color:#fff;">Client Pitch</div><div style="font-size:11px;color:#94a3b8;">Today · 3 participants</div></div>';
+  h += '<i class="fa-solid fa-chevron-right" style="color:#475569;"></i></div>';
+  h += '</div>';
+
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;">';
+  h += '<div style="font-size:11.5px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:10px;">RECENT MEETINGS</div>';
+  h += '<div style="font-size:12px;color:#cbd5e1;line-height:1.65;">';
+  h += '<div style="display:flex;justify-content:space-between;padding:6px 0;"><span>Weekly Standup</span><span style="color:#64748b;">Yesterday · 45 min</span></div>';
+  h += '<div style="display:flex;justify-content:space-between;padding:6px 0;"><span>Design Review</span><span style="color:#64748b;">2 days ago · 30 min</span></div>';
+  h += '<div style="display:flex;justify-content:space-between;padding:6px 0;"><span>Team Sync</span><span style="color:#64748b;">3 days ago · 20 min</span></div>';
+  h += '</div></div>';
+  return h;
+};
+
+ZT.renderMeetTabChat = function(){
+  ZT._initMeetSampleData();
+  var h = '';
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:14px;padding:14px;min-height:400px;display:flex;flex-direction:column;">';
+  h += '<div style="flex:1;padding:8px 0;" id="zt-meet-chat-body">';
+  var colors = { 'light-blue':'#dbeafe', 'light-green':'#dcfce7', 'light-yellow':'#fef3c7', 'light-pink':'#fce7f3', 'light-purple':'#ede9fe' };
+  var textColors = { 'light-blue':'#172554', 'light-green':'#052e16', 'light-yellow':'#451a03', 'light-pink':'#500724', 'light-purple':'#2e1065' };
+  (ZT.State.meetChatMessages || []).forEach(function(m){
+    var bg = colors[m.color] || colors['light-blue'];
+    var tc = textColors[m.color] || textColors['light-blue'];
+    h += '<div style="max-width:80%;margin-bottom:8px;' + (m.mine ? 'margin-left:auto;' : '') + 'padding:10px 12px;border-radius:12px;background:' + bg + ';color:' + tc + ';font-size:12px;word-break:break-word;">';
+    h += '<b style="opacity:.9;margin-right:6px;">' + ZT.escape(m.name) + '</b>' + ZT.escape(m.text);
+    h += '</div>';
+  });
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px;margin-top:8px;">';
+  h += '<input id="zt-meet-chat-input" type="text" placeholder="Type a message..." style="flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:10px 12px;font-size:12px;color:#fff;outline:none;">';
+  h += '<button onclick="ZT._meetSendChat()" style="background:#10b981;border:none;color:#000;font-weight:700;padding:8px 16px;border-radius:8px;font-size:11px;cursor:pointer;">Send</button>';
+  h += '</div></div>';
+  return h;
+};
+
+ZT._meetSendChat = function(){
+  var inp = document.getElementById('zt-meet-chat-input');
+  if(!inp) return;
+  var txt = (inp.value || '').trim();
+  if(!txt) return;
+  inp.value = '';
+  ZT.State.meetChatMessages.push({ name:'You', text:txt, color:'light-green', mine:true });
+  ZT.toast('Message sent.');
+  ZT.switchRoomTab('chat');
+};
+
+ZT.renderMeetTabMembers = function(){
+  ZT._initMeetSampleData();
+  var h = '<div style="display:flex;flex-direction:column;gap:8px;">';
+  ZT.State.meetMembers.forEach(function(m){
+    var dot = m.online ? '<span style="position:absolute;bottom:2px;right:2px;width:11px;height:11px;border-radius:50%;background:#10b981;border:2px solid #111827;"></span>' : '';
+    h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;">';
+    h += '<div style="position:relative;width:44px;height:44px;flex-shrink:0;">';
+    h += '<div style="width:100%;height:100%;border-radius:50%;background:' + m.color + '22;color:' + m.color + ';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;">' + m.initials + '</div>';
+    h += dot + '</div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:13px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + ZT.escape(m.name) + '</div>';
+    h += '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px;">' + ZT.escape(m.role) + ' · ' + ZT.escape(m.handle) + '</div>';
+    h += '</div></div>';
+  });
+  h += '</div>';
+  return h;
+};
+
+ZT.renderMeetTabAbout = function(){
+  var cir = ZT.State.currentCircle;
+  var h = '';
+  h += '<div style="background:#111827;border:1px solid #1e293b;border-radius:16px;padding:16px;">';
+  h += '<div style="font-size:10px;color:#94a3b8;font-weight:900;letter-spacing:.5px;margin-bottom:6px;">DESCRIPTION</div>';
+  h += '<div style="font-size:12.5px;color:#e2e8f0;line-height:1.65;">' + ZT.escape(cir.description || 'A meeting space for business conversations, webinars, and conferences.') + '</div>';
+  h += '</div>';
+  return h;
+};
+
 ZT._setRoomNav = function(tabs){
   var bottom = document.getElementById('zt-room-nav-bottom');
   var side = document.getElementById('zt-room-nav-side');
@@ -1493,6 +1664,7 @@ ZT._initCurrentRoomTab = function(key){
   var cir = ZT.State.currentCircle;
   var type = (cir && cir.room_type) || 'learn';
   if(type === 'connect') return;
+  if(type === 'meet') return;
   if(key === 'feed'){ ZT._paintTrialBanner(); ZT.loadCirclePosts(); }
   else if(key === 'classes'){ ZT.loadAssignments(); }
   else if(key === 'slides'){ ZT.loadSlidesList(); }
@@ -1525,6 +1697,7 @@ ZT.renderRoomTab = function(key){
   var cir = ZT.State.currentCircle;
   var type = (cir && cir.room_type) || 'learn';
   if(type === 'connect') return ZT.renderConnectTab(key);
+  if(type === 'meet') return ZT.renderMeetTab(key);
   if(key === 'feed')      return ZT.renderRoomTabFeed();
   if(key === 'classes')   return ZT.renderRoomTabClasses();
   if(key === 'chat')      return ZT.renderRoomTabChat();
@@ -2402,6 +2575,7 @@ ZT.exitCircle = function(){
 ZT.renderCircleFeed = async function(){
   var cir = ZT.State.currentCircle;
   if(cir && cir.room_type === 'connect'){ return ZT.renderConnectRoom(); }
+  if(cir && cir.room_type === 'meet'){ return ZT.renderMeetRoom(); }
   ZT._setRoomNav(ZT.LEARN_TABS);
   var role = ZT.State.myRoleInCircle || 'student';
   var _tab = ZT.State.roomTab || 'feed';
@@ -2445,6 +2619,9 @@ ZT.renderContextHeader = async function(tab){
   if(!cir) return '';
   if((cir.room_type || 'learn') === 'connect'){
     return ZT.renderConnectContextHeader(tab);
+  }
+  if((cir.room_type || 'learn') === 'meet'){
+    return ZT.renderMeetContextHeader(tab);
   }
   var me = ZT.State.currentUser;
   var role = ZT.State.myRoleInCircle || 'student';
@@ -4272,11 +4449,7 @@ ZT.joinLiveRoom = async function(){
       ZT._lk.connected = false;
       ZT._lk.room = null;
       ZT._resumeBackgroundActivity();
-      if(ZT.State.currentCircle && document.getElementById('zt-room-tabs')){
-        ZT.switchRoomTab('live');
-      } else {
-        ZT.showView('live');
-      }
+      ZT._routeToLiveTab();
     });
 
     await room.connect(ZT.LIVEKIT_URL, data.token);
@@ -4300,11 +4473,7 @@ ZT.joinLiveRoom = async function(){
 
     ZT.toast(isTutor ? 'Connected as host ✓' : 'Request sent. Waiting for approval…');
     ZT.haptic(15);
-    if(ZT.State.currentCircle && document.getElementById('zt-room-tabs')){
-      ZT.switchRoomTab('live');
-    } else {
-      ZT.showView('live');
-    }
+    ZT._routeToLiveTab();
 
   } catch(e){
     console.error('[live join]', e);
@@ -4787,8 +4956,16 @@ ZT.leaveLiveRoom = async function(){
   ZT._lk.connected = false;
   ZT._lk.handRaised = false;
   ZT._lk.attendanceMarked = false;
-  if(ZT.State.currentCircle && document.getElementById('zt-room-tabs')){
-    ZT.switchRoomTab('live');
+  ZT._routeToLiveTab();
+};
+
+ZT._routeToLiveTab = function(){
+  var cir = ZT.State.currentCircle;
+  if(!cir){ ZT.showView('live'); return; }
+  var rhost = document.getElementById('zt-room-content');
+  if(rhost){
+    var targetTab = (cir.room_type === 'meet') ? 'meeting' : 'live';
+    ZT.switchRoomTab(targetTab);
   } else {
     ZT.showView('live');
   }
