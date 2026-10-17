@@ -2714,41 +2714,123 @@ ZT.openComposer = function(){
   var me = ZT.State.currentUser; if(!me) return;
   var avatar = ZT.safeAvatar(me);
   ZT._composerBanner = 'none';
-  var h = '';
-  h += '<div class="zt-composer-expanded" style="margin-top:10px;">';
-  h += '<div style="display:flex;gap:10px;align-items:center;"><img src="' + ZT.escape(avatar) + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;">';
-  h += '<div style="font-size:12px;font-weight:800;color:#fff;">Posting as ' + ZT.escape(me.name || 'Owner') + '</div></div>';
+  ZT._composerFile = null;
+  ZT._composerKind = null;
 
-  h += '<div class="zt-composer-chips">';
+  var h = '';
+  h += '<div class="zt-bsheet-overlay" onclick="if(event.target===this)ZT.cancelComposer()">';
+  h += '<div class="zt-bsheet" onclick="event.stopPropagation()" style="max-height:94vh;">';
+  h += '<div class="zt-bsheet-handle"></div>';
+  h += '<div class="zt-bsheet-header">';
+  h += '<h3>Create Post</h3>';
+  h += '<button class="zt-bsheet-close" onclick="ZT.cancelComposer()"><i class="fa-solid fa-xmark"></i></button>';
+  h += '</div>';
+  h += '<div class="zt-bsheet-body">';
+
+  /* Type chips */
+  h += '<div style="display:flex;gap:6px;margin-bottom:12px;">';
   h += '<button class="zt-chip active" data-type="text" onclick="ZT.composerType(\'text\')"><i class="fa-solid fa-align-left"></i> Post</button>';
   h += '<button class="zt-chip" data-type="announcement" onclick="ZT.composerType(\'announcement\')"><i class="fa-solid fa-bullhorn"></i> Announcement</button>';
   h += '</div>';
 
-  h += '<div class="zt-st" style="margin:0;padding:0 4px;">Banner style</div>';
-  h += '<div id="zt-banner-picker" style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;scrollbar-width:none;">';
+  /* Banner toggle + media buttons */
+  h += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">';
+  h += '<button type="button" class="zt-media-btn" id="zt-banner-toggle" onclick="ZT.toggleComposerBanner()"><i class="fa-solid fa-palette"></i> Banner</button>';
+  h += '<button type="button" class="zt-media-btn" onclick="document.getElementById(\'zt-file-photo\').click()"><i class="fa-solid fa-camera"></i> Photo</button>';
+  h += '<button type="button" class="zt-media-btn" onclick="document.getElementById(\'zt-file-video\').click()"><i class="fa-solid fa-video"></i> Video</button>';
+  h += '</div>';
+
+  /* Banner picker (hidden) */
+  h += '<div id="zt-banner-picker" style="display:none;padding:12px;border-radius:10px;background:#0f172a;border:1px solid #1e293b;margin-bottom:12px;">';
+  h += '<div style="display:flex;gap:8px;overflow-x:auto;padding:4px 0;scrollbar-width:none;">';
   ZT.COMPOSER_BANNERS.forEach(function(b){
     var isActive = b.id === 'none';
-    var style = b.css || 'background:#0f172a;border:1px dashed #334155;';
-    h += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:52px;height:52px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : style) + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">';
+    h += '<div onclick="ZT.pickBanner(\'' + b.id + '\')" data-banner="' + b.id + '" style="flex-shrink:0;width:56px;height:56px;border-radius:12px;cursor:pointer;' + (b.css ? 'background:' + b.css + ';' : 'background:#0f172a;border:1px dashed #334155;') + 'border:' + (isActive ? '2px solid #10b981' : '2px solid rgba(255,255,255,.06)') + ';display:flex;align-items:center;justify-content:center;">';
     if(b.id === 'none') h += '<i class="fa-solid fa-font" style="color:#64748b;font-size:14px;"></i>';
     h += '</div>';
   });
-  h += '</div>';
+  h += '</div></div>';
 
-  h += '<textarea id="zt-composer-text" class="zt-textarea" placeholder="Share something with your members…" style="min-height:110px;"></textarea>';
-  h += '<div class="zt-media-row">';
-  h += '<button class="zt-media-btn" onclick="document.getElementById(\'zt-file-photo\').click()"><i class="fa-solid fa-camera"></i> Photo</button>';
-  h += '<button class="zt-media-btn" onclick="document.getElementById(\'zt-file-video\').click()"><i class="fa-solid fa-video"></i> Video</button>';
-  h += '</div>';
+  /* Text */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-bottom:5px;">What\'s on your mind?</label>';
+  h += '<textarea id="zt-composer-text" class="zt-textarea" placeholder="Share something with your members…" style="min-height:100px;"></textarea>';
+
+  /* Media inputs */
   h += '<input type="file" id="zt-file-photo" accept="image/*" style="display:none;" onchange="ZT.previewMedia(this,\'photo\')">';
   h += '<input type="file" id="zt-file-video" accept="video/*" style="display:none;" onchange="ZT.previewMedia(this,\'video\')">';
   h += '<div class="zt-preview" id="zt-preview"></div>';
-  h += '<div style="display:flex;gap:8px;justify-content:flex-end;">';
-  h += '<button class="zt-btn secondary small" onclick="ZT.cancelComposer()">Cancel</button>';
-  h += '<button class="zt-btn small" id="zt-publish-btn" onclick="ZT.publishPost()" style="width:auto;"><i class="fa-solid fa-paper-plane"></i> Publish</button>';
+
+  /* Visibility */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-top:14px;margin-bottom:5px;">Who can see this?</label>';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">';
+  h += '<button type="button" class="zt-chip active" data-vis="public" onclick="ZT.pickComposerVis(this,\'public\')"><i class="fa-solid fa-globe"></i> Public</button>';
+  h += '<button type="button" class="zt-chip" data-vis="connections" onclick="ZT.pickComposerVis(this,\'connections\')"><i class="fa-solid fa-user-group"></i> Members only</button>';
+  h += '</div>';
+
+  /* Share Bounty */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-top:12px;margin-bottom:5px;">Share Bounty <span style="color:#64748b;font-weight:500;">(paid to whoever shares)</span></label>';
+  h += '<select class="zt-select" id="zt-comp-bounty">';
+  h += '<option value="0">No bounty</option>';
+  h += '<option value="0.01">$0.01 per share</option>';
+  h += '<option value="0.02">$0.02 per share</option>';
+  h += '<option value="0.05">$0.05 per share</option>';
+  h += '</select>';
+
+  /* Share Budget */
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-top:12px;margin-bottom:5px;">Total Share Budget <span style="color:#64748b;font-weight:500;">(0 = no cap)</span></label>';
+  h += '<select class="zt-select" id="zt-comp-budget">';
+  [0,0.5,1,5,10,25,50,100].forEach(function(v){
+    h += '<option value="' + v + '">$' + v.toFixed(2) + (v===0?' (no cap)':'') + '</option>';
+  });
+  h += '</select>';
+
+  /* CFAR */
+  h += '<div style="margin-top:16px;padding:12px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.28);">';
+  h += '<div style="font-size:11px;font-weight:900;color:#60a5fa;letter-spacing:.4px;margin-bottom:8px;"><i class="fa-solid fa-coins"></i> CFAR — Viewer Rewards (optional)</div>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-bottom:5px;">Viewer rate (per minute)</label>';
+  h += '<select class="zt-select" id="zt-comp-cfar-rate" style="margin-bottom:10px;">';
+  h += '<option value="0">Off (no viewer reward)</option>';
+  [0.001,0.002,0.003,0.004,0.005,0.006,0.007,0.008,0.009,0.010].forEach(function(v){
+    h += '<option value="' + v + '">$' + v.toFixed(3) + ' / min</option>';
+  });
+  h += '</select>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-bottom:5px;">View budget</label>';
+  h += '<select class="zt-select" id="zt-comp-cfar-budget">';
+  h += '<option value="0">Off</option>';
+  [10,25,50,100,250,500,1000,2500,5000,10000].forEach(function(v){
+    h += '<option value="' + v + '">$' + v.toLocaleString() + '</option>';
+  });
+  h += '</select></div>';
+
+  /* Age 18+ */
+  h += '<div style="margin-top:16px;padding:12px;border-radius:10px;background:rgba(161,98,98,.06);border:1px solid rgba(161,98,98,.28);">';
+  h += '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12px;color:#cbd5e1;font-weight:700;margin-bottom:8px;">';
+  h += '<input type="checkbox" id="zt-comp-age" style="flex-shrink:0;"> Mark as 18+ (mature audiences only)</label>';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-top:8px;margin-bottom:5px;">Content warning (optional)</label>';
+  h += '<input type="text" id="zt-comp-warning" class="zt-input" maxlength="80" placeholder="e.g. flashing lights">';
+  h += '</div>';
+
+  /* Schedule */
+  h += '<div style="margin-top:16px;padding:10px 12px;border-radius:10px;background:rgba(96,165,250,.05);border:1px solid rgba(96,165,250,.22);">';
+  h += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#cbd5e1;font-weight:700;">';
+  h += '<input type="checkbox" id="zt-comp-schedule-toggle" onchange="ZT.toggleComposerSchedule()" style="flex-shrink:0;">';
+  h += '<i class="fa-regular fa-clock" style="color:#60a5fa;"></i> Schedule for later</label>';
+  h += '<div id="zt-comp-schedule-wrap" style="display:none;margin-top:8px;">';
+  h += '<label style="display:block;font-size:11px;color:#94a3b8;font-weight:800;margin-bottom:5px;">Date &amp; time</label>';
+  h += '<input type="datetime-local" id="zt-comp-schedule-at" class="zt-input">';
+  h += '</div></div>';
+
+  h += '</div>';
+
+  h += '<div class="zt-bsheet-footer">';
+  h += '<button type="button" class="zt-btn secondary small" onclick="ZT.cancelComposer()" style="flex:0 0 auto;">Cancel</button>';
+  h += '<button type="button" class="zt-btn small" id="zt-publish-btn" onclick="ZT.publishPost()" style="flex:1;"><i class="fa-solid fa-paper-plane"></i> Publish</button>';
+  h += '</div>';
+
   h += '</div></div>';
   host.innerHTML = h;
-  ZT._composerType = 'text'; ZT._composerFile = null; ZT._composerKind = null;
+  ZT._composerType = 'text';
+  ZT._composerVis = 'public';
 };
 
 ZT.pickBanner = function(id){
@@ -2780,6 +2862,43 @@ ZT.removeMedia = function(){
   ZT._composerFile = null; ZT._composerKind = null;
   ['zt-file-photo','zt-file-video'].forEach(function(id){ var el = document.getElementById(id); if(el) el.value = ''; });
   var box = document.getElementById('zt-preview'); if(box){ box.innerHTML = ''; box.classList.remove('show'); }
+};
+
+ZT.toggleComposerBanner = function(){
+  var p = document.getElementById('zt-banner-picker');
+  var t = document.getElementById('zt-banner-toggle');
+  if(!p) return;
+  var open = p.style.display !== 'block';
+  p.style.display = open ? 'block' : 'none';
+  if(t){
+    t.style.background = open ? 'rgba(16,185,129,.15)' : '';
+    t.style.borderColor = open ? '#10b981' : '';
+    t.style.color = open ? '#10b981' : '';
+  }
+};
+
+ZT.pickComposerVis = function(btn, k){
+  ZT._composerVis = k;
+  document.querySelectorAll('[data-vis]').forEach(function(b){
+    var active = b.getAttribute('data-vis') === k;
+    b.classList.toggle('active', active);
+  });
+};
+
+ZT.toggleComposerSchedule = function(){
+  var cb = document.getElementById('zt-comp-schedule-toggle');
+  var wrap = document.getElementById('zt-comp-schedule-wrap');
+  if(!cb || !wrap) return;
+  if(cb.checked){
+    wrap.style.display = 'block';
+    var inp = document.getElementById('zt-comp-schedule-at');
+    if(inp && !inp.value){
+      var d = new Date(Date.now() + 60*60*1000);
+      inp.value = new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+    }
+  } else {
+    wrap.style.display = 'none';
+  }
 };
 
 ZT.publishPost = async function(){
