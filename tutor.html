@@ -916,19 +916,39 @@ ZT.storeMedia = async function(file){
   var sess = await c.auth.getSession();
   var session = sess && sess.data ? sess.data.session : null;
   if(!session || !session.access_token) throw new Error('Not logged in.');
-  var pres = await fetch('/api/r2-presign', {
-    method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer ' + session.access_token},
-    body: JSON.stringify({ action:'put', path:path, contentType:file.type||'' })
-  });
-  if(!pres.ok) throw new Error('Presign failed.');
-  var pd = await pres.json();
-  if(!pd || !pd.url) throw new Error('No upload URL.');
-  var put = await fetch(pd.url, {
-    method:'PUT', body: file,
-    headers: {'Content-Type': pd.contentType || file.type || 'application/octet-stream'}
-  });
-  if(!put.ok) throw new Error('Upload failed.');
+  var pres;
+  try {
+    pres = await fetch('/api/r2-presign', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer ' + session.access_token},
+      body: JSON.stringify({ action:'put', path:path, contentType:file.type||'' })
+    });
+  } catch(e){
+    console.error('[r2-presign network]', e);
+    throw new Error('Upload server unreachable — check network or /api/r2-presign endpoint.');
+  }
+  if(!pres.ok){
+    var errTxt = '';
+    try { errTxt = await pres.text(); } catch(e){}
+    console.error('[r2-presign ' + pres.status + ']', errTxt);
+    throw new Error('Presign failed (' + pres.status + ') — endpoint /api/r2-presign may be missing on server.');
+  }
+  var pd;
+  try { pd = await pres.json(); } catch(e){ throw new Error('Presign response invalid JSON.'); }
+  if(!pd || !pd.url) throw new Error('No upload URL returned from server.');
+  var put;
+  try {
+    put = await fetch(pd.url, {
+      method:'PUT', body: file,
+      headers: {'Content-Type': pd.contentType || file.type || 'application/octet-stream'}
+    });
+  } catch(e){
+    console.error('[r2 PUT network]', e);
+    throw new Error('Upload to storage failed — check CORS on R2 bucket.');
+  }
+  if(!put.ok){
+    throw new Error('R2 upload failed (' + put.status + ').');
+  }
   return ZT.R2_PUBLIC_BASE + '/' + path;
 };
 
@@ -1719,6 +1739,10 @@ ZT.goHome = function(){
   ZT.State.myRoleInCircle = null;
   ZT.showView('feed');
 };
+ZT.openAuthModal = ZT.openAuthModal || function(mode){
+  ZT.toast('Please log in to continue.', 'error');
+};
+
 ZT.goBackToPlatform = function(){ window.location.href = 'index.html'; };
 ZT.goToMySpace = function(){
   /* Same as index.html behaviour: opens own space page */
@@ -3180,21 +3204,7 @@ ZT.postsSkeleton = function(){
   return h;
 };
 
-ZT.loadPostViewCounts = async function(posts){
-  if(!posts || !posts.length) return;
-  var c = sb(); if(!c) return;
-  try {
-    var r = await c.from('tutor_post_views').select('post_id').in('post_id', posts.map(function(p){ return p.id; }));
-    var counts = {};
-    (r.data || []).forEach(function(v){ counts[v.post_id] = (counts[v.post_id] || 0) + 1; });
-    ZT.State.postViewCounts = counts;
-    /* Update DOM counters if they exist */
-    posts.forEach(function(p){
-      var el = document.querySelector('[data-view-count="' + p.id + '"]');
-      if(el) el.textContent = (counts[p.id] || 0);
-    });
-  } catch(e){ console.warn('[view counts]', e); }
-};
+/* loadPostViewCounts removed — view counter UI gone. Backend view tracking still works via recordPostViews. */
 
 
 ZT.loadCirclePosts = async function(){
@@ -3244,9 +3254,7 @@ ZT.loadCirclePosts = async function(){
     /* Record views silently — non-blocking */
     setTimeout(function(){ ZT.recordPostViews(posts); }, 800);
     /* Show views count for tutor posts */
-    if(ZT.State.currentUser && ZT.State.currentCircle && ZT.State.currentCircle.owner_id === ZT.State.currentUser.id){
-      ZT.loadPostViewCounts(posts);
-    }
+    /* view-count UI removed */
 
   } catch(e){ console.warn(e); host.innerHTML = '<div class="zt-empty"><p>Error.</p></div>'; }
 };
@@ -3314,17 +3322,8 @@ h += '<div style="flex:1;min-width:0;cursor:pointer;" onclick="if(\'' + ZT.escap
   h += '</div>';
 
   h += '<div class="zt-post-actions">';
-  var viewCount = (ZT.State.postViewCounts && ZT.State.postViewCounts[p.id]) || 0;
-  if(isMyPost || isTutor){
-    h += '<div style="font-size:10.5px;color:#64748b;padding:2px 4px 6px;display:flex;align-items:center;gap:6px;">';
-    h += '<i class="fa-solid fa-eye" style="font-size:10px;"></i>';
-    h += '<span data-view-count="' + ZT.escape(p.id) + '">' + viewCount + '</span>';
-    h += '<span style="color:#475569;">·</span>';
-    h += '<span>' + (comments.length) + ' comments</span>';
-    h += '</div>';
-  }
-
   h += '<button data-toggle-comments="' + ZT.escape(p.id) + '"><i class="fa-regular fa-comment"></i> ' + comments.length + ' Comments</button>';
+  h += '<button onclick="ZT.sharePost(\'' + ZT.escape(p.id) + '\',event)"><i class="fa-solid fa-share-nodes"></i> Share</button>';
   if(!isTutor){
     h += '<button data-learned-post="' + ZT.escape(p.id) + '" style="margin-left:auto;' + (learned ? 'color:#10b981;font-weight:900;' : '') + '">';
     h += '<i class="' + (learned ? 'fa-solid' : 'fa-regular') + ' fa-circle-check"></i> ' + (learned ? 'Learned' : 'Mark as Learned') + '</button>';
@@ -3453,6 +3452,19 @@ ZT.showPostViews = async function(postId){
   } catch(e){
     console.warn('[views]', e);
     ZT.Modal.open({ title:'Post views', icon:'fa-solid fa-eye', body:'<div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;">Could not load views.</div>', footer:false });
+  }
+};
+
+ZT.sharePost = function(postId, ev){
+  if(ev) ev.stopPropagation();
+  var cir = ZT.State.currentCircle;
+  if(!cir){ ZT.toast('Not in a circle.', 'error'); return; }
+  var url = location.origin + location.pathname + '?post=' + postId + '&circle=' + cir.id;
+  try {
+    navigator.clipboard.writeText(url);
+    ZT.toast('Post link copied');
+  } catch(e){
+    ZT.toast('Copy failed — link: ' + url, 'error');
   }
 };
 
@@ -3829,8 +3841,13 @@ ZT.toggleChatLock = async function(){
     ZT.State.currentCircle = cir;
     ZT.toast(newVal ? 'Chat locked 🔒' : 'Chat unlocked 🔓');
     ZT.haptic(12);
-    if(document.getElementById('zt-room-content') && ZT.State.roomTab === 'chat'){
-      ZT.switchRoomTab('chat');
+    var cir2 = ZT.State.currentCircle;
+    if(cir2 && document.getElementById('zt-room-content')){
+      if(cir2.room_type === 'connect'){
+        /* Connect has no chat — no-op */
+      } else {
+        ZT.switchRoomTab('chat');
+      }
     } else {
       ZT.showView('chat');
     }
@@ -4088,11 +4105,6 @@ ZT.renderLive = function(){
 
   if(!ZT._lk.connected){
     var h = '';
-    h += '<div class="zt-circle-head">';
-    h += '<button class="back" onclick="ZT.goBack()"><i class="fa-solid fa-arrow-left"></i></button>';
-    h += '<div style="flex:1;min-width:0;"><div class="nm">Live Classroom</div>';
-    h += '<div class="sub">' + ZT.escape(cir.name) + '</div></div></div>';
-
     h += '<div class="zt-hero" style="background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(16,185,129,.10));border-color:rgba(16,185,129,.4);">';
     h += '<h2><i class="fa-solid fa-video" style="margin-right:8px;"></i>Ready to go live?</h2>';
     h += '<p>' + (isTutor ? 'You are the host. Your mic and camera will be on.' : 'You will join as a listener. Host will approve your entry.') + '</p></div>';
@@ -5510,7 +5522,7 @@ ZT.renderSlidePlayer = function(){
   if(!isTutor){
     h += '<button class="zt-btn secondary" id="zt-slide-complete" onclick="ZT.markSlideComplete()" style="margin-top:12px;"><i class="fa-regular fa-circle-check"></i> Mark lesson complete</button>';
   }
-  h += '<button class="zt-btn secondary" onclick="ZT.showView(\'slides\')" style="margin-top:8px;">Back to list</button>';
+  h += '<button class="zt-btn secondary" onclick="ZT._backToSlidesTab()" style="margin-top:8px;">Back to list</button>';
   setTimeout(function(){ ZT.paintSlidePlayer(); ZT.checkSlideComplete(); }, 30);
     if(slideBg) h += '</div>';
   return h;
@@ -5590,6 +5602,16 @@ ZT.paintSlidePlayer = function(){
   var nb = document.getElementById('zt-slide-next');
   if(pb) pb.onclick = ZT.prevSlide;
   if(nb) nb.onclick = ZT.nextSlide;
+};
+
+ZT._backToSlidesTab = function(){
+  var cir = ZT.State.currentCircle;
+  var rhost = document.getElementById('zt-room-content');
+  if(cir && rhost){
+    ZT.switchRoomTab('slides');
+  } else {
+    ZT.showView('slides');
+  }
 };
 
 ZT.nextSlide = function(){
@@ -9295,34 +9317,66 @@ ZT.renderView = async function(view, param){
    BOOT
    ============================================================ */
 async function boot(){
-  try {
-    var c = sb();
-    if(c){
-      var s = await c.auth.getSession();
-      var user = s && s.data && s.data.session ? s.data.session.user : null;
-      if(user){
+  var c = sb();
+  var user = null;
+
+  if(c){
+    /* Retry getSession up to 3 times — SDK sometimes returns null right after page load */
+    for(var attempt = 0; attempt < 3; attempt++){
+      try {
+        var s = await c.auth.getSession();
+        if(s && s.data && s.data.session && s.data.session.user){
+          user = s.data.session.user;
+          break;
+        }
+      } catch(e){ console.warn('[boot] session attempt ' + attempt, e); }
+      if(!user) await new Promise(function(r){ setTimeout(r, 400); });
+    }
+    /* Fallback: getUser uses cached session in localStorage */
+    if(!user){
+      try {
+        var gu = await c.auth.getUser();
+        if(gu && gu.data && gu.data.user) user = gu.data.user;
+      } catch(e){ console.warn('[boot] getUser', e); }
+    }
+    /* Load profile */
+    if(user){
+      try {
         var pr = await c.from('profiles').select('*').eq('id', user.id).maybeSingle();
-        ZT.State.currentUser = pr.data || {
+        if(pr.data){
+          ZT.State.currentUser = pr.data;
+        } else {
+          ZT.State.currentUser = {
+            id: user.id,
+            name: (user.user_metadata && user.user_metadata.name) || 'User',
+            username: (user.email||'').split('@')[0],
+            email: user.email,
+            avatar: 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.email||'U') + '&background=8b5cf6&color=000'
+          };
+        }
+        ZT.State.profileCache[ZT.State.currentUser.id] = ZT.State.currentUser;
+        if(ZT.State.currentUser.is_tutor_approved === undefined){
+          ZT.State.currentUser.is_tutor_approved = false;
+        }
+      } catch(e){
+        console.warn('[boot] profile fetch', e);
+        /* Fallback — still set currentUser so UI doesn't appear logged out */
+        ZT.State.currentUser = {
           id: user.id,
           name: (user.user_metadata && user.user_metadata.name) || 'User',
           username: (user.email||'').split('@')[0],
           email: user.email,
           avatar: 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.email||'U') + '&background=8b5cf6&color=000'
         };
-        ZT.State.profileCache[ZT.State.currentUser.id] = ZT.State.currentUser;
-      /* Ensure is_tutor_approved field exists on currentUser */
-      if(ZT.State.currentUser && ZT.State.currentUser.is_tutor_approved === undefined){
-        ZT.State.currentUser.is_tutor_approved = false;
-      }
-
       }
     }
-  } catch(e){ console.warn('session', e); }
+  }
+
   setTimeout(function(){ var w = document.getElementById('zt-welcome'); if(w) w.classList.add('fadeout'); }, 400);
   ZT._loadTutorTheme();
-ZT._paintHeaderWallet();
-setInterval(ZT._paintHeaderWallet, 30000);
-  /* Restore last circle from localStorage (survives page refresh) */
+  ZT._paintHeaderWallet();
+  setInterval(ZT._paintHeaderWallet, 30000);
+
   var _lastCircleId = null;
   try { _lastCircleId = localStorage.getItem('zynix_tutor_last_circle'); } catch(e){}
   if(_lastCircleId && ZT.State.currentUser){
@@ -9330,16 +9384,17 @@ setInterval(ZT._paintHeaderWallet, 30000);
   } else {
     ZT.showView('feed');
   }
-  /* Watchdog — agar 5 sec me kuch render nahi hua to landing pe force karo (refresh safety) */
+
+  /* Watchdog — agar 5 sec me blank reh gaya, force landing */
   setTimeout(function(){
     var app = document.getElementById('zt-app');
     if(app && (!app.innerHTML || app.innerHTML.trim() === '')){
       try { ZT.showView('feed'); } catch(e){}
     }
   }, 5000);
+
   console.log('[ZYNIX Tutor v3] booted · user=' + (ZT.State.currentUser ? ZT.State.currentUser.name : 'guest'));
 
-  /* Trial + monthly auto-check safety net (Phase F) */
   setTimeout(function(){
     try {
       if(ZT.State.currentUser && sb()){
